@@ -831,6 +831,7 @@ on_game_started = { on_actions = { pmr_on_game_started } }
 on_production_method_changed = { on_actions = { pmr_on_production_method_changed } }
 on_building_built = { on_actions = { pmr_on_building_built } }
 on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }
+on_acquired_technology = { on_actions = { pmr_on_acquired_technology } }
 
 # No root. Adopt every building's starting recipe so day-one recipes carry no lag.
 pmr_on_game_started = {
@@ -855,6 +856,14 @@ pmr_on_building_built = {
 	effect = {
 		pmr_tick_parent_of_retool = yes
 		pmr_built_building = yes
+	}
+}
+
+# Root = country that just acquired a technology. A newly unlocked recipe switches its buildings
+# at once instead of at the next month turn.
+pmr_on_acquired_technology = {
+	effect = {
+		every_scope_state = { pmr_state_tick = yes }
 	}
 }
 
