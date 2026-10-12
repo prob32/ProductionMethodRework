@@ -26,6 +26,9 @@ the 1.14.x open beta, `supported_version = 1.14.*`.
 | 4. p is driven by construction | `building_pmr_retool_<b>` costs 50% of the building's construction cost ÷ N per level (steel: 800 × 0.5 ÷ 4 = 100). A switch queues N × level of it: the government-owned share through `start_building_construction`, the rest through `start_privately_funded_building_construction`. |
 | 5. p is read, not accumulated | `p = (retool.level ÷ N + level − L_start) ÷ level`, clamped to 0..1, in `pmr_tick_<b>`. When p reaches 1 the lag and the retool building are removed. |
 
+| The building panel | A shadowed `gui/building_details_panel.gui` (vanilla's, with two patches the generator asserts). On a PMR building the production method row shows only the fixed labour slot, drawn as the building's main output good in gold (`tools/pmr/icons.py`, written to `gfx/.../production_method_icons/pmr_labour_<b>.dds`). Beside it a recipe bar, sized to sit between that slot and the employment and cash-reserve bars: gold is the recipe the building fully runs, blue the share already retooled to the new one. It reads `pmr_bar_old`, `pmr_p` and two building custom localizations, `pmr_old_recipe` and `pmr_new_recipe`. |
+| Recipes switch on research | With the selector gone, each tick finds the newest recipe the building can run (the last in the vanilla group that `can_activate_production_method` allows) and, when that rises, activates it, which starts retooling like any switch. A newly constructed building starts on the newest recipe at no cost. |
+
 p is recomputed on three hooks, all appended to vanilla on_actions the documented way:
 `on_production_method_changed` (the switch is seen at once), `on_building_built` (each completed
 retool level moves p at once), and `on_monthly_pulse_state` (backstop). A save that predates the mod
@@ -53,6 +56,12 @@ be paid for by itself.
   metal shipbuilding), `old/new − 1` divides by zero and no `_mult` can restore it, so that good
   switches at once.
   `GENERATION_REPORT.json` lists every one.
+- **Newest means last in the vanilla list.** Vanilla orders recipe groups oldest first; the generator
+  does not check that every group is a strict progression.
+- **Only research and new construction switch recipes.** Automation and any other multi-method group
+  on a PMR building are hidden too and stay on whatever they run. The building browser's
+  per-building-type production method menus still exist and still switch recipes; such a switch
+  retools like any other.
 - **Pollution has no lag.** It is a state modifier, not a building one.
 - **Other `_mult`s on the same good combine with the lag additively**, exactly as the design notes
   for recipes: a +25% steel bonus during Blister → Bessemer gives 90 × (1 + 0.25 − 0.278 × (1 − p)).

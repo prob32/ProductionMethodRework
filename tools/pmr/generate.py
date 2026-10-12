@@ -22,6 +22,10 @@ What it does, building by building (see pmr/ProductionMethodRework/README.md for
    and private construction queues by the building's government-owned fraction.
 5. p = (retool.level / N + level - L_start) / level, clamped to 0..1, recomputed whenever the
    recipe changes, whenever a retool level completes, and on the monthly state pulse.
+6. Recipes switch on research: when a newer recipe becomes available the building activates it,
+   which starts retooling. The building panel hides the recipe and automation selectors, shows the
+   fixed labour method as a gold drawing of the main output good, and adds a bar showing the old
+   and new recipe's shares.
 
 Vanilla files the mod changes are written whole under their vanilla names (file shadowing), with
 only the employment lines and the extra group inserted; every other byte is the installed game's.
@@ -35,6 +39,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import icons  # noqa: E402
 import pdx  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
@@ -198,7 +203,7 @@ def main():
         for p in lst:
             pm_groups.setdefault(p, set()).add(g)
 
-    report = {'treated': [], 'skipped': [], 'unrepresentable': []}
+    report = {'treated': [], 'skipped': [], 'unrepresentable': [], 'icon_fallback': []}
     treated = []          # (building_key, building_node, building_src, [Recipe])
     candidates = []
     for s in b_srcs:
@@ -240,14 +245,15 @@ def main():
             if r.key not in stripped:
                 r.strip_employment()
                 stripped.add(r.key)
-        close = pg.end - 1   # the '}' of production_method_groups
-        indent = s.text[s.text.rfind('\n', 0, close) + 1:close]
-        line_start = s.text.rfind('\n', 0, close) + 1
-        item_indent = indent + '\t' if not indent.strip() else '\t\t'
-        s.inserts.append((line_start, f'{item_indent}pmg_pmr_labour_{short(bk)}  # PMR: fixed labour\n'))
+        # First in the list, so the building panel's grid shows it in the first slot and the hidden
+        # recipe and automation slots after it leave no gap.
+        brace = s.text.index('{', pg.start) + 1
+        rest = s.text[brace:s.text.find('\n', brace)]
+        tail = '' if not rest.strip() else '\n\t\t'   # the list continues on the brace's line
+        s.inserts.append((brace, f'\n\t\tpmg_pmr_labour_{short(bk)}  # PMR: fixed labour{tail}'))
 
     if os.path.isdir(args.out):
-        for sub in ('common', 'localization', '.metadata'):
+        for sub in ('common', 'localization', '.metadata', 'gfx', 'gui'):
             shutil.rmtree(os.path.join(args.out, sub), ignore_errors=True)
     os.makedirs(args.out, exist_ok=True)
 
@@ -280,14 +286,38 @@ def main():
             except ValueError:
                 pass
 
+    goods_tex = {}
+    for gsrc in load_dir(game, 'goods'):
+        for gk, gn in gsrc.objects().items():
+            t = pdx.get(gn.value, 'texture')
+            if t:
+                goods_tex[gk] = t.value
+    gfx_root = game
+    custom_old, custom_new = [], []
+
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
         r0 = recipes[0]
+        # The fixed labour method's icon: the building's main output good, drawn gold.
+        good = max(r0.outputs.items(), key=lambda kv: kv[1])[0] if r0.outputs else None
+        icon_tex = r0.texture
+        src = os.path.join(gfx_root, goods_tex[good]) if good in goods_tex else None
+        if src and os.path.isfile(src):
+            icon_tex = f'gfx/interface/icons/production_method_icons/pmr_labour_{b}.dds'
+            path = os.path.join(args.out, icon_tex)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            icons.write_dds(icons.gold_icon(src), path)
+        else:
+            report['icon_fallback'].append({'building': bk, 'good': good, 'missing': src})
+        for i, r in enumerate(recipes, 1):
+            for var, lst in (('pmr_from', custom_old), ('pmr_to', custom_new)):
+                lst.append(f'\ttext = {{\n\t\ttrigger = {{ is_building_type = {bk} var:{var} = {i} }}\n'
+                           f'\t\tlocalization_key = {r.key}\n\t}}\n')
         emp = '\n'.join(f'\t\t\t{k} = {fmt(v)}' for k, v in r0.employment.items())
         labour_pms.append(
             f'# {bk}: employment of {r0.key}, the default recipe, held fixed whatever recipe runs.\n'
             f'pm_pmr_labour_{b} = {{\n'
-            f'\ttexture = "{r0.texture}"\n'
+            f'\ttexture = "{icon_tex}"\n'
             f'\tis_default = yes\n'
             f'\tbuilding_modifiers = {{\n\t\tlevel_scaled = {{\n{emp}\n\t\t}}\n\t}}\n}}\n')
         labour_groups.append(
@@ -354,6 +384,7 @@ def main():
         tick_effects.append(tick_effect(bk, b, recipes, pair_names))
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
+                                  'icon_good': good,
                                   'labour_from': r0.key, 'employment': r0.employment,
                                   'retool_cost': retool_cost, 'lag_modifiers': len(pair_names)})
 
@@ -369,6 +400,13 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
+    write('common/customizable_localization/pmr_custom_loc.txt', header +
+          '# Building scope. The recipe a building is retooling from, and the one it runs or retools to.\n'
+          'pmr_old_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_old) + '}\n\n'
+          'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n')
+    write('gui/building_details_panel.gui', patch_building_panel(
+        open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read()), bom=False)
+    loc += PANEL_LOC
     write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
     loc += [' bg_pmr_retool:0 "Retooling"'] + DECISION_LOC
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
@@ -461,19 +499,72 @@ def tick_effect(bk, b, recipes, pairs):
              f'\t\tset_variable = {{ name = pmr_retool_queued value = state.b:building_pmr_retool_{b}.level_after_queued_constructions }}\n'
              '\t}\n}\n\n')
 
+    # newest recipe this building could run now: the last in the vanilla group that it runs or can
+    # activate. Vanilla lists recipes oldest first.
+    o.append(f'pmr_best_{b} = {{\n\tset_variable = {{ name = pmr_best_now value = 0 }}\n')
+    for i in range(k, 0, -1):
+        r = recipes[i - 1]
+        kw = 'if' if i == k else 'else_if'
+        o.append(f'\t{kw} = {{\n\t\tlimit = {{ state = {{ OR = {{\n'
+                 f'\t\t\tis_production_method_active = {{ building_type = {bk} production_method = {r.key} }}\n'
+                 f'\t\t\tcan_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}\n'
+                 f'\t\t}} }} }}\n\t\tset_variable = {{ name = pmr_best_now value = {i} }}\n\t}}\n')
+    o.append('}\n\n')
+
+    # activate recipe number var:<name> on this building (through its state: the effect is state scope)
+    o.append(f'pmr_activate_{b} = {{\n')
+    for i, r in enumerate(recipes, 1):
+        kw = 'if' if i == 1 else 'else_if'
+        o.append(f'\t{kw} = {{ limit = {{ var:pmr_best_now = {i} }} '
+                 f'state = {{ activate_production_method = {{ building_type = {bk} production_method = {r.key} }} }} }}\n')
+    o.append('}\n\n')
+
     # the tick
     o.append(f'pmr_tick_{b} = {{\n'
              '\tset_variable = { name = pmr_level value = level }\n'
+             f'\tpmr_best_{b} = yes\n'
              '\t# First sight: adopt whatever recipe runs now, with no lag.\n'
-             '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_to } }\n')
+             '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_to } }\n'
+             '\t\tset_variable = { name = pmr_best value = var:pmr_best_now }\n')
     for i, r in enumerate(recipes, 1):
         kw = 'if' if i == 1 else 'else_if'
         o.append(f'\t\t{kw} = {{ limit = {{ has_active_production_method = {r.key} }} '
                  f'set_variable = {{ name = pmr_from value = {i} }} set_variable = {{ name = pmr_to value = {i} }} }}\n')
     o.append('\t\tset_variable = { name = pmr_p value = 1 }\n'
              '\t\tset_variable = { name = pmr_l_start value = level }\n'
-             f'\t\t{log("INIT", b)}\n\t}}\n')
-    o.append('\t# A switch: the active recipe is not the one we are retooling towards.\n')
+             '\t\t# Newly constructed (not seen at game start or on first load): built with the newest\n'
+             '\t\t# recipe the owner has, at no retooling cost.\n'
+             '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_new_build var:pmr_best_now > 0 NOT = { var:pmr_to = var:pmr_best_now } }\n'
+             '\t\t\tset_variable = { name = pmr_from value = var:pmr_best_now }\n'
+             '\t\t\tset_variable = { name = pmr_to value = var:pmr_best_now }\n'
+             '\t\t\tset_variable = { name = pmr_adopting value = 0 }\n'
+             f'\t\t\tpmr_activate_{b} = yes\n'
+             f'\t\t\t{log("ADOPT", b)}\n\t\t}}\n'
+             f'\t\t{log("INIT", b, extra=";best=[THIS.Var('pmr_best_now').GetValue|0]")}\n\t}}\n'
+             '\tif = { limit = { has_variable = pmr_new_build } remove_variable = pmr_new_build }\n')
+    o.append('\t# Research: a newer recipe became available since the last tick. Switch to it; the switch\n'
+             '\t# below then queues the retooling like any other.\n'
+             '\tif = {\n\t\tlimit = { var:pmr_best_now > var:pmr_best }\n'
+             '\t\tset_variable = { name = pmr_best value = var:pmr_best_now }\n'
+             f'\t\t{log("RESEARCH", b, extra=";best=[THIS.Var('pmr_best_now').GetValue|0]")}\n'
+             f'\t\tpmr_activate_{b} = yes\n\t}}\n'
+             '\tset_variable = { name = pmr_best value = var:pmr_best_now }\n')
+    o.append('\t# A free adoption is waiting for the game to apply the activation: until it shows, the\n'
+             '\t# running recipe is not a switch. Give up after one more tick and keep what runs.\n'
+             '\tif = {\n\t\tlimit = { has_variable = pmr_adopting }\n')
+    for i, r in enumerate(recipes, 1):
+        kw = 'if' if i == 1 else 'else_if'
+        o.append(f'\t\t{kw} = {{ limit = {{ var:pmr_to = {i} has_active_production_method = {r.key} }} remove_variable = pmr_adopting }}\n')
+    o.append('\t\telse = {\n\t\t\tchange_variable = { name = pmr_adopting add = 1 }\n'
+             '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_adopting > 1 }\n'
+             '\t\t\t\tremove_variable = pmr_adopting\n')
+    for i, r in enumerate(recipes, 1):
+        kw = 'if' if i == 1 else 'else_if'
+        o.append(f'\t\t\t\t{kw} = {{ limit = {{ has_active_production_method = {r.key} }} '
+                 f'set_variable = {{ name = pmr_from value = {i} }} set_variable = {{ name = pmr_to value = {i} }} }}\n')
+    o.append(f'\t\t\t\t{log("ADOPT_FAILED", b)}\n\t\t\t}}\n\t\t}}\n\t}}\n')
+    o.append('\t# A switch: the active recipe is not the one we are retooling towards.\n'
+             '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_adopting } }\n')
     for i, r in enumerate(recipes, 1):
         o.append(f'\tif = {{\n\t\tlimit = {{ has_active_production_method = {r.key} NOT = {{ var:pmr_to = {i} }} }}\n'
                  f'\t\tset_variable = {{ name = pmr_to value = {i} }}\n'
@@ -491,6 +582,7 @@ def tick_effect(bk, b, recipes, pairs):
                  f'\t\t\tpmr_queue_retool_{b} = yes\n'
                  f'\t\t\t{log("SWITCH", b, extra=";gov_frac=[THIS.Var(\'pmr_gov_frac\').GetValue|2];gov=[THIS.Var(\'pmr_retool_gov\').GetValue|0];priv=[THIS.Var(\'pmr_retool_priv\').GetValue|0];queued=[THIS.Var(\'pmr_retool_queued\').GetValue|0]")}\n'
                  '\t\t}\n\t}\n')
+    o.append('\t}\n')
     o.append('\t# Progress: p = (retool.level / N + level - L_start) / level, clamped to 0..1.\n'
              '\tif = {\n\t\tlimit = { has_variable = pmr_retooling }\n'
              f'\t\tpmr_read_retool_{b} = yes\n'
@@ -509,7 +601,8 @@ def tick_effect(bk, b, recipes, pairs):
              '\t\telse = {\n'
              f'\t\t\tpmr_apply_lag_{b} = yes\n'
              f'\t\t\t{log("TICK", b, extra=";queued=[THIS.Var(\'pmr_retool_queued\').GetValue|0]")}\n'
-             '\t\t}\n\t}\n}\n\n')
+             '\t\t}\n\t}\n'
+             '\tpmr_set_bar = yes\n}\n\n')
     return ''.join(o)
 
 
@@ -529,6 +622,14 @@ def shared_effects():
         o.append(f'\t{kw} = {{ limit = {{ country_ownership_fraction >= {fmt(threshold)} }} '
                  f'set_variable = {{ name = pmr_gov_frac value = {fmt(v)} }} }}\n')
     o.append('}\n\n')
+    o.append('# Building scope. What the building panel\'s recipe bar reads: the old recipe\'s share, and\n'
+             '# whether a retool is running. Outside a retool the running recipe fills the bar.\n'
+             'pmr_set_bar = {\n'
+             '\tset_variable = { name = pmr_bar_old value = 1 }\n'
+             '\tif = {\n\t\tlimit = { has_variable = pmr_retooling }\n'
+             '\t\tchange_variable = { name = pmr_bar_old subtract = var:pmr_p }\n'
+             '\t\tset_variable = { name = pmr_ui_retooling value = 1 }\n\t}\n'
+             '\telse = { set_variable = { name = pmr_ui_retooling value = 0 } }\n}\n\n')
     return ''.join(o)
 
 
@@ -554,6 +655,127 @@ def dispatch_effects(buildings):
         o.append(f'\tif = {{ limit = {{ has_building = {bk} }} b:{bk} = {{ pmr_tick_building = yes }} }}\n')
     o.append('}\n')
     return ''.join(o)
+
+
+TREATED = "NotZero_CFixedPoint(Building.MakeScope.Var('pmr_to').GetValue)"
+RETOOLING = "NotZero_CFixedPoint(Building.MakeScope.Var('pmr_ui_retooling').GetValue)"
+
+# The recipe bar: two rows sized and centred to match the employment and cash-reserve bars to its
+# right (26 px each, 8 apart). It sits between the production method slot (x 2..72) and those bars
+# (230 wide, 5 from the right edge of the 540 px panel): x 84..293.
+RECIPE_BAR = f"""
+				# PMR: recipe bar. Gold is the recipe the building fully runs; while retooling, blue is
+				# the share already moved to the new recipe.
+				widget = {{
+					visible = "[{TREATED}]"
+					position = {{ 84 0 }}
+					size = {{ 209 60 }}
+					parentanchor = vcenter
+
+					textbox = {{
+						visible = "[Not({RETOOLING})]"
+						size = {{ 209 26 }}
+						align = left|nobaseline
+						elide = right
+						text = "PMR_RECIPE_BAR_TITLE"
+						tooltip = "PMR_RECIPE_BAR_TOOLTIP"
+						using = tooltip_above
+					}}
+					textbox = {{
+						visible = "[{RETOOLING}]"
+						size = {{ 209 26 }}
+						align = left|nobaseline
+						elide = right
+						text = "PMR_RECIPE_BAR_TITLE_RETOOLING"
+						tooltip = "PMR_RECIPE_BAR_TOOLTIP_RETOOLING"
+						using = tooltip_above
+					}}
+
+					widget = {{
+						position = {{ 0 34 }}
+						size = {{ 209 26 }}
+						tooltip = "PMR_RECIPE_BAR_TOOLTIP_RETOOLING"
+						using = tooltip_above
+
+						gold_progressbar_horizontal = {{
+							size = {{ 100% 100% }}
+							blockoverride "background" {{
+								background = {{
+									texture = "gfx/interface/progressbar/progressbar_default.dds"
+									spriteType = Corneredtiled
+									spriteborder = {{ 4 4 }}
+									texture_density = 2
+									using = progressbar_texture_properties
+								}}
+							}}
+							blockoverride "values" {{
+								min = 0
+								max = 1
+								value = "[FixedPointToFloat(Building.MakeScope.Var('pmr_bar_old').GetValue)]"
+							}}
+						}}
+						textbox = {{
+							visible = "[{RETOOLING}]"
+							position = {{ 6 0 }}
+							size = {{ 98 26 }}
+							align = left|nobaseline
+							text = "PMR_BAR_OLD_SHARE"
+						}}
+						textbox = {{
+							visible = "[{RETOOLING}]"
+							position = {{ -6 0 }}
+							parentanchor = right
+							size = {{ 98 26 }}
+							align = right|nobaseline
+							text = "PMR_BAR_NEW_SHARE"
+						}}
+						textbox = {{
+							visible = "[Not({RETOOLING})]"
+							size = {{ 100% 100% }}
+							align = center|nobaseline
+							text = "PMR_BAR_FULL"
+						}}
+					}}
+				}}
+"""
+
+
+def patch_building_panel(text):
+    """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
+    either anchor fails generation instead of shipping a panel that silently lost them."""
+    def once(old, new):
+        nonlocal text
+        n = text.count(old)
+        if n != 1:
+            raise SystemExit(f'building_details_panel.gui: expected one {old.strip()[:60]!r}, found {n}; '
+                             'the panel changed in this build, update patch_building_panel')
+        text = text.replace(old, new)
+
+    # 1. In the condensed production method grid, a PMR building shows only its single-method groups
+    #    (the fixed labour slot). Recipe and automation selectors are hidden.
+    type_at = text.index('type condensed_building_information_pms')
+    item = 'datacontext = "[ProductionMethodGroup]"\n'
+    at = text.index(item, type_at) + len(item)
+    indent = text[text.rfind('\n', 0, at - len(item)) + 1:at - len(item)]
+    text = (text[:at] + indent + '# PMR: fixed labour only on PMR buildings\n' + indent +
+            f'visible = "[Or(Not({TREATED}), EqualTo_int32(GetDataModelSize(ProductionMethodGroup.'
+            "AccessBuildingProductionMethods(Building.Self)), '(int32)1'))]\"\n" + text[at:])
+
+    # 2. The recipe bar beside it, in the details panel's PMs / employment / cash reserves row.
+    once('\t\t\t\tblock "extra_items_in_production_methods_list" {}\n',
+         '\t\t\t\tblock "extra_items_in_production_methods_list" {}\n' + RECIPE_BAR)
+    return text
+
+
+PANEL_LOC = [
+    ' PMR_RECIPE_BAR_TITLE:0 "#bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
+    ' PMR_RECIPE_BAR_TITLE_RETOOLING:0 "Retooling to #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
+    ' PMR_BAR_FULL:0 "#bold 100%#!"',
+    ' PMR_BAR_OLD_SHARE:0 "#bold [Building.MakeScope.Var(\'pmr_bar_old\').GetValue|%0]#!"',
+    ' PMR_BAR_NEW_SHARE:0 "#bold [Building.MakeScope.Var(\'pmr_p\').GetValue|%0]#!"',
+    ' PMR_RECIPE_BAR_TOOLTIP:0 "This building runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!. When your country researches a newer recipe it switches automatically, and the change takes effect as retooling construction completes."',
+    ' PMR_RECIPE_BAR_TOOLTIP_RETOOLING:0 "#bold Retooling#!\\n[Building.GetCustom(\'pmr_old_recipe\')] (gold): #bold [Building.MakeScope.Var(\'pmr_bar_old\').GetValue|%0]#!\\n[Building.GetCustom(\'pmr_new_recipe\')] (blue): #bold [Building.MakeScope.Var(\'pmr_p\').GetValue|%0]#!\\nRetooling levels built: [Building.MakeScope.Var(\'pmr_retool_built\').GetValue|0] of [Building.MakeScope.Var(\'pmr_retool_total\').GetValue|0]"',
+]
 
 
 ON_ACTIONS = '''# Appended to vanilla on_actions the documented way (_on_actions.md, MODDING INFO):
@@ -586,7 +808,13 @@ pmr_on_production_method_changed = {
 pmr_on_building_built = {
 	effect = {
 		pmr_tick_parent_of_retool = yes
+		# Not seen before: newly constructed, so it starts on the newest recipe at no cost.
+		if = {
+			limit = { NOT = { has_variable = pmr_to } }
+			set_variable = pmr_new_build
+		}
 		pmr_tick_building = yes
+		if = { limit = { has_variable = pmr_new_build } remove_variable = pmr_new_build }
 	}
 }
 
@@ -604,7 +832,7 @@ pmr_test_setup_decision = {
 	is_shown = { always = yes }
 	possible = { always = yes }
 	when_taken = {
-		add_technology_researched = bessemer_process
+		# The mill first, seen on Blister; then Bessemer, so the next tick sees the research.
 		capital = {
 			if = {
 				limit = { NOT = { has_building = building_steel_mill } }
@@ -613,6 +841,8 @@ pmr_test_setup_decision = {
 			pmr_state_tick = yes
 			debug_log = "PMR;rec=TEST;arm=SETUP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting]"
 		}
+		add_technology_researched = bessemer_process
+		capital = { pmr_state_tick = yes }
 	}
 	ai_chance = { value = 0 }
 }
@@ -632,7 +862,7 @@ pmr_test_tick_decision = {
 
 DECISION_LOC = [
     ' pmr_test_setup_decision:0 "PMR test: grant Bessemer and a steel mill"',
-    ' pmr_test_setup_decision_desc:0 "Researches the Bessemer Process and, if the capital has no Steel Mills, creates five levels there."',
+    ' pmr_test_setup_decision_desc:0 "If the capital has no Steel Mills, creates five levels there; then researches the Bessemer Process, which switches the mill to it and starts retooling."',
     ' pmr_test_tick_decision:0 "PMR test: recompute retooling now"',
     ' pmr_test_tick_decision_desc:0 "Runs the monthly PMR tick on every state you own immediately, instead of waiting for the month to turn."',
 ]

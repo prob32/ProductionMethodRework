@@ -22,6 +22,10 @@ error there means the mechanism below never ran, and a missing log line is then 
 | `rec=SWITCH` with `queued=1` while `retool_total=20` | Repeated `start_building_construction` calls collapse into one queue entry. The fix is to queue one level at a time as each completes; tell me and I'll switch it. | — |
 | `gov_frac=0.00` on a government-owned mill | `country_ownership_fraction` does not read government ownership; everything goes to the private queue. | — |
 | Lag modifier shows on the building but the steel and iron figures match plain Bessemer after two weeks | Building-scope `goods_*_mult` from a timed modifier is not read by the economy. This kills design point 3 as written. Ironroad measured up to 12 game days before an applied modifier shows in readbacks, so wait two weeks before calling it. | — |
+| The setup decision writes `rec=RESEARCH;...;best=2` but no `rec=SWITCH` follows, even after the month turns | `activate_production_method` in state scope did not switch the mill. Recipes cannot change without the selector, so tell me and I'll move the switch to another effect. | A failure of retooling. |
+| No `rec=RESEARCH` line after the setup decision | `can_activate_production_method` said no to Bessemer in the capital. Look at the INIT line's `best=`: if it reads 1 after the research, this trigger is the problem. | — |
+| The Steel Mills panel still shows three production method slots | The shadowed `gui/building_details_panel.gui` is not loading, or the panel cannot read the building's `pmr_to` variable. If `rec=INIT` lines exist for that mill, it is the GUI read. | Anything about the economy. |
+| The recipe bar's name is blank or shows `pmr_new_recipe` | The building custom localization did not resolve. The bar's numbers still stand. | — |
 | A field prints as text in brackets rather than a number | A log datafunction did not resolve on this build. The instrument failed, not the mod; the other fields on the line still stand. | — |
 
 ## The run
@@ -40,28 +44,36 @@ PMR;rec=INIT;...;building=building_steel_mill;from=1;to=1;level=<L>;l_start=<L>;
 There is one `rec=INIT` per treated building in the world, so expect thousands. Any steel mill line
 must say `from=1;to=1`, Blister, because that is what every 1836 mill runs.
 
-**3. Look at any steel mill's production methods.** There is a new group, **Workforce**, holding one
-method, **Fixed Workforce**. Per level the building employs 500 shopkeepers, 3,500 laborers, 750
-machinists and 250 engineers. The **Steelmaking Process** methods list no employment.
+**3. Open any steel mill's panel.** The production method row shows one slot only: a gold steel
+beam, with no dropdown. Its tooltip is **Fixed Workforce**: per level the building employs 500
+shopkeepers, 3,500 laborers, 750 machinists and 250 engineers. The recipe and automation slots are
+gone.
 
-**4. Take the decision `PMR test: grant Bessemer and a steel mill`.** It researches Bessemer and, if
-the capital has no Steel Mills, creates five levels there. Look for:
+To its right, between that slot and the employment and cash-reserve bars, is the recipe bar: the
+top line reads **Blister Steel Process**, and under it a full gold bar reads **100%**.
+
+**4. Note the capital mill's numbers on Blister** before anything else, at full staffing: per level
+40 iron and 30 coal in, 65 steel out. If the capital has no Steel Mills, skip this; the decision
+creates one.
+
+**5. Take the decision `PMR test: grant Bessemer and a steel mill`.** If the capital has no Steel
+Mills it creates five levels there on Blister, then it researches Bessemer. There is no recipe
+selector any more: research is what switches the mill. Immediately, without unpausing:
 
 ```
 PMR;rec=TEST;arm=SETUP;date=...;country=Great Britain;state=Home Counties
-```
-
-If the mill was created by the decision, an `INIT` line for it follows with `level=5`.
-
-**5. Note the capital mill's numbers on Blister,** at full staffing: per level 40 iron and 30 coal in,
-65 steel out.
-
-**6. Switch the capital mill to Bessemer Process.** Immediately, without unpausing:
-
-```
+PMR;rec=RESEARCH;...;building=building_steel_mill;from=1;to=1;...;best=2
 PMR;rec=SWITCH;...;building=building_steel_mill;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=20;p=0.000;gov_frac=<f>;gov=<g>;priv=<20-g>;queued=20
 PMR;rec=TICK;...;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=20;p=0.000;queued=20
 ```
+
+If the decision created the mill, an `INIT` line with `level=5;best=1` comes before the
+`RESEARCH` line. If `SWITCH` only appears when the month turns, the activation applied late; that
+is fine.
+
+**6. Read the capital mill's panel.** The recipe bar's top line now reads **Retooling to Bessemer
+Process**; the bar is all gold with **100%** at the left and **0%** at the right. Its tooltip names
+both recipes and reads `Retooling levels built: 0 of 20`.
 
 - `retool_total=20` is N × level = 4 × 5.
 - `gov + priv = 20`, and `gov ≈ 20 × gov_frac`. A government-built mill should say `gov_frac=1.00`.
@@ -83,7 +95,8 @@ PMR;rec=TICK;...;retool_built=2;retool_total=20;p=0.100
 
 p moves in steps of 1/(N × L) = 1/20. Iron per level is 40 + 20p and steel 65 + 25p, so at
 `p=0.500` the mill reads 50 iron and 77.5 steel per level. The month-turn backstop writes the same
-line again with the same p.
+line again with the same p. The recipe bar follows: blue grows from the right by 5% a level, and
+the two labels read 1 − p and p.
 
 **9. When the twentieth level completes:**
 
@@ -93,16 +106,18 @@ PMR;rec=DONE;...;from=2;to=2;level=5;l_start=5;retool_built=20;retool_total=20;p
 
 The lag modifier and the Retooling building are gone, and the mill reads 60 iron, 30 coal, 90
 steel per level. Check that no **Retooling: Steel Mills** entry is left in either construction queue.
+The recipe bar is full gold again and reads **Bessemer Process**, **100%**.
 
 ## Optional checks
 
 - **Build a level mid-retool.** Queue one more Steel Mills level while retooling. When it lands,
   `level=6;l_start=5` and p jumps by (1 − p) ÷ 6 on top of the retool term, because the new level
   arrives already on Bessemer.
-- **Switch back to Blister mid-retool.** Expect `rec=CANCEL;from=1;to=1;p=1.000`, the modifier and
-  the Retooling building removed, and the mill back on Blister numbers at once.
-- **Switch Blister → Open Hearth** (needs `open_hearth_process`): same shape as above with
-  `to=3`, iron −0.55556 and steel −0.45833.
+- **Build a new Steel Mills elsewhere after Bessemer.** When its first level lands, expect
+  `rec=ADOPT;...;from=2;to=2` and then `rec=INIT;...;p=1.000`: a new building starts on the newest
+  recipe its owner has, with no retooling. Its recipe bar reads **Bessemer Process**, **100%**.
+- **Research Open Hearth** (`open_hearth_process`) on a mill that runs Bessemer: same shape as step 5
+  with `best=3;to=3`, iron −0.55556 and steel −0.45833.
 
 Send me the filtered `PMR;rec=` lines and the `error.log` lines containing `pmr_`, and say which row
 of the null table matched if any did.
