@@ -34,6 +34,7 @@ only the employment lines and the extra group inserted; every other byte is the 
 import argparse
 import glob
 import json
+import re
 import os
 import shutil
 import sys
@@ -392,8 +393,11 @@ def main():
     write('common/production_method_groups/pmr_labour_groups.txt', header + '\n'.join(labour_groups))
     write('common/buildings/pmr_retool_buildings.txt', header + '\n'.join(retools))
     write('common/building_groups/pmr_building_groups.txt', header +
-          '# Shaped on vanilla bg_monuments_hidden: no lens, not in the outliner.\n'
-          'bg_pmr_retool = {\n\talways_possible = yes\n\tis_shown_in_outliner = no\n}\n')
+          '# Shaped on vanilla bg_monuments_hidden: no lens, not in the outliner. With neither a category nor\n'
+          '# is_government_funded, 1.14.5 showed privately funded retool levels in the government queue;\n'
+          '# both are set here on the guess that the group decides which queue a construction joins.\n'
+          'bg_pmr_retool = {\n\tcategory = urban\n\tis_government_funded = no\n\talways_possible = yes\n'
+          '\tis_shown_in_outliner = no\n}\n')
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/static_modifiers/pmr_lag_modifiers.txt', header + '\n'.join(lags))
@@ -406,6 +410,9 @@ def main():
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n')
     write('gui/building_details_panel.gui', patch_building_panel(
         open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(), dispatch),
+        bom=False)
+    write('gui/production_methods.gui', patch_pm_browser(
+        open(os.path.join(game, 'gui', 'production_methods.gui'), encoding='utf-8-sig').read(), dispatch),
         bom=False)
     loc += panel_loc(dispatch)
     write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
@@ -809,6 +816,59 @@ def patch_building_panel(text, buildings):
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
     text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk)) for bk in buildings))
     return text
+
+
+def block_end(text, start):
+    """Index just past the '}' that closes the first '{' at or after start."""
+    i = text.index('{', start)
+    depth = 0
+    while True:
+        c = text[i]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        elif c == '#':
+            i = text.index('\n', i)
+            continue
+        elif c == '"':
+            i = text.index('"', i + 1)
+        i += 1
+
+
+def patch_pm_browser(text, buildings):
+    """Vanilla production_methods.gui: the building browser's per-type production method grids
+    (which switch every building of a type at once) show no selectors for PMR building types, only
+    the fixed labour icon. Asserted: three grids, or generation fails."""
+    out, pos, n = [], 0, 0
+    pattern = re.compile(r'datamodel = "\[(\w+)\.GetBuildingType\.AccessProductionMethodGroups\]"')
+    for m in pattern.finditer(text):
+        ctx = m.group(1)
+        types = [f"ObjectsEqual({ctx}.GetBuildingType, GetBuildingType('{bk}').Self)" for bk in buildings]
+        any_expr = types[-1]
+        for t in reversed(types[:-1]):
+            any_expr = f'Or({t}, {any_expr})'
+        grid = text.rfind('fixedgridbox = {', 0, m.start())
+        w = text.index('widget = {\n', m.end()) + len('widget = {\n')
+        ind = text[text.rfind('\n', 0, w - len('widget = {\n')) + 1:w - len('widget = {\n')] + '\t'
+        end = block_end(text, grid)
+        gind = text[text.rfind('\n', 0, grid) + 1:grid]
+        icons = ''.join(
+            f'\n{gind}# PMR: fixed labour icon for {bk}\n{gind}icon = {{\n'
+            f'{gind}\tvisible = "[ObjectsEqual({ctx}.GetBuildingType, GetBuildingType(\'{bk}\').Self)]"\n'
+            f'{gind}\tposition = {{ 5 5 }}\n{gind}\tsize = {{ 40 40 }}\n'
+            f'{gind}\ttexture = "gfx/interface/icons/production_method_icons/pmr_labour_{short(bk)}.dds"\n{gind}}}\n'
+            for bk in buildings)
+        out += [text[pos:w], f'{ind}# PMR: no selectors for PMR building types\n{ind}visible = "[Not({any_expr})]"\n',
+                text[w:end], icons]
+        pos = end
+        n += 1
+    if n != 3:
+        raise SystemExit(f'production_methods.gui: expected 3 per-type production method grids, found {n}; '
+                         'update patch_pm_browser')
+    return ''.join(out) + text[pos:]
 
 
 def panel_loc(buildings):

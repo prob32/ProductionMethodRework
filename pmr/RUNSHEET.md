@@ -20,6 +20,7 @@ error there means the mechanism below never ran, and a missing log line is then 
 | `rec=SWITCH` with `queued=0`, and no **Retooling: Steel Mills** in either construction queue | The game refused to queue `building_pmr_retool_steel_mill`. This is the riskiest assumption. Look in `error.log` for the reason. | A failure of p. |
 | `queued=0`, but **Retooling: Steel Mills** entries are in the queue | Script cannot see a building that is still entirely under construction, so the readback is blind until the first level lands. The queue works; watch for `retool_built=1` when it does. | A failure to queue. |
 | `rec=SWITCH` with `queued=1` while `retool_total=5` | Repeated `start_building_construction` calls collapse into one queue entry. The fix is to queue one level at a time as each completes; tell me and I'll switch it. | — |
+| **Retooling: Steel Mills** sits in the government queue while the SWITCH line says `gov=0` | The privately funded effect still lands in the government queue even with the retool group marked `is_government_funded = no`. The private queue then cannot be reached from script; tell me. | A misread of ownership: `gov_frac` is what the mill's owners say. |
 | `gov_frac=0.00` on a government-owned mill | `country_ownership_fraction` does not read government ownership; everything goes to the private queue. | — |
 | Lag modifier shows on the building but the steel and iron figures match plain Bessemer after two weeks | Building-scope `goods_*_mult` from a timed modifier is not read by the economy. This kills design point 3 as written. Ironroad measured up to 12 game days before an applied modifier shows in readbacks, so wait two weeks before calling it. | — |
 | The setup decision writes `rec=RESEARCH;...;best=2` but no `rec=SWITCH` follows, even after the month turns | `activate_production_method` in state scope did not switch the mill. Recipes cannot change without the selector, so tell me and I'll move the switch to another effect. | A failure of retooling. |
@@ -83,7 +84,7 @@ both recipes and reads `Retooling levels built: 0 of 5`.
   and `priv` in the private one, each costing 400 construction (half a Steel Mills level).
 - The mill carries the modifier **Retooling: Blister Steel Process to Bessemer Process**.
 
-**7. Unpause for two weeks and read the mill's goods.** At p = 0 the lag holds Bessemer at Blister's
+**7. Unpause for two weeks and read the mill's goods.** While paused, the panel shows plain Bessemer figures the moment the recipe changes: the game applies the recipe at once but only recomputes modifiers on its daily tick. Check the **Modifiers** tab for **Retooling: Blister Steel Process to Bessemer Process** before unpausing. At p = 0 the lag holds Bessemer at Blister's
 numbers: iron 60 × (1 − 0.33333) = **40** per level and steel 90 × (1 − 0.27778) = **65** per level,
 coal **30** throughout. If the figures read 60 and 90, see the lag-modifier row in the null table.
 
