@@ -19,7 +19,7 @@ error there means the mechanism below never ran, and a missing log line is then 
 | Switching the recipe gives no `rec=SWITCH` until the month turns | `on_production_method_changed` does not run appended on_actions. The monthly backstop still works; the switch is just seen late. | A failure of the lag. |
 | `rec=SWITCH` with `queued=0`, and no **Retooling: Steel Mills** in either construction queue | The game refused to queue `building_pmr_retool_steel_mill`. This is the riskiest assumption. Look in `error.log` for the reason. | A failure of p. |
 | `queued=0`, but **Retooling: Steel Mills** entries are in the queue | Script cannot see a building that is still entirely under construction, so the readback is blind until the first level lands. The queue works; watch for `retool_built=1` when it does. | A failure to queue. |
-| `rec=SWITCH` with `queued=1` while `retool_total=20` | Repeated `start_building_construction` calls collapse into one queue entry. The fix is to queue one level at a time as each completes; tell me and I'll switch it. | — |
+| `rec=SWITCH` with `queued=1` while `retool_total=5` | Repeated `start_building_construction` calls collapse into one queue entry. The fix is to queue one level at a time as each completes; tell me and I'll switch it. | — |
 | `gov_frac=0.00` on a government-owned mill | `country_ownership_fraction` does not read government ownership; everything goes to the private queue. | — |
 | Lag modifier shows on the building but the steel and iron figures match plain Bessemer after two weeks | Building-scope `goods_*_mult` from a timed modifier is not read by the economy. This kills design point 3 as written. Ironroad measured up to 12 game days before an applied modifier shows in readbacks, so wait two weeks before calling it. | — |
 | The setup decision writes `rec=RESEARCH;...;best=2` but no `rec=SWITCH` follows, even after the month turns | `activate_production_method` in state scope did not switch the mill. Recipes cannot change without the selector, so tell me and I'll move the switch to another effect. | A failure of retooling. |
@@ -65,8 +65,8 @@ selector any more: research is what switches the mill. Immediately, without unpa
 ```
 PMR;rec=TEST;arm=SETUP;date=...;country=Great Britain;state=Home Counties
 PMR;rec=RESEARCH;...;building=building_steel_mill;from=1;to=1;...;best=2
-PMR;rec=SWITCH;...;building=building_steel_mill;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=20;p=0.000;gov_frac=<f>;gov=<g>;priv=<20-g>;queued=20
-PMR;rec=TICK;...;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=20;p=0.000;queued=20
+PMR;rec=SWITCH;...;building=building_steel_mill;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=5;p=0.000;gov_frac=<f>;gov=<g>;priv=<5-g>;queued=5
+PMR;rec=TICK;...;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=5;p=0.000;queued=5
 ```
 
 If the decision created the mill, an `INIT` line with `level=5;best=1` comes before the
@@ -75,12 +75,12 @@ is fine.
 
 **6. Read the capital mill's panel.** The recipe bar's top line now reads **Retooling to Bessemer
 Process**; the bar is all gold with **100%** at the left and **0%** at the right. Its tooltip names
-both recipes and reads `Retooling levels built: 0 of 20`.
+both recipes and reads `Retooling levels built: 0 of 5`.
 
-- `retool_total=20` is N × level = 4 × 5.
-- `gov + priv = 20`, and `gov ≈ 20 × gov_frac`. A government-built mill should say `gov_frac=1.00`.
+- `retool_total=5` is one retooling level per building level.
+- `gov + priv = 5`, and `gov ≈ 5 × gov_frac`. A government-built mill should say `gov_frac=1.00`; one owned by Financial Districts or other private owners should say `gov_frac=0.00` and queue every level privately.
 - The construction queue now holds **Retooling: Steel Mills**, `gov` levels in the government queue
-  and `priv` in the private one, each costing 100 construction.
+  and `priv` in the private one, each costing 400 construction (half a Steel Mills level).
 - The mill carries the modifier **Retooling: Blister Steel Process to Bessemer Process**.
 
 **7. Unpause for two weeks and read the mill's goods.** At p = 0 the lag holds Bessemer at Blister's
@@ -90,20 +90,20 @@ coal **30** throughout. If the figures read 60 and 90, see the lag-modifier row 
 **8. Let retooling build.** Each completed level writes, at once (from `on_building_built`):
 
 ```
-PMR;rec=TICK;...;retool_built=1;retool_total=20;p=0.050
-PMR;rec=TICK;...;retool_built=2;retool_total=20;p=0.100
+PMR;rec=TICK;...;retool_built=1;retool_total=5;p=0.200
+PMR;rec=TICK;...;retool_built=2;retool_total=5;p=0.400
 ...
 ```
 
-p moves in steps of 1/(N × L) = 1/20. Iron per level is 40 + 20p and steel 65 + 25p, so at
-`p=0.500` the mill reads 50 iron and 77.5 steel per level. The month-turn backstop writes the same
-line again with the same p. The recipe bar follows: blue grows from the right by 5% a level, and
+p moves in steps of 1/L = 1/5. Iron per level is 40 + 20p and steel 65 + 25p, so at
+`p=0.600` the mill reads 52 iron and 80 steel per level. The month-turn backstop writes the same
+line again with the same p. The recipe bar follows: blue grows from the right by 20% a level, and
 the two labels read 1 − p and p.
 
-**9. When the twentieth level completes:**
+**9. When the fifth level completes:**
 
 ```
-PMR;rec=DONE;...;from=2;to=2;level=5;l_start=5;retool_built=20;retool_total=20;p=1.000
+PMR;rec=DONE;...;from=2;to=2;level=5;l_start=5;retool_built=5;retool_total=5;p=1.000
 ```
 
 The lag modifier and the Retooling building are gone, and the mill reads 60 iron, 30 coal, 90

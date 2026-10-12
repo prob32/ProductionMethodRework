@@ -44,7 +44,7 @@ import pdx  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Tunables. Change here and regenerate; nothing below hard-codes them.
-N = 4                      # retool levels per real building level
+N = 1                      # retool levels per real building level (Pat, 2026-10-12: one per level)
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
 
@@ -440,12 +440,14 @@ def main():
 def log(rec, bk, b, extra=''):
     def v(name, f):
         return f"[THIS.Var('{name}_{b}').GetValue|{f}]"
-    return (f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
+    # Player-owned states only: debug.log rotates at about 2.5 MB and the world's lines overflow it.
+    return (f'if = {{ limit = {{ owner = {{ is_player = yes }} }} '
+            f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk};'
             f"from={v('pmr_from', 0)};to={v('pmr_to', 0)};level={v('pmr_level', 0)};l_start={v('pmr_l_start', 0)};"
             f"retool_built={v('pmr_retool_built', 0)};retool_total={v('pmr_retool_total', 0)};"
-            f"p={v('pmr_p', 3)}{extra}\"")
+            f"p={v('pmr_p', 3)}{extra}\" }}")
 
 
 def tick_effect(bk, b, recipes, pairs):
@@ -733,8 +735,6 @@ def recipe_bar(bk, b):
 					widget = {{
 						position = {{ 0 34 }}
 						size = {{ 209 26 }}
-						tooltip = "PMR_BAR_TOOLTIP_{b}"
-						using = tooltip_above
 
 						gold_progressbar_horizontal = {{
 							size = {{ 100% 100% }}
@@ -773,6 +773,15 @@ def recipe_bar(bk, b):
 							size = {{ 100% 100% }}
 							align = center|nobaseline
 							text = "PMR_BAR_FULL"
+							tooltip = "PMR_BAR_FULL_TOOLTIP"
+							using = tooltip_above
+						}}
+						# hover area for the retooling breakdown, only while retooling
+						widget = {{
+							visible = "[{retooling}]"
+							size = {{ 100% 100% }}
+							tooltip = "PMR_BAR_TOOLTIP_{b}"
+							using = tooltip_above
 						}}
 					}}
 				}}
@@ -807,6 +816,7 @@ def panel_loc(buildings):
         ' PMR_RECIPE_BAR_TITLE:0 "#bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
         ' PMR_RECIPE_BAR_TITLE_RETOOLING:0 "Retooling to #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
         ' PMR_BAR_FULL:0 "#bold 100%#!"',
+        ' PMR_BAR_FULL_TOOLTIP:0 "[Building.GetCustom(\'pmr_new_recipe\')]: #bold 100%#!"',
         ' PMR_RECIPE_BAR_TOOLTIP:0 "This building runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!. When your country researches a newer recipe it switches automatically, and the change takes effect as retooling construction completes."',
     ]
     for bk in buildings:
