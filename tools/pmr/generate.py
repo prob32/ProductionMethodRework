@@ -340,8 +340,9 @@ def main():
             f'\tbuilding_group = bg_pmr_retool\n'
             f'\ticon = "{icon}"\n'
             f'\tcity_type = none\n'
-            f'\tgenerates_residences = no\n'
-            f'\teconomic_contribution = 0\n'
+            f'\t# Every building vanilla lets private investors build says ownership_type = self; without it\n'
+            f'\t# 1.14.5 put privately funded retool levels in the government queue.\n'
+            f'\townership_type = self\n'
             f'\tdownsizeable = no\n'
             f'\t# Open only while script is retooling a {bk} in this state.\n'
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
@@ -401,6 +402,28 @@ def main():
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/static_modifiers/pmr_lag_modifiers.txt', header + '\n'.join(lags))
+    # 1.14.5 only knows a goods_<input|output>_<good>_mult once modifier_type_definitions defines it
+    # ("Unknown modifier type ... potential dynamic modifier type definition missing"); vanilla
+    # defines a handful. Define the rest the lags use, in vanilla's own format.
+    defined = set()
+    for msrc in load_dir(game, 'modifier_type_definitions'):
+        defined |= set(msrc.objects())
+    used = sorted(set(re.findall(r'\b(goods_(?:input|output)_[a-z_]+_mult)\b', '\n'.join(lags))))
+    missing = [k for k in used if k not in defined]
+    goods_names = set(goods_tex)
+    mtypes, mloc = [], []
+    for k in missing:
+        kind = 'input' if k.startswith('goods_input_') else 'output'
+        g = k[len(f'goods_{kind}_'):-len('_mult')]
+        if g not in goods_names:
+            raise SystemExit(f'{k}: {g} is not a good')
+        mtypes.append(f'{k} = {{\n\tdecimals = 1\n\tcolor = {"bad" if kind == "input" else "good"}\n'
+                      f'\tpercent = yes\n\tgame_data = {{\n\t\tai_value = 0\n\t}}\n}}\n')
+        mloc += [f' {k}:0 "Building @{g}! ${g}$ {kind}"',
+                 f' {k}_desc:0 "A bonus or penalty to the amount of @{g}! {"consumed" if kind == "input" else "produced"} by buildings"']
+    write('common/modifier_type_definitions/pmr_modifier_types.txt', header + '\n'.join(mtypes))
+    report['modifier_types_defined'] = missing
+    loc += mloc
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
@@ -411,9 +434,14 @@ def main():
     write('gui/building_details_panel.gui', patch_building_panel(
         open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(), dispatch),
         bom=False)
-    write('gui/production_methods.gui', patch_pm_browser(
-        open(os.path.join(game, 'gui', 'production_methods.gui'), encoding='utf-8-sig').read(), dispatch),
-        bom=False)
+    def vanilla_gui(name):
+        return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
+    write('gui/production_methods.gui', patch_type_grids(vanilla_gui('production_methods.gui'), dispatch,
+                                                         'production_methods.gui', 3), bom=False)
+    write('gui/building_browser_panel.gui', patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch,
+                                                             'building_browser_panel.gui', 1), bom=False)
+    write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
+                                                            'goods_state_panel.gui', 1), bom=False)
     loc += panel_loc(dispatch)
     write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
     loc += [' bg_pmr_retool:0 "Retooling"'] + DECISION_LOC
@@ -838,10 +866,10 @@ def block_end(text, start):
         i += 1
 
 
-def patch_pm_browser(text, buildings):
-    """Vanilla production_methods.gui: the building browser's per-type production method grids
-    (which switch every building of a type at once) show no selectors for PMR building types, only
-    the fixed labour icon. Asserted: three grids, or generation fails."""
+def patch_type_grids(text, buildings, name, expected):
+    """A vanilla GUI file's per-building-type production method grids (the building browser's,
+    which switch every building of a type at once): for PMR building types the grid's items are
+    hidden and one static fixed-labour icon takes their place. Asserted per file."""
     out, pos, n = [], 0, 0
     pattern = re.compile(r'datamodel = "\[(\w+)\.GetBuildingType\.AccessProductionMethodGroups\]"')
     for m in pattern.finditer(text):
@@ -855,20 +883,47 @@ def patch_pm_browser(text, buildings):
         ind = text[text.rfind('\n', 0, w - len('widget = {\n')) + 1:w - len('widget = {\n')] + '\t'
         end = block_end(text, grid)
         gind = text[text.rfind('\n', 0, grid) + 1:grid]
+        # place the icon where the grid's first cell is: copy the grid's own position and anchor
+        head = text[grid:m.start()] + text[m.end():text.index('item = {', m.end())]
+        place = ''.join(f'{gind}\t{l.strip()}\n' for l in head.splitlines()
+                        if l.strip().startswith(('position =', 'parentanchor =')))
         icons = ''.join(
-            f'\n{gind}# PMR: fixed labour icon for {bk}\n{gind}icon = {{\n'
+            f'\n{gind}# PMR: fixed labour icon for {bk}\n{gind}widget = {{\n'
             f'{gind}\tvisible = "[ObjectsEqual({ctx}.GetBuildingType, GetBuildingType(\'{bk}\').Self)]"\n'
-            f'{gind}\tposition = {{ 5 5 }}\n{gind}\tsize = {{ 40 40 }}\n'
-            f'{gind}\ttexture = "gfx/interface/icons/production_method_icons/pmr_labour_{short(bk)}.dds"\n{gind}}}\n'
+            f'{place}{gind}\tsize = {{ 50 50 }}\n'
+            f'{gind}\ticon = {{\n{gind}\t\tsize = {{ 40 40 }}\n{gind}\t\tparentanchor = center\n'
+            f'{gind}\t\ttexture = "gfx/interface/icons/production_method_icons/pmr_labour_{short(bk)}.dds"\n'
+            f'{gind}\t}}\n{gind}}}\n'
             for bk in buildings)
         out += [text[pos:w], f'{ind}# PMR: no selectors for PMR building types\n{ind}visible = "[Not({any_expr})]"\n',
                 text[w:end], icons]
         pos = end
         n += 1
-    if n != 3:
-        raise SystemExit(f'production_methods.gui: expected 3 per-type production method grids, found {n}; '
-                         'update patch_pm_browser')
+    if n != expected:
+        raise SystemExit(f'{name}: expected {expected} per-type production method grids, found {n}; '
+                         'update patch_type_grids')
     return ''.join(out) + text[pos:]
+
+
+def patch_building_grids(text, buildings, name, expected):
+    """A vanilla GUI file's per-building production method lists (Building context): on PMR building
+    types only single-method groups (the fixed labour slot) show. Asserted per file."""
+    anchor = 'datamodel = "[Building.AccessProductionMethodGroups]"'
+    n = text.count(anchor)
+    if n != expected:
+        raise SystemExit(f'{name}: expected {expected} building production method lists, found {n}; '
+                         'update patch_building_grids')
+    pos = 0
+    for _ in range(n):
+        at = text.index(anchor, pos)
+        w = text.index('widget = {\n', at) + len('widget = {\n')
+        ind = text[text.rfind('\n', 0, w - len('widget = {\n')) + 1:w - len('widget = {\n')] + '\t'
+        line = (f'{ind}# PMR: fixed labour only on PMR building types\n{ind}visible = "[Or(Not({any_type(buildings)}), '
+                "EqualTo_int32(GetDataModelSize(ProductionMethodGroup.AccessBuildingProductionMethods(Building.Self)), "
+                "'(int32)1'))]\"\n")
+        text = text[:w] + line + text[w:]
+        pos = w + len(line)
+    return text
 
 
 def panel_loc(buildings):

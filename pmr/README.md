@@ -43,6 +43,14 @@ each), and the government, military, urban, infrastructure, monument, canal, sub
 and construction-sector buildings, whose first group is not a goods recipe or whose retooling would
 be paid for by itself.
 
+## Goods modifier types
+
+1.14.5 only accepts a `goods_input_<good>_mult` or `goods_output_<good>_mult` modifier once
+`modifier_type_definitions` defines it; vanilla defines a handful. The generator writes the rest the
+lag modifiers use into `common/modifier_type_definitions/pmr_modifier_types.txt`, in vanilla's
+format, and lists them in `GENERATION_REPORT.json`. Without them the lag modifier is empty and a
+recipe switch takes effect at once.
+
 ## Where PMR keeps its numbers
 
 Buildings cannot hold script variables on 1.14.5 (`This scope doesn't support variables. Scope:
