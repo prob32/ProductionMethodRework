@@ -49,6 +49,7 @@ N = 1                      # retool levels per real building level (Pat, 2026-10
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
 RETOOL_AI_VALUE = 1000000  # AI weight of a retool building while it has room; vanilla's default is 1000
+OCCUPANCY_STEP = 0.05      # resolution of the occupancy that scales goods only old recipes have
 # Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
 # building (Pat, 2026-10-12): tier 1 red, 2 yellow, 3 blue, 4 purple; 5 green for the two farms with five.
 TIER_COLORS = [('Red', (0.80, 0.22, 0.20)), ('Yellow', (0.93, 0.78, 0.22)), ('Blue', (0.25, 0.50, 0.88)),
@@ -209,7 +210,7 @@ def main():
         for p in lst:
             pm_groups.setdefault(p, set()).add(g)
 
-    report = {'treated': [], 'skipped': [], 'unrepresentable': [], 'icon_fallback': []}
+    report = {'treated': [], 'skipped': [], 'carried_by_add': [], 'icon_fallback': []}
     treated = []          # (building_key, building_node, building_src, [Recipe])
     candidates = []
     for s in b_srcs:
@@ -356,38 +357,73 @@ def main():
                 f' building_pmr_retool_gov_{b}_desc:0 "Government construction that switches the government-owned share of ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."']
 
         # lag modifiers for every ordered pair
-        pair_names = {}
+        pair_names, add_names = {}, {}
         for i, old in enumerate(recipes, 1):
             for j, new in enumerate(recipes, 1):
                 if i == j:
                     continue
-                lines = []
+                lines, adds = [], []
                 for kind, o, n in (('input', old.inputs, new.inputs), ('output', old.outputs, new.outputs)):
                     for g in sorted(set(o) | set(n)):
                         ov, nv = o.get(g, 0), n.get(g, 0)
                         if nv == 0:
+                            # A _mult on the new recipe's figure cannot bring back a good it does not
+                            # have (coal on Atmospheric levels of an iron mine retooling to Diesel).
+                            # Those goods come back as a flat _add per level still on the old recipe.
                             if ov != 0:
-                                report['unrepresentable'].append(
+                                adds.append(f'\tgoods_{kind}_{g}_add = {fmt(ov)}  # per level on {old.key}')
+                                report['carried_by_add'].append(
                                     {'building': bk, 'old': old.key, 'new': new.key, 'good': g, 'kind': kind,
-                                     'old_value': ov, 'note': 'new recipe has none; a _mult cannot restore it'})
+                                     'per_level': ov})
                             continue
                         v = ov / nv - 1
                         if abs(v) > 1e-9:
                             lines.append(f'\tgoods_{kind}_{g}_mult = {fmt(v)}  # {fmt(ov)}/{fmt(nv)} - 1')
-                if not lines:
-                    continue
-                name = f'pmr_lag_{b}_{i}_{j}'
-                pair_names[(i, j)] = name
-                lags.append(f'# {bk}: {old.key} -> {new.key}\n{name} = {{\n\ticon = "{LAG_ICON}"\n' + '\n'.join(lines) + '\n}\n')
-                loc.append(f' {name}:0 "Retooling: ${old.key}$ to ${new.key}$"')
-                loc.append(f' {name}_desc:0 "This building still runs partly on its old recipe. The effect fades as retooling construction completes."')
+                if lines:
+                    name = f'pmr_lag_{b}_{i}_{j}'
+                    pair_names[(i, j)] = name
+                    lags.append(f'# {bk}: {old.key} -> {new.key}\n{name} = {{\n\ticon = "{LAG_ICON}"\n' + '\n'.join(lines) + '\n}\n')
+                    loc.append(f' {name}:0 "Retooling: ${old.key}$ to ${new.key}$"')
+                    loc.append(f' {name}_desc:0 "This building still runs partly on its old recipe. The effect fades as retooling construction completes."')
+                if adds:
+                    name = f'pmr_old_{b}_{i}_{j}'
+                    add_names[(i, j)] = name
+                    lags.append(f'# {bk}: goods {old.key} has and {new.key} does not, per level still on {old.key}.\n'
+                                f'# Applied with multiplier = those levels x the building\'s occupancy.\n'
+                                f'{name} = {{\n\ticon = "{LAG_ICON}"\n' + '\n'.join(adds) + '\n}\n')
+                    loc.append(f' {name}:0 "Not yet retooled: ${old.key}$"')
+                    loc.append(f' {name}_desc:0 "Goods that levels still on ${old.key}$ use or make and ${new.key}$ does not. The effect fades as retooling construction completes."')
 
-        tick_effects.append(tick_effect(bk, b, recipes, pair_names))
+        tick_effects.append(tick_effect(bk, b, recipes, pair_names, add_names))
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
                                   'icon_good': good,
                                   'labour_from': r0.key, 'employment': r0.employment,
-                                  'retool_cost': retool_cost, 'lag_modifiers': len(pair_names)})
+                                  'retool_cost': retool_cost, 'lag_modifiers': len(pair_names),
+                                  'old_goods_modifiers': len(add_names)})
+
+    # ---- companies: a company that owns a building type may own its private retooling ----------
+    # When the investment pool builds a building type a company lists in building_types, the company
+    # can be chosen as owner (OWNER_COMPANY_EXPANSION_CHANCE_MULTIPLIER, x OWNER_COMPANY_OWN_STATE_MULT
+    # in its headquarters state). Listing each treated type's private retool building beside it lets a
+    # company retool the building types it owns. Not added to extension_building_types: that list is
+    # what industry charters offer, and a retool building is no charter. Vanilla files are rewritten
+    # with only these lines inserted, like the building files above.
+    retool_of = {t[0]: f'building_pmr_retool_{short(t[0])}' for t in treated}
+    report['company_types'] = []
+    for csrc in load_dir(game, 'company_types'):
+        for ck, cn in csrc.objects().items():
+            bt = pdx.get(cn.value, 'building_types')
+            if not bt or not bt.is_block:
+                continue
+            listed = pdx.items(bt)
+            new = [(x, retool_of[x]) for x in listed if x in retool_of and retool_of[x] not in listed]
+            if not new:
+                continue
+            csrc.inserts.append((bt.end - 1, ''.join(f'\t{rbx}  # PMR: retooling of {x}\n\t' for x, rbx in new)))
+            report['company_types'].append({'company': ck, 'file': csrc.name, 'added': [rbx for _, rbx in new]})
+        if csrc.inserts:
+            write(f'common/company_types/{csrc.name}', csrc.render())
 
     write('common/production_methods/pmr_labour_production_methods.txt', header + '\n'.join(labour_pms))
     write('common/production_method_groups/pmr_labour_groups.txt', header + '\n'.join(labour_groups))
@@ -416,17 +452,19 @@ def main():
     defined = set()
     for msrc in load_dir(game, 'modifier_type_definitions'):
         defined |= set(msrc.objects())
-    used = sorted(set(re.findall(r'\b(goods_(?:input|output)_[a-z_]+_mult)\b', '\n'.join(lags))))
+    used = sorted(set(re.findall(r'\b(goods_(?:input|output)_[a-z_]+_(?:mult|add))\b', '\n'.join(lags))))
     missing = [k for k in used if k not in defined]
     goods_names = set(goods_tex)
     mtypes, mloc = [], []
     for k in missing:
         kind = 'input' if k.startswith('goods_input_') else 'output'
-        g = k[len(f'goods_{kind}_'):-len('_mult')]
+        suffix = k.rsplit('_', 1)[1]
+        g = k[len(f'goods_{kind}_'):-len('_' + suffix)]
         if g not in goods_names:
             raise SystemExit(f'{k}: {g} is not a good')
         mtypes.append(f'{k} = {{\n\tdecimals = 1\n\tcolor = {"bad" if kind == "input" else "good"}\n'
-                      f'\tpercent = yes\n\tgame_data = {{\n\t\tai_value = 0\n\t}}\n}}\n')
+                      + ('\tpercent = yes\n' if suffix == 'mult' else '')
+                      + '\tgame_data = {\n\t\tai_value = 0\n\t}\n}\n')
         mloc += [f' {k}:0 "Building @{g}! ${g}$ {kind}"',
                  f' {k}_desc:0 "A bonus or penalty to the amount of @{g}! {"consumed" if kind == "input" else "produced"} by buildings"']
     write('common/modifier_type_definitions/pmr_modifier_types.txt', header + '\n'.join(mtypes))
@@ -467,7 +505,8 @@ def main():
                           'game': args.version_label}
     write('GENERATION_REPORT.json', json.dumps(report, indent=1) + '\n', bom=False)
     print(f"treated {len(report['treated'])} buildings, skipped {len(report['skipped'])}, "
-          f"{len(report['unrepresentable'])} unrepresentable goods in lag pairs")
+          f"{len(report['carried_by_add'])} goods carried by old-recipe _add modifiers, "
+          f"{len(report['company_types'])} company types may own retooling")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -583,7 +622,7 @@ def retool_values(b):
 
 
 
-def tick_effect(bk, b, recipes, pairs):
+def tick_effect(bk, b, recipes, pairs, adds):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -592,7 +631,9 @@ def tick_effect(bk, b, recipes, pairs):
     level moves one level, oldest recipe first, onto the target. A newer recipe arriving mid-retool
     only changes the target: levels already moved keep their recipe until retooled again.
     The lag is one modifier per recipe still running, scaled by that recipe's share of the levels,
-    so the building's goods are the level-weighted mix of its recipes."""
+    so the building's goods are the level-weighted mix of its recipes. Goods the target recipe has
+    none of cannot be scaled back from it; they come from a second modifier per old recipe (adds),
+    a flat amount per level still on it, times the building's occupancy."""
     k = len(recipes)
     rb = f'building_pmr_retool_{b}'
     rbg = f'building_pmr_retool_gov_{b}'
@@ -629,7 +670,7 @@ def tick_effect(bk, b, recipes, pairs):
 
     # lag modifiers live on the building
     o.append(f'pmr_clear_lag_{b} = {{\n\tb:{bk} = {{\n')
-    for name in pairs.values():
+    for name in list(pairs.values()) + list(adds.values()):
         o.append(f'\t\tif = {{ limit = {{ has_modifier = {name} }} remove_modifier = {name} }}\n')
     o.append('\t}\n}\n\n')
 
@@ -637,6 +678,22 @@ def tick_effect(bk, b, recipes, pairs):
     for (i, j), name in pairs.items():
         o.append(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_to")} = {j} var:{v(f"pmr_sh_{i}")} > 0 }}\n'
                  f'\t\tb:{bk} = {{ add_modifier = {{ name = {name} multiplier = prev.var:{v(f"pmr_sh_{i}")} }} }}\n\t}}\n')
+    if adds:
+        # A static modifier is not scaled by the workforce the way a recipe's goods are, so the
+        # flat per-level amounts are scaled here: levels on the old recipe x occupancy, read from
+        # the building-scope occupancy trigger in steps of OCCUPANCY_STEP.
+        steps = round(1 / OCCUPANCY_STEP)
+        o.append(f'\t{setv("pmr_occ", 0)}\n')
+        for n in range(steps, 0, -1):
+            frac = n * OCCUPANCY_STEP
+            kw = 'if' if n == steps else 'else_if'
+            o.append(f'\t{kw} = {{ limit = {{ b:{bk} = {{ occupancy >= {fmt(frac - OCCUPANCY_STEP / 2)} }} }} '
+                     f'{setv("pmr_occ", fmt(frac))} }}\n')
+        for (i, j), name in adds.items():
+            o.append(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_to")} = {j} var:{lv(i)} > 0 var:{v("pmr_occ")} > 0 }}\n'
+                     f'\t\t{setv("pmr_oldm", "var:" + lv(i))}\n'
+                     f'\t\t{chg("pmr_oldm", "multiply", "var:" + v("pmr_occ"))}\n'
+                     f'\t\tb:{bk} = {{ add_modifier = {{ name = {name} multiplier = prev.var:{v("pmr_oldm")} }} }}\n\t}}\n')
     o.append('}\n\n')
 
     # The levels the state tracks always add up to the building's level. New levels arrive on the
@@ -687,6 +744,21 @@ def tick_effect(bk, b, recipes, pairs):
              f'\t{chg("pmr_pending", "add", "var:" + v("pmr_pending_gov"))}\n'
              '}\n\n')
 
+    # A retool building whose levels are all counted and with nothing queued on it is removed, so
+    # the next retool level is a new construction. 1.14.5's investment pool never queued a second
+    # level on a retool building that already had one: in a year of Pat's test log, every private
+    # retool level queued was the first of its building. The pool does not expand a building with
+    # employment under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD, and a retool building employs
+    # nobody. Never removed while anything is queued on it (that leaves a NULL_STATE construction).
+    def release(rbx, side):
+        return (f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_retool_built_" + side)} > 0 var:{v("pmr_pending_" + side)} <= 0 '
+                f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
+                f'\t\tremove_building = {rbx}\n'
+                f'\t\t{chg("pmr_seen", "subtract", "var:" + v("pmr_retool_built_" + side))}\n'
+                f'\t\t{setv("pmr_retool_built_" + side, 0)}\n'
+                f'\t\t{setv("pmr_retool_q_" + side, 0)}\n'
+                f'\t\t{setv("pmr_pending_" + side, 0)}\n\t}}\n')
+
     # Completed retool levels not yet counted move levels onto the target, oldest recipe first.
     # The retool buildings keep their levels between retools while anything is queued on them,
     # so pmr_seen counts the levels already used and only the rest move anything.
@@ -704,6 +776,9 @@ def tick_effect(bk, b, recipes, pairs):
                        f'\t\t{chg("pmr_conv", "subtract", "var:" + v("pmr_amt"))}\n'
                        f'\t\t{chg("pmr_gain", "add", "var:" + v("pmr_amt"))}\n\t}}\n' for i in range(1, k + 1))
              + on_index('pmr_to', lambda i: f'change_variable = {{ name = {lv(i)} add = var:{v("pmr_gain")} }}')
+             + ''.join(release(rbx, side) for rbx, side in ((rb, 'priv'), (rbg, 'gov')))
+             + f'\t{setv("pmr_retool_built", "var:" + v("pmr_retool_built_priv"))}\n'
+             f'\t{chg("pmr_retool_built", "add", "var:" + v("pmr_retool_built_gov"))}\n'
              + '}\n\n')
 
     # Shares for the bar and the lag, the levels still to retool, and p (share on the target).
@@ -1200,8 +1275,9 @@ pmr_on_production_method_changed = {
 # new PMR building is seen without waiting for the month.
 pmr_on_building_built = {
 	effect = {
-		pmr_tick_parent_of_retool = yes
 		pmr_built_building = yes
+		# Last: the parent's tick can remove this retool building once its level is counted.
+		pmr_tick_parent_of_retool = yes
 	}
 }
 
@@ -1209,8 +1285,9 @@ pmr_on_building_built = {
 # building's first level, so without this every later retool level waited for the month to turn.
 pmr_on_building_expanded = {
 	effect = {
-		pmr_tick_parent_of_retool = yes
 		pmr_built_building = yes
+		# Last: the parent's tick can remove this retool building once its level is counted.
+		pmr_tick_parent_of_retool = yes
 	}
 }
 

@@ -10,6 +10,18 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
+## First, on your current save
+
+Load the exit autosave from your last session (Great Britain, September 1838) and take **PMR test: recompute
+retooling now** before unpausing.
+
+1. **Coal.** Open Yorkshire's Iron Mines. The Modifiers tab lists **Not yet retooled: Atmospheric
+   Engine Pump**, and its inputs show coal again: about 10 per Atmospheric level times the mine's
+   employment, so about 50 at full employment, beside the Tools and Oil you saw.
+2. **Second levels.** Unpause for three months. Expect new **Retooling:** entries in the Private
+   queue for buildings that already had a level land, such as Yorkshire's Iron Mines or Wales's Coal
+   Mines, and their `rec=TICK` lines showing `queued_priv=1` again.
+
 **Start a new game, and leave `fastresearch` off.** `fastresearch` lets every country research
 instantly. In the last autosave, 279 of 370 countries had the whole tree, compression ignition
 included, by 1837. That is why Wallonia's sulfur mines went straight to Diesel Pump, and it fills
@@ -17,22 +29,24 @@ every country's construction queue with retooling.
 
 ## What changed in this build
 
-- **The state tracks every level's recipe.** A Steel Mills of 8 levels might run 5 on Blister and 3
-  on Bessemer. The recipe the building runs is the target. Every level on another recipe is still to
-  retool, and each completed retool level moves one of them, oldest recipe first.
-- **A newer recipe mid-retool keeps what is done.** If Open Hearth arrives while 3 of 8 levels are
-  on Bessemer, those 3 stay on Bessemer and all 8 are now to retool towards Open Hearth. Retool
-  levels already queued keep building and count towards the new target.
-- **Retool buildings with anything queued are never removed.** Removing one left the queued
-  construction with no building, which is the NULL_STATE entry you saw. When nothing is left to
-  retool, PMR closes the building to new levels and removes it once its queue has emptied.
-- **The recipe bar has one colour per recipe tier**, the same on every building: tier 1 red, 2
-  yellow, 3 blue, 4 purple (5 green, only on wheat and rice farms). Oldest is on the left. Each
-  segment is as wide as that recipe's share of the levels. The middle of the bar shows the share
-  already on the target. Its tooltip lists every recipe's share and what each funder has queued.
-
-Unchanged: who may fund retooling. Investors whose country owns part of the building fund the
-private share, and the government funds its own share.
+- **Levels still on an old recipe keep the goods the new recipe lacks.** Your Yorkshire iron mine,
+  5 levels on Atmospheric and 1 on Diesel, lost its coal because the old recipe's figures were
+  scaled from Diesel's, and Diesel has no coal. Those goods now come from a second modifier per old
+  recipe, **Not yet retooled: Atmospheric Engine Pump**, which adds that recipe's per-level amount
+  (10 coal) for each level still on it, times the mine's occupancy.
+- **Investors can now queue more than one retool level per building.** In your last log every
+  private retool level investors queued was the first for its building. Once one had landed,
+  none got a second: Yorkshire's steel mill sat at `room_priv=6` for twenty months. The game's
+  investment AI does not expand a building with under 80% employment, and a retool building employs
+  nobody. PMR now removes a retool building as soon as its levels are counted and nothing is queued
+  on it, so the next level is a new construction again. One level per building is under
+  construction at a time.
+- **Companies can retool the building types they own.** Each company that lists a building type
+  now also lists its **Retooling:** building, so the investment pool can make the company the owner
+  of the retooling, as it does for new levels of that type, most often in the company's
+  headquarters state. Side effect: company panels show the Retooling icons beside their building
+  types.
+- Unchanged: one colour per recipe tier, the level mix, who may fund retooling, and the queue rules.
 
 ## Reading the log lines
 
@@ -57,7 +71,13 @@ levels it comes to. `share_gov` / `share_priv` split `to_retool` between governm
 | A retool level lands but the next line's `levels` and `to_retool` do not move | Completed levels are not being counted (`pmr_seen_`). | A failure of the investors. |
 | Months pass with money in the pool, Yorkshire keeps `queued_priv=0;room_priv=8`, and no **Retooling: Steel Mills** appears in the Private queue | The ownership check refuses your own investors. Either `scope:investor_country` is not set where the game checks, or the `gov_levels` comparison failed. Hover **Retooling: Steel Mills** in Yorkshire's construction list and send me the tooltip. | A failure of the cap. |
 | A **new** Retooling entry appears in your Private queue for a building your investors own none of | The ownership check is not applied. Send me the state and building. | — |
-| Investors queue the first private level, then never a second, though `room_priv` is above 0 | The pool will not expand a building with no workforce. | — |
+| After the recompute, Yorkshire's Iron Mines show no **Not yet retooled** modifier | The modifier was not applied: the `occupancy` trigger read 0 or the apply step did not run. Send me Yorkshire's `rec=TICK` line and the error.log `pmr_` lines. | A failure of the level mix. |
+| The **Not yet retooled** modifier is there but the mine's inputs still show no coal after two weeks | The economy ignores a flat `goods_input_coal_add` from a building modifier. Wait two weeks before calling it. | A failure of the level mix. |
+| Coal is back but well below 10 per Atmospheric level although the mine is fully staffed | The game applies throughput bonuses to the recipe's goods and not to the modifier's. Send me the figure. | — |
+| Months pass with money in the pool and no building that already had a level land ever gets another queued, though `room_priv` is above 0 | Removing and re-creating the retool building does not bring the pool back. The 80% employment rule is not the cause. Hover the **Retooling:** building in that state's construction list and send me the tooltip. | A failure of the cap. |
+| A retool building disappears from the state while a level was still queued on it | The new removal step ran with something queued. Send me that state's `PMR;rec=` lines around that date. | — |
+| `error.log` names `company_types` or a `building_pmr_retool_` type in a company | A company file did not load with the added line. Send me the lines. | — |
+| A year in, no **Retooling:** entry in your Private queue has ever shown a company as owner, though companies own treated buildings | Company ownership of retooling is not applied. The chance scales with how much of the pool comes from companies, so a few entries are not enough to call it. | — |
 | More private retool levels are queued in Yorkshire than its `to_retool` | The private cap is not enforced: `level_after_queued_constructions` or `scope:num_levels` did not read as expected in `can_build_private`. | — |
 | **Retooling (Government): Steel Mills** is not in the capital's construction list at all | Its `potential` failed, or the development lens does not list it. | — |
 | It is listed but greyed out while the capital's line says `room_gov=5` | The government cap refused the first level. Send me the tooltip. | — |
@@ -108,7 +128,8 @@ figures (Yorkshire held 345 iron and 561 steel last time).
 
 **8. Let some levels land.** Each one writes a `rec=TICK` the day it lands, with one more level moved
 from the first figure to the second (`levels=7/1/0/0`, then `6/2/0/0`). On the bar, red shrinks
-and yellow grows from the right.
+and yellow grows from the right. When a level lands and nothing else is queued, the **Retooling:**
+building leaves Yorkshire's building list, and investors queue the next level as a new one.
 
 **9. Your edge case: grant Open Hearth mid-retool.** While Yorkshire still has levels on Blister
 (say `levels=5/3/0/0`) and some retooling is queued, take **PMR test: grant Open Hearth**. Expect:
