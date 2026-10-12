@@ -338,13 +338,13 @@ def main():
         costs.append(f'pmr_retool_cost_{b} = {fmt(retool_cost)}  # {rc.value} = {fmt(base_cost)} x {RETOOL_SHARE} / {N}')
         icon = pdx.get(bn.value, 'icon').value
         retools.append(retool_buildings(b, bk, icon))
-        triggers.append(retool_triggers(b))
+        triggers.append(retool_triggers(b, bk))
         costs.append(retool_values(b))
 
         loc += [f' pmg_pmr_labour_{b}:0 "Workforce"',
                 f' pm_pmr_labour_{b}:0 "Fixed Workforce"',
                 f' building_pmr_retool_{b}:0 "Retooling: ${bk}$"',
-                f' building_pmr_retool_{b}_desc:0 "Privately funded construction that switches existing ${bk}$ to a new recipe. Investors fund the privately owned share; each completed level moves the old recipe\'s output closer to the new one."',
+                f' building_pmr_retool_{b}_desc:0 "Privately funded construction that switches existing ${bk}$ to a new recipe. Investors from countries that own part of it fund the privately owned share; each completed level moves the old recipe\'s output closer to the new one."',
                 f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
                 f' building_pmr_retool_gov_{b}_desc:0 "Government construction that switches the government-owned share of ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."']
 
@@ -497,6 +497,8 @@ def log(rec, bk, b, extra=''):
 
 RETOOL_TRIGGERS_DOC = """# State scope. True while this funder may add scope:num_levels more retool levels in the state.
 # The caps are pmr_cap_priv_<b> / pmr_cap_gov_<b>, recomputed by pmr_split_retool_<b> every tick.
+# pmr_retool_investor_<b> (state scope): true when scope:investor_country's investors own part of the
+# building, so an investment agreement alone does not let a foreign pool retool it.
 
 """
 
@@ -510,7 +512,8 @@ def retool_buildings(b, bk, icon):
                    '\t# investors build says ownership_type = self.\n'
                    '\townership_type = self\n'
                    f'\tcan_build_government = {{ always = no }}\n'
-                   f'\tcan_build_private = {{ pmr_retool_room_priv_{b} = yes }}\n')
+                   '\t# Room left, and only investors from a country whose investors own part of the building.\n'
+                   f'\tcan_build_private = {{\n\t\tpmr_retool_room_priv_{b} = yes\n\t\tpmr_retool_investor_{b} = yes\n\t}}\n')
         else:
             who = ('\t# The government only, for the government-owned share.\n'
                    f'\tcan_build_government = {{ pmr_retool_room_gov_{b} = yes }}\n'
@@ -535,7 +538,7 @@ def retool_buildings(b, bk, icon):
     return '\n'.join(out)
 
 
-def retool_triggers(b):
+def retool_triggers(b, bk):
     out = []
     for side, rb in (('priv', f'building_pmr_retool_{b}'), ('gov', f'building_pmr_retool_gov_{b}')):
         cap = f'pmr_cap_{side}_{b}'
@@ -549,6 +552,20 @@ def retool_triggers(b):
             '\t}\n'
             f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
             '}\n')
+    # levels_owned_by_country counts "a country or investors in that country" (triggers.log), so for
+    # the state's own country it includes the government's levels: its investors need more than those.
+    # Vanilla compares the same trigger against c:RUS for the Manchurian railway.
+    out.append(
+        f'pmr_retool_investor_{b} = {{\n'
+        '\texists = scope:investor_country\n'
+        f'\texists = b:{bk}\n'
+        '\ttrigger_if = {\n'
+        '\t\tlimit = { owner = scope:investor_country }\n'
+        f'\t\thas_variable = pmr_gov_levels_{b}\n'
+        f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
+        '\t}\n'
+        f'\ttrigger_else = {{\n\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value >= 1 }} }}\n\t}}\n'
+        '}\n')
     return '\n'.join(out)
 
 
@@ -599,7 +616,7 @@ def tick_effect(bk, b, recipes, pairs):
              f'\tif = {{ limit = {{ OR = {{ has_building = {rbg} exists = b:{rbg} }} }} remove_building = {rbg} }}\n'
              + ''.join(f'\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
                        for n in (f'pmr_retool_gate_{b}', f'pmr_retool_open_priv_{b}', f'pmr_retool_open_gov_{b}',
-                                 v('pmr_cap_priv'), v('pmr_cap_gov'))) +
+                                 v('pmr_cap_priv'), v('pmr_cap_gov'), v('pmr_gov_levels'))) +
              '}\n\n')
 
     # government-owned share of the building, read through the building-scope ownership trigger
@@ -610,7 +627,11 @@ def tick_effect(bk, b, recipes, pairs):
         kw = 'if' if n == steps else 'else_if'
         o.append(f'\t{kw} = {{ limit = {{ b:{bk} = {{ country_ownership_fraction >= {fmt(frac - GOV_FRACTION_STEP / 2)} }} }} '
                  f'set_variable = {{ name = {v("pmr_gov_frac")} value = {fmt(frac)} }} }}\n')
-    o.append('}\n\n')
+    o.append('\t# Government-owned levels, which the state owner\'s count in levels_owned_by_country includes.\n'
+             f'\tset_variable = {{ name = {v("pmr_gov_levels")} value = b:{bk}.level }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_gov_levels")} multiply = var:{v("pmr_gov_frac")} }}\n'
+             f'\tround_variable = {{ name = {v("pmr_gov_levels")} nearest = 1 }}\n'
+             '}\n\n')
 
     # On a switch: the levels to retool are the levels the building has now, N each.
     o.append(f'pmr_open_retool_{b} = {{\n'
@@ -739,8 +760,8 @@ def tick_effect(bk, b, recipes, pairs):
     split = (f";built_gov={f('pmr_retool_built_gov')};built_priv={f('pmr_retool_built_priv')}"
              f";with_queued_gov={f('pmr_retool_q_gov')};with_queued_priv={f('pmr_retool_q_priv')}"
              f";cap_gov={f('pmr_cap_gov')};cap_priv={f('pmr_cap_priv')}")
-    sw = f";gov_frac={f('pmr_gov_frac', 2)};share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}" + split
-    tick_extra = f";gov_frac={f('pmr_gov_frac', 2)}" + split
+    sw = f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')};share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}" + split
+    tick_extra = f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}" + split
     o.append('\t# A switch: the running recipe is not the one we are retooling towards.\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_adopting")} }} }}\n')
     for i, r in enumerate(recipes, 1):
@@ -1063,7 +1084,7 @@ def panel_loc(buildings):
             f' PMR_BAR_TOOLTIP_{b}:0 "#bold Retooling#!\\n[Building.GetCustom(\'pmr_old_recipe\')] (gold): #bold {var("pmr_bar_old", "%0")}#!'
             f'\\n[Building.GetCustom(\'pmr_new_recipe\')] (blue): #bold {var("pmr_p", "%0")}#!'
             f'\\nRetooling levels built: {var("pmr_retool_built", "0")} of {var("pmr_retool_total", "0")}'
-            f'\\n\\nPrivate owners: {var("pmr_retool_built_priv", "0")} built of {var("pmr_cap_priv", "0")}. Investors fund these from the investment pool.'
+            f'\\n\\nPrivate owners: {var("pmr_retool_built_priv", "0")} built of {var("pmr_cap_priv", "0")}. Only investors who own part of this building fund these, from the investment pool.'
             f'\\nGovernment: {var("pmr_retool_built_gov", "0")} built of {var("pmr_cap_gov", "0")}. Queue these yourself: build #bold $building_pmr_retool_gov_{b}$#! in this state."',
         ]
     return loc

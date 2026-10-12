@@ -17,7 +17,8 @@ pseudo-buildings in its state and gives each a cap:
 
 - **Retooling: Steel Mills** is built only by private investors, from the investment pool, for the
   privately owned share of the levels. While it has room its AI value is 1,000,000 against vanilla's
-  usual 1,000, so the pool should pick it before anything else.
+  usual 1,000, so the pool should pick it before anything else. Only a country whose investors own
+  part of the mill may fund it: an investment agreement alone is not enough.
 - **Retooling (Government): Steel Mills** is built only by the government, for the government-owned
   share. You queue it yourself from the state's Buildings tab or the development construction list.
   AI governments pick it the same way investors pick the private one.
@@ -26,7 +27,8 @@ Every tick re-reads who owns the mill. If the private sector buys government lev
 levels nobody has built or queued yet move to the private side, and the reverse for a
 nationalisation. Levels already built or queued stay where they are.
 
-The log lines carry: `gov_frac` (government-owned share of the mill), `built_gov` / `built_priv`
+The log lines carry: `gov_frac` (government-owned share of the mill), `gov_levels` (the levels that
+share comes to, which the owner country's investors must own more than), `built_gov` / `built_priv`
 (completed retool levels), `with_queued_gov` / `with_queued_priv` (completed plus queued), and
 `cap_gov` / `cap_priv` (the most each side may have, completed plus queued).
 
@@ -37,7 +39,9 @@ The log lines carry: `gov_frac` (government-owned share of the mill), `built_gov
 | No `rec=LOADED` line | The mod is not in the playset, or `on_game_started` is not reaching appended on_actions. Check the playset first. | Anything about the design. |
 | `rec=LOADED` but no `rec=INIT` lines | `pmr_state_tick` is not reaching buildings: `b:<building>` or `has_building` failed. Take **PMR test: recompute retooling now** and look again. | — |
 | `error.log` names `pmr_retool_room_`, `pmr_room_value_` or `num_levels` | The build caps did not load or evaluate, so the game decides who may build retooling without them. Send me the lines. | A failure of the investors. |
-| Months pass with money in the investment pool, Yorkshire's line keeps `cap_priv=8;with_queued_priv=0`, and no **Retooling: Steel Mills** appears in the Private queue | The investment pool will not pick the retool building: either AI value does not steer it, or the cap check refuses investors. Hover **Retooling: Steel Mills** in Yorkshire's construction list and send me what the tooltip says it lacks. The fallback is PMR queuing the private levels itself, which worked last run. | A failure of the cap. |
+| `error.log` names `pmr_retool_investor_`, `levels_owned_by_country` or `investor_country` | The ownership check did not load or evaluate. Send me the lines. | A failure of the investors. |
+| A **new** Retooling entry appears in your Private queue for a building your investors own none of (the Wallonia Sulfur Mines case) | The ownership check is not applied: `levels_owned_by_country` against `scope:investor_country` did not read as expected in `can_build_private`. Send me the state and building. | — |
+| Months pass with money in the investment pool, Yorkshire's line keeps `cap_priv=8;with_queued_priv=0`, and no **Retooling: Steel Mills** appears in the Private queue | The ownership check refuses your own investors, since AI value is already shown to steer the pool. That means `scope:investor_country` is not set where the game checks, or the `gov_levels` comparison failed. Hover **Retooling: Steel Mills** in Yorkshire's construction list and send me what the tooltip says it lacks. The fallback is PMR queuing the private levels itself, which worked last run. | A failure of the cap. |
 | Investors queue the first private level, then never a second, though `cap_priv` is above `with_queued_priv` | The pool will not expand a building with no workforce. Vanilla skips expanding buildings it judges understaffed, and a retool building has no staff at all. | — |
 | `with_queued_priv` passes `cap_priv`, or more than 8 private levels are ever queued in Yorkshire | The private cap is not enforced: `level_after_queued_constructions` or `scope:num_levels` did not read as expected in `can_build_private`. | — |
 | **Retooling (Government): Steel Mills** is not in the capital's construction list at all | Its `potential` failed, or the development lens does not list it. The cap is untested; tell me. | — |
@@ -53,6 +57,16 @@ The log lines carry: `gov_frac` (government-owned share of the mill), `built_gov
 | The Steel Mills panel shows the Steelmaking Process or automation slot | The shadowed `gui/building_details_panel.gui` is not loading. | Anything about the economy. |
 | The recipe bar reads 0% or stays all blue on a mill with a `rec=INIT` line | The panel cannot read the state variables PMR keeps for the mill. | A failure of retooling. |
 | A field prints as text in brackets rather than a number | A log datafunction did not resolve on this build. The instrument failed, not the mod. | — |
+
+## Quick check on your current save
+
+The ownership fix works on the save you have now. After loading, take **PMR test: recompute retooling
+now** once, so each state has the government level count the check reads; until then British
+investors skip retooling at home. Entries already in the Private queue stay, because
+the game asks who may build only when it queues, so judge only entries added after loading. Over a
+few months, every new **Retooling** entry should be for a building British investors already own
+part of, and Wallonia's Sulfur Mines should get no new one. To check a foreign entry, open that
+building and look at who owns its levels.
 
 ## The run
 
@@ -71,8 +85,8 @@ Mills it creates five **government-owned** levels there, then researches Besseme
 every Steel Mills you own. Immediately, without unpausing:
 
 ```
-PMR;rec=SWITCH;...;state=Yorkshire;building=building_steel_mill;from=1;to=2;level=8;...;retool_total=8;p=0.000;gov_frac=0.00;share_gov=0;share_priv=8;built_gov=0;built_priv=0;with_queued_gov=0;with_queued_priv=0;cap_gov=0;cap_priv=8
-PMR;rec=SWITCH;...;state=Home Counties;building=building_steel_mill;from=1;to=2;level=5;...;retool_total=5;p=0.000;gov_frac=1.00;share_gov=5;share_priv=0;...;cap_gov=5;cap_priv=0
+PMR;rec=SWITCH;...;state=Yorkshire;building=building_steel_mill;from=1;to=2;level=8;...;retool_total=8;p=0.000;gov_frac=0.00;gov_levels=0;share_gov=0;share_priv=8;built_gov=0;built_priv=0;with_queued_gov=0;with_queued_priv=0;cap_gov=0;cap_priv=8
+PMR;rec=SWITCH;...;state=Home Counties;building=building_steel_mill;from=1;to=2;level=5;...;retool_total=5;p=0.000;gov_frac=1.00;gov_levels=5;share_gov=5;share_priv=0;...;cap_gov=5;cap_priv=0
 ```
 
 Both construction queues stay empty: nothing is queued for you.
@@ -85,7 +99,8 @@ only investors may build it.
 
 **6. Unpause and watch the Private queue.** Within a few weeks of the pool having money, expect
 **Retooling: Steel Mills in Yorkshire** to appear under **Private**, owned by a Financial District,
-one level per investment decision, and never more than 8 in all. Take **PMR test: recompute
+one level per investment decision, and never more than 8 in all. Retooling entries for buildings
+abroad should appear only where British investors own part of the building. Take **PMR test: recompute
 retooling now** any time to read the counts:
 
 ```
