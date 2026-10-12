@@ -49,6 +49,10 @@ N = 1                      # retool levels per real building level (Pat, 2026-10
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
 RETOOL_AI_VALUE = 1000000  # AI weight of a retool building while it has room; vanilla's default is 1000
+# Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
+# building (Pat, 2026-10-12): tier 1 red, 2 yellow, 3 blue, 4 purple; 5 green for the two farms with five.
+TIER_COLORS = [('Red', (0.80, 0.22, 0.20)), ('Yellow', (0.93, 0.78, 0.22)), ('Blue', (0.25, 0.50, 0.88)),
+               ('Purple', (0.62, 0.36, 0.78)), ('Green', (0.32, 0.70, 0.36))]
 
 MOD_NAME = 'ProductionMethodRework'
 MOD_VERSION = '0.1.0'
@@ -296,7 +300,8 @@ def main():
             if t:
                 goods_tex[gk] = t.value
     gfx_root = game
-    custom_old, custom_new = [], []
+    custom_new = []
+    recipe_keys = {}
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
@@ -312,10 +317,12 @@ def main():
             icons.write_dds(icons.gold_icon(src), path)
         else:
             report['icon_fallback'].append({'building': bk, 'good': good, 'missing': src})
+        recipe_keys[bk] = [r.key for r in recipes]
+        if len(recipes) > len(TIER_COLORS):
+            raise SystemExit(f'{bk}: {len(recipes)} recipes, but TIER_COLORS has {len(TIER_COLORS)}; add a colour')
         for i, r in enumerate(recipes, 1):
-            for var, lst in (('pmr_from', custom_old), ('pmr_to', custom_new)):
-                lst.append(f'\ttext = {{\n\t\ttrigger = {{ is_building_type = {bk} state = {{ var:{var}_{b} = {i} }} }}\n'
-                           f'\t\tlocalization_key = {r.key}\n\t}}\n')
+            custom_new.append(f'\ttext = {{\n\t\ttrigger = {{ is_building_type = {bk} state = {{ var:pmr_to_{b} = {i} }} }}\n'
+                              f'\t\tlocalization_key = {r.key}\n\t}}\n')
         emp = '\n'.join(f'\t\t\t{k} = {fmt(v)}' for k, v in r0.employment.items())
         labour_pms.append(
             f'# {bk}: employment of {r0.key}, the default recipe, held fixed whatever recipe runs.\n'
@@ -429,11 +436,10 @@ def main():
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
     write('common/customizable_localization/pmr_custom_loc.txt', header +
-          '# Building scope. The recipe a building is retooling from, and the one it runs or retools to.\n'
-          'pmr_old_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_old) + '}\n\n'
+          '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n')
     write('gui/building_details_panel.gui', patch_building_panel(
-        open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(), dispatch),
+        recipe_keys, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read()),
         bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
@@ -443,7 +449,7 @@ def main():
                                                              'building_browser_panel.gui', 1), bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1), bom=False)
-    loc += panel_loc(dispatch)
+    loc += panel_loc(recipe_keys)
     write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"'] + DECISION_LOC
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
@@ -473,17 +479,17 @@ def main():
 # a state is that state's steel mill's p. The tick runs in state scope and reaches the building with
 # b:<building_type> only to add or remove its lag modifier and to read its ownership.
 
-def log(rec, bk, b, extra=''):
+def log(rec, bk, b, k, extra=''):
     def v(name, f):
         return f"[THIS.Var('{name}_{b}').GetValue|{f}]"
+    levels = '/'.join(v(f'pmr_lv_{i}', 0) for i in range(1, k + 1))
     # Player-owned states only: debug.log rotates at about 2.5 MB and the world's lines overflow it.
     return (f'if = {{ limit = {{ owner = {{ is_player = yes }} }} '
             f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk};'
-            f"from={v('pmr_from', 0)};to={v('pmr_to', 0)};level={v('pmr_level', 0)};l_start={v('pmr_l_start', 0)};"
-            f"retool_built={v('pmr_retool_built', 0)};retool_total={v('pmr_retool_total', 0)};"
-            f"p={v('pmr_p', 3)}{extra}\" }}")
+            f"to={v('pmr_to', 0)};level={v('pmr_level', 0)};levels={levels};"
+            f"p={v('pmr_p', 3)};to_retool={v('pmr_need', 0)}{extra}\" }}")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -578,24 +584,48 @@ def retool_values(b):
 
 
 def tick_effect(bk, b, recipes, pairs):
-    """Every effect for one building type. All run in STATE scope."""
+    """Every effect for one building type. All run in STATE scope.
+
+    The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
+    recipe's position in vanilla's group, oldest first). The building's active recipe is the
+    target (pmr_to_<b>); every level on another recipe still needs retooling. Each completed retool
+    level moves one level, oldest recipe first, onto the target. A newer recipe arriving mid-retool
+    only changes the target: levels already moved keep their recipe until retooled again.
+    The lag is one modifier per recipe still running, scaled by that recipe's share of the levels,
+    so the building's goods are the level-weighted mix of its recipes."""
     k = len(recipes)
     rb = f'building_pmr_retool_{b}'
     rbg = f'building_pmr_retool_gov_{b}'
     v = lambda name: f'{name}_{b}'           # noqa: E731  state variable for this building type
+    lv = lambda i: v(f'pmr_lv_{i}')          # noqa: E731
     o = [f'# ===== {bk}: ' + ', '.join(f'{i} = {r.key}' for i, r in enumerate(recipes, 1)) + '\n'
          '# State scope throughout; the building is b:' + bk + '.\n\n']
 
     def active(r):
         return f'is_production_method_active = {{ building_type = {bk} production_method = {r.key} }}'
 
-    def adopt_running(ind):
-        out = []
-        for i, r in enumerate(recipes, 1):
-            kw = 'if' if i == 1 else 'else_if'
-            out.append(f'{ind}{kw} = {{ limit = {{ {active(r)} }} set_variable = {{ name = {v("pmr_from")} value = {i} }} '
-                       f'set_variable = {{ name = {v("pmr_to")} value = {i} }} }}\n')
-        return ''.join(out)
+    def on_index(var, body, ind='\t'):
+        """body(i) for the recipe whose index is held in var."""
+        return ''.join(f'{ind}{"if" if i == 1 else "else_if"} = {{ limit = {{ var:{v(var)} = {i} }} {body(i)} }}\n'
+                       for i in range(1, k + 1))
+
+    def setv(name, value):
+        return f'set_variable = {{ name = {v(name)} value = {value} }}'
+
+    def chg(name, op, value):
+        return f'change_variable = {{ name = {v(name)} {op} = {value} }}'
+
+    # the recipe the building runs now, 0 if none of the group's is active
+    o.append(f'pmr_running_{b} = {{\n\t{setv("pmr_run", 0)}\n')
+    for i, r in enumerate(recipes, 1):
+        o.append(f'\t{"if" if i == 1 else "else_if"} = {{ limit = {{ {active(r)} }} {setv("pmr_run", i)} }}\n')
+    o.append('}\n\n')
+
+    # all levels on one recipe (the one in pmr_to)
+    o.append(f'pmr_reset_levels_{b} = {{\n'
+             + ''.join(f'\tset_variable = {{ name = {lv(i)} value = 0 }}\n' for i in range(1, k + 1))
+             + on_index('pmr_to', lambda i: f'set_variable = {{ name = {lv(i)} value = var:{v("pmr_level")} }}')
+             + '}\n\n')
 
     # lag modifiers live on the building
     o.append(f'pmr_clear_lag_{b} = {{\n\tb:{bk} = {{\n')
@@ -603,101 +633,155 @@ def tick_effect(bk, b, recipes, pairs):
         o.append(f'\t\tif = {{ limit = {{ has_modifier = {name} }} remove_modifier = {name} }}\n')
     o.append('\t}\n}\n\n')
 
-    o.append(f'pmr_apply_lag_{b} = {{\n\tpmr_clear_lag_{b} = yes\n'
-             f'\tset_variable = {{ name = {v("pmr_lagmul")} value = 1 }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_lagmul")} subtract = var:{v("pmr_p")} }}\n')
+    o.append(f'pmr_apply_lag_{b} = {{\n\tpmr_clear_lag_{b} = yes\n')
     for (i, j), name in pairs.items():
-        o.append(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_from")} = {i} var:{v("pmr_to")} = {j} }}\n'
-                 f'\t\tb:{bk} = {{ add_modifier = {{ name = {name} multiplier = prev.var:{v("pmr_lagmul")} }} }}\n\t}}\n')
+        o.append(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_to")} = {j} var:{v(f"pmr_sh_{i}")} > 0 }}\n'
+                 f'\t\tb:{bk} = {{ add_modifier = {{ name = {name} multiplier = prev.var:{v(f"pmr_sh_{i}")} }} }}\n\t}}\n')
     o.append('}\n\n')
 
-    o.append(f'pmr_clear_retool_{b} = {{\n'
-             f'\tif = {{ limit = {{ OR = {{ has_building = {rb} exists = b:{rb} }} }} remove_building = {rb} }}\n'
-             f'\tif = {{ limit = {{ OR = {{ has_building = {rbg} exists = b:{rbg} }} }} remove_building = {rbg} }}\n'
-             + ''.join(f'\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
-                       for n in (f'pmr_retool_gate_{b}', f'pmr_retool_open_priv_{b}', f'pmr_retool_open_gov_{b}',
-                                 v('pmr_cap_priv'), v('pmr_cap_gov'), v('pmr_gov_levels'))) +
-             '}\n\n')
+    # The levels the state tracks always add up to the building's level. New levels arrive on the
+    # recipe the building runs; lost levels go from the oldest recipe first.
+    o.append(f'pmr_sync_levels_{b} = {{\n\t{setv("pmr_lvsum", 0)}\n'
+             + ''.join(f'\t{chg("pmr_lvsum", "add", "var:" + lv(i))}\n' for i in range(1, k + 1))
+             + f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_lvsum")} < var:{v("pmr_level")} }}\n'
+             f'\t\t{setv("pmr_d", "var:" + v("pmr_level"))}\n\t\t{chg("pmr_d", "subtract", "var:" + v("pmr_lvsum"))}\n'
+             + on_index('pmr_to', lambda i: f'change_variable = {{ name = {lv(i)} add = var:{v("pmr_d")} }}', '\t\t')
+             + f'\t}}\n\telse_if = {{\n\t\tlimit = {{ var:{v("pmr_lvsum")} > var:{v("pmr_level")} }}\n'
+             f'\t\t{setv("pmr_d", "var:" + v("pmr_lvsum"))}\n\t\t{chg("pmr_d", "subtract", "var:" + v("pmr_level"))}\n'
+             + ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_d")} > 0 var:{lv(i)} > 0 }}\n'
+                       f'\t\t\tif = {{ limit = {{ var:{lv(i)} >= var:{v("pmr_d")} }} '
+                       f'change_variable = {{ name = {lv(i)} subtract = var:{v("pmr_d")} }} {setv("pmr_d", 0)} }}\n'
+                       f'\t\t\telse = {{ {chg("pmr_d", "subtract", "var:" + lv(i))} set_variable = {{ name = {lv(i)} value = 0 }} }}\n'
+                       '\t\t}\n' for i in range(1, k + 1))
+             + '\t}\n}\n\n')
 
     # government-owned share of the building, read through the building-scope ownership trigger
     steps = round(1 / GOV_FRACTION_STEP)
-    o.append(f'pmr_read_gov_{b} = {{\n\tset_variable = {{ name = {v("pmr_gov_frac")} value = 0 }}\n')
+    o.append(f'pmr_read_gov_{b} = {{\n\t{setv("pmr_gov_frac", 0)}\n')
     for n in range(steps, 0, -1):
         frac = n * GOV_FRACTION_STEP
         kw = 'if' if n == steps else 'else_if'
         o.append(f'\t{kw} = {{ limit = {{ b:{bk} = {{ country_ownership_fraction >= {fmt(frac - GOV_FRACTION_STEP / 2)} }} }} '
-                 f'set_variable = {{ name = {v("pmr_gov_frac")} value = {fmt(frac)} }} }}\n')
+                 f'{setv("pmr_gov_frac", fmt(frac))} }}\n')
     o.append('\t# Government-owned levels, which the state owner\'s count in levels_owned_by_country includes.\n'
              f'\tset_variable = {{ name = {v("pmr_gov_levels")} value = b:{bk}.level }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_gov_levels")} multiply = var:{v("pmr_gov_frac")} }}\n'
+             f'\t{chg("pmr_gov_levels", "multiply", "var:" + v("pmr_gov_frac"))}\n'
              f'\tround_variable = {{ name = {v("pmr_gov_levels")} nearest = 1 }}\n'
              '}\n\n')
 
-    # On a switch: the levels to retool are the levels the building has now, N each.
-    o.append(f'pmr_open_retool_{b} = {{\n'
-             f'\tset_variable = {{ name = {v("pmr_retool_total")} value = var:{v("pmr_level")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_retool_total")} multiply = pmr_retool_levels_per_level }}\n'
-             f'\tset_variable = pmr_retool_gate_{b}\n'
-             f'\tpmr_split_retool_{b} = yes\n'
-             '}\n\n')
-
     def read_side(rbx, side):
-        return (f'\tset_variable = {{ name = {v("pmr_retool_built_" + side)} value = 0 }}\n'
-                f'\tset_variable = {{ name = {v("pmr_retool_q_" + side)} value = 0 }}\n'
+        return (f'\t{setv("pmr_retool_built_" + side, 0)}\n'
+                f'\t{setv("pmr_retool_q_" + side, 0)}\n'
                 f'\tif = {{\n\t\tlimit = {{ OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
-                f'\t\tset_variable = {{ name = {v("pmr_retool_built_" + side)} value = b:{rbx}.level }}\n'
-                f'\t\tset_variable = {{ name = {v("pmr_retool_q_" + side)} value = b:{rbx}.level_after_queued_constructions }}\n'
-                '\t}\n')
+                f'\t\t{setv("pmr_retool_built_" + side, f"b:{rbx}.level")}\n'
+                f'\t\t{setv("pmr_retool_q_" + side, f"b:{rbx}.level_after_queued_constructions")}\n'
+                '\t}\n'
+                f'\t{setv("pmr_pending_" + side, "var:" + v("pmr_retool_q_" + side))}\n'
+                f'\t{chg("pmr_pending_" + side, "subtract", "var:" + v("pmr_retool_built_" + side))}\n')
     o.append(f'pmr_read_retool_{b} = {{\n'
              '\t# A retool still entirely under construction may not count for has_building.\n'
              + read_side(rb, 'priv') + read_side(rbg, 'gov') +
-             f'\tset_variable = {{ name = {v("pmr_retool_built")} value = var:{v("pmr_retool_built_priv")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_retool_built")} add = var:{v("pmr_retool_built_gov")} }}\n'
-             f'\tset_variable = {{ name = {v("pmr_retool_queued")} value = var:{v("pmr_retool_q_priv")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_retool_queued")} add = var:{v("pmr_retool_q_gov")} }}\n'
+             f'\t{setv("pmr_retool_built", "var:" + v("pmr_retool_built_priv"))}\n'
+             f'\t{chg("pmr_retool_built", "add", "var:" + v("pmr_retool_built_gov"))}\n'
+             f'\t{setv("pmr_pending", "var:" + v("pmr_pending_priv"))}\n'
+             f'\t{chg("pmr_pending", "add", "var:" + v("pmr_pending_gov"))}\n'
              '}\n\n')
 
-    # Who may add retool levels, from who owns the building now. Each side's share of the total is
-    # its ownership share; the levels not yet built or queued (R) go first to whichever side is
-    # short of its share. A side already past its share (ownership changed after it built) gets
-    # none, and the other side takes the rest, so the two rooms always add up to R.
+    # Completed retool levels not yet counted move levels onto the target, oldest recipe first.
+    # The retool buildings keep their levels between retools while anything is queued on them,
+    # so pmr_seen counts the levels already used and only the rest move anything.
+    o.append(f'pmr_progress_{b} = {{\n\tpmr_read_retool_{b} = yes\n'
+             f'\t{setv("pmr_conv", "var:" + v("pmr_retool_built"))}\n'
+             f'\t{chg("pmr_conv", "subtract", "var:" + v("pmr_seen"))}\n'
+             f'\tif = {{ limit = {{ var:{v("pmr_conv")} < 0 }} {setv("pmr_conv", 0)} }}\n'
+             f'\t{setv("pmr_seen", "var:" + v("pmr_retool_built"))}\n'
+             f'\t{chg("pmr_conv", "divide", "pmr_retool_levels_per_level")}\n'
+             f'\t{setv("pmr_gain", 0)}\n'
+             + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_conv")} > 0 var:{lv(i)} > 0 NOT = {{ var:{v("pmr_to")} = {i} }} }}\n'
+                       f'\t\tif = {{ limit = {{ var:{lv(i)} >= var:{v("pmr_conv")} }} {setv("pmr_amt", "var:" + v("pmr_conv"))} }}\n'
+                       f'\t\telse = {{ {setv("pmr_amt", "var:" + lv(i))} }}\n'
+                       f'\t\tchange_variable = {{ name = {lv(i)} subtract = var:{v("pmr_amt")} }}\n'
+                       f'\t\t{chg("pmr_conv", "subtract", "var:" + v("pmr_amt"))}\n'
+                       f'\t\t{chg("pmr_gain", "add", "var:" + v("pmr_amt"))}\n\t}}\n' for i in range(1, k + 1))
+             + on_index('pmr_to', lambda i: f'change_variable = {{ name = {lv(i)} add = var:{v("pmr_gain")} }}')
+             + '}\n\n')
+
+    # Shares for the bar and the lag, the levels still to retool, and p (share on the target).
+    o.append(f'pmr_mix_{b} = {{\n'
+             + on_index('pmr_to', lambda i: setv("pmr_lv_to", "var:" + lv(i)))
+             + f'\t{setv("pmr_need", "var:" + v("pmr_level"))}\n'
+             f'\t{chg("pmr_need", "subtract", "var:" + v("pmr_lv_to"))}\n'
+             f'\tif = {{ limit = {{ var:{v("pmr_need")} < 0 }} {setv("pmr_need", 0)} }}\n'
+             f'\t{chg("pmr_need", "multiply", "pmr_retool_levels_per_level")}\n'
+             f'\t{setv("pmr_p", "var:" + v("pmr_lv_to"))}\n'
+             f'\t{chg("pmr_p", "divide", "var:" + v("pmr_level"))}\n'
+             f'\t{setv("pmr_cum", 0)}\n'
+             + ''.join(f'\t{setv(f"pmr_sh_{i}", "var:" + lv(i))}\n'
+                       f'\t{chg(f"pmr_sh_{i}", "divide", "var:" + v("pmr_level"))}\n'
+                       f'\t{chg("pmr_cum", "add", "var:" + v(f"pmr_sh_{i}"))}\n'
+                       f'\t{setv(f"pmr_cum_{i}", "var:" + v("pmr_cum"))}\n' for i in range(1, k + 1))
+             + f'\tif = {{ limit = {{ var:{v("pmr_need")} > 0 }} {setv("pmr_ui_retooling", 1)} }}\n'
+             f'\telse = {{ {setv("pmr_ui_retooling", 0)} }}\n'
+             '}\n\n')
+
+    # Who may add retool levels, from who owns the building now. The levels still to retool (need)
+    # are split by ownership; each side's room is its share less what it already has queued, and
+    # the rooms never add up to more than need less everything queued.
     def clamp_to(name, other):
         return (f'\tif = {{ limit = {{ var:{v(name)} > var:{v(other)} }} '
-                f'set_variable = {{ name = {v(name)} value = var:{v(other)} }} }}\n')
+                f'{setv(name, "var:" + v(other))} }}\n')
     o.append(f'pmr_split_retool_{b} = {{\n'
              f'\tpmr_read_gov_{b} = yes\n'
-             f'\tpmr_read_retool_{b} = yes\n'
-             f'\tset_variable = {{ name = {v("pmr_retool_gov")} value = var:{v("pmr_retool_total")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_retool_gov")} multiply = var:{v("pmr_gov_frac")} }}\n'
+             f'\t{setv("pmr_retool_gov", "var:" + v("pmr_need"))}\n'
+             f'\t{chg("pmr_retool_gov", "multiply", "var:" + v("pmr_gov_frac"))}\n'
              f'\tround_variable = {{ name = {v("pmr_retool_gov")} nearest = 1 }}\n'
-             f'\tset_variable = {{ name = {v("pmr_retool_priv")} value = var:{v("pmr_retool_total")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_retool_priv")} subtract = var:{v("pmr_retool_gov")} }}\n'
-             f'\tset_variable = {{ name = {v("pmr_room")} value = var:{v("pmr_retool_total")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_room")} subtract = var:{v("pmr_retool_queued")} }}\n'
-             f'\tif = {{ limit = {{ var:{v("pmr_room")} < 0 }} set_variable = {{ name = {v("pmr_room")} value = 0 }} }}\n'
-             f'\tset_variable = {{ name = {v("pmr_room_gov")} value = var:{v("pmr_retool_gov")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_room_gov")} subtract = var:{v("pmr_retool_q_gov")} }}\n'
-             f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} < 0 }} set_variable = {{ name = {v("pmr_room_gov")} value = 0 }} }}\n'
+             f'\t{setv("pmr_retool_priv", "var:" + v("pmr_need"))}\n'
+             f'\t{chg("pmr_retool_priv", "subtract", "var:" + v("pmr_retool_gov"))}\n'
+             f'\t{setv("pmr_room", "var:" + v("pmr_need"))}\n'
+             f'\t{chg("pmr_room", "subtract", "var:" + v("pmr_pending"))}\n'
+             f'\tif = {{ limit = {{ var:{v("pmr_room")} < 0 }} {setv("pmr_room", 0)} }}\n'
+             f'\t{setv("pmr_room_gov", "var:" + v("pmr_retool_gov"))}\n'
+             f'\t{chg("pmr_room_gov", "subtract", "var:" + v("pmr_pending_gov"))}\n'
+             f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} < 0 }} {setv("pmr_room_gov", 0)} }}\n'
              + clamp_to("pmr_room_gov", "pmr_room") +
-             f'\tset_variable = {{ name = {v("pmr_room_priv")} value = var:{v("pmr_room")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_room_priv")} subtract = var:{v("pmr_room_gov")} }}\n'
-             f'\tset_variable = {{ name = {v("pmr_cap_gov")} value = var:{v("pmr_retool_q_gov")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_cap_gov")} add = var:{v("pmr_room_gov")} }}\n'
-             f'\tset_variable = {{ name = {v("pmr_cap_priv")} value = var:{v("pmr_retool_q_priv")} }}\n'
-             f'\tchange_variable = {{ name = {v("pmr_cap_priv")} add = var:{v("pmr_room_priv")} }}\n'
+             f'\t{setv("pmr_room_priv", "var:" + v("pmr_room"))}\n'
+             f'\t{chg("pmr_room_priv", "subtract", "var:" + v("pmr_room_gov"))}\n'
+             f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
+             f'\t{chg("pmr_cap_gov", "add", "var:" + v("pmr_room_gov"))}\n'
+             f'\t{setv("pmr_cap_priv", "var:" + v("pmr_retool_q_priv"))}\n'
+             f'\t{chg("pmr_cap_priv", "add", "var:" + v("pmr_room_priv"))}\n'
+             f'\tset_variable = pmr_retool_gate_{b}\n'
              + ''.join(f'\tif = {{ limit = {{ var:{v("pmr_room_" + side)} > 0 }} set_variable = pmr_retool_open_{side}_{b} }}\n'
                        f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_{side}_{b} }} remove_variable = pmr_retool_open_{side}_{b} }}\n'
                        for side in ('priv', 'gov')) +
              '}\n\n')
 
+    # Nothing left to retool. A retool building with levels still queued is never removed: that
+    # leaves a construction with no building (seen as NULL_STATE in the queue). It is closed
+    # instead, and removed by a later tick once its queue has emptied.
+    o.append(f'pmr_close_retool_{b} = {{\n'
+             + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_retool_open_{side}_{b} }} remove_variable = pmr_retool_open_{side}_{b} }}\n'
+                       for side in ('priv', 'gov')) +
+             f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_pending")} > 0 }}\n'
+             f'\t\t{setv("pmr_cap_priv", "var:" + v("pmr_retool_q_priv"))}\n'
+             f'\t\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
+             f'\t\t{setv("pmr_room_priv", 0)}\n\t\t{setv("pmr_room_gov", 0)}\n\t}}\n'
+             '\telse = {\n'
+             f'\t\tif = {{ limit = {{ OR = {{ has_building = {rb} exists = b:{rb} }} }} remove_building = {rb} }}\n'
+             f'\t\tif = {{ limit = {{ OR = {{ has_building = {rbg} exists = b:{rbg} }} }} remove_building = {rbg} }}\n'
+             f'\t\t{setv("pmr_seen", 0)}\n'
+             + ''.join(f'\t\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
+                       for n in (f'pmr_retool_gate_{b}', v('pmr_cap_priv'), v('pmr_cap_gov'), v('pmr_gov_levels'))) +
+             '\t}\n}\n\n')
+
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first
-    o.append(f'pmr_best_{b} = {{\n\tset_variable = {{ name = {v("pmr_best_now")} value = 0 }}\n')
+    o.append(f'pmr_best_{b} = {{\n\t{setv("pmr_best_now", 0)}\n')
     for i in range(k, 0, -1):
         r = recipes[i - 1]
         kw = 'if' if i == k else 'else_if'
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{\n\t\t\t{active(r)}\n'
                  f'\t\t\tcan_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}\n'
-                 f'\t\t}} }}\n\t\tset_variable = {{ name = {v("pmr_best_now")} value = {i} }}\n\t}}\n')
+                 f'\t\t}} }}\n\t\t{setv("pmr_best_now", i)}\n\t}}\n')
     o.append('}\n\n')
 
     o.append(f'pmr_activate_{b} = {{\n')
@@ -707,104 +791,92 @@ def tick_effect(bk, b, recipes, pairs):
                  f'activate_production_method = {{ building_type = {bk} production_method = {r.key} }} }}\n')
     o.append('}\n\n')
 
-    o.append(f'pmr_set_bar_{b} = {{\n'
-             f'\tset_variable = {{ name = {v("pmr_bar_old")} value = 1 }}\n'
-             f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_retooling")} }}\n'
-             f'\t\tchange_variable = {{ name = {v("pmr_bar_old")} subtract = var:{v("pmr_p")} }}\n'
-             f'\t\tset_variable = {{ name = {v("pmr_ui_retooling")} value = 1 }}\n\t}}\n'
-             f'\telse = {{ set_variable = {{ name = {v("pmr_ui_retooling")} value = 0 }} }}\n}}\n\n')
+    def f(name, d=0):
+        return f"[THIS.Var('{v(name)}').GetValue|{d}]"
+    best = f";best={f('pmr_best_now')}"
+    split = (f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}"
+             f";share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}"
+             f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
+             f";room_gov={f('pmr_room_gov')};room_priv={f('pmr_room_priv')}")
+    done = f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
 
-    best = f";best=[THIS.Var('{v('pmr_best_now')}').GetValue|0]"
     o.append(f'pmr_tick_{b} = {{\n'
-             f'\tset_variable = {{ name = {v("pmr_level")} value = b:{bk}.level }}\n'
+             f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
              f'\tpmr_best_{b} = yes\n'
-             '\t# First sight: adopt whatever recipe runs now, with no lag.\n'
-             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_to")} }} }}\n'
-             f'\t\tset_variable = {{ name = {v("pmr_best")} value = var:{v("pmr_best_now")} }}\n'
-             + adopt_running('\t\t') +
-             f'\t\tset_variable = {{ name = {v("pmr_p")} value = 1 }}\n'
-             f'\t\tset_variable = {{ name = {v("pmr_l_start")} value = var:{v("pmr_level")} }}\n'
-             '\t\t# Newly constructed (not seen at game start or on first load): built with the newest\n'
-             '\t\t# recipe the owner has, at no retooling cost.\n'
+             '\t# First sight (game start, a new building, or a save from before the level mix): every\n'
+             '\t# level runs the recipe the building runs now, with no lag. Retool levels already built\n'
+             '\t# count for nothing.\n'
+             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_mix_{b} }} }}\n'
+             f'\t\tset_variable = pmr_mix_{b}\n'
+             f'\t\tpmr_clear_lag_{b} = yes\n'
+             f'\t\tif = {{ limit = {{ has_variable = {v("pmr_retooling")} }} remove_variable = {v("pmr_retooling")} }}\n'
+             f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
+             f'\t\tpmr_running_{b} = yes\n'
+             f'\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
+             f'\t\tpmr_reset_levels_{b} = yes\n'
+             f'\t\tpmr_read_retool_{b} = yes\n'
+             f'\t\t{setv("pmr_seen", "var:" + v("pmr_retool_built"))}\n'
+             '\t\t# Newly constructed: built with the newest recipe the owner has, at no retooling cost.\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = {v("pmr_new_build")} var:{v("pmr_best_now")} > 0 '
              f'NOT = {{ var:{v("pmr_to")} = var:{v("pmr_best_now")} }} }}\n'
-             f'\t\t\tset_variable = {{ name = {v("pmr_from")} value = var:{v("pmr_best_now")} }}\n'
-             f'\t\t\tset_variable = {{ name = {v("pmr_to")} value = var:{v("pmr_best_now")} }}\n'
-             f'\t\t\tset_variable = {{ name = {v("pmr_adopting")} value = 0 }}\n'
+             f'\t\t\t{setv("pmr_to", "var:" + v("pmr_best_now"))}\n'
+             f'\t\t\tpmr_reset_levels_{b} = yes\n'
+             f'\t\t\t{setv("pmr_adopting", 0)}\n'
              f'\t\t\tpmr_activate_{b} = yes\n'
-             f'\t\t\t{log("ADOPT", bk, b)}\n\t\t}}\n'
-             f'\t\t{log("INIT", bk, b, extra=best)}\n\t}}\n'
+             f'\t\t\tpmr_mix_{b} = yes\n'
+             f'\t\t\t{log("ADOPT", bk, b, k)}\n\t\t}}\n'
+             f'\t\tpmr_mix_{b} = yes\n'
+             f'\t\t{log("INIT", bk, b, k, extra=best)}\n\t}}\n'
              f'\tif = {{ limit = {{ has_variable = {v("pmr_new_build")} }} remove_variable = {v("pmr_new_build")} }}\n')
 
     o.append('\t# Research: a newer recipe became available since the last tick. Switch to it; the switch\n'
-             '\t# below then queues the retooling like any other.\n'
+             '\t# below then opens retooling like any other.\n'
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_best_now")} > var:{v("pmr_best")} }}\n'
-             f'\t\tset_variable = {{ name = {v("pmr_best")} value = var:{v("pmr_best_now")} }}\n'
-             f'\t\t{log("RESEARCH", bk, b, extra=best)}\n'
+             f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
+             f'\t\t{log("RESEARCH", bk, b, k, extra=best)}\n'
              f'\t\tpmr_activate_{b} = yes\n\t}}\n'
-             f'\tset_variable = {{ name = {v("pmr_best")} value = var:{v("pmr_best_now")} }}\n')
+             f'\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
+             f'\tpmr_running_{b} = yes\n')
 
     o.append('\t# A free adoption waits for the game to apply the activation: until it shows, the running\n'
              '\t# recipe is not a switch. Give up after one more tick and keep what runs.\n'
-             f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_adopting")} }}\n')
-    for i, r in enumerate(recipes, 1):
-        kw = 'if' if i == 1 else 'else_if'
-        o.append(f'\t\t{kw} = {{ limit = {{ var:{v("pmr_to")} = {i} {active(r)} }} remove_variable = {v("pmr_adopting")} }}\n')
-    o.append(f'\t\telse = {{\n\t\t\tchange_variable = {{ name = {v("pmr_adopting")} add = 1 }}\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_adopting")} }}\n'
+             f'\t\tif = {{ limit = {{ var:{v("pmr_run")} = var:{v("pmr_to")} }} remove_variable = {v("pmr_adopting")} }}\n'
+             f'\t\telse = {{\n\t\t\t{chg("pmr_adopting", "add", 1)}\n'
              f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{v("pmr_adopting")} > 1 }}\n'
-             f'\t\t\t\tremove_variable = {v("pmr_adopting")}\n' + adopt_running('\t\t\t\t') +
-             f'\t\t\t\t{log("ADOPT_FAILED", bk, b)}\n\t\t\t}}\n\t\t}}\n\t}}\n')
+             f'\t\t\t\tremove_variable = {v("pmr_adopting")}\n'
+             f'\t\t\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
+             f'\t\t\t\tpmr_reset_levels_{b} = yes\n'
+             f'\t\t\t\t{log("ADOPT_FAILED", bk, b, k)}\n\t\t\t}}\n\t\t}}\n\t}}\n')
 
-    def f(name, d=0):
-        return f"[THIS.Var('{v(name)}').GetValue|{d}]"
-    split = (f";built_gov={f('pmr_retool_built_gov')};built_priv={f('pmr_retool_built_priv')}"
-             f";with_queued_gov={f('pmr_retool_q_gov')};with_queued_priv={f('pmr_retool_q_priv')}"
-             f";cap_gov={f('pmr_cap_gov')};cap_priv={f('pmr_cap_priv')}")
-    sw = f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')};share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}" + split
-    tick_extra = f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}" + split
-    o.append('\t# A switch: the running recipe is not the one we are retooling towards.\n'
-             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_adopting")} }} }}\n')
-    for i, r in enumerate(recipes, 1):
-        o.append(f'\t\tif = {{\n\t\t\tlimit = {{ {active(r)} NOT = {{ var:{v("pmr_to")} = {i} }} }}\n'
-                 f'\t\t\tset_variable = {{ name = {v("pmr_to")} value = {i} }}\n'
-                 f'\t\t\tpmr_clear_lag_{b} = yes\n'
-                 f'\t\t\tpmr_clear_retool_{b} = yes\n'
-                 f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{v("pmr_from")} = {i} }}\n'
-                 '\t\t\t\t# Back to the recipe it fully runs: nothing to retool.\n'
-                 f'\t\t\t\tset_variable = {{ name = {v("pmr_p")} value = 1 }}\n'
-                 f'\t\t\t\tif = {{ limit = {{ has_variable = {v("pmr_retooling")} }} remove_variable = {v("pmr_retooling")} }}\n'
-                 f'\t\t\t\t{log("CANCEL", bk, b)}\n\t\t\t}}\n'
-                 '\t\t\telse = {\n'
-                 f'\t\t\t\tset_variable = {{ name = {v("pmr_l_start")} value = var:{v("pmr_level")} }}\n'
-                 f'\t\t\t\tset_variable = {{ name = {v("pmr_p")} value = 0 }}\n'
-                 f'\t\t\t\tset_variable = {v("pmr_retooling")}\n'
-                 f'\t\t\t\tpmr_open_retool_{b} = yes\n'
-                 f'\t\t\t\t{log("SWITCH", bk, b, extra=sw)}\n'
-                 '\t\t\t}\n\t\t}\n')
-    o.append('\t}\n')
+    o.append('\t# A switch: the building now runs a recipe other than the target. The levels keep the\n'
+             '\t# recipes they run; every level not on the new target is now to retool.\n'
+             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_adopting")} }} var:{v("pmr_run")} > 0 '
+             f'NOT = {{ var:{v("pmr_run")} = var:{v("pmr_to")} }} }}\n'
+             f'\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
+             f'\t\tset_variable = {v("pmr_switched")}\n\t}}\n')
 
-    o.append('\t# Progress: p = (retool.level / N + level - L_start) / level, clamped to 0..1.\n'
-             f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_retooling")} }}\n'
-             '\t\t# Re-split every tick, so a building sold to or bought from private owners mid-retool moves the\n'
-             '\t\t# remaining levels to the new owner\'s side.\n'
+    o.append(f'\tpmr_sync_levels_{b} = yes\n'
+             f'\tpmr_progress_{b} = yes\n'
+             f'\tpmr_mix_{b} = yes\n'
+             f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
+             f'\t\tset_variable = {v("pmr_retooling")}\n'
              f'\t\tpmr_split_retool_{b} = yes\n'
-             f'\t\tset_variable = {{ name = {v("pmr_p")} value = var:{v("pmr_retool_built")} }}\n'
-             f'\t\tchange_variable = {{ name = {v("pmr_p")} divide = pmr_retool_levels_per_level }}\n'
-             f'\t\tchange_variable = {{ name = {v("pmr_p")} add = var:{v("pmr_level")} }}\n'
-             f'\t\tchange_variable = {{ name = {v("pmr_p")} subtract = var:{v("pmr_l_start")} }}\n'
-             f'\t\tchange_variable = {{ name = {v("pmr_p")} divide = var:{v("pmr_level")} }}\n'
-             f'\t\tclamp_variable = {{ name = {v("pmr_p")} min = 0 max = 1 }}\n'
-             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_p")} >= 1 }}\n'
-             f'\t\t\tset_variable = {{ name = {v("pmr_from")} value = var:{v("pmr_to")} }}\n'
+             f'\t\tpmr_apply_lag_{b} = yes\n'
+             f'\t\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("SWITCH", bk, b, k, extra=split)} }}\n'
+             f'\t\telse = {{ {log("TICK", bk, b, k, extra=split)} }}\n'
+             '\t}\n'
+             '\telse = {\n'
+             f'\t\tpmr_clear_lag_{b} = yes\n'
+             f'\t\tpmr_close_retool_{b} = yes\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = {v("pmr_retooling")} }}\n'
              f'\t\t\tremove_variable = {v("pmr_retooling")}\n'
-             f'\t\t\tpmr_clear_lag_{b} = yes\n'
-             f'\t\t\tpmr_clear_retool_{b} = yes\n'
-             f'\t\t\t{log("DONE", bk, b)}\n\t\t}}\n'
-             '\t\telse = {\n'
-             f'\t\t\tpmr_apply_lag_{b} = yes\n'
-             f'\t\t\t{log("TICK", bk, b, extra=tick_extra)}\n'
-             '\t\t}\n\t}\n'
-             f'\tpmr_set_bar_{b} = yes\n}}\n\n')
+             f'\t\t\t{log("DONE", bk, b, k, extra=done)}\n'
+             '\t\t}\n'
+             f'\t\telse_if = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("CANCEL", bk, b, k)} }}\n'
+             '\t}\n'
+             f'\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} remove_variable = {v("pmr_switched")} }}\n'
+             '}\n\n')
     return ''.join(o)
 
 
@@ -829,7 +901,7 @@ def dispatch_effects(buildings):
         b = short(bk)
         kw = 'if' if i == 0 else 'else_if'
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ is_building_type = {bk} level >= 1 }}\n\t\tstate = {{\n'
-                 f'\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_to_{b} }} }} set_variable = pmr_new_build_{b} }}\n'
+                 f'\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_mix_{b} }} }} set_variable = pmr_new_build_{b} }}\n'
                  f'\t\t\tpmr_tick_{b} = yes\n'
                  f'\t\t\tif = {{ limit = {{ has_variable = pmr_new_build_{b} }} remove_variable = pmr_new_build_{b} }}\n'
                  '\t\t}\n\t}\n')
@@ -866,16 +938,37 @@ def any_type(buildings):
     return expr
 
 
-def recipe_bar(bk, b):
+def recipe_bar(bk, b, k):
     """The recipe bar for one building type. Two rows sized and centred to match the employment
     and cash-reserve bars to its right (26 px each, 8 apart), between the production method slot
-    (x 2..72) and those bars (230 wide, 5 from the right edge of the 540 px panel): x 84..293."""
+    (x 2..72) and those bars (230 wide, 5 from the right edge of the 540 px panel): x 84..293.
+    The bar is one segment per recipe, oldest on the left, each as wide as that recipe's share of
+    the building's levels and coloured by its tier (TIER_COLORS). Drawn as white progress bars
+    tinted per tier, filled to the running total of the shares and stacked newest first, so each
+    tier shows from where the older ones end."""
     def var(name):
         return f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue"
     retooling = f'NotZero_CFixedPoint({var("pmr_ui_retooling")})'
+    layers = []
+    frame = '\n\t\t\t\t\t\t\tblockoverride "frame" {}  # the frame is drawn once, by the top layer'
+    for i in range(k, 0, -1):
+        name, (r, g, bl) = TIER_COLORS[i - 1]
+        layers.append(f"""
+						# tier {i}, {name.lower()}
+						white_progressbar_horizontal = {{
+							size = {{ 100% 100% }}
+							blockoverride "background" {{}}{'' if i == 1 else frame}
+							blockoverride "values" {{
+								min = 0
+								max = 1
+								value = "[FixedPointToFloat({var(f"pmr_cum_{i}")})]"
+							}}
+							blockoverride "color" {{
+								color = {{ {r} {g} {bl} 1 }}
+							}}
+						}}""")
     return f"""
-				# PMR: recipe bar for {bk}. Gold is the recipe the building fully runs; while retooling,
-				# blue is the share already moved to the new recipe.
+				# PMR: recipe bar for {bk}: each recipe's share of the levels, in its tier's colour.
 				widget = {{
 					visible = "[{is_type(bk)}]"
 					position = {{ 84 0 }}
@@ -904,52 +997,37 @@ def recipe_bar(bk, b):
 					widget = {{
 						position = {{ 0 34 }}
 						size = {{ 209 26 }}
-
-						gold_progressbar_horizontal = {{
+						background = {{
+							texture = "gfx/interface/progressbar/progressbar_empty.dds"
+							spriteType = Corneredtiled
+							spriteborder = {{ 4 4 }}
+							texture_density = 2
+							using = progressbar_texture_properties
+						}}
+{''.join(layers)}
+						textbox = {{
+							visible = "[{retooling}]"
 							size = {{ 100% 100% }}
-							blockoverride "background" {{
-								background = {{
-									texture = "gfx/interface/progressbar/progressbar_default.dds"
-									spriteType = Corneredtiled
-									spriteborder = {{ 4 4 }}
-									texture_density = 2
-									using = progressbar_texture_properties
-								}}
-							}}
-							blockoverride "values" {{
-								min = 0
-								max = 1
-								value = "[FixedPointToFloat({var("pmr_bar_old")})]"
-							}}
-						}}
-						textbox = {{
-							visible = "[{retooling}]"
-							position = {{ 6 0 }}
-							size = {{ 98 26 }}
-							align = left|nobaseline
-							text = "PMR_BAR_OLD_{b}"
-						}}
-						textbox = {{
-							visible = "[{retooling}]"
-							position = {{ -6 0 }}
-							parentanchor = right
-							size = {{ 98 26 }}
-							align = right|nobaseline
-							text = "PMR_BAR_NEW_{b}"
+							align = center|nobaseline
+							text = "PMR_BAR_PCT_{b}"
 						}}
 						textbox = {{
 							visible = "[Not({retooling})]"
 							size = {{ 100% 100% }}
 							align = center|nobaseline
 							text = "PMR_BAR_FULL"
-							tooltip = "PMR_BAR_FULL_TOOLTIP"
-							using = tooltip_above
 						}}
-						# hover area for the retooling breakdown, only while retooling
+						# hover areas: the breakdown by recipe while retooling, else the one recipe
 						widget = {{
 							visible = "[{retooling}]"
 							size = {{ 100% 100% }}
 							tooltip = "PMR_BAR_TOOLTIP_{b}"
+							using = tooltip_above
+						}}
+						widget = {{
+							visible = "[Not({retooling})]"
+							size = {{ 100% 100% }}
+							tooltip = "PMR_BAR_FULL_TOOLTIP"
 							using = tooltip_above
 						}}
 					}}
@@ -957,7 +1035,8 @@ def recipe_bar(bk, b):
 """
 
 
-def patch_building_panel(text, buildings):
+def patch_building_panel(recipe_keys, text):
+    buildings = list(recipe_keys)
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
     # 1. In the condensed production method grid, a PMR building type shows only its single-method
@@ -976,7 +1055,7 @@ def patch_building_panel(text, buildings):
     if text.count(anchor) != 1:
         raise SystemExit(f'building_details_panel.gui: expected one {anchor.strip()!r}, found '
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
-    text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk)) for bk in buildings))
+    text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), len(recipe_keys[bk])) for bk in buildings))
     return text
 
 
@@ -1065,27 +1144,27 @@ def patch_building_grids(text, buildings, name, expected):
     return text
 
 
-def panel_loc(buildings):
+def panel_loc(recipe_keys):
     loc = [
         ' PMR_RECIPE_BAR_TITLE:0 "#bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
         ' PMR_RECIPE_BAR_TITLE_RETOOLING:0 "Retooling to #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
         ' PMR_BAR_FULL:0 "#bold 100%#!"',
-        ' PMR_BAR_FULL_TOOLTIP:0 "[Building.GetCustom(\'pmr_new_recipe\')]: #bold 100%#!"',
+        ' PMR_BAR_FULL_TOOLTIP:0 "Every level runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!."',
         ' PMR_RECIPE_BAR_TOOLTIP:0 "This building runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!. When your country researches a newer recipe it switches automatically, and the change takes effect as retooling construction completes."',
     ]
-    for bk in buildings:
+    for bk, keys in recipe_keys.items():
         b = short(bk)
 
         def var(name, f):
             return f"[Building.GetState.MakeScope.Var('{name}_{b}').GetValue|{f}]"
+        tiers = ''.join(f'\\n{TIER_COLORS[i - 1][0]}, ${key}$: #bold {var(f"pmr_sh_{i}", "%0")}#!'
+                        for i, key in enumerate(keys, 1))
         loc += [
-            f' PMR_BAR_OLD_{b}:0 "#bold {var("pmr_bar_old", "%0")}#!"',
-            f' PMR_BAR_NEW_{b}:0 "#bold {var("pmr_p", "%0")}#!"',
-            f' PMR_BAR_TOOLTIP_{b}:0 "#bold Retooling#!\\n[Building.GetCustom(\'pmr_old_recipe\')] (gold): #bold {var("pmr_bar_old", "%0")}#!'
-            f'\\n[Building.GetCustom(\'pmr_new_recipe\')] (blue): #bold {var("pmr_p", "%0")}#!'
-            f'\\nRetooling levels built: {var("pmr_retool_built", "0")} of {var("pmr_retool_total", "0")}'
-            f'\\n\\nPrivate owners: {var("pmr_retool_built_priv", "0")} built of {var("pmr_cap_priv", "0")}. Only investors who own part of this building fund these, from the investment pool.'
-            f'\\nGovernment: {var("pmr_retool_built_gov", "0")} built of {var("pmr_cap_gov", "0")}. Queue these yourself: build #bold $building_pmr_retool_gov_{b}$#! in this state."',
+            f' PMR_BAR_PCT_{b}:0 "#bold {var("pmr_p", "%0")}#!"',
+            f' PMR_BAR_TOOLTIP_{b}:0 "#bold Levels by recipe#!{tiers}'
+            f'\\n\\nLevels still to retool to [Building.GetCustom(\'pmr_new_recipe\')]: #bold {var("pmr_need", "0")}#!'
+            f'\\n\\nPrivate investors: #bold {var("pmr_pending_priv", "0")}#! queued, room for #bold {var("pmr_room_priv", "0")}#! more. Only investors who own part of this building fund these, from the investment pool.'
+            f'\\nGovernment: #bold {var("pmr_pending_gov", "0")}#! queued, room for #bold {var("pmr_room_gov", "0")}#! more. Queue these yourself: build #bold $building_pmr_retool_gov_{b}$#! in this state."',
         ]
     return loc
 
@@ -1176,6 +1255,21 @@ pmr_test_setup_decision = {
 	ai_chance = { value = 0 }
 }
 
+# A newer recipe arriving mid-retool: the levels already on Bessemer stay on it, and every level
+# not on Open Hearth is now to retool.
+pmr_test_open_hearth_decision = {
+	is_shown = { has_technology_researched = bessemer_process }
+	possible = { always = yes }
+	when_taken = {
+		add_technology_researched = open_hearth_process
+		capital = {
+			debug_log = "PMR;rec=TEST;arm=OPEN_HEARTH;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting]"
+		}
+		every_scope_state = { pmr_state_tick = yes }
+	}
+	ai_chance = { value = 0 }
+}
+
 pmr_test_tick_decision = {
 	is_shown = { always = yes }
 	possible = { always = yes }
@@ -1209,6 +1303,8 @@ COUNT_QUEUES = '''pmr_count_queues = {
 DECISION_LOC = [
     ' pmr_test_setup_decision:0 "PMR test: grant Bessemer and a steel mill"',
     ' pmr_test_setup_decision_desc:0 "If the capital has no Steel Mills, creates five government-owned levels there; then researches the Bessemer Process, which switches every Steel Mills to it and opens retooling."',
+    ' pmr_test_open_hearth_decision:0 "PMR test: grant Open Hearth"',
+    ' pmr_test_open_hearth_decision_desc:0 "Researches the Open Hearth Process, which switches every Steel Mills to it, including mills still part way through retooling to Bessemer."',
     ' pmr_test_tick_decision:0 "PMR test: recompute retooling now"',
     ' pmr_test_tick_decision_desc:0 "Runs the monthly PMR tick on every state you own immediately, instead of waiting for the month to turn, and logs how many building levels sit in each construction queue."',
 ]
