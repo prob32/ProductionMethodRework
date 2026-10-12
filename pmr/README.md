@@ -29,9 +29,11 @@ the 1.14.x open beta, `supported_version = 1.14.*`.
 | The building panel | A shadowed `gui/building_details_panel.gui` (vanilla's, with two patches the generator asserts). On a PMR building the production method row shows only the fixed labour slot, drawn as the building's main output good in gold (`tools/pmr/icons.py`, written to `gfx/.../production_method_icons/pmr_labour_<b>.dds`). Beside it a recipe bar, sized to sit between that slot and the employment and cash-reserve bars: gold is the recipe the building fully runs, blue the share already retooled to the new one. It reads the state's `pmr_bar_old_<b>` and `pmr_p_<b>` and two building custom localizations, `pmr_old_recipe` and `pmr_new_recipe`. |
 | Recipes switch on research | With the selector gone, each tick finds the newest recipe the building can run (the last in the vanilla group that `can_activate_production_method` allows) and, when that rises, activates it, which starts retooling like any switch. A newly constructed building starts on the newest recipe at no cost. |
 
-p is recomputed on three hooks, all appended to vanilla on_actions the documented way:
-`on_production_method_changed` (the switch is seen at once), `on_building_built` (each completed
-retool level moves p at once), and `on_monthly_pulse_state` (backstop). A save that predates the mod
+p is recomputed on these hooks, all appended to vanilla on_actions the documented way:
+`on_production_method_changed` (the switch is seen at once), `on_acquired_technology` (research
+switches at once), `on_building_built` and `on_building_expanded` (a building's first level and each
+later one; together every completed retool level moves p at once), and `on_monthly_pulse_state`
+(backstop). A save that predates the mod
 adopts each building's current recipe with no lag on its first tick.
 
 ## Scope
@@ -102,7 +104,7 @@ has run yet; the run sheet says how each shows up when it fails.
    reads building-scope goods modifiers, but never this exact pair.
 2. `start_building_construction` and `start_privately_funded_building_construction` accept a modded
    building gated by a `potential` trigger, and calling one N × L times queues N × L levels.
-3. `on_production_method_changed` and `on_building_built` fire with the building as root.
+3. `on_production_method_changed`, `on_building_built` and `on_building_expanded` fire with the building as root.
 4. `level_after_queued_constructions` and `country_ownership_fraction` behave as documented.
 5. `[THIS.GetBuilding.GetState...]` and `[THIS.Var('x').GetValue]` resolve inside `debug_log` text in
    building scope.

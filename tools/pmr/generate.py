@@ -964,6 +964,7 @@ ON_ACTIONS = '''# Appended to vanilla on_actions the documented way (_on_actions
 on_game_started = { on_actions = { pmr_on_game_started } }
 on_production_method_changed = { on_actions = { pmr_on_production_method_changed } }
 on_building_built = { on_actions = { pmr_on_building_built } }
+on_building_expanded = { on_actions = { pmr_on_building_expanded } }
 on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }
 on_acquired_technology = { on_actions = { pmr_on_acquired_technology } }
 
@@ -984,9 +985,18 @@ pmr_on_production_method_changed = {
 	}
 }
 
-# Root = building that completed construction. A finished retool level moves p at once, and a
-# new or expanded PMR building is seen (and its new level counted) without waiting for the month.
+# Root = building whose first level just completed. A new retool building moves p at once, and a
+# new PMR building is seen without waiting for the month.
 pmr_on_building_built = {
+	effect = {
+		pmr_tick_parent_of_retool = yes
+		pmr_built_building = yes
+	}
+}
+
+# Root = building that just completed a further level. on_building_built fires only for a
+# building's first level, so without this every later retool level waited for the month to turn.
+pmr_on_building_expanded = {
 	effect = {
 		pmr_tick_parent_of_retool = yes
 		pmr_built_building = yes

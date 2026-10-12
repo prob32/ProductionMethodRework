@@ -17,6 +17,7 @@ error there means the mechanism below never ran, and a missing log line is then 
 | No `rec=LOADED` line | The mod is not in the playset, or `on_game_started` is not reaching appended on_actions. Check the playset first. | Anything about the design. |
 | `rec=LOADED` but no `rec=INIT` lines | `pmr_state_tick` is not reaching buildings: `b:<building>` or `has_building` failed. Take **PMR test: recompute retooling now** and look again. | — |
 | Switching the recipe gives no `rec=SWITCH` until the month turns | `on_production_method_changed` does not run appended on_actions. The monthly backstop still works; the switch is just seen late. | A failure of the lag. |
+| The first retool level writes a `rec=TICK` the day it completes, but later levels only show at the month turn | `on_building_expanded` does not run appended on_actions. p still catches up monthly; it is only late. | A failure of retooling. |
 | `rec=SWITCH` with `queued=0`, and no **Retooling: Steel Mills** in either construction queue | The game refused to queue `building_pmr_retool_steel_mill`. This is the riskiest assumption. Look in `error.log` for the reason. | A failure of p. |
 | `queued=0`, but **Retooling: Steel Mills** entries are in the queue | Script cannot see a building that is still entirely under construction, so the readback is blind until the first level lands. The queue works; watch for `retool_built=1` when it does. | A failure to queue. |
 | `rec=SWITCH` with `queued=1` while `retool_total=5` | Repeated `start_building_construction` calls collapse into one queue entry. The fix is to queue one level at a time as each completes; tell me and I'll switch it. | — |
@@ -113,7 +114,8 @@ both recipes and reads `Retooling levels built: 0 of 5`.
 numbers: iron 60 × (1 − 0.33333) = **40** per level and steel 90 × (1 − 0.27778) = **65** per level,
 coal **30** throughout. If the figures read 60 and 90, see the lag-modifier row in the null table.
 
-**8. Let retooling build.** Each completed level writes, at once (from `on_building_built`):
+**8. Let retooling build.** Each completed level writes, the day it lands (the first from
+`on_building_built`, later ones from `on_building_expanded`):
 
 ```
 PMR;rec=TICK;...;retool_built=1;retool_total=5;p=0.200
