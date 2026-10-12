@@ -75,14 +75,18 @@ or remove the lag modifier and to read its ownership.
 - **Newest means last in the vanilla list.** Vanilla orders recipe groups oldest first; the generator
   does not check that every group is a strict progression.
 - **Only research and new construction switch recipes.** Automation and any other multi-method group
-  on a PMR building are hidden too and stay on whatever they run. The building browser's
-  per-building-type production method menus still exist and still switch recipes; such a switch
-  retools like any other.
+  on a PMR building are hidden too and stay on whatever they run, in the building panel, the
+  Buildings tab and the market panel's building lists.
 - **Pollution has no lag.** It is a state modifier, not a building one.
 - **Other `_mult`s on the same good combine with the lag additively**, exactly as the design notes
   for recipes: a +25% steel bonus during Blister → Bessemer gives 90 × (1 + 0.25 − 0.278 × (1 − p)).
 - **The government share is read in 5% steps** through `country_ownership_fraction`, a ladder of
   constant comparisons, so no trigger needs a variable on its right-hand side.
+- **Retool levels need an investor to reach the private queue.** In 1.14.5 a privately funded
+  retool level landed in the government queue while `bg_pmr_retool` stood alone. Investors pick by
+  the building groups their `investment_scores` name, so `bg_pmr_retool` is now a child of
+  `bg_manufacturing`, which Financial Districts score. Not yet confirmed in game; the run sheet's
+  private-queue control tells the effect failing apart from the group failing.
 - **The retool building is gated, not unbuildable.** `potential` is true only while script holds a
   state variable for that retool, and `ai_value = 0`, because no vanilla script ever queues a
   `buildable = no` building and a queued construction may need its building to stay possible.

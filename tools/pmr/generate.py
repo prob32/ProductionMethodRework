@@ -340,10 +340,11 @@ def main():
             f'\tbuilding_group = bg_pmr_retool\n'
             f'\ticon = "{icon}"\n'
             f'\tcity_type = none\n'
-            f'\t# Every building vanilla lets private investors build says ownership_type = self; without it\n'
-            f'\t# 1.14.5 put privately funded retool levels in the government queue.\n'
+            f'\t# Every building vanilla lets private investors build says ownership_type = self.\n'
             f'\townership_type = self\n'
             f'\tdownsizeable = no\n'
+            f'\t# bg_pmr_retool sits under bg_manufacturing, which auto-expands; retool levels come only from script.\n'
+            f'\tshould_auto_expand = {{ always = no }}\n'
             f'\t# Open only while script is retooling a {bk} in this state.\n'
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             f'\tai_value = 0\n'
@@ -394,11 +395,14 @@ def main():
     write('common/production_method_groups/pmr_labour_groups.txt', header + '\n'.join(labour_groups))
     write('common/buildings/pmr_retool_buildings.txt', header + '\n'.join(retools))
     write('common/building_groups/pmr_building_groups.txt', header +
-          '# Shaped on vanilla bg_monuments_hidden: no lens, not in the outliner. With neither a category nor\n'
-          '# is_government_funded, 1.14.5 showed privately funded retool levels in the government queue;\n'
-          '# both are set here on the guess that the group decides which queue a construction joins.\n'
-          'bg_pmr_retool = {\n\tcategory = urban\n\tis_government_funded = no\n\talways_possible = yes\n'
-          '\tis_shown_in_outliner = no\n}\n')
+          '# No lens, not in the outliner. 1.14.5 put privately funded retool levels in the government queue\n'
+          '# with this group standing alone, even marked is_government_funded = no and its buildings\n'
+          '# ownership_type = self. A private construction needs an investor, and investors (Financial\n'
+          '# Districts, Manor Houses) pick by the building groups their investment_scores name, which a\n'
+          '# child group inherits from its parent. bg_manufacturing is the parent with no land usage or\n'
+          '# resource cap to inherit; Financial Districts score it.\n'
+          'bg_pmr_retool = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
+          '\talways_possible = yes\n\tis_shown_in_outliner = no\n}\n')
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/static_modifiers/pmr_lag_modifiers.txt', header + '\n'.join(lags))
@@ -425,7 +429,7 @@ def main():
     report['modifier_types_defined'] = missing
     loc += mloc
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
-          + dispatch_effects(dispatch))
+          + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building is retooling from, and the one it runs or retools to.\n'
@@ -868,19 +872,24 @@ def block_end(text, start):
 
 def patch_type_grids(text, buildings, name, expected):
     """A vanilla GUI file's per-building-type production method grids (the building browser's,
-    which switch every building of a type at once): for PMR building types the grid's items are
-    hidden and one static fixed-labour icon takes their place. Asserted per file."""
+    which switch every building of a type at once): for PMR building types the whole grid is
+    hidden and one static fixed-labour icon takes its place. Asserted per file.
+
+    1.14.5 ignored a visible on the grid's items here (the browser still showed every selector), so
+    the grid itself is hidden. The type test uses the BuildingType datacontext each of these grids
+    sits in, in the form vanilla's own company panels use."""
     out, pos, n = [], 0, 0
     pattern = re.compile(r'datamodel = "\[(\w+)\.GetBuildingType\.AccessProductionMethodGroups\]"')
+
+    def is_bt(bk):
+        return f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
+
+    any_expr = is_bt(buildings[-1])
+    for bk in reversed(buildings[:-1]):
+        any_expr = f'Or({is_bt(bk)}, {any_expr})'
     for m in pattern.finditer(text):
-        ctx = m.group(1)
-        types = [f"ObjectsEqual({ctx}.GetBuildingType, GetBuildingType('{bk}').Self)" for bk in buildings]
-        any_expr = types[-1]
-        for t in reversed(types[:-1]):
-            any_expr = f'Or({t}, {any_expr})'
         grid = text.rfind('fixedgridbox = {', 0, m.start())
-        w = text.index('widget = {\n', m.end()) + len('widget = {\n')
-        ind = text[text.rfind('\n', 0, w - len('widget = {\n')) + 1:w - len('widget = {\n')] + '\t'
+        inner = text.index('\n', grid) + 1
         end = block_end(text, grid)
         gind = text[text.rfind('\n', 0, grid) + 1:grid]
         # place the icon where the grid's first cell is: copy the grid's own position and anchor
@@ -889,14 +898,14 @@ def patch_type_grids(text, buildings, name, expected):
                         if l.strip().startswith(('position =', 'parentanchor =')))
         icons = ''.join(
             f'\n{gind}# PMR: fixed labour icon for {bk}\n{gind}widget = {{\n'
-            f'{gind}\tvisible = "[ObjectsEqual({ctx}.GetBuildingType, GetBuildingType(\'{bk}\').Self)]"\n'
+            f'{gind}\tvisible = "[{is_bt(bk)}]"\n'
             f'{place}{gind}\tsize = {{ 50 50 }}\n'
             f'{gind}\ticon = {{\n{gind}\t\tsize = {{ 40 40 }}\n{gind}\t\tparentanchor = center\n'
             f'{gind}\t\ttexture = "gfx/interface/icons/production_method_icons/pmr_labour_{short(bk)}.dds"\n'
             f'{gind}\t}}\n{gind}}}\n'
             for bk in buildings)
-        out += [text[pos:w], f'{ind}# PMR: no selectors for PMR building types\n{ind}visible = "[Not({any_expr})]"\n',
-                text[w:end], icons]
+        out += [text[pos:inner], f'{gind}\t# PMR: no selectors for PMR building types\n{gind}\tvisible = "[Not({any_expr})]"\n',
+                text[inner:end], icons]
         pos = end
         n += 1
     if n != expected:
@@ -1025,12 +1034,48 @@ pmr_test_tick_decision = {
 	is_shown = { always = yes }
 	possible = { always = yes }
 	when_taken = {
-		capital = {
-			debug_log = "PMR;rec=TEST;arm=TICK_NOW;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting]"
-		}
 		every_scope_state = { pmr_state_tick = yes }
+		capital = {
+			pmr_count_queues = yes
+			debug_log = "PMR;rec=TEST;arm=TICK_NOW;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];queued_gov=[THIS.Var('pmr_q_gov').GetValue|0];queued_priv=[THIS.Var('pmr_q_priv').GetValue|0]"
+		}
 	}
 	ai_chance = { value = 0 }
+}
+
+# Control for the private queue: the same effect PMR uses for retooling, on a vanilla building that
+# Financial Districts invest in. Tells "this effect cannot reach the private queue" apart from
+# "the private queue will not take PMR's retool building".
+pmr_test_private_control_decision = {
+	is_shown = { always = yes }
+	possible = { always = yes }
+	when_taken = {
+		capital = {
+			pmr_count_queues = yes
+			set_variable = { name = pmr_q_gov_before value = var:pmr_q_gov }
+			set_variable = { name = pmr_q_priv_before value = var:pmr_q_priv }
+			start_privately_funded_building_construction = building_steel_mill
+			pmr_count_queues = yes
+			debug_log = "PMR;rec=TEST;arm=PRIVATE_CONTROL;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];building=building_steel_mill;gov_before=[THIS.Var('pmr_q_gov_before').GetValue|0];gov_after=[THIS.Var('pmr_q_gov').GetValue|0];priv_before=[THIS.Var('pmr_q_priv_before').GetValue|0];priv_after=[THIS.Var('pmr_q_priv').GetValue|0]"
+		}
+	}
+	ai_chance = { value = 0 }
+}
+'''
+
+# State scope: the owner's queued building levels, government and private, into pmr_q_gov / pmr_q_priv.
+# The triggers only compare, so count up to them.
+COUNT_QUEUES = '''pmr_count_queues = {
+	set_variable = { name = pmr_q_gov value = 0 }
+	while = {
+		limit = { owner = { construction_queue_num_queued_government_levels > prev.var:pmr_q_gov } }
+		change_variable = { name = pmr_q_gov add = 1 }
+	}
+	set_variable = { name = pmr_q_priv value = 0 }
+	while = {
+		limit = { owner = { construction_queue_num_queued_private_levels > prev.var:pmr_q_priv } }
+		change_variable = { name = pmr_q_priv add = 1 }
+	}
 }
 '''
 
@@ -1038,7 +1083,9 @@ DECISION_LOC = [
     ' pmr_test_setup_decision:0 "PMR test: grant Bessemer and a steel mill"',
     ' pmr_test_setup_decision_desc:0 "If the capital has no Steel Mills, creates five levels there; then researches the Bessemer Process, which switches the mill to it and starts retooling."',
     ' pmr_test_tick_decision:0 "PMR test: recompute retooling now"',
-    ' pmr_test_tick_decision_desc:0 "Runs the monthly PMR tick on every state you own immediately, instead of waiting for the month to turn."',
+    ' pmr_test_tick_decision_desc:0 "Runs the monthly PMR tick on every state you own immediately, instead of waiting for the month to turn, and logs how many building levels sit in each construction queue."',
+    ' pmr_test_private_control_decision:0 "PMR test: queue one private Steel Mills level"',
+    ' pmr_test_private_control_decision_desc:0 "Queues one Steel Mills level in the capital with the same privately funded effect PMR uses for retooling, and logs both construction queues before and after."',
 ]
 
 
