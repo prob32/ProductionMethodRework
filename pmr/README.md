@@ -26,7 +26,7 @@ the 1.14.x open beta, `supported_version = 1.14.*`.
 | 4. p is driven by construction | `building_pmr_retool_<b>` costs 50% of the building's construction cost ÷ N per level (steel: 800 × 0.5 ÷ 4 = 100). A switch queues N × level of it: the government-owned share through `start_building_construction`, the rest through `start_privately_funded_building_construction`. |
 | 5. p is read, not accumulated | `p = (retool.level ÷ N + level − L_start) ÷ level`, clamped to 0..1, in `pmr_tick_<b>`. When p reaches 1 the lag and the retool building are removed. |
 
-| The building panel | A shadowed `gui/building_details_panel.gui` (vanilla's, with two patches the generator asserts). On a PMR building the production method row shows only the fixed labour slot, drawn as the building's main output good in gold (`tools/pmr/icons.py`, written to `gfx/.../production_method_icons/pmr_labour_<b>.dds`). Beside it a recipe bar, sized to sit between that slot and the employment and cash-reserve bars: gold is the recipe the building fully runs, blue the share already retooled to the new one. It reads `pmr_bar_old`, `pmr_p` and two building custom localizations, `pmr_old_recipe` and `pmr_new_recipe`. |
+| The building panel | A shadowed `gui/building_details_panel.gui` (vanilla's, with two patches the generator asserts). On a PMR building the production method row shows only the fixed labour slot, drawn as the building's main output good in gold (`tools/pmr/icons.py`, written to `gfx/.../production_method_icons/pmr_labour_<b>.dds`). Beside it a recipe bar, sized to sit between that slot and the employment and cash-reserve bars: gold is the recipe the building fully runs, blue the share already retooled to the new one. It reads the state's `pmr_bar_old_<b>` and `pmr_p_<b>` and two building custom localizations, `pmr_old_recipe` and `pmr_new_recipe`. |
 | Recipes switch on research | With the selector gone, each tick finds the newest recipe the building can run (the last in the vanilla group that `can_activate_production_method` allows) and, when that rises, activates it, which starts retooling like any switch. A newly constructed building starts on the newest recipe at no cost. |
 
 p is recomputed on three hooks, all appended to vanilla on_actions the documented way:
@@ -42,6 +42,14 @@ holds two or more recipes. Skipped: synthetics plant, electrics industry and gol
 each), and the government, military, urban, infrastructure, monument, canal, subsistence, company
 and construction-sector buildings, whose first group is not a goods recipe or whose retooling would
 be paid for by itself.
+
+## Where PMR keeps its numbers
+
+Buildings cannot hold script variables on 1.14.5 (`This scope doesn't support variables. Scope:
+Building`), so every number PMR keeps for a building lives on its state, named by building type:
+`pmr_p_steel_mill` on a state is that state's steel mill's p. A state has at most one building of
+each type. The tick runs in state scope and touches the building through `b:<type>` only to add
+or remove the lag modifier and to read its ownership.
 
 ## Choices made where the design was silent
 
