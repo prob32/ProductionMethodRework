@@ -23,7 +23,7 @@ the 1.14.x open beta, `supported_version = 1.14.*`.
 | 1. Labour is fixed | Each treated building gets `pmg_pmr_labour_<b>` with one method, `pm_pmr_labour_<b>`, holding the default recipe's `level_scaled` employment. The recipe methods lose their `building_employment_*` lines. Steel: shopkeepers 500, laborers 3500, machinists 750, engineers 250, from Blister. |
 | 2. Recipes are ordinary methods | The vanilla recipe methods, unchanged apart from employment: `goods_input_<g>_add` / `goods_output_<g>_add` in `workforce_scaled`. Vanilla files are shadowed whole under their own names, so every other byte is the game's. |
 | 3. Gradual switch | `common/static_modifiers/pmr_lag_modifiers.txt`: one modifier per ordered recipe pair, values old/new − 1. Applied to the building with `multiplier = 1 − p` and re-applied whenever p moves. Steel Blister → Bessemer is `goods_input_iron_mult = -0.33333`, `goods_output_steel_mult = -0.27778`, no coal entry. |
-| 4. p is driven by construction | `building_pmr_retool_<b>` costs 50% of the building's construction cost ÷ N per level, with N = 1 (steel: 800 × 0.5 = 400). A switch queues N × level of it, one per building level: the government-owned share through `start_building_construction`, the rest through `start_privately_funded_building_construction`. |
+| 4. p is driven by construction | Two pseudo-buildings per building type, each costing 50% of the building's construction cost ÷ N per level, with N = 1 (steel: 800 × 0.5 = 400). `building_pmr_retool_<b>` is built only by private investors, for the privately owned share of the levels at the switch; `building_pmr_retool_gov_<b>` only by the government, for its share. Nothing queues them: the investment pool picks the private one (AI value 1,000,000 while it has room) and the player, or an AI government, builds the government one. `can_build_private` / `can_build_government` cap each at its share, the way vanilla caps trade centers under the canton system. Every tick re-splits the levels nobody has built or queued by current ownership, so a privatisation mid-retool hands the rest to investors. |
 | 5. p is read, not accumulated | `p = (retool.level ÷ N + level − L_start) ÷ level`, clamped to 0..1, in `pmr_tick_<b>`. When p reaches 1 the lag and the retool building are removed. |
 
 | The building panel | A shadowed `gui/building_details_panel.gui` (vanilla's, with two patches the generator asserts). On a PMR building the production method row shows only the fixed labour slot, drawn as the building's main output good in gold (`tools/pmr/icons.py`, written to `gfx/.../production_method_icons/pmr_labour_<b>.dds`). Beside it a recipe bar, sized to sit between that slot and the employment and cash-reserve bars: gold is the recipe the building fully runs, blue the share already retooled to the new one. It reads the state's `pmr_bar_old_<b>` and `pmr_p_<b>` and two building custom localizations, `pmr_old_recipe` and `pmr_new_recipe`. |
@@ -84,14 +84,14 @@ or remove the lag modifier and to read its ownership.
   for recipes: a +25% steel bonus during Blister → Bessemer gives 90 × (1 + 0.25 − 0.278 × (1 − p)).
 - **The government share is read in 5% steps** through `country_ownership_fraction`, a ladder of
   constant comparisons, so no trigger needs a variable on its right-hand side.
-- **Retool levels need an investor to reach the private queue.** In 1.14.5 a privately funded
-  retool level landed in the government queue while `bg_pmr_retool` stood alone. Investors pick by
-  the building groups their `investment_scores` name, so `bg_pmr_retool` is now a child of
-  `bg_manufacturing`, which Financial Districts score. Not yet confirmed in game; the run sheet's
-  private-queue control tells the effect failing apart from the group failing.
-- **The retool building is gated, not unbuildable.** `potential` is true only while script holds a
-  state variable for that retool, and `ai_value = 0`, because no vanilla script ever queues a
-  `buildable = no` building and a queued construction may need its building to stay possible.
+- **Investors need a group they score.** `bg_pmr_retool` is a child of `bg_manufacturing`, which
+  Financial Districts score; standing alone, 1.14.5 never gave it a private investor. Countries
+  whose private investment comes only from Manor Houses (which score manufacturing 0) may never
+  retool their private share.
+- **Whether AI value steers the investment pool is untested.** The run sheet says what a null
+  looks like; the fallback is PMR queuing the private share itself, as it did before.
+- **The retool buildings are gated.** `potential` is true only while script holds a state variable
+  for that retool, so neither shows in any construction list outside a retool.
 
 ## Assumptions about game script that are not verified in game
 

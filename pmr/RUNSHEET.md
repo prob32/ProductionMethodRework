@@ -1,4 +1,4 @@
-# PMR run sheet: Blister → Bessemer in one steel mill
+# PMR run sheet: Blister → Bessemer, retooled by investors and the government
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,144 +10,108 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
+## How retooling is funded now
+
+Nothing queues retooling for you any more. When research switches a building, PMR opens two
+pseudo-buildings in its state and gives each a cap:
+
+- **Retooling: Steel Mills** is built only by private investors, from the investment pool, for the
+  privately owned share of the levels. While it has room its AI value is 1,000,000 against vanilla's
+  usual 1,000, so the pool should pick it before anything else.
+- **Retooling (Government): Steel Mills** is built only by the government, for the government-owned
+  share. You queue it yourself from the state's Buildings tab or the development construction list.
+  AI governments pick it the same way investors pick the private one.
+
+Every tick re-reads who owns the mill. If the private sector buys government levels mid-retool, the
+levels nobody has built or queued yet move to the private side, and the reverse for a
+nationalisation. Levels already built or queued stay where they are.
+
+The log lines carry: `gov_frac` (government-owned share of the mill), `built_gov` / `built_priv`
+(completed retool levels), `with_queued_gov` / `with_queued_priv` (completed plus queued), and
+`cap_gov` / `cap_priv` (the most each side may have, completed plus queued).
+
 ## What each null means, decided before the run
 
 | You see | It means | Not |
 | --- | --- | --- |
 | No `rec=LOADED` line | The mod is not in the playset, or `on_game_started` is not reaching appended on_actions. Check the playset first. | Anything about the design. |
 | `rec=LOADED` but no `rec=INIT` lines | `pmr_state_tick` is not reaching buildings: `b:<building>` or `has_building` failed. Take **PMR test: recompute retooling now** and look again. | — |
-| Switching the recipe gives no `rec=SWITCH` until the month turns | `on_production_method_changed` does not run appended on_actions. The monthly backstop still works; the switch is just seen late. | A failure of the lag. |
-| The first retool level writes a `rec=TICK` the day it completes, but later levels only show at the month turn | `on_building_expanded` does not run appended on_actions. p still catches up monthly; it is only late. | A failure of retooling. |
-| `rec=SWITCH` with `queued=0`, and no **Retooling: Steel Mills** in either construction queue | The game refused to queue `building_pmr_retool_steel_mill`. This is the riskiest assumption. Look in `error.log` for the reason. | A failure of p. |
-| `queued=0`, but **Retooling: Steel Mills** entries are in the queue | Script cannot see a building that is still entirely under construction, so the readback is blind until the first level lands. The queue works; watch for `retool_built=1` when it does. | A failure to queue. |
-| `rec=SWITCH` with `queued=1` while `retool_total=5` | Repeated `start_building_construction` calls collapse into one queue entry. The fix is to queue one level at a time as each completes; tell me and I'll switch it. | — |
-| **PMR test: queue one private Steel Mills level** logs `priv_after` = `priv_before` + 1 and the level shows under **Private**, but **Retooling: Steel Mills** still lands under **Government** | The effect does reach the private queue, and investors still will not take the retool building even as a child of manufacturing. The next step is giving Financial Districts and Manor Houses an investment score for it directly. | A failure of the control. |
-| The control logs `gov_after` = `gov_before` + 1 and its Steel Mills level shows under **Government** too | `start_privately_funded_building_construction` never makes a private construction on 1.14.5, whatever the building. Script cannot reach the private queue this way; the only route left is letting the investment pool pick the retool building itself. | Anything about the retool building. |
-| The control's before and after numbers are all equal, or print in brackets | The queue counters failed, not the queue. Read the **Construction** panel's Government and Private tabs instead. | A failed construction. |
-| `gov_frac=0.00` on a government-owned mill | `country_ownership_fraction` does not read government ownership; everything goes to the private queue. | — |
+| `error.log` names `pmr_retool_room_`, `pmr_room_value_` or `num_levels` | The build caps did not load or evaluate, so the game decides who may build retooling without them. Send me the lines. | A failure of the investors. |
+| Months pass with money in the investment pool, Yorkshire's line keeps `cap_priv=8;with_queued_priv=0`, and no **Retooling: Steel Mills** appears in the Private queue | The investment pool will not pick the retool building: either AI value does not steer it, or the cap check refuses investors. Hover **Retooling: Steel Mills** in Yorkshire's construction list and send me what the tooltip says it lacks. The fallback is PMR queuing the private levels itself, which worked last run. | A failure of the cap. |
+| Investors queue the first private level, then never a second, though `cap_priv` is above `with_queued_priv` | The pool will not expand a building with no workforce. Vanilla skips expanding buildings it judges understaffed, and a retool building has no staff at all. | — |
+| `with_queued_priv` passes `cap_priv`, or more than 8 private levels are ever queued in Yorkshire | The private cap is not enforced: `level_after_queued_constructions` or `scope:num_levels` did not read as expected in `can_build_private`. | — |
+| **Retooling (Government): Steel Mills** is not in the capital's construction list at all | Its `potential` failed, or the development lens does not list it. The cap is untested; tell me. | — |
+| It is listed but greyed out while the capital's line says `cap_gov=5;with_queued_gov=0` | The government cap refused the first level. Send me the tooltip. | — |
+| You can queue a sixth government level in the capital | The government cap is not enforced. | — |
+| After a privatisation, the next line still shows the old `gov_frac` and `cap_gov` | `country_ownership_fraction` did not see the sale, or ownership changed without a tick yet. Take **PMR test: recompute retooling now** before calling it. | — |
+| A completed retool level only shows at the month turn, not the day it lands | `on_building_expanded` (later levels) or `on_building_built` (the first) does not run appended on_actions. p still catches up monthly. | A failure of retooling. |
 | `error.log` says `Unknown modifier type: goods_input_iron_mult` (or any `goods_..._mult`) | The game did not accept PMR's definitions in `common/modifier_type_definitions/pmr_modifier_types.txt`, so the lag modifier carries nothing and the recipe switches at once. | — |
-| Lag modifier shows on the building but the steel and iron figures match plain Bessemer after two weeks | Building-scope `goods_*_mult` from a timed modifier is not read by the economy. This kills design point 3 as written. Ironroad measured up to 12 game days before an applied modifier shows in readbacks, so wait two weeks before calling it. | — |
-| The setup decision writes `rec=RESEARCH;...;best=2` but no `rec=SWITCH` follows, even after the month turns | `activate_production_method` in state scope did not switch the mill. Recipes cannot change without the selector, so tell me and I'll move the switch to another effect. | A failure of retooling. |
-| Researching a recipe normally (or through the console) gives no `rec=RESEARCH` until the month turns | `on_acquired_technology` did not fire for that kind of research. The monthly tick still switches the building; take **PMR test: recompute retooling now** to see it at once. | A failure of the switch. |
-| No `rec=RESEARCH` line after the setup decision | `can_activate_production_method` said no to Bessemer in the capital. Look at the INIT line's `best=`: if it reads 1 after the research, this trigger is the problem. | — |
-| The Buildings tab's Steel Mills row still shows a Steelmaking Process or automation button | The shadowed `gui/production_methods.gui` is not loading, or its building-type check (now on the whole grid, in the form vanilla's company panels use) still fails. | — |
-| The Steel Mills panel still shows the Steelmaking Process or automation slot | The shadowed `gui/building_details_panel.gui` is not loading, or its building-type check failed. The selectors are hidden by building type, not by any script state. | Anything about the economy. |
-| The recipe bar reads 0% or stays all blue on a mill with a `rec=INIT` line | The panel cannot read the state variables (`pmr_bar_old_steel_mill` and the like) PMR keeps for the mill. | A failure of retooling. |
-| The recipe bar's name is blank or shows `pmr_new_recipe` | The building custom localization did not resolve. The bar's numbers still stand. | — |
-| A field prints as text in brackets rather than a number | A log datafunction did not resolve on this build. The instrument failed, not the mod; the other fields on the line still stand. | — |
+| Lag modifier shows on the building but the steel and iron figures match plain Bessemer after two weeks | Building-scope `goods_*_mult` from a timed modifier is not read by the economy. Ironroad measured up to 12 game days before an applied modifier shows in readbacks, so wait two weeks before calling it. | — |
+| The setup decision writes `rec=RESEARCH;...;best=2` but no `rec=SWITCH` follows, even after the month turns | `activate_production_method` in state scope did not switch the mill. | A failure of retooling. |
+| No `rec=RESEARCH` line after the setup decision | `can_activate_production_method` said no to Bessemer. Look at the INIT line's `best=`. | — |
+| The Buildings tab's Steel Mills row shows a recipe or automation button again | The shadowed `gui/production_methods.gui` stopped loading. | — |
+| The Steel Mills panel shows the Steelmaking Process or automation slot | The shadowed `gui/building_details_panel.gui` is not loading. | Anything about the economy. |
+| The recipe bar reads 0% or stays all blue on a mill with a `rec=INIT` line | The panel cannot read the state variables PMR keeps for the mill. | A failure of retooling. |
+| A field prints as text in brackets rather than a number | A log datafunction did not resolve on this build. The instrument failed, not the mod. | — |
 
 ## The run
 
 **1. Install.** Copy `ProductionMethodRework` into `Documents\Paradox Interactive\Victoria 3\mod\`,
-add it to a playset on its own, launch.
+add it to a playset on its own, launch. Start a **new** game: retooling a save from an earlier
+build carries that build's queued levels.
 
-**2. Start a game as Great Britain** (any country works; GBR has spare construction). Before unpausing,
-look for:
+**2. Start as Great Britain.** Before unpausing, expect `PMR;rec=LOADED` and one `rec=INIT` per
+treated building; every steel mill line says `from=1;to=1`.
 
-```
-PMR;rec=LOADED;date=1836.1.1;hook=on_game_started
-PMR;rec=INIT;...;building=building_steel_mill;from=1;to=1;level=<L>;l_start=<L>;retool_built=0;retool_total=0;p=1.000
-```
+**3. Note the investment pool** on the **Construction** panel. If it reads £0, unpause for a few
+weeks until it has money: the private side of this test needs it.
 
-There is one `rec=INIT` per treated building in the world, so expect thousands. Any steel mill line
-must say `from=1;to=1`, Blister, because that is what every 1836 mill runs.
-
-**2b. Run the private-queue control before anything else.** Take **PMR test: queue one private
-Steel Mills level**. It uses the same effect PMR uses for retooling, on a building Financial
-Districts invest in:
+**4. Take the decision `PMR test: grant Bessemer and a steel mill`.** If the capital has no Steel
+Mills it creates five **government-owned** levels there, then researches Bessemer, which switches
+every Steel Mills you own. Immediately, without unpausing:
 
 ```
-PMR;rec=TEST;arm=PRIVATE_CONTROL;...;building=building_steel_mill;gov_before=<a>;gov_after=<b>;priv_before=<c>;priv_after=<d>
+PMR;rec=SWITCH;...;state=Yorkshire;building=building_steel_mill;from=1;to=2;level=8;...;retool_total=8;p=0.000;gov_frac=0.00;share_gov=0;share_priv=8;built_gov=0;built_priv=0;with_queued_gov=0;with_queued_priv=0;cap_gov=0;cap_priv=8
+PMR;rec=SWITCH;...;state=Home Counties;building=building_steel_mill;from=1;to=2;level=5;...;retool_total=5;p=0.000;gov_frac=1.00;share_gov=5;share_priv=0;...;cap_gov=5;cap_priv=0
 ```
 
-Expect `priv_after` one more than `priv_before`, and the new level under the **Construction**
-panel's **Private** tab. Cancel it afterwards if you like. If it went to **Government**, see the
-null table: the rest of the run still tests the recipe, but not the queue.
+Both construction queues stay empty: nothing is queued for you.
 
-**3. Open any steel mill's panel, then the Buildings tab.** The production method row shows one slot
-only: a gold steel beam, with no dropdown. In the Buildings tab the Steel Mills row shows that same
-single beam and no recipe or automation buttons. Its tooltip is **Fixed Workforce**: per level the building employs 500
-shopkeepers, 3,500 laborers, 750 machinists and 250 engineers. The recipe and automation slots are
-gone.
+**5. Queue the government's share yourself.** In Home Counties, open the construction list (or the
+state's Buildings tab) and build **Retooling (Government): Steel Mills**. Add levels until it
+refuses: it should take exactly 5, in the **Government** queue, each costing 400 construction. The
+sixth should be greyed out. **Retooling: Steel Mills** (the private one) is listed too but greyed:
+only investors may build it.
 
-To its right, between that slot and the employment and cash-reserve bars, is the recipe bar: the
-top line reads **Blister Steel Process**, and under it a full gold bar reads **100%**.
-
-**4. Note the capital mill's numbers on Blister** before anything else, at full staffing: per level
-40 iron and 30 coal in, 65 steel out. If the capital has no Steel Mills, skip this; the decision
-creates one.
-
-**5. Take the decision `PMR test: grant Bessemer and a steel mill`.** If the capital has no Steel
-Mills it creates five levels there on Blister, then it researches Bessemer. There is no recipe
-selector any more: research is what switches the mill. Immediately, without unpausing:
+**6. Unpause and watch the Private queue.** Within a few weeks of the pool having money, expect
+**Retooling: Steel Mills in Yorkshire** to appear under **Private**, owned by a Financial District,
+one level per investment decision, and never more than 8 in all. Take **PMR test: recompute
+retooling now** any time to read the counts:
 
 ```
-PMR;rec=TEST;arm=SETUP;date=...;country=Great Britain;state=Home Counties
-PMR;rec=RESEARCH;...;building=building_steel_mill;from=1;to=1;...;best=2
-PMR;rec=SWITCH;...;building=building_steel_mill;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=5;p=0.000;gov_frac=<f>;gov=<g>;priv=<5-g>;queued=5
-PMR;rec=TICK;...;from=1;to=2;level=5;l_start=5;retool_built=0;retool_total=5;p=0.000;queued=5
+PMR;rec=TICK;...;state=Yorkshire;...;built_priv=0;with_queued_priv=3;cap_priv=8
 ```
 
-If the decision created the mill, an `INIT` line with `level=5;best=1` comes before the
-`RESEARCH` line. If `SWITCH` only appears when the month turns, the activation applied late; that
-is fine.
+**7. Check the lag after two weeks**, as before: at p = 0 each mill reads Blister's 40 iron and 65
+steel per level under Bessemer.
 
-**6. Read the capital mill's panel.** The recipe bar's top line now reads **Retooling to Bessemer
-Process**; the bar is all gold with **100%** at the left and **0%** at the right. Its tooltip names
-both recipes and reads `Retooling levels built: 0 of 5`.
+**8. Let retooling build.** Each completed level writes a `rec=TICK` the day it lands, from either
+side. p = (levels built) ÷ (levels at the switch), so Yorkshire moves in eighths and Home Counties
+in fifths. The recipe bar's tooltip shows each side: `Private owners: <built> built of <cap>` and
+`Government: <built> built of <cap>`.
 
-- `retool_total=5` is one retooling level per building level.
-- `gov + priv = 5`, and `gov ≈ 5 × gov_frac`. A government-built mill should say `gov_frac=1.00`; one owned by Financial Districts or other private owners should say `gov_frac=0.00` and queue every level privately.
-- The construction queue now holds **Retooling: Steel Mills**, `gov` levels in the government queue
-  and `priv` in the private one, each costing 400 construction (half a Steel Mills level). Take
-  **PMR test: recompute retooling now** and read its line:
-
-  ```
-  PMR;rec=TEST;arm=TICK_NOW;...;queued_gov=<n>;queued_priv=<m>
-  ```
-
-  These count every queued level in the country, so compare them with the panel's **Government**
-  and **Private** tabs rather than with `gov` and `priv` alone.
-- The mill carries the modifier **Retooling: Blister Steel Process to Bessemer Process**.
-
-**7. Unpause for two weeks and read the mill's goods.** While paused, the panel shows plain Bessemer figures the moment the recipe changes: the game applies the recipe at once but only recomputes modifiers on its daily tick. Check the **Modifiers** tab for **Retooling: Blister Steel Process to Bessemer Process** before unpausing. At p = 0 the lag holds Bessemer at Blister's
-numbers: iron 60 × (1 − 0.33333) = **40** per level and steel 90 × (1 − 0.27778) = **65** per level,
-coal **30** throughout. If the figures read 60 and 90, see the lag-modifier row in the null table.
-
-**8. Let retooling build.** Each completed level writes, the day it lands (the first from
-`on_building_built`, later ones from `on_building_expanded`):
-
-```
-PMR;rec=TICK;...;retool_built=1;retool_total=5;p=0.200
-PMR;rec=TICK;...;retool_built=2;retool_total=5;p=0.400
-...
-```
-
-p moves in steps of 1/L = 1/5. Iron per level is 40 + 20p and steel 65 + 25p, so at
-`p=0.600` the mill reads 52 iron and 80 steel per level. The month-turn backstop writes the same
-line again with the same p. The recipe bar follows: blue grows from the right by 20% a level, and
-the two labels read 1 − p and p.
-
-**9. When the fifth level completes:**
-
-```
-PMR;rec=DONE;...;from=2;to=2;level=5;l_start=5;retool_built=5;retool_total=5;p=1.000
-```
-
-The lag modifier and the Retooling building are gone, and the mill reads 60 iron, 30 coal, 90
-steel per level. Check that no **Retooling: Steel Mills** entry is left in either construction queue.
-The recipe bar is full gold again and reads **Bessemer Process**, **100%**.
+**9. When a mill's last level completes:** `rec=DONE;...;p=1.000`; both retool buildings are
+gone from that state and neither queue holds a **Retooling** entry for it.
 
 ## Optional checks
 
-- **Build a level mid-retool.** Queue one more Steel Mills level while retooling. When it lands,
-  `level=6;l_start=5` and p jumps by (1 − p) ÷ 6 on top of the retool term, because the new level
+- **Privatise mid-retool.** If the pool privatises the Home Counties mill (or you let it) before its
+  government levels are all queued, the next tick should show `gov_frac` falling, `cap_gov`
+  dropping to what is already built or queued, and `cap_priv` taking the rest. Investors then pick
+  up the remainder.
+- **Build a level mid-retool.** When it lands, `level=` rises and p jumps, because the new level
   arrives already on Bessemer.
-- **Build a new Steel Mills elsewhere after Bessemer.** When its first level lands, expect
-  `rec=ADOPT;...;from=2;to=2` and then `rec=INIT;...;p=1.000`: a new building starts on the newest
-  recipe its owner has, with no retooling. Its recipe bar reads **Bessemer Process**, **100%**.
-- **Research Open Hearth** (`open_hearth_process`) on a mill that runs Bessemer: same shape as step 5
-  with `best=3;to=3`, iron −0.55556 and steel −0.45833.
+- **Build a new Steel Mills elsewhere after Bessemer.** Expect `rec=ADOPT` then `rec=INIT;...;p=1.000`.
 
 Send me the filtered `PMR;rec=` lines and the `error.log` lines containing `pmr_`, and say which row
 of the null table matched if any did.

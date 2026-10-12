@@ -48,6 +48,7 @@ import pdx  # noqa: E402
 N = 1                      # retool levels per real building level (Pat, 2026-10-12: one per level)
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
+RETOOL_AI_VALUE = 1000000  # AI weight of a retool building while it has room; vanilla's default is 1000
 
 MOD_NAME = 'ProductionMethodRework'
 MOD_VERSION = '0.1.0'
@@ -277,6 +278,7 @@ def main():
 
     # ---- new script ------------------------------------------------------------------------------
     labour_pms, labour_groups, retools, costs, lags, loc = [], [], [], [], [], []
+    triggers = []
     tick_effects, dispatch = [], []
     cost_values = {}
     for line in open(os.path.join(game, 'common', 'script_values', 'building_values.txt'), encoding='utf-8-sig'):
@@ -335,27 +337,16 @@ def main():
         retool_cost = base_cost * RETOOL_SHARE / N
         costs.append(f'pmr_retool_cost_{b} = {fmt(retool_cost)}  # {rc.value} = {fmt(base_cost)} x {RETOOL_SHARE} / {N}')
         icon = pdx.get(bn.value, 'icon').value
-        retools.append(
-            f'building_pmr_retool_{b} = {{\n'
-            f'\tbuilding_group = bg_pmr_retool\n'
-            f'\ticon = "{icon}"\n'
-            f'\tcity_type = none\n'
-            f'\t# Every building vanilla lets private investors build says ownership_type = self.\n'
-            f'\townership_type = self\n'
-            f'\tdownsizeable = no\n'
-            f'\t# bg_pmr_retool sits under bg_manufacturing, which auto-expands; retool levels come only from script.\n'
-            f'\tshould_auto_expand = {{ always = no }}\n'
-            f'\t# Open only while script is retooling a {bk} in this state.\n'
-            f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
-            f'\tai_value = 0\n'
-            f'\trequired_construction = pmr_retool_cost_{b}\n'
-            f'\tproduction_method_groups = {{\n\t\tpmg_dummy\n\t}}\n'
-            f'\tbackground = "{RETOOL_BACKGROUND}"\n}}\n')
+        retools.append(retool_buildings(b, bk, icon))
+        triggers.append(retool_triggers(b))
+        costs.append(retool_values(b))
 
         loc += [f' pmg_pmr_labour_{b}:0 "Workforce"',
                 f' pm_pmr_labour_{b}:0 "Fixed Workforce"',
                 f' building_pmr_retool_{b}:0 "Retooling: ${bk}$"',
-                f' building_pmr_retool_{b}_desc:0 "Construction that switches existing ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."']
+                f' building_pmr_retool_{b}_desc:0 "Privately funded construction that switches existing ${bk}$ to a new recipe. Investors fund the privately owned share; each completed level moves the old recipe\'s output closer to the new one."',
+                f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
+                f' building_pmr_retool_gov_{b}_desc:0 "Government construction that switches the government-owned share of ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."']
 
         # lag modifiers for every ordered pair
         pair_names = {}
@@ -402,7 +393,13 @@ def main():
           '# child group inherits from its parent. bg_manufacturing is the parent with no land usage or\n'
           '# resource cap to inherit; Financial Districts score it.\n'
           'bg_pmr_retool = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
-          '\talways_possible = yes\n\tis_shown_in_outliner = no\n}\n')
+          '\talways_possible = yes\n\tis_shown_in_outliner = no\n}\n\n'
+          '# The government-owned share is retooled by the government: the player builds it from the state,\n'
+          '# AI governments by ai_value. Shaped on bg_government, which is how vanilla marks government-only\n'
+          '# construction; the lens puts it in the development construction list.\n'
+          'bg_pmr_retool_gov = {\n\tcategory = urban\n\tis_government_funded = yes\n\talways_possible = yes\n'
+          '\tlens = development\n\tis_shown_in_outliner = no\n}\n')
+    write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers))
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/static_modifiers/pmr_lag_modifiers.txt', header + '\n'.join(lags))
@@ -448,7 +445,7 @@ def main():
                                                             'goods_state_panel.gui', 1), bom=False)
     loc += panel_loc(dispatch)
     write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
-    loc += [' bg_pmr_retool:0 "Retooling"'] + DECISION_LOC
+    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"'] + DECISION_LOC
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
 
     write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy"\n}}\n'
@@ -489,10 +486,85 @@ def log(rec, bk, b, extra=''):
             f"p={v('pmr_p', 3)}{extra}\" }}")
 
 
+# ---------------------------------------------------------------------------------------------
+# Retooling construction. Two pseudo-buildings per building type: building_pmr_retool_<b> is
+# built only by private investors, for the privately owned share of the levels being retooled;
+# building_pmr_retool_gov_<b> only by the government, for its share. Nothing queues either: the
+# investment pool and the government choose. Each one's room is capped through can_build_private
+# and can_build_government, the way vanilla caps trade centers under the canton system: the level
+# after queued constructions, plus the levels being added (scope:num_levels), may not pass the cap
+# the tick stores on the state.
+
+RETOOL_TRIGGERS_DOC = """# State scope. True while this funder may add scope:num_levels more retool levels in the state.
+# The caps are pmr_cap_priv_<b> / pmr_cap_gov_<b>, recomputed by pmr_split_retool_<b> every tick.
+
+"""
+
+
+def retool_buildings(b, bk, icon):
+    out = []
+    for side, group, rb in (('priv', 'bg_pmr_retool', f'building_pmr_retool_{b}'),
+                            ('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}')):
+        if side == 'priv':
+            who = ('\t# Private investors only, for the privately owned share. Every building vanilla lets private\n'
+                   '\t# investors build says ownership_type = self.\n'
+                   '\townership_type = self\n'
+                   f'\tcan_build_government = {{ always = no }}\n'
+                   f'\tcan_build_private = {{ pmr_retool_room_priv_{b} = yes }}\n')
+        else:
+            who = ('\t# The government only, for the government-owned share.\n'
+                   f'\tcan_build_government = {{ pmr_retool_room_gov_{b} = yes }}\n'
+                   '\tcan_build_private = { always = no }\n')
+        out.append(
+            f'{rb} = {{\n'
+            f'\tbuilding_group = {group}\n'
+            f'\ticon = "{icon}"\n'
+            f'\tcity_type = none\n'
+            f'\tdownsizeable = no\n'
+            '\t# Retool levels come only from the funders below, never from auto-expansion.\n'
+            '\tshould_auto_expand = { always = no }\n'
+            f'\t# Open only while script is retooling a {bk} in this state.\n'
+            f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
+            + who +
+            '\t# Very attractive while there is room, so investors (or an AI government) pick it first.\n'
+            f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_{side}_{b} }}\n'
+            f'\t\t\tvalue = {RETOOL_AI_VALUE}\n\t\t}}\n\t}}\n'
+            f'\trequired_construction = pmr_retool_cost_{b}\n'
+            f'\tproduction_method_groups = {{\n\t\tpmg_dummy\n\t}}\n'
+            f'\tbackground = "{RETOOL_BACKGROUND}"\n}}\n')
+    return '\n'.join(out)
+
+
+def retool_triggers(b):
+    out = []
+    for side, rb in (('priv', f'building_pmr_retool_{b}'), ('gov', f'building_pmr_retool_gov_{b}')):
+        cap = f'pmr_cap_{side}_{b}'
+        out.append(
+            f'pmr_retool_room_{side}_{b} = {{\n'
+            f'\thas_variable = {cap}\n'
+            '\t# b: finds the retool building even while all of it is still queued (seen in 1.14.5).\n'
+            '\ttrigger_if = {\n'
+            f'\t\tlimit = {{ exists = b:{rb} }}\n'
+            f'\t\tb:{rb} = {{ level_after_queued_constructions <= pmr_room_value_{side}_{b} }}\n'
+            '\t}\n'
+            f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
+            '}\n')
+    return '\n'.join(out)
+
+
+def retool_values(b):
+    """Building scope: the most retool levels this funder's building may have after queued constructions,
+    before the scope:num_levels being added."""
+    return ''.join(f'pmr_room_value_{side}_{b} = {{\n\tvalue = state.var:pmr_cap_{side}_{b}\n'
+                   '\tsubtract = scope:num_levels\n}\n' for side in ('priv', 'gov'))
+
+
+
 def tick_effect(bk, b, recipes, pairs):
     """Every effect for one building type. All run in STATE scope."""
     k = len(recipes)
     rb = f'building_pmr_retool_{b}'
+    rbg = f'building_pmr_retool_gov_{b}'
     v = lambda name: f'{name}_{b}'           # noqa: E731  state variable for this building type
     o = [f'# ===== {bk}: ' + ', '.join(f'{i} = {r.key}' for i, r in enumerate(recipes, 1)) + '\n'
          '# State scope throughout; the building is b:' + bk + '.\n\n']
@@ -524,7 +596,10 @@ def tick_effect(bk, b, recipes, pairs):
 
     o.append(f'pmr_clear_retool_{b} = {{\n'
              f'\tif = {{ limit = {{ OR = {{ has_building = {rb} exists = b:{rb} }} }} remove_building = {rb} }}\n'
-             f'\tif = {{ limit = {{ has_variable = pmr_retool_gate_{b} }} remove_variable = pmr_retool_gate_{b} }}\n'
+             f'\tif = {{ limit = {{ OR = {{ has_building = {rbg} exists = b:{rbg} }} }} remove_building = {rbg} }}\n'
+             + ''.join(f'\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
+                       for n in (f'pmr_retool_gate_{b}', f'pmr_retool_open_priv_{b}', f'pmr_retool_open_gov_{b}',
+                                 v('pmr_cap_priv'), v('pmr_cap_gov'))) +
              '}\n\n')
 
     # government-owned share of the building, read through the building-scope ownership trigger
@@ -537,35 +612,62 @@ def tick_effect(bk, b, recipes, pairs):
                  f'set_variable = {{ name = {v("pmr_gov_frac")} value = {fmt(frac)} }} }}\n')
     o.append('}\n\n')
 
-    o.append(f'pmr_queue_retool_{b} = {{\n'
-             f'\tpmr_read_gov_{b} = yes\n'
+    # On a switch: the levels to retool are the levels the building has now, N each.
+    o.append(f'pmr_open_retool_{b} = {{\n'
              f'\tset_variable = {{ name = {v("pmr_retool_total")} value = var:{v("pmr_level")} }}\n'
              f'\tchange_variable = {{ name = {v("pmr_retool_total")} multiply = pmr_retool_levels_per_level }}\n'
+             f'\tset_variable = pmr_retool_gate_{b}\n'
+             f'\tpmr_split_retool_{b} = yes\n'
+             '}\n\n')
+
+    def read_side(rbx, side):
+        return (f'\tset_variable = {{ name = {v("pmr_retool_built_" + side)} value = 0 }}\n'
+                f'\tset_variable = {{ name = {v("pmr_retool_q_" + side)} value = 0 }}\n'
+                f'\tif = {{\n\t\tlimit = {{ OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
+                f'\t\tset_variable = {{ name = {v("pmr_retool_built_" + side)} value = b:{rbx}.level }}\n'
+                f'\t\tset_variable = {{ name = {v("pmr_retool_q_" + side)} value = b:{rbx}.level_after_queued_constructions }}\n'
+                '\t}\n')
+    o.append(f'pmr_read_retool_{b} = {{\n'
+             '\t# A retool still entirely under construction may not count for has_building.\n'
+             + read_side(rb, 'priv') + read_side(rbg, 'gov') +
+             f'\tset_variable = {{ name = {v("pmr_retool_built")} value = var:{v("pmr_retool_built_priv")} }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_retool_built")} add = var:{v("pmr_retool_built_gov")} }}\n'
+             f'\tset_variable = {{ name = {v("pmr_retool_queued")} value = var:{v("pmr_retool_q_priv")} }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_retool_queued")} add = var:{v("pmr_retool_q_gov")} }}\n'
+             '}\n\n')
+
+    # Who may add retool levels, from who owns the building now. Each side's share of the total is
+    # its ownership share; the levels not yet built or queued (R) go first to whichever side is
+    # short of its share. A side already past its share (ownership changed after it built) gets
+    # none, and the other side takes the rest, so the two rooms always add up to R.
+    def clamp_to(name, other):
+        return (f'\tif = {{ limit = {{ var:{v(name)} > var:{v(other)} }} '
+                f'set_variable = {{ name = {v(name)} value = var:{v(other)} }} }}\n')
+    o.append(f'pmr_split_retool_{b} = {{\n'
+             f'\tpmr_read_gov_{b} = yes\n'
+             f'\tpmr_read_retool_{b} = yes\n'
              f'\tset_variable = {{ name = {v("pmr_retool_gov")} value = var:{v("pmr_retool_total")} }}\n'
              f'\tchange_variable = {{ name = {v("pmr_retool_gov")} multiply = var:{v("pmr_gov_frac")} }}\n'
              f'\tround_variable = {{ name = {v("pmr_retool_gov")} nearest = 1 }}\n'
              f'\tset_variable = {{ name = {v("pmr_retool_priv")} value = var:{v("pmr_retool_total")} }}\n'
              f'\tchange_variable = {{ name = {v("pmr_retool_priv")} subtract = var:{v("pmr_retool_gov")} }}\n'
-             f'\tset_local_variable = {{ name = pmr_n_gov value = var:{v("pmr_retool_gov")} }}\n'
-             f'\tset_local_variable = {{ name = pmr_n_priv value = var:{v("pmr_retool_priv")} }}\n'
-             f'\tset_variable = pmr_retool_gate_{b}\n'
-             '\twhile = {\n\t\tlimit = { local_var:pmr_n_gov > 0 }\n'
-             f'\t\tstart_building_construction = {rb}\n'
-             '\t\tchange_local_variable = { name = pmr_n_gov subtract = 1 }\n\t}\n'
-             '\twhile = {\n\t\tlimit = { local_var:pmr_n_priv > 0 }\n'
-             f'\t\tstart_privately_funded_building_construction = {rb}\n'
-             '\t\tchange_local_variable = { name = pmr_n_priv subtract = 1 }\n\t}\n'
-             f'\tpmr_read_retool_{b} = yes\n'
+             f'\tset_variable = {{ name = {v("pmr_room")} value = var:{v("pmr_retool_total")} }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_room")} subtract = var:{v("pmr_retool_queued")} }}\n'
+             f'\tif = {{ limit = {{ var:{v("pmr_room")} < 0 }} set_variable = {{ name = {v("pmr_room")} value = 0 }} }}\n'
+             f'\tset_variable = {{ name = {v("pmr_room_gov")} value = var:{v("pmr_retool_gov")} }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_room_gov")} subtract = var:{v("pmr_retool_q_gov")} }}\n'
+             f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} < 0 }} set_variable = {{ name = {v("pmr_room_gov")} value = 0 }} }}\n'
+             + clamp_to("pmr_room_gov", "pmr_room") +
+             f'\tset_variable = {{ name = {v("pmr_room_priv")} value = var:{v("pmr_room")} }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_room_priv")} subtract = var:{v("pmr_room_gov")} }}\n'
+             f'\tset_variable = {{ name = {v("pmr_cap_gov")} value = var:{v("pmr_retool_q_gov")} }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_cap_gov")} add = var:{v("pmr_room_gov")} }}\n'
+             f'\tset_variable = {{ name = {v("pmr_cap_priv")} value = var:{v("pmr_retool_q_priv")} }}\n'
+             f'\tchange_variable = {{ name = {v("pmr_cap_priv")} add = var:{v("pmr_room_priv")} }}\n'
+             + ''.join(f'\tif = {{ limit = {{ var:{v("pmr_room_" + side)} > 0 }} set_variable = pmr_retool_open_{side}_{b} }}\n'
+                       f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_{side}_{b} }} remove_variable = pmr_retool_open_{side}_{b} }}\n'
+                       for side in ('priv', 'gov')) +
              '}\n\n')
-
-    o.append(f'pmr_read_retool_{b} = {{\n'
-             f'\tset_variable = {{ name = {v("pmr_retool_built")} value = 0 }}\n'
-             f'\tset_variable = {{ name = {v("pmr_retool_queued")} value = 0 }}\n'
-             '\t# A retool still entirely under construction may not count for has_building.\n'
-             f'\tif = {{\n\t\tlimit = {{ OR = {{ has_building = {rb} exists = b:{rb} }} }}\n'
-             f'\t\tset_variable = {{ name = {v("pmr_retool_built")} value = b:{rb}.level }}\n'
-             f'\t\tset_variable = {{ name = {v("pmr_retool_queued")} value = b:{rb}.level_after_queued_constructions }}\n'
-             '\t}\n}\n\n')
 
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first
     o.append(f'pmr_best_{b} = {{\n\tset_variable = {{ name = {v("pmr_best_now")} value = 0 }}\n')
@@ -632,9 +734,13 @@ def tick_effect(bk, b, recipes, pairs):
              f'\t\t\t\tremove_variable = {v("pmr_adopting")}\n' + adopt_running('\t\t\t\t') +
              f'\t\t\t\t{log("ADOPT_FAILED", bk, b)}\n\t\t\t}}\n\t\t}}\n\t}}\n')
 
-    queued = f";queued=[THIS.Var('{v('pmr_retool_queued')}').GetValue|0]"
-    sw = (f";gov_frac=[THIS.Var('{v('pmr_gov_frac')}').GetValue|2];gov=[THIS.Var('{v('pmr_retool_gov')}').GetValue|0];"
-          f"priv=[THIS.Var('{v('pmr_retool_priv')}').GetValue|0]" + queued)
+    def f(name, d=0):
+        return f"[THIS.Var('{v(name)}').GetValue|{d}]"
+    split = (f";built_gov={f('pmr_retool_built_gov')};built_priv={f('pmr_retool_built_priv')}"
+             f";with_queued_gov={f('pmr_retool_q_gov')};with_queued_priv={f('pmr_retool_q_priv')}"
+             f";cap_gov={f('pmr_cap_gov')};cap_priv={f('pmr_cap_priv')}")
+    sw = f";gov_frac={f('pmr_gov_frac', 2)};share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}" + split
+    tick_extra = f";gov_frac={f('pmr_gov_frac', 2)}" + split
     o.append('\t# A switch: the running recipe is not the one we are retooling towards.\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_adopting")} }} }}\n')
     for i, r in enumerate(recipes, 1):
@@ -651,14 +757,16 @@ def tick_effect(bk, b, recipes, pairs):
                  f'\t\t\t\tset_variable = {{ name = {v("pmr_l_start")} value = var:{v("pmr_level")} }}\n'
                  f'\t\t\t\tset_variable = {{ name = {v("pmr_p")} value = 0 }}\n'
                  f'\t\t\t\tset_variable = {v("pmr_retooling")}\n'
-                 f'\t\t\t\tpmr_queue_retool_{b} = yes\n'
+                 f'\t\t\t\tpmr_open_retool_{b} = yes\n'
                  f'\t\t\t\t{log("SWITCH", bk, b, extra=sw)}\n'
                  '\t\t\t}\n\t\t}\n')
     o.append('\t}\n')
 
     o.append('\t# Progress: p = (retool.level / N + level - L_start) / level, clamped to 0..1.\n'
              f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_retooling")} }}\n'
-             f'\t\tpmr_read_retool_{b} = yes\n'
+             '\t\t# Re-split every tick, so a building sold to or bought from private owners mid-retool moves the\n'
+             '\t\t# remaining levels to the new owner\'s side.\n'
+             f'\t\tpmr_split_retool_{b} = yes\n'
              f'\t\tset_variable = {{ name = {v("pmr_p")} value = var:{v("pmr_retool_built")} }}\n'
              f'\t\tchange_variable = {{ name = {v("pmr_p")} divide = pmr_retool_levels_per_level }}\n'
              f'\t\tchange_variable = {{ name = {v("pmr_p")} add = var:{v("pmr_level")} }}\n'
@@ -673,7 +781,7 @@ def tick_effect(bk, b, recipes, pairs):
              f'\t\t\t{log("DONE", bk, b)}\n\t\t}}\n'
              '\t\telse = {\n'
              f'\t\t\tpmr_apply_lag_{b} = yes\n'
-             f'\t\t\t{log("TICK", bk, b, extra=queued)}\n'
+             f'\t\t\t{log("TICK", bk, b, extra=tick_extra)}\n'
              '\t\t}\n\t}\n'
              f'\tpmr_set_bar_{b} = yes\n}}\n\n')
     return ''.join(o)
@@ -710,7 +818,8 @@ def dispatch_effects(buildings):
     for i, bk in enumerate(buildings):
         b = short(bk)
         kw = 'if' if i == 0 else 'else_if'
-        o.append(f'\t{kw} = {{\n\t\tlimit = {{ is_building_type = building_pmr_retool_{b} }}\n'
+        o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ is_building_type = building_pmr_retool_{b} '
+                 f'is_building_type = building_pmr_retool_gov_{b} }} }}\n'
                  f'\t\tstate = {{ if = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }} }}\n\t}}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state.\n'
@@ -953,7 +1062,9 @@ def panel_loc(buildings):
             f' PMR_BAR_NEW_{b}:0 "#bold {var("pmr_p", "%0")}#!"',
             f' PMR_BAR_TOOLTIP_{b}:0 "#bold Retooling#!\\n[Building.GetCustom(\'pmr_old_recipe\')] (gold): #bold {var("pmr_bar_old", "%0")}#!'
             f'\\n[Building.GetCustom(\'pmr_new_recipe\')] (blue): #bold {var("pmr_p", "%0")}#!'
-            f'\\nRetooling levels built: {var("pmr_retool_built", "0")} of {var("pmr_retool_total", "0")}"',
+            f'\\nRetooling levels built: {var("pmr_retool_built", "0")} of {var("pmr_retool_total", "0")}'
+            f'\\n\\nPrivate owners: {var("pmr_retool_built_priv", "0")} built of {var("pmr_cap_priv", "0")}. Investors fund these from the investment pool.'
+            f'\\nGovernment: {var("pmr_retool_built_gov", "0")} built of {var("pmr_cap_gov", "0")}. Queue these yourself: build #bold $building_pmr_retool_gov_{b}$#! in this state."',
         ]
     return loc
 
@@ -1029,7 +1140,11 @@ pmr_test_setup_decision = {
 		capital = {
 			if = {
 				limit = { NOT = { has_building = building_steel_mill } }
-				create_building = { building = building_steel_mill level = 5 }
+				# Government-owned, so retooling it is the government's to queue.
+				create_building = {
+					building = building_steel_mill
+					add_ownership = { country = { country = root levels = 5 } }
+				}
 			}
 			pmr_state_tick = yes
 			debug_log = "PMR;rec=TEST;arm=SETUP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting]"
@@ -1048,25 +1163,6 @@ pmr_test_tick_decision = {
 		capital = {
 			pmr_count_queues = yes
 			debug_log = "PMR;rec=TEST;arm=TICK_NOW;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];queued_gov=[THIS.Var('pmr_q_gov').GetValue|0];queued_priv=[THIS.Var('pmr_q_priv').GetValue|0]"
-		}
-	}
-	ai_chance = { value = 0 }
-}
-
-# Control for the private queue: the same effect PMR uses for retooling, on a vanilla building that
-# Financial Districts invest in. Tells "this effect cannot reach the private queue" apart from
-# "the private queue will not take PMR's retool building".
-pmr_test_private_control_decision = {
-	is_shown = { always = yes }
-	possible = { always = yes }
-	when_taken = {
-		capital = {
-			pmr_count_queues = yes
-			set_variable = { name = pmr_q_gov_before value = var:pmr_q_gov }
-			set_variable = { name = pmr_q_priv_before value = var:pmr_q_priv }
-			start_privately_funded_building_construction = building_steel_mill
-			pmr_count_queues = yes
-			debug_log = "PMR;rec=TEST;arm=PRIVATE_CONTROL;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];building=building_steel_mill;gov_before=[THIS.Var('pmr_q_gov_before').GetValue|0];gov_after=[THIS.Var('pmr_q_gov').GetValue|0];priv_before=[THIS.Var('pmr_q_priv_before').GetValue|0];priv_after=[THIS.Var('pmr_q_priv').GetValue|0]"
 		}
 	}
 	ai_chance = { value = 0 }
@@ -1091,11 +1187,9 @@ COUNT_QUEUES = '''pmr_count_queues = {
 
 DECISION_LOC = [
     ' pmr_test_setup_decision:0 "PMR test: grant Bessemer and a steel mill"',
-    ' pmr_test_setup_decision_desc:0 "If the capital has no Steel Mills, creates five levels there; then researches the Bessemer Process, which switches the mill to it and starts retooling."',
+    ' pmr_test_setup_decision_desc:0 "If the capital has no Steel Mills, creates five government-owned levels there; then researches the Bessemer Process, which switches every Steel Mills to it and opens retooling."',
     ' pmr_test_tick_decision:0 "PMR test: recompute retooling now"',
     ' pmr_test_tick_decision_desc:0 "Runs the monthly PMR tick on every state you own immediately, instead of waiting for the month to turn, and logs how many building levels sit in each construction queue."',
-    ' pmr_test_private_control_decision:0 "PMR test: queue one private Steel Mills level"',
-    ' pmr_test_private_control_decision_desc:0 "Queues one Steel Mills level in the capital with the same privately funded effect PMR uses for retooling, and logs both construction queues before and after."',
 ]
 
 
