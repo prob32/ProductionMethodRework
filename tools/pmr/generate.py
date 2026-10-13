@@ -957,12 +957,8 @@ def tick_effect(bk, b, recipes):
     # re-activated a share the inner tick had already applied, and the game then counted that share's
     # goods twice (Pat's Sicily sulfur mine, two identical "(… of levels)" lines per switched recipe;
     # cause inferred from the log order).
-    # So only the outermost tick runs; the flag expires after a day in case a tick never finishes.
-    o.append(f'pmr_tick_{b} = {{\n'
-             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_busy_{b} }} }}\n'
-             f'\t\tset_variable = {{ name = pmr_busy_{b} value = yes days = 1 }}\n'
-             f'\t\tpmr_tick_body_{b} = yes\n'
-             f'\t\tremove_variable = pmr_busy_{b}\n\t}}\n}}\n\n')
+    # So only the outermost tick runs (pmr_tick_<b>, below); the flag expires after a day in case a
+    # tick never finishes.
     o.append(f'pmr_tick_body_{b} = {{\n'
              f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
              f'\tpmr_best_{b} = yes\n'
@@ -1039,6 +1035,12 @@ def tick_effect(bk, b, recipes):
              '\t}\n'
              f'\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} remove_variable = {v("pmr_switched")} }}\n'
              '}\n\n')
+    # The guarded entry point, after the body it calls (every scripted effect here is defined before use).
+    o.append(f'pmr_tick_{b} = {{\n'
+             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_busy_{b} }} }}\n'
+             f'\t\tset_variable = {{ name = pmr_busy_{b} value = yes days = 1 }}\n'
+             f'\t\tpmr_tick_body_{b} = yes\n'
+             f'\t\tremove_variable = pmr_busy_{b}\n\t}}\n}}\n\n')
     return ''.join(o)
 
 
