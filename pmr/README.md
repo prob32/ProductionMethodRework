@@ -50,6 +50,12 @@ acceptance band, for plantation treatment by acceptance. `PRICE` reads the local
 prices through the `state_goods_pricier` / `state_goods_cheaper` ladder, for the market blend of the
 trade-off groups. They change nothing in game; the run sheet says what each null means.
 
+A loop breaker guards every building type's tick (`TICK_TRIP`): past 25 outermost runs in one state
+on one day, that building waits for the next day and PMR logs `TRIP`. It went in after a game froze
+during the daily update of 16 June 1836. `TECH`, `RETOOL_LEVEL`, `RELEASE` and `RELEASED` lines mark
+the rarer actions in every country and are padded past 4 KB (`flush_log`), so they reach debug.log
+even when the game hangs right after them.
+
 ## Scope
 
 Treated: every building in industry, agriculture, mining, plantations and the

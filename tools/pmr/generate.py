@@ -111,6 +111,13 @@ AUTOMATION_FROM_TIER = 3
 # required_input_goods) can't become a building's target unless its state produces electricity, and
 # retooling towards it pauses while the state has none. One rule for government and private retooling.
 ELECTRICITY = 'electricity'
+# Loop breaker (2026-10-13: Pat's game froze during the daily update of 16 June 1836, and debug.log
+# held nothing after 11 June). A building type's tick that runs more than TICK_TRIP times in one
+# state in one day stops there for the rest of the day and writes a TRIP line. TRIP and RELEASE (a
+# private retool building with a crew removed) lines go through flush_log: debug.log reaches disk in
+# 4 KB blocks, so the last lines before a hang are lost unless one line fills a block by itself.
+TICK_TRIP = 25
+FLUSH_PAD = 4500
 # Log-only probes for the next batch (Pat approved both 2026-10-13). They change nothing in game; each
 # writes one line a month per player-owned state where it applies.
 # TREAT: each plantation's workforce by acceptance band, for plantation treatment by acceptance
@@ -714,7 +721,7 @@ def main():
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
-    write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
+    write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-')))
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -804,6 +811,13 @@ def log(rec, bk, b, k, extra=''):
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk};'
             f"to={v('pmr_to', 0)};level={v('pmr_level', 0)};levels={levels};"
             f"p={v('pmr_p', 3)};to_retool={v('pmr_need', 0)}{extra}\" }}")
+
+
+def flush_log(rec, bk, extra=''):
+    """State scope, every country: a line long enough to push itself and everything before it to disk."""
+    return (f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
+            f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+            f'building={bk}{extra};pad={"." * FLUSH_PAD}"')
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1173,10 +1187,15 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
     # while anything is queued on it (that leaves a NULL_STATE construction).
     def release(rbx, side, keep=''):
         seen = 'pmr_seen_gov' if side == 'gov' else 'pmr_seen_priv'
+        built = v('pmr_retool_built_' + side)
+        # A crewed private one may still have staff when it goes: logged (flush_log) in case that hangs.
+        crumb = '' if side == 'gov' else f"\t\t{flush_log('RELEASE', rbx, f';built=[THIS.Var({built!r}).GetValue|0]')}\n"
         return (f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_retool_built_" + side)} > 0 '
                 f'var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} {keep}'
                 f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
+                + crumb +
                 f'\t\tremove_building = {rbx}\n'
+                + crumb.replace('RELEASE', 'RELEASED') +
                 f'\t\t{chg(seen, "subtract", "var:" + v("pmr_retool_built_" + side))}\n'
                 f'\t\t{setv("pmr_retool_built_" + side, 0)}\n'
                 f'\t\t{setv("pmr_retool_q_" + side, 0)}\n\t}}\n')
@@ -1519,12 +1538,21 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
              '}\n\n')
 
     # The guarded entry point, after the body it calls (every scripted effect here is defined before use).
+    # pmr_runs_<b> counts the day's outermost ticks (pmr_rday_<b> marks the day); past TICK_TRIP the
+    # building waits for the next day (pmr_trip_<b>), so a loop through the game's own hooks ends.
     o.append(f'pmr_tick_{b} = {{\n'
-             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_busy_{b} }} }}\n'
-             f'\t\tset_variable = {{ name = pmr_busy_{b} value = yes days = 1 }}\n'
-             f'\t\tpmr_tick_body_{b} = yes\n'
-             f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_bulk }} owner = {{ is_player = yes }} }} owner = {{ pmr_c_sum_{b} = yes }} }}\n'
-             f'\t\tremove_variable = pmr_busy_{b}\n\t}}\n}}\n\n')
+             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_busy_{b} }} NOT = {{ has_variable = pmr_trip_{b} }} }}\n'
+             f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_rday_{b} }} }} '
+             f'set_variable = {{ name = pmr_rday_{b} value = yes days = 1 }} set_variable = {{ name = pmr_runs_{b} value = 0 }} }}\n'
+             f'\t\tchange_variable = {{ name = pmr_runs_{b} add = 1 }}\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_runs_{b} > {TICK_TRIP} }}\n'
+             f'\t\t\tset_variable = {{ name = pmr_trip_{b} value = yes days = 1 }}\n'
+             f'\t\t\t{flush_log("TRIP", bk, f";runs={TICK_TRIP + 1}")}\n\t\t}}\n'
+             f'\t\telse = {{\n'
+             f'\t\t\tset_variable = {{ name = pmr_busy_{b} value = yes days = 1 }}\n'
+             f'\t\t\tpmr_tick_body_{b} = yes\n'
+             f'\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_bulk }} owner = {{ is_player = yes }} }} owner = {{ pmr_c_sum_{b} = yes }} }}\n'
+             f'\t\t\tremove_variable = pmr_busy_{b}\n\t\t}}\n\t}}\n}}\n\n')
 
     # The government upgrade button (pmr_gov_retool_<b>_sgui): queue every government retool level
     # the building still needs, as if the player had built them one by one, then tick so the room,
@@ -1589,7 +1617,8 @@ def dispatch_effects(buildings):
         kw = 'if' if i == 0 else 'else_if'
         types = priv_slots(b) + [f'building_pmr_retool_gov_{b}']
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in types) + ' } }\n'
-                 f'\t\tstate = {{ if = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }} }}\n\t}}\n')
+                 f'\t\tstate = {{\n\t\t\t{flush_log("RETOOL_LEVEL", bk)}\n'
+                 f'\t\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t\t}}\n\t}}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'
              '# research, at game start), so the country totals wait for pmr_c_sum_all once the states are done.\n'
@@ -2299,6 +2328,7 @@ pmr_on_building_expanded = {
 # at once instead of at the next month turn.
 pmr_on_acquired_technology = {
 	effect = {
+		if = { limit = { exists = capital } capital = { TECH_CRUMB } }
 		every_scope_state = { pmr_state_tick = yes }
 		pmr_c_sum_all = yes
 	}

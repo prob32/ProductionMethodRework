@@ -1,4 +1,4 @@
-# PMR run sheet: electric automation as its own recipe, TREAT and PRICE probes, government levels, Owners column, retool crews
+# PMR run sheet: June 16 freeze diagnostics, electric automation as its own recipe, TREAT and PRICE probes, government levels, Owners column, retool crews
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -9,6 +9,34 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
+
+## First: the 16 June 1836 freeze
+
+Your last game froze during the daily update of 16 June 1836, with nothing clicked. debug.log held
+no PMR line after 11 June, because the game writes that log to disk in 4 KB blocks and loses the
+last block when it hangs. This build adds:
+
+- **A loop breaker.** If one building type's PMR tick runs more than 25 times in one state on one
+  day, PMR stops ticking it there until the next day and logs `PMR;rec=TRIP`. Normal play runs it
+  once or twice a day at most.
+- **Lines that reach disk even if the game hangs right after**, for the rare PMR actions that could
+  set one off, in every country (not only yours): `TECH` (a country acquired a technology; its states
+  tick next), `RETOOL_LEVEL` (a retool level finished; its building ticks next), `RELEASE` /
+  `RELEASED` (a private retool building with a crew is about to be removed / was removed, 90 days
+  after its last level when its crew stayed short). Each ends in a long run of dots, which is what
+  pushes it to disk.
+
+Run a new game at full speed to at least September 1836.
+
+| What you see | What it means |
+| --- | --- |
+| No freeze, no `TRIP` | The freeze did not repeat. It needs something this run lacked; play on and tell me. |
+| No freeze, `TRIP` lines | PMR's own hooks were looping and the breaker ended it. The `TRIP` line names the building and state. |
+| Freeze, last PMR line `RELEASE` with no `RELEASED` after it | Removing a crewed retool building hangs the game. |
+| Freeze, last PMR line `TECH` or `RETOOL_LEVEL` | The tick that follows that event hangs. |
+| Freeze, no PMR line from that day | Not PMR's hooks: the loop is in the game's own daily update. The investment AI choosing among retool buildings is the next suspect. |
+
+If it freezes, close it and tell me; I read the logs from here.
 
 **Start a new game for this build**, including if you started one on d920da5. Recipes from the third
 on change what they consume, and six building types gain a recipe. Leave `fastresearch` off for the
