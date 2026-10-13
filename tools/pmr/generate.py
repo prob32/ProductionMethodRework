@@ -419,9 +419,12 @@ def main():
                 pct = round(100 * f)
                 loc += [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
                         f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"']
+            # No is_hidden_when_unavailable: with it, a share group lists only its one unlocked method,
+            # and the building panel, which shows a PMR building's groups of exactly one method (the
+            # fixed labour slot), drew every share group's icon in the row (seen in 1.14.5).
             for g, lst, what in ((f'pmg_pmr_share_{b}_{i}', shares, 'share of levels'),
                                  (f'pmg_pmr_key_{b}_{i}', keys, 'share lock')):
-                blend_groups.append(f'{g} = {{\n\ttexture = "{GENERIC_ICON}"\n\tis_hidden_when_unavailable = yes\n'
+                blend_groups.append(f'{g} = {{\n\ttexture = "{GENERIC_ICON}"\n'
                                     '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in lst) + '\t}\n}\n')
                 loc.append(f' {g}:0 "${r.key}$ {what}"')
             report['blended'].append({'building': bk, 'recipe': r.key, 'tier': i, 'blend': r.blend})
