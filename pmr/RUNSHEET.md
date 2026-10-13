@@ -1,4 +1,4 @@
-# PMR run sheet: 1% blend, recipe bar, government upgrade button
+# PMR run sheet: blended workforce, automation, electricity, Buildings tab row
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,49 +10,58 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-**Your current save works with this build** if it was started on the blended build (the one with
-four retool slots). Its share methods now mean 1% steps instead of 5%, so right after loading take
-**PMR test: recompute retooling now** (or wait for the month to turn) before reading any figures.
-Saves from before the blended build still need a new game: they carry modifiers and retool
-buildings it no longer defines. Leave `fastresearch` off
-for the full run: it lets every country research instantly and fills every construction queue with
-retooling. For a quick look at the blend
-alone, step 4 below grants one technology to you only.
+**Start a new game for this build.** It moves every building's workforce into the recipe shares and
+takes the automation groups off buildings with three or more recipes, so a save from the last build
+would keep automation methods its buildings no longer have. Leave `fastresearch` off for the full
+run: it lets every country research instantly and fills every construction queue with retooling.
 
 ## What changed in this build
 
-- **1% steps.** Each recipe's share is now blended to the nearest 1%, so an 11-level building at
-  6/0/4/1 reads 55%, 36% and 9% in its tooltips, the same as the bar.
-- **The recipe bar** is now built like the Owners bar: one slice per recipe, oldest on the left, in
-  muted colours (bronze, ochre, steel blue, plum, slate; no red or green), with the recipe's icon
-  centred on any slice over 25%. While retooling, the line above it reads **9% on Diesel Pump**.
-- **Government upgrade button**, the gold arrow beside the recipe name, against the employment bar.
-  It queues every government retooling level the building still needs. It is greyed out when the
-  government owns none of the levels still to retool, has queued them all, or the state is not yours.
-- **Buildings tab:** each row shows the recipe bar beside the gold labour icon, and the upgrade
-  button left of nationalize. The tab is 35 px wider to make room.
+- **Building panel:** no goods icon. The recipe name, the bar and the upgrade button start at the
+  panel's left edge, with the button still against the employment bar.
+- **Workforce blends** like the goods: each recipe's jobs count by its share of the levels. The
+  "Fixed workforce" slot is gone.
+- **Full automation from the third recipe:** recipes 3 and later include the building's most
+  advanced automation (mines: Steam Donkey and Rail Transport; most factories: Assembly Lines), and
+  the automation selector groups are gone from those buildings.
+- **Electricity:** a recipe that needs electricity becomes a building's target only while its state
+  produces electricity, and retooling towards one pauses while it produces none. Government and
+  private alike.
+- **Buildings tab type row:** the recipe bar over all your buildings of that type replaces the gold
+  icon, and the upgrade button sits left of nationalize. It queues the government's retooling in every
+  state at once. Expanding the type shows each building's own row with its own bar and button.
+- **Private retooling diagnostics:** every `TICK` line now ends with
+  `elec=;home_investors=;pool=` (and `elec_wait=` where a recipe needs electricity).
 
-### The new UI, after the doubling check below
+## Checks
 
-1. Open a building that is retooling and has government-owned levels (a mine you built with the
-   government, or Home Counties after `PMR test: grant Bessemer and a steel mill`). The arrow
-   button is lit. Hover it: it says how many levels it will queue.
-2. Click it. The Government queue gains exactly that many **Retooling (Government): …** entries, the
-   button greys out, and the log has one line:
-   ```
-   PMR;rec=GOV_QUEUE;...;room_gov=5;...;queueing=5
-   ```
-   followed by a `rec=TICK` line with `queued_gov=5;room_gov=0`.
-3. Open the **Buildings** tab: the same button sits left of nationalize on that building's row, greyed
-   out now, and the recipe bar sits beside the gold icon.
+1. **Panel row.** Open any PMR building. There is no goods icon; the recipe name starts at the left
+   edge and the bar is about 290 px wide, ending where the employment bar starts.
+2. **Workforce.** Open a building that is retooling (queue its government levels with the upgrade
+   button and let one land). In the Workforce tab its jobs move towards the new recipe's as each level
+   lands. Its Modifiers tab lists one `(… % of levels)` line per recipe, each with jobs and goods.
+3. **Automation.** A mine whose newest recipe is Condensing Engine Pump: that recipe's share line in
+   the Modifiers tab includes engines, coal and transportation inputs and fewer laborers. No mine,
+   steel mill or factory shows an automation selector.
+4. **Buildings tab.** Open the Buildings tab. Each PMR building type's row shows the recipe bar where
+   the gold icon was, and the gold arrow left of the flag (nationalize). Hover the bar: levels by
+   recipe across your country, levels still to retool, and how many government levels the arrow would
+   queue. Click a lit arrow: one `rec=GOV_QUEUE` line per state with room, and the arrow greys out.
+5. **Private retooling.** Let a year pass. For each building with `room_priv` above 0, read
+   `home_investors` and `pool` on its `TICK` lines.
 
 | You see | It means |
 | --- | --- |
-| The button never lights, even with `room_gov` above 0 in the log | The scripted GUI's `is_valid` is not reading the state's flag. Hover it and send me the tooltip. |
-| You click a lit button and nothing is queued, and no `rec=GOV_QUEUE` line | The scripted GUI did not run. Send me `error.log` lines containing `sgui` or `pmr_`. |
-| `rec=GOV_QUEUE` is logged but the queue gains nothing | `start_building_construction` refused the retool building. Send me the line and the tooltip of **Retooling (Government): …** in that state's construction list. |
-| The bar is empty, or one slice fills it although the tooltip lists two recipes above 0% | The slice widths (`layoutstretchfactor_horizontal`) did not read the shares. Send me a screenshot with the tooltip open. |
-| The Buildings tab's rows run off the right edge or the last buttons are cut | The 35 px widening did not fit your screen. Send me a screenshot. |
+| A building's jobs never change as levels land, but its goods do | The share methods' employment is not read by the game. Send me the Workforce and Modifiers tabs. |
+| A mine still shows an automation selector, or `error.log` names a production method group | The building file edit did not take. Send me the `error.log` lines. |
+| The Buildings tab row is empty where the icon was | The country totals are missing or the bar cannot read them. Hover where the bar should be and send me a screenshot, plus any `error.log` line with `pmr_c_`. |
+| The arrow on the type row never lights although a state's building panel arrow is lit | The country scripted GUI cannot see the state flags. Send me a screenshot of both. |
+| A `TICK` line with `elec=0` shows `to=` an electric recipe that was not running before | The electricity lock failed. Send me the line. |
+| `room_priv` above 0 for a year, `queued_priv=0`, `home_investors=0` | Your country's investors do not own enough of the building (at home they need more levels than the government) to fund its retooling. Ownership, not the pool. |
+| The same, with `home_investors=1` and `pool=1000` or more | The pool is allowed and has money but never picks the retool buildings. Send me the lines: that points at how the pool scores them. |
+| The same, with `pool=0` or `100` | The pool is too small to fund anything yet. Not a result. |
+
+## Earlier checks, still to confirm
 
 - **Goods counted once.** A building whose shares the tick had changed listed each switched recipe
   twice: Sicily's sulfur mine showed **Condensing Engine Pump (15% of levels)** and **Diesel Pump
