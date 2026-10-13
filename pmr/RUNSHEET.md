@@ -1,4 +1,4 @@
-# PMR run sheet: faster trade-offs and a worldwide record, plantation treatment by acceptance, trade-offs by local prices, June 16 freeze diagnostics
+# PMR run sheet: trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices, June 16 freeze diagnostics
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,35 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: faster trade-offs, and a record of trade-offs worldwide (your current save carries on)
+## Latest: trade-offs start where your 1838 save was heading, and the second bar's label is vanilla's group name
+
+- **The label beside each second bar is now vanilla's name for the group**: Hardwood Production,
+  Secondary (farms), Luxury Production, Canning, Distilleries, Working Conditions (plantations),
+  Aeroplanes, Tanks. It no longer changes with the leading option, and an ellipsis cuts it if it
+  would run past the panel. The tooltip is shorter: the group, each option's share and, for
+  trade-offs, what it earns per level a week, then one line on how the group moves. Your current
+  save shows this at once.
+- **New games start each trade-off near where games take it.** I read your 1838-10-28 save
+  (7,609 buildings in 1,141 states) and took, per building type, where every building was heading
+  at its state's prices. New games now start there: rye farms 32% Potatoes and 68% Apple Orchards,
+  wheat and maize farms all Citrus Orchards, millet and rice farms all Fig Orchards, logging camps
+  5% Hardwood and 27% Focused Hardwood, textile mills 21% luxury, furniture 70% luxury and 2%
+  Precision Tools, glassworks 99% Ceramics, food industry 3% Pot Stills and 10% Patent Stills
+  (canning stays off). An option a state can't run yet passes its share to the option before it,
+  then to none. Your current save keeps its shares; this needs a new game.
+
+Check, in a new game: the first `OPT` line of a Yorkshire rye farm reads `x=32/68/0`, or one
+month's move past it; a logging camp reads `x=5/27`. In your current save, the logging camp's
+second bar reads Hardwood Production.
+
+| What you see | What it means |
+| --- | --- |
+| A new game's rye farm starts at `x=0/0/0` or on vanilla's single choice | The start shares didn't load; check error.log for `pmr_t` or `pmr_xinit`. |
+| A rye farm starts with Potatoes at 100 | Apple Orchards can't run in that state, so its share passed down. Normal where the technology is missing. |
+| The label still shows an option's name and share | The panel file didn't load; tell me. |
+| The label is blank | The group's name didn't resolve; tell me which building. |
+
+## Earlier: faster trade-offs, and a record of trade-offs worldwide (your current save carries on)
 
 - **Trade-offs move by how much better the option pays.** Each month the best-paying option takes
   as many points as its lead over the worst-paying share, in % of the building's output, from 2 to
