@@ -1,4 +1,4 @@
-# PMR run sheet: blended recipes, four private retool slots
+# PMR run sheet: 1% blend, recipe bar, government upgrade button
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -11,13 +11,48 @@ Also check `logs\error.log` for any line containing `pmr_` before reading anythi
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
 **Your current save works with this build** if it was started on the blended build (the one with
-four retool slots): this build only adds methods. Saves from before that still need a new game: they
-carry modifiers and retool buildings the blended build no longer defines. Leave `fastresearch` off
+four retool slots). Its share methods now mean 1% steps instead of 5%, so right after loading take
+**PMR test: recompute retooling now** (or wait for the month to turn) before reading any figures.
+Saves from before the blended build still need a new game: they carry modifiers and retool
+buildings it no longer defines. Leave `fastresearch` off
 for the full run: it lets every country research instantly and fills every construction queue with
 retooling. For a quick look at the blend
 alone, step 4 below grants one technology to you only.
 
 ## What changed in this build
+
+- **1% steps.** Each recipe's share is now blended to the nearest 1%, so an 11-level building at
+  6/0/4/1 reads 55%, 36% and 9% in its tooltips, the same as the bar.
+- **The recipe bar** is now built like the Owners bar: one slice per recipe, oldest on the left, in
+  muted colours (bronze, ochre, steel blue, plum, slate; no red or green), with the recipe's icon
+  centred on any slice over 25%. While retooling, the line above it reads **9% on Diesel Pump**.
+- **Government upgrade button**, the gold arrow beside the recipe name, against the employment bar.
+  It queues every government retooling level the building still needs. It is greyed out when the
+  government owns none of the levels still to retool, has queued them all, or the state is not yours.
+- **Buildings tab:** each row shows the recipe bar beside the gold labour icon, and the upgrade
+  button left of nationalize. The tab is 35 px wider to make room.
+
+### The new UI, after the doubling check below
+
+1. Open a building that is retooling and has government-owned levels (a mine you built with the
+   government, or Home Counties after `PMR test: grant Bessemer and a steel mill`). The arrow
+   button is lit. Hover it: it says how many levels it will queue.
+2. Click it. The Government queue gains exactly that many **Retooling (Government): …** entries, the
+   button greys out, and the log has one line:
+   ```
+   PMR;rec=GOV_QUEUE;...;room_gov=5;...;queueing=5
+   ```
+   followed by a `rec=TICK` line with `queued_gov=5;room_gov=0`.
+3. Open the **Buildings** tab: the same button sits left of nationalize on that building's row, greyed
+   out now, and the recipe bar sits beside the gold icon.
+
+| You see | It means |
+| --- | --- |
+| The button never lights, even with `room_gov` above 0 in the log | The scripted GUI's `is_valid` is not reading the state's flag. Hover it and send me the tooltip. |
+| You click a lit button and nothing is queued, and no `rec=GOV_QUEUE` line | The scripted GUI did not run. Send me `error.log` lines containing `sgui` or `pmr_`. |
+| `rec=GOV_QUEUE` is logged but the queue gains nothing | `start_building_construction` refused the retool building. Send me the line and the tooltip of **Retooling (Government): …** in that state's construction list. |
+| The bar is empty, or one slice fills it although the tooltip lists two recipes above 0% | The slice widths (`layoutstretchfactor_horizontal`) did not read the shares. Send me a screenshot with the tooltip open. |
+| The Buildings tab's rows run off the right edge or the last buttons are cut | The 35 px widening did not fit your screen. Send me a screenshot. |
 
 - **Goods counted once.** A building whose shares the tick had changed listed each switched recipe
   twice: Sicily's sulfur mine showed **Condensing Engine Pump (15% of levels)** and **Diesel Pump
@@ -29,7 +64,7 @@ alone, step 4 below grants one technology to you only.
   inferred: the outer tick activated again a share the inner one had already applied. The first try
   at this, the switching lock, stays: it does no harm and keeps the running share unlocked mid-change.
 
-### The doubling check, first
+### The doubling check
 
 1. Load your save (or start a new game) and open the Sicily sulfur mine, or any building with two
    recipes in its bar.
@@ -50,8 +85,8 @@ alone, step 4 below grants one technology to you only.
 ### Earlier in this build
 
 - **Old recipes' goods are now in the building's own production figures.** Each recipe has a hidden
-  share method carrying its goods (and pollution) times its share of the building's levels, in 5%
-  steps. An iron mine with 15 levels on Atmospheric and 5 on Condensing lists **Atmospheric Engine
+  share method carrying its goods (and pollution) times its share of the building's levels, in 1%
+  steps (5% before this build). An iron mine with 15 levels on Atmospheric and 5 on Condensing lists **Atmospheric Engine
   Pump (75% of levels)** and **Condensing Engine Pump (25% of levels)** in its input and output
   tooltips, coal included, scaled by employment and throughput exactly like a vanilla recipe. Its
   profit, and the investment AI's view of it, use those figures. The **Not yet retooled** and lag
@@ -70,10 +105,9 @@ alone, step 4 below grants one technology to you only.
 `5/3/0/0` means 5 levels on Blister and 3 on Bessemer. `p` is the target's share and `to_retool` is
 the number of levels not on it.
 
-`blend` is each tier's share in twentieths as the tick set it (`15/5/0/0` is 75% and 25%), and
-`active` is the share method the game reports running for each tier, `-1` if none. They match when
-the blend has been applied. On the line written as a change is made they can differ; the next line
-for that building should show them equal.
+`blend` is each tier's share in percent as the tick set it (`75/25/0/0`), and `active` is the same
+figure for each tier whose share method the game reports running, `-1` where it does not. They match
+when the blend has been applied, which with the guard should be on every line.
 
 `gov_frac` and `gov_levels` give the government-owned share and the levels it comes to.
 `share_gov` / `share_priv` split `to_retool` between government and investors. `queued_gov` /
@@ -134,8 +168,8 @@ investment pool on the **Construction** panel; if it reads £0, unpause for a fe
 the capital, then researches Bessemer. Without unpausing:
 
 ```
-PMR;rec=SWITCH;...;state=Yorkshire;...;to=2;level=8;levels=8/0/0/0;p=0.000;to_retool=8;blend=20/0/0/0;active=20/0/0/0;...;room_gov=0;room_priv=8
-PMR;rec=SWITCH;...;state=Home Counties;...;to=2;level=5;levels=5/0/0/0;p=0.000;to_retool=5;blend=20/0/0/0;active=20/0/0/0;...;room_gov=5;room_priv=0
+PMR;rec=SWITCH;...;state=Yorkshire;...;to=2;level=8;levels=8/0/0/0;p=0.000;to_retool=8;blend=100/0/0/0;active=100/0/0/0;...;room_gov=0;room_priv=8
+PMR;rec=SWITCH;...;state=Home Counties;...;to=2;level=5;levels=5/0/0/0;p=0.000;to_retool=5;blend=100/0/0/0;active=100/0/0/0;...;room_gov=5;room_priv=0
 ```
 
 The mills read **Retooling to Bessemer Process** over an all-red bar showing **0%**, and the
@@ -151,11 +185,11 @@ Yorkshire** entries under Private at once, owned by a Financial District, never 
 moved from the first figure to the second, and the blend following:
 
 ```
-PMR;rec=TICK;...;state=Yorkshire;...;levels=6/2/0/0;...;blend=15/5/0/0;active=15/5/0/0;...
-PMR;rec=TICK;...;state=Yorkshire;...;levels=4/4/0/0;...;blend=10/10/0/0;active=10/10/0/0;...
+PMR;rec=TICK;...;state=Yorkshire;...;levels=6/2/0/0;...;blend=75/25/0/0;active=75/25/0/0;...
+PMR;rec=TICK;...;state=Yorkshire;...;levels=4/4/0/0;...;blend=50/50/0/0;active=50/50/0/0;...
 ```
 
-Shares that are not a multiple of 5% round to the nearest (7 of 8 levels shows as 85% or 90%).
+Shares round to the nearest 1% (7 of 8 levels shows as 88%).
 `active` may trail `blend` on the first line of a day and match on the next. The mill's tooltips now
 list **Blister Steel Process (75% of levels)** and **Bessemer Process (25% of levels)**, and its iron,
 coal and steel figures sit between the two recipes'. On the bar, red shrinks and yellow grows from
@@ -166,7 +200,7 @@ leaves Yorkshire's building list and the slot opens for the next level.
 (say `levels=4/4/0/0`) and some retooling is queued, take **PMR test: grant Open Hearth**. Expect:
 
 ```
-PMR;rec=SWITCH;...;state=Yorkshire;...;to=3;level=8;levels=4/4/0/0;p=0.000;to_retool=8;blend=10/10/0/0;...
+PMR;rec=SWITCH;...;state=Yorkshire;...;to=3;level=8;levels=4/4/0/0;p=0.000;to_retool=8;blend=50/50/0/0;...
 ```
 
 The bar shows red and yellow at half each, with no blue yet, under **Retooling to Open Hearth Process**,
@@ -174,7 +208,7 @@ and the tooltips list Blister and Bessemer and no Open Hearth. Queued Retooling 
 were: none turns into NULL_STATE. As levels land, red goes first (`3/4/1/0`, `2/4/2/0`, and so
 on), then yellow, while blue grows from the right.
 
-**9. When the last level moves:** `rec=DONE;...;levels=0/0/8/0;p=1.000;to_retool=0;blend=0/0/20/0`,
+**9. When the last level moves:** `rec=DONE;...;levels=0/0/8/0;p=1.000;to_retool=0;blend=0/0/100/0`,
 the bar is solid blue at 100%, and the tooltips list only **Open Hearth Process (100% of levels)**.
 If the DONE line shows `queued_priv` or `queued_gov` above 0, those levels still build. The retool
 buildings stay until they land, then disappear.

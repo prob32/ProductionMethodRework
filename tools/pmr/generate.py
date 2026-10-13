@@ -54,13 +54,16 @@ N = 1                      # retool levels per real building level (Pat, 2026-10
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
 RETOOL_AI_VALUE = 1000000  # AI weight of a retool building while it has room; vanilla's default is 1000
-SHARE_STEPS = 20           # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (5%)
+SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
 RETOOL_SLOTS = 4           # private retool levels one building can have under construction at once
 COMPANY_RETOOL = False     # list each private retool slot beside its building type in company files
 # Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
-# building (Pat, 2026-10-12): tier 1 red, 2 yellow, 3 blue, 4 purple; 5 green for the two farms with five.
-TIER_COLORS = [('Red', (0.80, 0.22, 0.20)), ('Yellow', (0.93, 0.78, 0.22)), ('Blue', (0.25, 0.50, 0.88)),
-               ('Purple', (0.62, 0.36, 0.78)), ('Green', (0.32, 0.70, 0.36))]
+# building. Pat, 2026-10-13: muted, in Victoria 3's own style, and no red or green, which read as bad
+# and good. Drawn on vanilla's stacked bar chart texture, as the Owners bar is.
+TIER_COLORS = [('Bronze', (0.60, 0.43, 0.27)), ('Ochre', (0.74, 0.60, 0.30)), ('Steel blue', (0.29, 0.43, 0.62)),
+               ('Plum', (0.48, 0.34, 0.53)), ('Slate', (0.43, 0.48, 0.53))]
+RECIPE_ICON_SHARE = 0.25   # a recipe's slice of the bar shows its icon above this share (Pat, 2026-10-13)
+GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 
 MOD_NAME = 'ProductionMethodRework'
 MOD_VERSION = '0.1.0'
@@ -339,7 +342,7 @@ def main():
                 goods_tex[gk] = t.value
     gfx_root = game
     custom_new = []
-    recipe_keys = {}
+    recipe_keys, recipe_tex = {}, {}
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
@@ -356,6 +359,7 @@ def main():
         else:
             report['icon_fallback'].append({'building': bk, 'good': good, 'missing': src})
         recipe_keys[bk] = [r.key for r in recipes]
+        recipe_tex[bk] = [r.texture for r in recipes]
         if len(recipes) > len(TIER_COLORS):
             raise SystemExit(f'{bk}: {len(recipes)} recipes, but TIER_COLORS has {len(TIER_COLORS)}; add a colour')
         for i, r in enumerate(recipes, 1):
@@ -403,9 +407,9 @@ def main():
         # the current method when a change gains nothing (PRODUCTION_METHOD_STICKINESS_*).
         # Every share method also unlocks under the switching lock _any (unlocking_production_methods
         # is any-of, as vanilla's pm_sewing_machines / pm_electric_sewing_machines lists show), so the
-        # tick can change the share without first locking out the one that runs. Locking it out first
-        # left the building with the new share's goods counted twice (seen in 1.14.5, every input of a
-        # switched building about 2x its blend; cause inferred).
+        # tick can change the share without first locking out the one that runs. Lock n in turn
+        # unlocks only while share n runs, so each lock group offers the AI two methods (lock n and
+        # _any), not SHARE_STEPS + 2.
         for i, r in enumerate(recipes, 1):
             default_n = SHARE_STEPS if i == 1 else 0
             shares, keys = [], []
@@ -421,7 +425,10 @@ def main():
                 blend_pms.append(
                     f'pm_pmr_share_{b}_{i}_{n} = {{\n\ttexture = "{r.texture}"\n{dflt}'
                     f'\tunlocking_production_methods = {{ pm_pmr_key_{b}_{i}_{n} {any_key} }}\n{body}}}\n')
-                blend_pms.append(f'pm_pmr_key_{b}_{i}_{n} = {{\n\ttexture = "{GENERIC_ICON}"\n{dflt}}}\n')
+                # The lock unlocks only while its own share runs, so the AI has two locks to weigh, not
+                # SHARE_STEPS + 2. The switch never needs another: it goes through _any.
+                blend_pms.append(f'pm_pmr_key_{b}_{i}_{n} = {{\n\ttexture = "{GENERIC_ICON}"\n{dflt}'
+                                 f'\tunlocking_production_methods = {{ pm_pmr_share_{b}_{i}_{n} }}\n}}\n')
                 shares.append(f'pm_pmr_share_{b}_{i}_{n}')
                 keys.append(f'pm_pmr_key_{b}_{i}_{n}')
                 pct = round(100 * f)
@@ -501,19 +508,29 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
+    write('common/scripted_guis/pmr_sguis.txt', header + SGUI_DOC + ''.join(gov_retool_sgui(bk) for bk in dispatch))
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n')
     write('gui/building_details_panel.gui', patch_building_panel(
-        recipe_keys, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read()),
+        recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read()),
         bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     write('gui/production_methods.gui', patch_type_grids(vanilla_gui('production_methods.gui'), dispatch,
                                                          'production_methods.gui', 3), bom=False)
-    write('gui/building_browser_panel.gui', patch_grid_instance(
+    # Building browser rows: the labour icon with the recipe bar beside it in the production method
+    # column (220 wide), and the government upgrade button left of nationalize.
+    browser_bars = ''.join(
+        f'\t\t\t\t# PMR: recipe bar for {bk}\n\t\t\t\twidget = {{\n'
+        f'\t\t\t\t\tvisible = "[{is_type(bk)}]"\n\t\t\t\t\tposition = {{ 56 0 }}\n'
+        f'\t\t\t\t\tsize = {{ 156 24 }}\n\t\t\t\t\tparentanchor = vcenter\n'
+        + stacked_bar(short(bk), recipe_tex[bk], ('100%', '100%'), 18, '\t\t\t\t\t') + '\t\t\t\t}\n'
+        for bk in dispatch)
+    write('gui/building_browser_panel.gui', patch_browser_actions(patch_grid_instance(
         patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1),
-        dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(50, 50), cell=50, anchor='center'), bom=False)
+        dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
+        extra=browser_bars), dispatch), bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1), bom=False)
     loc += panel_loc(recipe_keys)
@@ -660,6 +677,22 @@ def retool_triggers(b, bk):
     return '\n'.join(out)
 
 
+SGUI_DOC = """# The government upgrade button on PMR buildings (details panel and building browser rows). State
+# scope, one per building type, since a state has at most one building of each type. Valid while the
+# government still has room to queue retool levels for that building (pmr_retool_open_gov_<b>, set by
+# the tick). The GUI also requires the state to be the player's.
+
+"""
+
+
+def gov_retool_sgui(bk):
+    b = short(bk)
+    return (f'pmr_gov_retool_{b}_sgui = {{\n\tscope = state\n'
+            f'\tis_shown = {{ exists = b:{bk} }}\n'
+            f'\tis_valid = {{ has_variable = pmr_retool_open_gov_{b} }}\n'
+            f'\teffect = {{ pmr_queue_gov_{b} = yes }}\n}}\n\n')
+
+
 def retool_values(b):
     """Building scope: the most government retool levels the building may have after queued
     constructions, before the scope:num_levels being added."""
@@ -719,14 +752,39 @@ def tick_effect(bk, b, recipes):
     # switching lock _any is active. To change share, the lock moves to _any (the running share stays
     # unlocked), then the share moves (the new one is unlocked), then the lock moves to the new step:
     # no step ever locks out the running share method, so the game never has to replace it itself.
-    # A lock left off its step for any reason is put back on the next tick. Each activation checks
-    # first that its method is not already running: activating a running share again counted its
-    # goods twice (see pmr_tick_<b>).
+    # Only a share that is not running is activated (pmr_read_blend_<b> finds out first): activating
+    # a running share again counted its goods twice (see pmr_tick_<b>). With 1% steps the step is
+    # found by bisection, so a tick costs about seven comparisons per recipe, not a hundred.
     def pm(kind, i, n):
         return f'pm_pmr_{kind}_{b}_{i}_{n}'
 
     def pm_active(kind, i, n):
         return f'is_production_method_active = {{ building_type = {bk} production_method = {pm(kind, i, n)} }}'
+
+    def act(kind, i, n):
+        return f'activate_production_method = {{ building_type = {bk} production_method = {pm(kind, i, n)} }}'
+
+    def bisect(var, leaf, ind, lo=0, hi=SHARE_STEPS):
+        """leaf(n) for the step n held in var, found in log2(SHARE_STEPS) comparisons. Not indented by
+        depth: with 1% steps these ladders are most of the file."""
+        if lo == hi:
+            return f'{ind}{leaf(lo)}\n'
+        mid = (lo + hi) // 2
+        return (f'{ind}if = {{ limit = {{ var:{var} <= {mid} }}\n' + bisect(var, leaf, ind, lo, mid)
+                + f'{ind}}}\n{ind}else = {{\n' + bisect(var, leaf, ind, mid + 1, hi) + f'{ind}}}\n')
+
+    # pmr_a_<i>: the step the tick wants (pmr_n_<i>) if that share method runs, else -1. Read before
+    # the blend to see what must change, and after it for the log.
+    o.append(f'pmr_read_blend_{b} = {{\n')
+    for i in range(1, k + 1):
+        o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}', '\t'))
+    o.append('}\n\n')
+
+    # pmr_lock_<i>_<b>: recipe i's lock onto the step the tick wants.
+    for i in range(1, k + 1):
+        o.append(f'pmr_lock_{i}_{b} = {{\n'
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("key", i, n), '\t') + '}\n\n')
 
     o.append(f'pmr_blend_{b} = {{\n\t{setv("pmr_ncum", 0)}\n')
     for i in range(1, k + 1):
@@ -739,26 +797,15 @@ def tick_effect(bk, b, recipes):
                  f'\t\tif = {{ limit = {{ var:{v(f"pmr_n_{i}")} > var:{v("pmr_nrest")} }} {setv(f"pmr_n_{i}", "var:" + v("pmr_nrest"))} }}\n'
                  f'\t\t{chg("pmr_ncum", "add", "var:" + v(f"pmr_n_{i}"))}\n\t}}\n')
     o.append(on_index('pmr_to', lambda i: f'{setv(f"pmr_n_{i}", SHARE_STEPS)} {chg(f"pmr_n_{i}", "subtract", "var:" + v("pmr_ncum"))}'))
-    def act(kind, i, n):
-        return f'activate_production_method = {{ building_type = {bk} production_method = {pm(kind, i, n)} }}'
-
+    o.append(f'\tpmr_read_blend_{b} = yes\n')
     for i in range(1, k + 1):
-        for n in range(SHARE_STEPS + 1):
-            kw = 'if' if n == 0 else 'else_if'
-            o.append(f'\t{kw} = {{\n\t\tlimit = {{ var:{v(f"pmr_n_{i}")} = {n} }}\n'
-                     f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ {pm_active("share", i, n)} }} }}\n'
-                     f'\t\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, "any")} }} }} {act("key", i, "any")} }}\n'
-                     f'\t\t\tif = {{ limit = {{ NOT = {{ {pm_active("share", i, n)} }} }} {act("share", i, n)} }}\n\t\t}}\n'
-                     f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, n)} }} }} {act("key", i, n)} }}\n\t}}\n')
-    o.append('}\n\n')
-
-    # For the log: the share step each recipe's group actually runs, -1 if none reads.
-    o.append(f'pmr_read_blend_{b} = {{\n')
-    for i in range(1, k + 1):
-        o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n')
-        for n in range(SHARE_STEPS + 1):
-            kw = 'if' if n == 0 else 'else_if'
-            o.append(f'\t{kw} = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}\n')
+        o.append(f'\t# recipe {i}: if its share is not the one wanted, unlock every share, switch, lock again;\n'
+                 '\t# if only the lock moved (the AI took the switching lock), lock again\n'
+                 f'\tif = {{\n\t\tlimit = {{ var:{v(f"pmr_a_{i}")} = -1 }}\n'
+                 f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, "any")} }} }} {act("key", i, "any")} }}\n'
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("share", i, n), '\t\t')
+                 + f'\t\tpmr_lock_{i}_{b} = yes\n\t}}\n'
+                 f'\telse_if = {{ limit = {{ {pm_active("key", i, "any")} }} pmr_lock_{i}_{b} = yes }}\n')
     o.append('}\n\n')
 
     # The levels the state tracks always add up to the building's level. New levels arrive on the
@@ -1041,6 +1088,19 @@ def tick_effect(bk, b, recipes):
              f'\t\tset_variable = {{ name = pmr_busy_{b} value = yes days = 1 }}\n'
              f'\t\tpmr_tick_body_{b} = yes\n'
              f'\t\tremove_variable = pmr_busy_{b}\n\t}}\n}}\n\n')
+
+    # The government upgrade button (pmr_gov_retool_<b>_sgui): queue every government retool level
+    # the building still needs, as if the player had built them one by one, then tick so the room,
+    # and with it the button, drops to nothing.
+    o.append(f'pmr_queue_gov_{b} = {{\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} }}\n'
+             f'\t\t{setv("pmr_q", "var:" + v("pmr_room_gov"))}\n'
+             f'\t\t{log("GOV_QUEUE", bk, b, k, extra=";queueing=" + f("pmr_q"))}\n'
+             f'\t\twhile = {{\n\t\t\tlimit = {{ var:{v("pmr_q")} > 0 }}\n'
+             f'\t\t\tstart_building_construction = {rbg}\n'
+             f'\t\t\t{chg("pmr_q", "subtract", 1)}\n\t\t}}\n'
+             f'\t\tremove_variable = {v("pmr_q")}\n'
+             f'\t\tpmr_tick_{b} = yes\n\t}}\n}}\n\n')
     return ''.join(o)
 
 
@@ -1102,37 +1162,87 @@ def any_type(buildings):
     return expr
 
 
-def recipe_bar(bk, b, k):
-    """The recipe bar for one building type. Two rows sized and centred to match the employment
-    and cash-reserve bars to its right (26 px each, 8 apart), between the production method slot
-    (x 2..72) and those bars (230 wide, 5 from the right edge of the 540 px panel): x 84..293.
-    The bar is one segment per recipe, oldest on the left, each as wide as that recipe's share of
-    the building's levels and coloured by its tier (TIER_COLORS). Drawn as white progress bars
-    tinted per tier, filled to the running total of the shares and stacked newest first, so each
-    tier shows from where the older ones end."""
-    def var(name):
-        return f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue"
-    retooling = f'NotZero_CFixedPoint({var("pmr_ui_retooling")})'
-    layers = []
-    frame = '\n\t\t\t\t\t\t\tblockoverride "frame" {}  # the frame is drawn once, by the top layer'
-    for i in range(k, 0, -1):
+def state_var(b, name):
+    return f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue"
+
+
+def stacked_bar(b, textures, size, icon, ind):
+    """A recipe bar in the style of vanilla's Owners bar (building_ownership_stacked_barchart): one
+    slice per recipe, oldest on the left, as wide as that recipe's share of the building's levels
+    (layoutstretchfactor_horizontal, as vanilla sizes owners), coloured by its tier (TIER_COLORS),
+    with the recipe's icon centred on it once the slice is over RECIPE_ICON_SHARE."""
+    retooling = f'NotZero_CFixedPoint({state_var(b, "pmr_ui_retooling")})'
+    items = []
+    for i, tex in enumerate(textures, 1):
         name, (r, g, bl) = TIER_COLORS[i - 1]
-        layers.append(f"""
-						# tier {i}, {name.lower()}
-						white_progressbar_horizontal = {{
-							size = {{ 100% 100% }}
-							blockoverride "background" {{}}{'' if i == 1 else frame}
-							blockoverride "values" {{
-								min = 0
-								max = 1
-								value = "[FixedPointToFloat({var(f"pmr_cum_{i}")})]"
-							}}
-							blockoverride "color" {{
-								color = {{ {r} {g} {bl} 1 }}
-							}}
-						}}""")
+        sh = state_var(b, f'pmr_sh_{i}')
+        items.append(
+            f'{ind}\t\t# tier {i}, {name.lower()}\n'
+            f'{ind}\t\thbox = {{\n'
+            f'{ind}\t\t\tvisible = "[GreaterThan_CFixedPoint({sh}, \'(CFixedPoint)0\')]"\n'
+            f'{ind}\t\t\tlayoutpolicy_horizontal = expanding\n{ind}\t\t\tlayoutpolicy_vertical = expanding\n'
+            f'{ind}\t\t\tlayoutstretchfactor_horizontal = "[FixedPointToInt(Multiply_CFixedPoint({sh}, \'(CFixedPoint)100\'))]"\n'
+            f'{ind}\t\t\talwaystransparent = yes\n'
+            f'{ind}\t\t\tbackground = {{\n'
+            f'{ind}\t\t\t\ttexture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
+            f'{ind}\t\t\t\tcolor = {{ {r} {g} {bl} 1 }}\n'
+            f'{ind}\t\t\t\tspriteborder = {{ 3 3 }}\n'
+            f'{ind}\t\t\t\tusing = simple_frame_mask\n{ind}\t\t\t\tusing = progressbar_texture_properties\n'
+            f'{ind}\t\t\t}}\n'
+            f'{ind}\t\t\ticon = {{\n'
+            f'{ind}\t\t\t\tvisible = "[GreaterThan_CFixedPoint({sh}, \'(CFixedPoint){RECIPE_ICON_SHARE}\')]"\n'
+            f'{ind}\t\t\t\tsize = {{ {icon} {icon} }}\n'
+            f'{ind}\t\t\t\talwaystransparent = yes\n'
+            f'{ind}\t\t\t\ttexture = "{tex}"\n'
+            f'{ind}\t\t\t}}\n'
+            f'{ind}\t\t}}\n')
+    return (f'{ind}widget = {{\n'
+            f'{ind}\tsize = {{ {size[0]} {size[1]} }}\n'
+            f'{ind}\tbackground = {{\n'
+            f'{ind}\t\ttexture = "gfx/interface/progressbar/progressbar_empty.dds"\n'
+            f'{ind}\t\tspriteType = Corneredtiled\n{ind}\t\tspriteborder = {{ 4 4 }}\n{ind}\t\ttexture_density = 2\n'
+            f'{ind}\t\tusing = progressbar_texture_properties\n{ind}\t}}\n'
+            f'{ind}\thbox = {{\n'
+            f'{ind}\t\tlayoutpolicy_horizontal = expanding\n{ind}\t\tlayoutpolicy_vertical = expanding\n'
+            f'{ind}\t\tmargin = {{ 1 1 }}\n'
+            + ''.join(items) +
+            f'{ind}\t}}\n'
+            f'{ind}\t# hover areas: the breakdown by recipe while retooling, else the one recipe\n'
+            f'{ind}\twidget = {{\n{ind}\t\tvisible = "[{retooling}]"\n{ind}\t\tsize = {{ 100% 100% }}\n'
+            f'{ind}\t\ttooltip = "PMR_BAR_TOOLTIP_{b}"\n{ind}\t\tusing = tooltip_above\n{ind}\t}}\n'
+            f'{ind}\twidget = {{\n{ind}\t\tvisible = "[Not({retooling})]"\n{ind}\t\tsize = {{ 100% 100% }}\n'
+            f'{ind}\t\ttooltip = "PMR_BAR_FULL_TOOLTIP"\n{ind}\t\tusing = tooltip_above\n{ind}\t}}\n'
+            f'{ind}}}\n')
+
+
+def gov_button(b, size, ind, place=''):
+    """The government upgrade button: queues every government retool level the building still
+    needs (pmr_gov_retool_<b>_sgui). Greyed out unless the state is the player's and the government
+    has room left, which needs government-owned levels still to retool."""
+    sgui = f"GetScriptedGui('pmr_gov_retool_{b}_sgui')"
+    scope = 'GuiScope.SetRoot(Building.GetState.MakeScope).End'
+    return (f'{ind}button_icon_round = {{\n{place}'
+            f'{ind}\tsize = {{ {size} {size} }}\n'
+            f'{ind}\tenabled = "[And(ObjectsEqual(Building.GetState.GetOwner.Self, GetPlayer.Self), {sgui}.IsValid({scope}))]"\n'
+            f'{ind}\tonclick = "[{sgui}.Execute({scope})]"\n'
+            f'{ind}\ttooltip = "PMR_GOV_RETOOL_TOOLTIP_{b}"\n'
+            f'{ind}\tusing = tooltip_ne\n'
+            f'{ind}\tusing = confirm_button_sound\n'
+            f'{ind}\tblockoverride "icon" {{\n{ind}\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t}}\n'
+            f'{ind}\tblockoverride "icon_size" {{\n{ind}\t\tsize = {{ 80% 80% }}\n{ind}\t}}\n'
+            f'{ind}}}\n')
+
+
+def recipe_bar(bk, b, textures):
+    """The recipe bar for one building type, in the details panel's row between the production
+    method slot (x 2..72) and the employment and cash-reserve bars (230 wide, 5 from the right edge
+    of the 540 px panel): x 84..293, two rows of 26 px, 8 apart, to match those bars. The top row
+    holds the recipe's name and, against the employment bar, the government upgrade button; the
+    bottom row the stacked recipe bar."""
+    retooling = f'NotZero_CFixedPoint({state_var(b, "pmr_ui_retooling")})'
+    ind = '\t\t\t\t\t'
     return f"""
-				# PMR: recipe bar for {bk}: each recipe's share of the levels, in its tier's colour.
+				# PMR: recipe bar and government upgrade button for {bk}
 				widget = {{
 					visible = "[{is_type(bk)}]"
 					position = {{ 84 0 }}
@@ -1141,7 +1251,7 @@ def recipe_bar(bk, b, k):
 
 					textbox = {{
 						visible = "[Not({retooling})]"
-						size = {{ 209 26 }}
+						size = {{ 175 26 }}
 						align = left|nobaseline
 						elide = right
 						text = "PMR_RECIPE_BAR_TITLE"
@@ -1150,56 +1260,23 @@ def recipe_bar(bk, b, k):
 					}}
 					textbox = {{
 						visible = "[{retooling}]"
-						size = {{ 209 26 }}
+						size = {{ 175 26 }}
 						align = left|nobaseline
 						elide = right
-						text = "PMR_RECIPE_BAR_TITLE_RETOOLING"
+						text = "PMR_RECIPE_BAR_TITLE_RETOOLING_{b}"
 						tooltip = "PMR_BAR_TOOLTIP_{b}"
 						using = tooltip_above
 					}}
-
+{gov_button(b, 30, ind, f'{ind}\tposition = {{ 179 -2 }}\n')}
 					widget = {{
 						position = {{ 0 34 }}
 						size = {{ 209 26 }}
-						background = {{
-							texture = "gfx/interface/progressbar/progressbar_empty.dds"
-							spriteType = Corneredtiled
-							spriteborder = {{ 4 4 }}
-							texture_density = 2
-							using = progressbar_texture_properties
-						}}
-{''.join(layers)}
-						textbox = {{
-							visible = "[{retooling}]"
-							size = {{ 100% 100% }}
-							align = center|nobaseline
-							text = "PMR_BAR_PCT_{b}"
-						}}
-						textbox = {{
-							visible = "[Not({retooling})]"
-							size = {{ 100% 100% }}
-							align = center|nobaseline
-							text = "PMR_BAR_FULL"
-						}}
-						# hover areas: the breakdown by recipe while retooling, else the one recipe
-						widget = {{
-							visible = "[{retooling}]"
-							size = {{ 100% 100% }}
-							tooltip = "PMR_BAR_TOOLTIP_{b}"
-							using = tooltip_above
-						}}
-						widget = {{
-							visible = "[Not({retooling})]"
-							size = {{ 100% 100% }}
-							tooltip = "PMR_BAR_FULL_TOOLTIP"
-							using = tooltip_above
-						}}
-					}}
+{stacked_bar(b, textures, ('100%', '100%'), 22, ind + chr(9))}					}}
 				}}
 """
 
 
-def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor=''):
+def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extra=''):
     """The one use of vanilla's condensed_building_information_pms in a GUI file, at indent ind: on a
     PMR building type it is hidden and the fixed labour icon stands in its place. The grid inside is
     a fixedgridbox, which keeps a column for every production method group even when the item is
@@ -1221,13 +1298,13 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor=''):
               + (f'{ind}\tparentanchor = {anchor}\n' if anchor else '') +
               f'{ind}\twidget = {{\n{ind}\t\tsize = {{ {cell} {cell} }}\n{ind}\t\tparentanchor = vcenter\n'
               f'{ind}\t\ttooltip = "PMR_LABOUR_ICON_TOOLTIP"\n'
-              f'{ind}\t\tusing = tooltip_ne\n{icons}{ind}\t}}\n{ind}}}')
+              f'{ind}\t\tusing = tooltip_ne\n{icons}{ind}\t}}\n{extra}{ind}}}')
     return (text[:at] + f'{ind}\t# PMR: no grid on PMR building types\n{ind}\tvisible = "[Not({any_type(buildings)})]"\n'
             + text[at:end] + labour + text[end:])
 
 
-def patch_building_panel(recipe_keys, text):
-    buildings = list(recipe_keys)
+def patch_building_panel(recipe_tex, text):
+    buildings = list(recipe_tex)
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
     # 1. The production method row: on a PMR building type, the fixed labour icon instead of the grid.
@@ -1248,7 +1325,37 @@ def patch_building_panel(recipe_keys, text):
     if text.count(anchor) != 1:
         raise SystemExit(f'building_details_panel.gui: expected one {anchor.strip()!r}, found '
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
-    text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), len(recipe_keys[bk])) for bk in buildings))
+    text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk]) for bk in buildings))
+    return text
+
+
+BROWSER_EXTRA = 35  # px the building browser grows by, for the government upgrade button
+
+
+def patch_browser_actions(text, buildings):
+    """building_browser_panel.gui: the government upgrade button left of nationalize in each building
+    row, at the same 35 px, on PMR building types. The rows have no room to spare (their columns
+    already fill @spreadsheet_width), so the spreadsheet, the row's action column and the
+    Interactions header above it grow by BROWSER_EXTRA. Asserted per anchor."""
+    def once(old, new):
+        nonlocal text
+        if text.count(old) != 1:
+            raise SystemExit(f'building_browser_panel.gui: expected one {old.strip()!r}, found {text.count(old)}; '
+                             'update patch_browser_actions')
+        text = text.replace(old, new)
+    once('@spreadsheet_width = 1381\n', f'@spreadsheet_width = {1381 + BROWSER_EXTRA}  # PMR: +{BROWSER_EXTRA}\n')
+    once('@spreadsheet_width_minus_10 = 1371\n', f'@spreadsheet_width_minus_10 = {1371 + BROWSER_EXTRA}  # PMR\n')
+    once('\t\t\t\t\t\t\t\t\tsize = { 191 30 }\n', f'\t\t\t\t\t\t\t\t\tsize = {{ {191 + BROWSER_EXTRA} 30 }}  # PMR\n')
+    once('\t\t\tsize = { 180 @spreadsheet_height }\n', f'\t\t\tsize = {{ {180 + BROWSER_EXTRA} @spreadsheet_height }}  # PMR\n')
+    ind = '\t\t\t\t\t'
+    buttons = ''.join(f'{ind}\twidget = {{\n{ind}\t\tvisible = "[{is_type(bk)}]"\n{ind}\t\tsize = {{ 100% 100% }}\n'
+                      + gov_button(short(bk), 35, ind + '\t\t', f'{ind}\t\t\tparentanchor = center\n')
+                      + f'{ind}\t}}\n' for bk in buildings)
+    once('\t\t\t\tflowcontainer = {\n\t\t\t\t\t### NATIONALIZE\n',
+         '\t\t\t\tflowcontainer = {\n'
+         f'{ind}ignoreinvisible = yes  # PMR\n'
+         f'{ind}# PMR: government upgrade button\n{ind}widget = {{\n{ind}\tvisible = "[{any_type(buildings)}]"\n'
+         f'{ind}\tsize = {{ 35 35 }}\n' + buttons + f'{ind}}}\n\n{ind}### NATIONALIZE\n')
     return text
 
 
@@ -1345,8 +1452,6 @@ def patch_building_grids(text, buildings, name, expected):
 def panel_loc(recipe_keys):
     loc = [
         ' PMR_RECIPE_BAR_TITLE:0 "#bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
-        ' PMR_RECIPE_BAR_TITLE_RETOOLING:0 "Retooling to #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
-        ' PMR_BAR_FULL:0 "#bold 100%#!"',
         ' PMR_LABOUR_ICON_TOOLTIP:0 "#bold Fixed workforce#!\\nThis building employs the same workforce whatever recipe it runs. Its recipes change only its goods, as the bar beside this shows."',
         ' PMR_BAR_FULL_TOOLTIP:0 "Every level runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!."',
         ' PMR_RECIPE_BAR_TOOLTIP:0 "This building runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!. When your country researches a newer recipe it switches automatically, and the change takes effect as retooling construction completes."',
@@ -1358,12 +1463,17 @@ def panel_loc(recipe_keys):
             return f"[Building.GetState.MakeScope.Var('{name}_{b}').GetValue|{f}]"
         tiers = ''.join(f'\\n{TIER_COLORS[i - 1][0]}, ${key}$: #bold {var(f"pmr_sh_{i}", "%0")}#!'
                         for i, key in enumerate(keys, 1))
+        gov = (f'Government: #bold {var("pmr_pending_gov", "0")}#! queued, room for #bold {var("pmr_room_gov", "0")}#! more.')
         loc += [
-            f' PMR_BAR_PCT_{b}:0 "#bold {var("pmr_p", "%0")}#!"',
+            f' PMR_RECIPE_BAR_TITLE_RETOOLING_{b}:0 "#bold {var("pmr_p", "%0")}#! on #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
             f' PMR_BAR_TOOLTIP_{b}:0 "#bold Levels by recipe#!{tiers}'
             f'\\n\\nLevels still to retool to [Building.GetCustom(\'pmr_new_recipe\')]: #bold {var("pmr_need", "0")}#!'
             f'\\n\\nPrivate investors: #bold {var("pmr_pending_priv", "0")}#! queued, room for #bold {var("pmr_room_priv", "0")}#! more. Only investors who own part of this building fund these, from the investment pool, up to {RETOOL_SLOTS} levels at a time.'
-            f'\\nGovernment: #bold {var("pmr_pending_gov", "0")}#! queued, room for #bold {var("pmr_room_gov", "0")}#! more. Queue these yourself: build #bold $building_pmr_retool_gov_{b}$#! in this state."',
+            f'\\n{gov} Queue them all with the upgrade button beside the recipe name, or build #bold $building_pmr_retool_gov_{b}$#! in this state yourself."',
+            f' PMR_GOV_RETOOL_TOOLTIP_{b}:0 "#bold Retool the government\'s levels#!'
+            f'\\nQueues every government retooling level this building still needs in your government construction queue: #bold {var("pmr_room_gov", "0")}#! now.'
+            f'\\n\\n{gov} Privately owned levels are retooled by their investors.'
+            f'\\n\\nUnavailable when the government owns none of the levels still to retool, has already queued them all, or the state is not yours."',
         ]
     return loc
 
