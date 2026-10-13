@@ -1,4 +1,4 @@
-# PMR run sheet: the Private construction tab, trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,63 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the Private construction tab (your current save works; a new game gives a clean chart)
+## Latest: the Private tab, third round (your current save works)
+
+What changed after your 13:05 look:
+
+- **The trend line draws now.** Its cells used a white texture that 1.14.5 doesn't ship, so they drew
+  nothing. Your save already holds four months (your log rows were 10, 1, 10 and 20), so the line
+  should show on load.
+- **Top of the tab:** the budget panel's own Investment Pool line. The Weekly re-investment line and
+  the Previous Investments line are gone; recent investments stay at the bottom.
+- **Buildings Adding to the Pool is a tree chart.** The game gives its per-building amounts only as
+  text, so the tiles are the privately owned building levels in each of the five priority groups,
+  with a legend of shares. Hovering the chart shows the game's list in money. It is counted when you
+  open the Private tab and on the 1st of each month.
+- **Five priority groups.** Light Industries (light industry, shipyards, arts), Heavy Industries
+  (heavy and military industry), Agriculture (farms, ranches, plantations, rubber, fishing, whaling),
+  Resources (mines, logging, oil) and Infrastructure (railways, ports, trade centers, power). Each
+  row reads +0%, or the boost in green (+25%, +50%). Earlier coin settings don't carry over: every
+  group starts at +0%.
+- **Larger cards.** The law and policy cards are 268 by 380; a law with more effects than fit
+  scrolls inside its card.
+- **Economic Policies window.** Add Policy and Change Policy open a window beside the panel with all
+  four policies as cards: benefits, a short description, and Adopt Policy. Added benefits: Steer the
+  Economy +10% private construction allocation and +10% infrastructure construction efficiency;
+  Favour Large Corporations +10% capitalists' investment efficiency and +10% company construction
+  bonus; Re-invest +10% government dividends reinvestment and +10% light and heavy industry
+  construction efficiency; Favour Small Businesses +10% farmers' investment efficiency.
+
+1. **Trend line.** On load the graph shows a pale line through the four recorded months on the
+   right. Hovering a month shows its weekly figure.
+2. **Pool line.** "Investment Pool: £… (+…)" matches the budget panel, and hovering it shows
+   vanilla's pool graph.
+3. **Chart.** Opening the Private tab logs
+   `PMR;rec=CONTRIB;...;light=...;heavy=...;agriculture=...;resources=...;infrastructure=...`. Five
+   coloured tiles, each labelled with its group and sized by those numbers, and a legend whose
+   percentages add to 100%.
+4. **Cards.** All of Interventionism's effects are readable (scroll inside the card if needed), and
+   the policy card is the same size.
+5. **Policy window.** Add Policy opens "Economic Policies" to the right of the panel. Adopt Steer the
+   Economy: a `PMR;rec=POLICY;...;policy=steer` line, the window closes, and the policy card shows
+   Steer with its benefits and Change Policy. Change Policy reopens the window with Steer marked
+   Current Policy. The close button shuts it; it hides on other tabs, and clicking the Private tab
+   closes it.
+6. **Priority rows.** Five rows, all reading +0% in white. Fifth coin on Light Industries: it reads
+   +50% in green; hovering shows what it covers and x1.00, and Heavy Industries shows x0.67. Under
+   Steer the Economy the same coin reads +75%.
+7. **error.log** has no line naming `pmr_pc`, `pmr_ipw`, `pmr_policy` or `pmr_ri`.
+
+| What you see | What it means |
+| --- | --- |
+| No line, but hovering a month shows its figure | The cells still don't draw; send a screenshot. |
+| "Counted when you open this tab…" stays after opening the tab, and no `CONTRIB` line | The tab button's recount didn't run. |
+| A `CONTRIB` line with numbers, a correct legend, but no tiles, equal tiles, one colour or one label | The tiles can't find their group by their place in the list; the legend is still right. Tell me which. |
+| Add Policy does nothing | The window isn't placed beside the panel; send error.log lines naming `construction_panel` or `pmr_policy_window`. |
+| The window opens but clicks go through it to the map | It doesn't block clicks; tell me. |
+| A row stays at +0% after a coin click | The row's value isn't read; the coin frame tells you whether the click itself landed. |
+
+## Earlier: the Private construction tab, first two rounds (superseded above where they differ)
 
 **Revised 2026-10-13 after your first look:** the weekly re-investment is a trend line in vanilla's
 graph frame (the GDP graph's), the policy card is the law card's size with an Add Policy plus in the
