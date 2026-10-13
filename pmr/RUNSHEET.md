@@ -1,4 +1,4 @@
-# PMR run sheet: June 16 freeze diagnostics, electric automation as its own recipe, TREAT and PRICE probes, government levels, Owners column, retool crews
+# PMR run sheet: plantation treatment by acceptance, trade-offs by local prices, June 16 freeze diagnostics, electric automation as its own recipe, government levels, Owners column
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,63 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: retool clutter and the bar tooltip (your current save carries on)
+## Latest: plantation treatment and trade-offs blend (start a new game)
+
+**Start a new game.** Buildings gain new production method groups, which a running save can't take.
+
+- **Plantation treatment follows the workforce.** Each plantation's Working Conditions is now a mix:
+  the share of its workforce with acceptance under 40 is treated violently, 40 to 59 exploitatively,
+  the rest under Standard Labor. Every effect of a treatment scales by its share, output, mortality,
+  wages, job attractiveness and slave imports alike. The law wins: where Violent Treatment is barred
+  (Britain bans slavery), that share is treated exploitatively, and where Exploitative Practices are
+  barred too, it goes to Standard Labor. Recounted monthly.
+- **Trade-offs follow local prices.** Hardwood, the farms' secondary crops, the luxury lines (textile
+  mills, furniture, glassworks), canning and distilling, aeroplanes and tanks. Once a month 2 points
+  move from the worst-paying option to the best-paying one, if it adds over 5% of the building's
+  output value more at this state's prices. At game start every building keeps vanilla's choice; one
+  built later starts on the best-paying option.
+- **A second bar under the recipe bar** on the building panel, one per group (food industry has two):
+  grey for none (Standard Labor, Prioritize Softwood Production, Jars), then each option. Beside it,
+  the leading option and its share. Hover for each share, this month's change and, for trade-offs,
+  what each option adds per level a week at local prices.
+
+Play to at least 1 March 1836. Each month a player-owned state logs one `OPT` line per building type
+with a blended group, for example
+`PMR;rec=OPT;...;building=building_logging_camp;x=0/0;running=0/0;can=1/0;value=-100/-1000000;px=hardwood:1.00,wood:1.00`.
+The fields list the options in order (for food industry: the four canning options, then the two
+distilling ones):
+
+| Field | Meaning |
+| --- | --- |
+| `x` | each option's share, 0 to 100; none is the rest |
+| `running` | the share the building actually runs; should equal `x` |
+| `can` | 1 if the option can run here (technology, laws) |
+| `value` | what the option adds per level a week at local prices; -1000000 when it can't run |
+| `px` | each good's local price as a share of its base price, 0.25 to 1.75 |
+| `w`, `band_v`, `band_h` | plantations: workforce, and % of it under acceptance 40 and from 40 to 59 |
+
+Checks:
+
+1. **Treatment.** On a Jamaican sugar plantation (or any of your plantations), the exploitative share
+   in `x` equals `band_v + band_h`, since Britain bars violent treatment (`can=0/1`). Its panel's
+   second bar shows the same split.
+2. **Prices.** On a logging camp, a hardwood option gains 2 points a month whenever its `value` beats
+   the worst-paying share by more than 5% of the camp's output; otherwise `x` stays put. At base
+   prices hardwood loses money (`value=-100`), so expect movement only where hardwood is dear.
+3. **The bar.** Open a food industry: two bars under the recipe bar, Canning and Distillery.
+
+| What you see | What it means |
+| --- | --- |
+| No `OPT` line after 1 February | The blending never ran; it is not that every share is zero. Check error.log for `pmr_x`. |
+| `can=0` for an option you know is unlocked | Asking whether the stripped vanilla method could run reads false; every share drains to none. |
+| `running` differs from `x`, or reads -1 | The share method did not activate, so the building's figures don't show that share. |
+| `w=0` on a staffed plantation | The workforce read nothing, so treatment stays all Standard Labor. |
+| `px` all 1.00 every month, `value` never moving | The price reads fail; trade-offs then only follow base prices. |
+| A bar all grey while `x` shows a share | The bar fails to read the state's variables; the blend itself works. |
+
+The `TREAT` and `PRICE` probe lines from the last build still run; `OPT` supersedes them.
+
+## Earlier: retool clutter and the bar tooltip
 
 - **Finished retool buildings go at once.** A private retool building is removed the moment its level
   is counted, as a government one already was, so the state's Buildings tab shows only the

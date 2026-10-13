@@ -121,6 +121,36 @@ ELECTRICITY = 'electricity'
 # 4 KB blocks, so the last lines before a hang are lost unless one line fills a block by itself.
 TICK_TRIP = 25
 FLUSH_PAD = 4500
+# Second groups (Pat approved both 2026-10-13; built from 03:21Z). A group after the recipe group is
+# either a trade-off, blended by local prices, or a plantation's working conditions, blended by the
+# workforce's acceptance. Each of its options (every method but the one that does nothing) gets a share
+# of the building, in 1% steps, through share methods built like the recipe ones; the do-nothing method
+# is the remainder. The vanilla group stays on the building as a marker that carries nothing: it keeps
+# the game's history setup readable at game start and lets can_activate_production_method gate each
+# option by technology, law and recipe as vanilla would. Tech ladders (automation, rail, explosives,
+# ...) are not converted yet.
+# Trade-offs (pmr/second-groups.md): once a month each option is valued at local prices (outputs minus
+# inputs per level, goods only), and TRADE_STEP points move from the worst-paying option with a share to
+# the best-paying one, when the gap beats TRADE_DEAD_BAND of the building's output value per level.
+# "None" is worth 0. A building built during the game starts on the best-paying option.
+TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_building_textile_mill',
+                'pmg_luxury_building_furniture_manufactory', 'pmg_luxury_building_glassworks',
+                'pmg_aeroplanes', 'pmg_tanks', 'pmg_synthetic_silk', 'pmg_radios_category',
+                'pmg_secondary_building_rye_farm', 'pmg_secondary_building_wheat_farm',
+                'pmg_secondary_building_rice_farm', 'pmg_secondary_building_maize_farm',
+                'pmg_secondary_building_millet_farm')
+TRADE_STEP = 2
+TRADE_DEAD_BAND = 0.05
+# Treatment (pmr/treatment-by-acceptance.md): Violent Treatment's share is the building's workforce
+# with acceptance under TREAT_BANDS[0], Exploitative Practices' (Pat's "harsh") the workforce from
+# there to under TREAT_BANDS[1], recounted monthly. Every effect of each method, output, penalties and
+# slave imports alike, scales by its share (Pat, 02:26Z). The law wins: a share the owner's laws bar
+# goes to the nearest treatment they allow (violent to harsh to standard; standard, barred under the
+# slave trade, to harsh, then violent).
+# Trade-off bar colours, muted and never red or green, apart from the recipe tiers; "none" is grey.
+OPTION_COLORS = [('Sand', (0.74, 0.66, 0.48)), ('Dusk blue', (0.42, 0.52, 0.66)),
+                 ('Mauve', (0.60, 0.46, 0.56)), ('Umber', (0.52, 0.41, 0.31))]
+OPTION_NONE_COLOR = (0.36, 0.36, 0.36)
 # Log-only probes for the next batch (Pat approved both 2026-10-13). They change nothing in game; each
 # writes one line a month per player-owned state where it applies.
 # TREAT: each plantation's workforce by acceptance band, for plantation treatment by acceptance
@@ -336,6 +366,56 @@ def effective(r, autos):
     return {sec: mods for sec, mods in blend.items() if mods}, emp, elec, clamped
 
 
+class Option:
+    """One option of a second group on one building: a vanilla method whose effects PMR moves into
+    share methods pm_pmr_x_<b>_<j>_<n>, scaled by n / SHARE_STEPS. The vanilla method stays in its
+    group as a marker that carries nothing."""
+    def __init__(self, bk, j, group, gi, mode, role, key, pms):
+        self.bk, self.b, self.j, self.group, self.gi = bk, short(bk), j, group, gi
+        self.mode, self.role, self.key = mode, role, key
+        self.node, self.src = pms[key]
+        t = pdx.get(self.node.value, 'texture')
+        self.texture = t.value if t else GENERIC_ICON
+        self.mods = {}   # (section, sub-block) -> {modifier: value}, in vanilla's order
+        for sec in BLEND_SECTIONS:
+            sn = pdx.get(self.node.value, sec)
+            for sub in (sn.value if sn else []):
+                if not sub.key:
+                    continue
+                if not sub.is_block:
+                    raise SystemExit(f'{key}.{sec}.{sub.key} is not a block; extend Option before shipping')
+                d = self.mods.setdefault((sec, sub.key), {})
+                for n in sub.value:
+                    if n.key:
+                        d[n.key] = d.get(n.key, 0) + num(n.value, f'{key}.{sec}.{sub.key}.{n.key}')
+        # goods per level at full employment: outputs positive, inputs negative
+        self.goods = {}
+        for mk, mv in self.mods.get(('building_modifiers', 'workforce_scaled'), {}).items():
+            for pre, sign in (('goods_output_', 1), ('goods_input_', -1)):
+                if mk.startswith(pre) and mk.endswith('_add'):
+                    g = mk[len(pre):-len('_add')]
+                    self.goods[g] = self.goods.get(g, 0) + sign * mv
+        self.required = [n.value for n in self.node.value if n.key == 'required_input_goods']
+        self.elec = ELECTRICITY in self.required or self.goods.get(ELECTRICITY, 0) < 0
+
+    def strip(self):
+        """Cut the effects and required goods: the share methods carry them."""
+        for n in self.node.value:
+            if n.key in BLEND_SECTIONS or n.key == 'required_input_goods':
+                self.src.cuts.append(line_span(self.src.text, n))
+
+    def share_body(self, f):
+        out = []
+        for sec in BLEND_SECTIONS:
+            subs = [(sub, d) for (s2, sub), d in self.mods.items() if s2 == sec and d]
+            if not subs:
+                continue
+            out.append(f'\t{sec} = {{\n' + ''.join(
+                f'\t\t{sub} = {{\n' + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in d.items()) + '\t\t}\n'
+                for sub, d in subs) + '\t}\n')
+        return ''.join(out)
+
+
 def fmt(x):
     s = f'{x:.5f}'.rstrip('0').rstrip('.')
     return '0' if s in ('-0', '') else s
@@ -473,6 +553,65 @@ def main():
             f'\tpmg_pmr_key_{short(bk)}_{i}  # PMR: lock for that share\n\t'
             for i, r in enumerate(recipes, 1))))
 
+    # ---- second groups: trade-offs and working conditions become option shares -------------------
+    # options[bk] = [(group, gi, mode, none method, [Option], standard methods)], gi counting the
+    # building's converted groups from 1 and j (Option.j) its options across them.
+    options = {}
+    treated_keys = {t[0] for t in treated}
+    for bk, bn, s, recipes, g0, pg in treated:
+        conv, j = [], 0
+        for g in pdx.items(pg):
+            lst = groups.get(g, [])
+            if g == g0 or g not in group_src:
+                continue
+            viol = [p for p in lst if p.startswith('slave_exploitation_')]
+            harsh = [p for p in lst if p.startswith('worker_exploitation_')]
+            std = [p for p in lst if p.startswith('default_labour')]
+            if g in TRADE_GROUPS:
+                mode, none, picks = 'market', lst[0], [(p, None) for p in lst[1:]]
+            elif viol or harsh:
+                if not std:
+                    raise SystemExit(f'{bk}: {g} has no standard labour method; extend the treatment before shipping')
+                mode, none, picks = 'treat', std[0], [(p, 'violent') for p in viol[:1]] + [(p, 'harsh') for p in harsh[:1]]
+            else:
+                continue
+            if not group_users.get(g, set()) <= treated_keys:
+                raise SystemExit(f'{g} is also used by {sorted(group_users[g] - treated_keys)}, which PMR does not tick')
+            opts = []
+            for key, role in picks:
+                j += 1
+                opts.append(Option(bk, j, g, len(conv) + 1, mode, role, key, pms))
+            conv.append((g, len(conv) + 1, mode, none, opts, std))
+        if conv:
+            options[bk] = conv
+    converted = {g for conv in options.values() for g, *_ in conv}
+    stripped_opts = set()
+    elec_of = {t[0]: t[3][-1] for t in treated if isinstance(t[3][-1], ElectricRecipe)}
+    for bk, conv in options.items():
+        for g, gi, mode, none, opts, std in conv:
+            for o in opts:
+                if not pm_groups[o.key] <= converted:
+                    raise SystemExit(f'{o.key} is also in {sorted(pm_groups[o.key] - converted)}, which PMR does not convert')
+                if o.key not in stripped_opts:
+                    o.strip()
+                    stripped_opts.add(o.key)
+                # An option that needs a recipe the electric recipe builds on needs the electric
+                # recipe too: on it, the recipe group's marker is the electric one.
+                er = elec_of.get(bk)
+                upm = pdx.get(o.node.value, 'unlocking_production_methods')
+                if er and upm and er.base.key in pdx.items(upm) and er.key not in pdx.items(upm):
+                    o.src.inserts.append((upm.end - 1, f'\t{er.key}  # PMR: electric recipe\n\t'))
+        # The option share groups, after the recipe ones.
+        bsrc, bpg = next((t[2], t[5]) for t in treated if t[0] == bk)
+        bsrc.inserts.append((bpg.end - 1, ''.join(
+            f'\tpmg_pmr_x_{short(bk)}_{o.j}  # PMR: share of {o.key}\n\t'
+            f'\tpmg_pmr_xk_{short(bk)}_{o.j}  # PMR: lock for that share\n\t'
+            for g, gi, mode, none, opts, std in conv for o in opts)))
+    report['options'] = [{'building': bk, 'group': g, 'mode': mode, 'none': none,
+                          'options': [{'j': o.j, 'key': o.key, 'role': o.role, 'goods': o.goods, 'electricity': o.elec}
+                                      for o in opts]}
+                         for bk, conv in options.items() for g, gi, mode, none, opts, std in conv]
+
     if os.path.isdir(args.out):
         for sub in ('common', 'events', 'localization', '.metadata', 'gfx', 'gui'):
             shutil.rmtree(os.path.join(args.out, sub), ignore_errors=True)
@@ -515,12 +654,15 @@ def main():
             except ValueError:
                 pass
 
-    goods_tex = {}
+    goods_tex, goods_cost = {}, {}
     for gsrc in load_dir(game, 'goods'):
         for gk, gn in gsrc.objects().items():
             t = pdx.get(gn.value, 'texture')
             if t:
                 goods_tex[gk] = t.value
+            c = pdx.get(gn.value, 'cost')
+            if c is not None:
+                goods_cost[gk] = num(c.value, f'{gk} cost')
     gfx_root = game
     custom_new = []
     recipe_keys, recipe_tex, recipe_elec = {}, {}, {}
@@ -650,7 +792,36 @@ def main():
                                       'employment': emp, 'automation': [a.key for a in autos],
                                       'needs_electricity': elec})
 
-        tick_effects.append(tick_effect(bk, b, recipes, elec_tiers))
+        # Option shares: the same share / lock / switching-lock pattern as the recipes, carrying the
+        # option's every effect x n / SHARE_STEPS. n = 0 is the default: a new building starts on none.
+        for g, gi, mode, none, opts, std in options.get(bk, []):
+            for o in opts:
+                shares, keys = [], []
+                any_key = f'pm_pmr_xk_{b}_{o.j}_any'
+                what = 'workforce' if mode == 'treat' else 'building'
+                for n in range(SHARE_STEPS + 1):
+                    dflt = '\tis_default = yes\n' if n == 0 else ''
+                    blend_pms.append(
+                        f'pm_pmr_x_{b}_{o.j}_{n} = {{\n\ttexture = "{o.texture}"\n{dflt}'
+                        f'\tunlocking_production_methods = {{ pm_pmr_xk_{b}_{o.j}_{n} {any_key} }}\n'
+                        f'{o.share_body(n / SHARE_STEPS) if n else ""}}}\n')
+                    blend_pms.append(f'pm_pmr_xk_{b}_{o.j}_{n} = {{\n\ttexture = "{GENERIC_ICON}"\n{dflt}'
+                                     f'\tunlocking_production_methods = {{ pm_pmr_x_{b}_{o.j}_{n} }}\n}}\n')
+                    shares.append(f'pm_pmr_x_{b}_{o.j}_{n}')
+                    keys.append(f'pm_pmr_xk_{b}_{o.j}_{n}')
+                    loc += [f' pm_pmr_x_{b}_{o.j}_{n}:0 "${o.key}$ ({n}% of the {what})"',
+                            f' pm_pmr_xk_{b}_{o.j}_{n}:0 "${o.key}$ share lock ({n}%)"']
+                blend_pms.append(f'{any_key} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n')
+                keys.append(any_key)
+                loc.append(f' {any_key}:0 "${o.key}$ share lock (switching)"')
+                for grp, lst, label in ((f'pmg_pmr_x_{b}_{o.j}', shares, 'share'),
+                                        (f'pmg_pmr_xk_{b}_{o.j}', keys, 'share lock')):
+                    blend_groups.append(f'{grp} = {{\n\ttexture = "{GENERIC_ICON}"\n'
+                                        '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in lst) + '\t}\n}\n')
+                    loc.append(f' {grp}:0 "${o.key}$ {label}"')
+
+        tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, recipes)
+                            + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, [])))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
@@ -723,7 +894,7 @@ def main():
           '# or the switching lock pm_pmr_key_<b>_<recipe>_any is active.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
-    write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
+    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(option_goods(options)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-')))
     write('events/pmr_events.txt', header + EVENTS)
@@ -733,24 +904,30 @@ def main():
           '# 1/11..11. Vanilla: common/defines/00_ai.txt, PRODUCTION_BUILDING_AUTONOMOUS_INVESTMENT_RANDOM_FACTOR_MULT = 2.0.\n'
           f'NAI = {{\n\tPRODUCTION_BUILDING_AUTONOMOUS_INVESTMENT_RANDOM_FACTOR_MULT = {INVESTMENT_RANDOM_FACTOR_MULT:.1f}\n}}\n')
     treat = treatment_buildings(all_b_srcs, groups, pms)
-    goods_cost = {}
-    for gs in load_dir(game, 'goods'):
-        for gk, gn in gs.objects().items():
-            c = pdx.get(gn.value, 'cost')
-            if c is not None:
-                goods_cost[gk] = num(c.value, f'{gk} cost')
     report['probe_treat'] = [t[0] for t in treat]
     write('common/script_values/pmr_probe_values.txt', header + probe_values(treat))
     write('common/scripted_effects/pmr_probe_effects.txt', header + probe_effects(treat, pms, goods_cost))
     write('common/scripted_guis/pmr_sguis.txt', header + SGUI_DOC + ''.join(gov_retool_sgui(bk) for bk in dispatch)
           + '# The same for every state at once, from the Buildings tab\'s building type row. Country scope.\n\n'
           + ''.join(gov_retool_country_sgui(bk) for bk in dispatch))
+    # the panel's second group bars, per building type
+    def pm_tex(key):
+        t = pdx.get(pms[key][0].value, 'texture')
+        return t.value if t else GENERIC_ICON
+    opt_ui = {bk: [(gi, mode, none, pm_tex(none), os_) for g, gi, mode, none, os_, std in conv]
+              for bk, conv in options.items() if conv}
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
-          'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n')
+          'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
+          + '\n# State scope. A note after an option the state can\'t run (technology, laws, electricity).\n'
+          + ''.join(f'pmr_xlk_{short(bk)}_{o.j} = {{\n\ttype = state\n\trandom_valid = no\n'
+                    f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xav_{o.j}_{short(bk)} = 0 }}\n'
+                    f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
+                    '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
+                    for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_))
     write('gui/building_details_panel.gui', patch_building_panel(
-        recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read()),
-        bom=False)
+        recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(),
+        opt_ui), bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     # The Buildings tab: the building type row's grid (the first of three) becomes the country recipe
@@ -773,7 +950,7 @@ def main():
         extra=browser_bars), dispatch), bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1), bom=False)
-    loc += panel_loc(recipe_keys)
+    loc += panel_loc(recipe_keys) + option_loc(opt_ui)
     write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"'] + DECISION_LOC
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
@@ -822,6 +999,267 @@ def flush_log(rec, bk, extra=''):
     return (f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
             f'building={bk}{extra};pad={"." * FLUSH_PAD}"')
+
+
+# ---------------------------------------------------------------------------------------------
+# Second groups: option shares (trade-offs by local price, plantation treatment by acceptance)
+
+PRICE_LADDER = list(range(-75, 76, PRICE_STEP))   # % off the base price; the game clamps prices to +-75%
+
+
+def price_effect(good):
+    """State scope: pmr_px_<good>, the local price as a multiple of the base price, to PRICE_STEP %.
+    The game only compares prices (state_goods_pricier / _cheaper, in fractions: the PRICE probe read
+    hardwood at +20% through them and nothing through percent), so this bisects to the step nearest the
+    price in about five comparisons."""
+    half = PRICE_STEP / 200
+
+    def above(k):   # the price is at least k % off base, give or take half a step
+        if k > 0:
+            return f'sg:{good} = {{ state_goods_pricier > {fmt(k / 100 - half)} }}'
+        return f'NOT = {{ sg:{good} = {{ state_goods_cheaper > {fmt(-k / 100 + half)} }} }}'
+
+    def find(lo, hi, ind):   # above(PRICE_LADDER[lo]) holds
+        if lo == hi:
+            return f'{ind}set_variable = {{ name = pmr_px_{good} value = {fmt(1 + PRICE_LADDER[lo] / 100)} }}\n'
+        mid = (lo + hi + 1) // 2
+        return (f'{ind}if = {{ limit = {{ {above(PRICE_LADDER[mid])} }}\n' + find(mid, hi, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid - 1, ind + '\t') + f'{ind}}}\n')
+    return (f'pmr_price_{good} = {{\n\tif = {{\n\t\tlimit = {{ exists = sg:{good} }}\n'
+            + find(0, len(PRICE_LADDER) - 1, '\t\t')
+            + f'\t}}\n\telse = {{ set_variable = {{ name = pmr_px_{good} value = 1 }} }}\n}}\n\n')
+
+
+def option_goods(options):
+    return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
+                   for o in opts for g in o.goods})
+
+
+def option_effects(bk, b, conv, goods_cost, recipes):
+    """State scope, for one building type with converted second groups: pmr_opts_<b>, run by every
+    tick after the recipe blend. Sets each option's share (pmr_x_<j>_<b>, 0..SHARE_STEPS) at first
+    sight and once a month (pmr_month, set by the monthly pulse), then makes the share methods match."""
+    if not conv:
+        return ''
+    opts = [o for _, _, _, _, os_, _ in conv for o in os_]
+    bv = lambda name: f'{name}_{b}'               # noqa: E731
+    xv = lambda name, j: f'{name}_{j}_{b}'        # noqa: E731
+    act = lambda pm: f'activate_production_method = {{ building_type = {bk} production_method = {pm} }}'   # noqa: E731
+    is_on = lambda pm: f'is_production_method_active = {{ building_type = {bk} production_method = {pm} }}'   # noqa: E731
+    can = lambda pm: f'OR = {{ {is_on(pm)} can_activate_production_method = {{ building_type = {bk} production_method = {pm} }} }}'   # noqa: E731
+    r0 = recipes[0]
+    band = TRADE_DEAD_BAND * sum(v * goods_cost.get(g, 0) for g, v in r0.outputs.items())
+    o = []
+
+    # Each option's availability: its vanilla marker could run here (technology, laws, recipe), and
+    # electricity in the state if it uses any.
+    o.append(f'pmr_xavail_{b} = {{\n')
+    for x in opts:
+        cond = can(x.key) + (' var:pmr_elec = 1' if x.elec else '')
+        o.append(f'\tset_variable = {{ name = {xv("pmr_xav", x.j)} value = 0 }}\n'
+                 f'\tif = {{ limit = {{ {cond} }} set_variable = {{ name = {xv("pmr_xav", x.j)} value = 1 }} }}\n')
+    for g, gi, mode, none, os_, std in conv:
+        if mode == 'treat':
+            o.append(f'\tset_variable = {{ name = {xv("pmr_xas", gi)} value = 0 }}\n'
+                     f'\tif = {{ limit = {{ {can(none)} }} set_variable = {{ name = {xv("pmr_xas", gi)} value = 1 }} }}\n')
+    o.append('}\n\n')
+
+    # Market options: value per level at local prices; an option that can't run sheds its share first.
+    market = [x for x in opts if x.mode == 'market']
+    if market:
+        goods = sorted({g for x in market for g in x.goods})
+        o.append(f'pmr_xvalue_{b} = {{\n' + ''.join(f'\tpmr_price_{g} = yes\n' for g in goods))
+        for x in market:
+            o.append(f'\tset_variable = {{ name = {xv("pmr_xv", x.j)} value = 0 }}\n')
+            for g, amt in x.goods.items():
+                if amt and goods_cost.get(g):
+                    o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{g} }}\n'
+                             f'\tchange_variable = {{ name = pmr_t multiply = {fmt(amt * goods_cost[g])} }}\n'
+                             f'\tchange_variable = {{ name = {xv("pmr_xv", x.j)} add = var:pmr_t }}\n')
+            # the panel shows the value whether or not the option can run (pmr_xw_<j>_<b>)
+            o.append(f'\tset_variable = {{ name = {xv("pmr_xw", x.j)} value = var:{xv("pmr_xv", x.j)} }}\n'
+                     f'\tif = {{ limit = {{ var:{xv("pmr_xav", x.j)} = 0 }} '
+                     f'set_variable = {{ name = {xv("pmr_xv", x.j)} value = -1000000 }} }}\n')
+        o.append('}\n\n')
+
+    def none_share(gi, os_):
+        return (f'\tset_variable = {{ name = {xv("pmr_xn", gi)} value = {SHARE_STEPS} }}\n'
+                + ''.join(f'\tchange_variable = {{ name = {xv("pmr_xn", gi)} subtract = var:{xv("pmr_x", x.j)} }}\n'
+                          for x in os_))
+
+    def best(os_, ind='\t'):
+        """pmr_bi / pmr_bv: the best-paying option that can run, 0 (none, worth 0) if none beats it."""
+        return (f'{ind}set_variable = {{ name = pmr_bv value = 0 }}\n{ind}set_variable = {{ name = pmr_bi value = 0 }}\n'
+                + ''.join(f'{ind}if = {{ limit = {{ var:{xv("pmr_xav", x.j)} = 1 var:{xv("pmr_xv", x.j)} > var:pmr_bv }} '
+                          f'set_variable = {{ name = pmr_bv value = var:{xv("pmr_xv", x.j)} }} '
+                          f'set_variable = {{ name = pmr_bi value = {x.j} }} }}\n' for x in os_))
+
+    # Monthly market step, group by group.
+    for g, gi, mode, none, os_, std in conv:
+        if mode != 'market':
+            continue
+        o.append(f'pmr_xstep_{gi}_{b} = {{\n' + none_share(gi, os_) + best(os_)
+                 + '\t# the worst-paying option that holds a share (none, worth 0, included)\n'
+                 '\tset_variable = { name = pmr_wi value = -1 }\n\tset_variable = { name = pmr_wv value = 0 }\n'
+                 f'\tif = {{ limit = {{ var:{xv("pmr_xn", gi)} > 0 }} set_variable = {{ name = pmr_wi value = 0 }} }}\n'
+                 + ''.join(f'\tif = {{ limit = {{ var:{xv("pmr_x", x.j)} > 0 OR = {{ var:pmr_wi < 0 var:{xv("pmr_xv", x.j)} < var:pmr_wv }} }} '
+                           f'set_variable = {{ name = pmr_wv value = var:{xv("pmr_xv", x.j)} }} '
+                           f'set_variable = {{ name = pmr_wi value = {x.j} }} }}\n' for x in os_)
+                 + '\tif = {\n\t\tlimit = { var:pmr_wi >= 0 NOT = { var:pmr_wi = var:pmr_bi } }\n'
+                 '\t\tset_variable = { name = pmr_gap value = var:pmr_bv }\n'
+                 '\t\tchange_variable = { name = pmr_gap subtract = var:pmr_wv }\n'
+                 f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_gap > {fmt(band)} }}\n'
+                 f'\t\t\tset_variable = {{ name = pmr_m value = {TRADE_STEP} }}\n'
+                 f'\t\t\tif = {{ limit = {{ var:pmr_wi = 0 var:{xv("pmr_xn", gi)} < var:pmr_m }} '
+                 f'set_variable = {{ name = pmr_m value = var:{xv("pmr_xn", gi)} }} }}\n'
+                 + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} var:{xv("pmr_x", x.j)} < var:pmr_m }} '
+                           f'set_variable = {{ name = pmr_m value = var:{xv("pmr_x", x.j)} }} }}\n' for x in os_)
+                 + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} }} '
+                           f'change_variable = {{ name = {xv("pmr_x", x.j)} subtract = var:pmr_m }} }}\n' for x in os_)
+                 + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_bi = {x.j} }} '
+                           f'change_variable = {{ name = {xv("pmr_x", x.j)} add = var:pmr_m }} }}\n' for x in os_)
+                 + '\t\t}\n\t}\n}\n\n')
+        # First sight: the option the vanilla marker runs (game start), or for a building built
+        # during the game the best-paying one, if it beats none by the dead band.
+        o.append(f'pmr_xinit_{gi}_{b} = {{\n'
+                 + ''.join(f'\tset_variable = {{ name = {xv("pmr_x", x.j)} value = 0 }}\n' for x in os_)
+                 + f'\tif = {{\n\t\tlimit = {{ has_variable = {bv("pmr_xnew")} }}\n'
+                 + best(os_, '\t\t')
+                 + f'\t\tif = {{ limit = {{ var:pmr_bv <= {fmt(band)} }} set_variable = {{ name = pmr_bi value = 0 }} }}\n'
+                 + ''.join(f'\t\tif = {{ limit = {{ var:pmr_bi = {x.j} }} set_variable = {{ name = {xv("pmr_x", x.j)} value = {SHARE_STEPS} }} }}\n'
+                           for x in os_)
+                 + '\t}\n\telse = {\n'
+                 + ''.join(f'\t\tif = {{ limit = {{ b:{bk} = {{ has_active_production_method = {x.key} }} }} '
+                           f'set_variable = {{ name = {xv("pmr_x", x.j)} value = {SHARE_STEPS} }} }}\n' for x in os_)
+                 + '\t}\n}\n\n')
+
+    # Treatment, group by group: the workforce's acceptance, then the laws.
+    for g, gi, mode, none, os_, std in conv:
+        if mode != 'treat':
+            continue
+        viol = next((x for x in os_ if x.role == 'violent'), None)
+        harsh = next((x for x in os_ if x.role == 'harsh'), None)
+        lo, hi = TREAT_BANDS
+        t = [f'pmr_xtreat_{gi}_{b} = {{\n'
+             f'\t# workforce under acceptance {lo} (violent), {lo} to {hi - 1} (harsh), in % of all of it\n'
+             f'\tset_variable = {{ name = pmr_tw value = pmr_tr_w_{b} }}\n'
+             '\tset_variable = { name = pmr_tv value = 0 }\n\tset_variable = { name = pmr_th value = 0 }\n'
+             '\tif = {\n\t\tlimit = { var:pmr_tw > 0 }\n'
+             f'\t\tset_variable = {{ name = pmr_tv value = pmr_tr_wv_{b} }}\n'
+             f'\t\tchange_variable = {{ name = pmr_tv multiply = {SHARE_STEPS} }}\n'
+             '\t\tchange_variable = { name = pmr_tv divide = var:pmr_tw }\n'
+             '\t\tround_variable = { name = pmr_tv nearest = 1 }\n'
+             f'\t\tset_variable = {{ name = pmr_th value = pmr_tr_wh_{b} }}\n'
+             f'\t\tchange_variable = {{ name = pmr_th multiply = {SHARE_STEPS} }}\n'
+             '\t\tchange_variable = { name = pmr_th divide = var:pmr_tw }\n'
+             '\t\tround_variable = { name = pmr_th nearest = 1 }\n\t}\n'
+             '\tset_variable = { name = pmr_bandv value = var:pmr_tv }\n\tset_variable = { name = pmr_bandh value = var:pmr_th }\n'
+             f'\tset_variable = {{ name = {xv("pmr_xbv", gi)} value = var:pmr_tv }}\n'
+             f'\tset_variable = {{ name = {xv("pmr_xbh", gi)} value = var:pmr_th }}\n'
+             '\t# The law wins: a barred treatment\'s share goes to the nearest one allowed.\n']
+        if viol:
+            t.append(f'\tif = {{ limit = {{ var:{xv("pmr_xav", viol.j)} = 0 }} '
+                     'change_variable = { name = pmr_th add = var:pmr_tv } set_variable = { name = pmr_tv value = 0 } }\n')
+        else:
+            t.append('\t# no violent treatment here: that band is treated harshly\n'
+                     '\tchange_variable = { name = pmr_th add = var:pmr_tv }\n\tset_variable = { name = pmr_tv value = 0 }\n')
+        if harsh:
+            t.append(f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_xav", harsh.j)} = 0 }}\n'
+                     + (f'\t\tif = {{ limit = {{ var:{xv("pmr_xas", gi)} = 0 var:{xv("pmr_xav", viol.j)} = 1 }} '
+                        'change_variable = { name = pmr_tv add = var:pmr_th } }\n' if viol else '')
+                     + '\t\tset_variable = { name = pmr_th value = 0 }\n\t}\n')
+        else:
+            t.append('\tset_variable = { name = pmr_th value = 0 }\n')
+        t.append(f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_xas", gi)} = 0 }}\n'
+                 f'\t\tset_variable = {{ name = pmr_t value = {SHARE_STEPS} }}\n'
+                 '\t\tchange_variable = { name = pmr_t subtract = var:pmr_tv }\n'
+                 '\t\tchange_variable = { name = pmr_t subtract = var:pmr_th }\n'
+                 + (f'\t\tif = {{ limit = {{ var:{xv("pmr_xav", harsh.j)} = 1 }} change_variable = {{ name = pmr_th add = var:pmr_t }} }}\n'
+                    if harsh else '')
+                 + (f'\t\t{"else_if" if harsh else "if"} = {{ limit = {{ var:{xv("pmr_xav", viol.j)} = 1 }} '
+                    'change_variable = { name = pmr_tv add = var:pmr_t } }\n' if viol else '')
+                 + '\t}\n'
+                 f'\tif = {{ limit = {{ var:pmr_tv > {SHARE_STEPS} }} set_variable = {{ name = pmr_tv value = {SHARE_STEPS} }} }}\n'
+                 f'\tset_variable = {{ name = pmr_t value = {SHARE_STEPS} }}\n'
+                 '\tchange_variable = { name = pmr_t subtract = var:pmr_tv }\n'
+                 '\tif = { limit = { var:pmr_th > var:pmr_t } set_variable = { name = pmr_th value = var:pmr_t } }\n'
+                 + (f'\tset_variable = {{ name = {xv("pmr_x", viol.j)} value = var:pmr_tv }}\n' if viol else '')
+                 + (f'\tset_variable = {{ name = {xv("pmr_x", harsh.j)} value = var:pmr_th }}\n' if harsh else '')
+                 + '}\n\n')
+        o.append(''.join(t))
+
+    # Making the share methods match, as pmr_blend_<b> does for recipes: only a share that is not
+    # running is activated, through the switching lock, then locked again.
+    def bisect(var, leaf, ind, lo=0, hi=SHARE_STEPS):
+        if lo == hi:
+            return f'{ind}{leaf(lo)}\n'
+        mid = (lo + hi) // 2
+        return (f'{ind}if = {{ limit = {{ var:{var} <= {mid} }}\n' + bisect(var, leaf, ind, lo, mid)
+                + f'{ind}}}\n{ind}else = {{\n' + bisect(var, leaf, ind, mid + 1, hi) + f'{ind}}}\n')
+    for x in opts:
+        o.append(f'pmr_xlock_{x.j}_{b} = {{\n'
+                 + bisect(xv('pmr_x', x.j), lambda n, x=x: act(f'pm_pmr_xk_{b}_{x.j}_{n}'), '\t') + '}\n\n')
+    o.append(f'pmr_xapply_{b} = {{\n')
+    for x in opts:
+        anyk = f'pm_pmr_xk_{b}_{x.j}_any'
+        o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
+                 + bisect(xv('pmr_x', x.j), lambda n, x=x: f'if = {{ limit = {{ {is_on(f"pm_pmr_x_{b}_{x.j}_{n}")} }} '
+                          f'set_variable = {{ name = {xv("pmr_xa", x.j)} value = {n} }} }}', '\t')
+                 + f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_xa", x.j)} = -1 }}\n'
+                 f'\t\tif = {{ limit = {{ NOT = {{ {is_on(anyk)} }} }} {act(anyk)} }}\n'
+                 + bisect(xv('pmr_x', x.j), lambda n, x=x: act(f'pm_pmr_x_{b}_{x.j}_{n}'), '\t\t')
+                 + f'\t\tpmr_xlock_{x.j}_{b} = yes\n'
+                 f'\t\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = var:{xv("pmr_x", x.j)} }}\n\t}}\n'
+                 f'\telse_if = {{ limit = {{ {is_on(anyk)} }} pmr_xlock_{x.j}_{b} = yes }}\n')
+    o.append('}\n\n')
+
+    # The entry point, and what the panel's trade-off bars read: each group's none share and leader.
+    o.append(f'pmr_opts_{b} = {{\n\tpmr_xavail_{b} = yes\n'
+             + (f'\tif = {{ limit = {{ OR = {{ NOT = {{ has_variable = {bv("pmr_xinit")} }} has_variable = pmr_month }} }} pmr_xvalue_{b} = yes }}\n'
+                if market else '')
+             + f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {bv("pmr_xinit")} }} }}\n'
+             f'\t\tset_variable = {bv("pmr_xinit")}\n'
+             + ''.join(f'\t\tpmr_xinit_{gi}_{b} = yes\n' if mode == 'market' else f'\t\tpmr_xtreat_{gi}_{b} = yes\n'
+                       for g, gi, mode, *_ in conv)
+             + ''.join(f'\t\tset_variable = {{ name = {xv("pmr_xd", x.j)} value = 0 }}\n' for x in opts)
+             + '\t}\n\telse_if = {\n\t\tlimit = { has_variable = pmr_month }\n'
+             # this month's change in each share, for the bar's tooltip (pmr_xd_<j>_<b>)
+             + ''.join(f'\t\tset_variable = {{ name = {xv("pmr_xd", x.j)} value = var:{xv("pmr_x", x.j)} }}\n' for x in opts)
+             + ''.join(f'\t\tpmr_xstep_{gi}_{b} = yes\n' if mode == 'market' else f'\t\tpmr_xtreat_{gi}_{b} = yes\n'
+                       for g, gi, mode, *_ in conv)
+             + ''.join(f'\t\tchange_variable = {{ name = {xv("pmr_xd", x.j)} multiply = -1 }}\n'
+                       f'\t\tchange_variable = {{ name = {xv("pmr_xd", x.j)} add = var:{xv("pmr_x", x.j)} }}\n' for x in opts)
+             + f'\t}}\n\tif = {{ limit = {{ has_variable = {bv("pmr_xnew")} }} remove_variable = {bv("pmr_xnew")} }}\n'
+             f'\tpmr_xapply_{b} = yes\n')
+    for g, gi, mode, none, os_, std in conv:
+        o.append(none_share(gi, os_)
+                 + f'\tset_variable = {{ name = {xv("pmr_xdn", gi)} value = 0 }}\n'
+                 + ''.join(f'\tchange_variable = {{ name = {xv("pmr_xdn", gi)} subtract = var:{xv("pmr_xd", x.j)} }}\n' for x in os_)
+                 + f'\tset_variable = {{ name = pmr_lv value = var:{xv("pmr_xn", gi)} }}\n\tset_variable = {{ name = pmr_li value = 0 }}\n'
+                 + ''.join(f'\tif = {{ limit = {{ var:{xv("pmr_x", x.j)} > var:pmr_lv }} '
+                           f'set_variable = {{ name = pmr_lv value = var:{xv("pmr_x", x.j)} }} set_variable = {{ name = pmr_li value = {x.j} }} }}\n'
+                           for x in os_)
+                 + f'\tset_variable = {{ name = {xv("pmr_xlead0", gi)} value = 0 }}\n'
+                 f'\tif = {{ limit = {{ var:pmr_li = 0 }} set_variable = {{ name = {xv("pmr_xlead0", gi)} value = 1 }} }}\n'
+                 + ''.join(f'\tset_variable = {{ name = {xv("pmr_xlead", x.j)} value = 0 }}\n'
+                           f'\tif = {{ limit = {{ var:pmr_li = {x.j} }} set_variable = {{ name = {xv("pmr_xlead", x.j)} value = 1 }} }}\n'
+                           for x in os_))
+    f = lambda name, d=0: f"[THIS.Var('{name}').GetValue|{d}]"   # noqa: E731
+    line = (f'PMR;rec=OPT;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+            f'state=[THIS.GetState.GetNameNoFormatting];building={bk}'
+            + ';x=' + '/'.join(f(xv('pmr_x', x.j)) for x in opts)
+            + ';running=' + '/'.join(f(xv('pmr_xa', x.j)) for x in opts)
+            + ';can=' + '/'.join(f(xv('pmr_xav', x.j)) for x in opts))
+    if market:
+        goods = sorted({g for x in market for g in x.goods})
+        line += (';value=' + '/'.join(f(xv('pmr_xv', x.j)) for x in market)
+                 + ';px=' + ','.join(f'{g}:{f("pmr_px_" + g, 2)}' for g in goods))
+    if any(m == 'treat' for _, _, m, *_ in conv):
+        # the workforce and its violent / harsh bands in % this month, before the laws
+        line += (f";w={f('pmr_tw')};band_v={f('pmr_bandv')};band_h={f('pmr_bandh')};std_ok="
+                 + '/'.join(f(xv('pmr_xas', gi)) for _, gi, m, *_ in conv if m == 'treat'))
+    o.append(f'\tif = {{ limit = {{ has_variable = pmr_month owner = {{ is_player = yes }} }} debug_log = "{line}" }}\n}}\n\n')
+    return ''.join(o)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -986,7 +1424,7 @@ def retool_values(b):
 
 
 
-def tick_effect(bk, b, recipes, elec_tiers=()):
+def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -1425,7 +1863,10 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
     # So only the outermost tick runs (pmr_tick_<b>, below); the flag expires after a day in case a
     # tick never finishes.
     o.append(f'pmr_tick_body_{b} = {{\n'
-             f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
+             + (f'\t# a building just built takes the best-paying trade-offs (pmr_opts_{b})\n'
+                f'\tif = {{ limit = {{ has_variable = pmr_new_build_{b} NOT = {{ has_variable = pmr_xinit_{b} }} }} '
+                f'set_variable = pmr_xnew_{b} }}\n' if opts else '')
+             + f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
              '\tpmr_read_elec = yes\n'
              f'\tpmr_read_earnings_{b} = yes\n'
              f'\tpmr_best_{b} = yes\n'
@@ -1489,6 +1930,7 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
              f'\tpmr_mix_{b} = yes\n'
              f'\tpmr_blend_{b} = yes\n'
              f'\tpmr_read_blend_{b} = yes\n'
+             + (f'\tpmr_opts_{b} = yes\n' if opts else '') +
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
              f'\t\tset_variable = {v("pmr_retooling")}\n'
              f'\t\tpmr_split_retool_{b} = yes\n'
@@ -1573,8 +2015,8 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
     return ''.join(o)
 
 
-def shared_effects():
-    return '''# State scope. pmr_elec: 1 while the state produces electricity (a local good, so only the state's
+def shared_effects(price_goods=()):
+    return ''.join(price_effect(g) for g in price_goods) + '''# State scope. pmr_elec: 1 while the state produces electricity (a local good, so only the state's
 # own power plants count). pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp:
 # the state's unemployment rate in % (lower bound of 1/2/5/10/20), for the log. The investment pool
 # scores a building x0.25 in a state short of workers, which can cost a retool site with a crew a pick.
@@ -1799,16 +2241,27 @@ def stacked_bar(b, textures, size, icon, ind, var=None, tips=None):
     retooling = f'NotZero_CFixedPoint({var("pmr_ui_retooling")})'
     if tips is None:
         tips = [(retooling, f'PMR_BAR_TOOLTIP_{b}'), (f'Not({retooling})', 'PMR_BAR_FULL_TOOLTIP')]
-    items = []
+    slices = []
     for i, tex in enumerate(textures, 1):
-        name, (r, g, bl) = TIER_COLORS[i - 1]
+        name, rgb = TIER_COLORS[i - 1]
         sh = var(f'pmr_sh_{i}')
+        slices.append((f'tier {i}, {name.lower()}', f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint)0')",
+                       f"FixedPointToInt(Multiply_CFixedPoint({sh}, '(CFixedPoint)100'))",
+                       f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint){RECIPE_ICON_SHARE}')", rgb, tex))
+    return slice_bar(slices, size, icon, ind, tips)
+
+
+def slice_bar(slices, size, icon, ind, tips):
+    """The Owners-style bar itself. slices are (comment, visible, stretch factor, icon visible,
+    colour, icon texture or None), left to right."""
+    items = []
+    for comment, vis, stretch, icon_vis, (r, g, bl), tex in slices:
         items.append(
-            f'{ind}\t\t# tier {i}, {name.lower()}\n'
+            f'{ind}\t\t# {comment}\n'
             f'{ind}\t\thbox = {{\n'
-            f'{ind}\t\t\tvisible = "[GreaterThan_CFixedPoint({sh}, \'(CFixedPoint)0\')]"\n'
+            f'{ind}\t\t\tvisible = "[{vis}]"\n'
             f'{ind}\t\t\tlayoutpolicy_horizontal = expanding\n{ind}\t\t\tlayoutpolicy_vertical = expanding\n'
-            f'{ind}\t\t\tlayoutstretchfactor_horizontal = "[FixedPointToInt(Multiply_CFixedPoint({sh}, \'(CFixedPoint)100\'))]"\n'
+            f'{ind}\t\t\tlayoutstretchfactor_horizontal = "[{stretch}]"\n'
             f'{ind}\t\t\talwaystransparent = yes\n'
             f'{ind}\t\t\tbackground = {{\n'
             f'{ind}\t\t\t\ttexture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
@@ -1816,13 +2269,13 @@ def stacked_bar(b, textures, size, icon, ind, var=None, tips=None):
             f'{ind}\t\t\t\tspriteborder = {{ 3 3 }}\n'
             f'{ind}\t\t\t\tusing = simple_frame_mask\n{ind}\t\t\t\tusing = progressbar_texture_properties\n'
             f'{ind}\t\t\t}}\n'
-            f'{ind}\t\t\ticon = {{\n'
-            f'{ind}\t\t\t\tvisible = "[GreaterThan_CFixedPoint({sh}, \'(CFixedPoint){RECIPE_ICON_SHARE}\')]"\n'
-            f'{ind}\t\t\t\tsize = {{ {icon} {icon} }}\n'
-            f'{ind}\t\t\t\talwaystransparent = yes\n'
-            f'{ind}\t\t\t\ttexture = "{tex}"\n'
-            f'{ind}\t\t\t}}\n'
-            f'{ind}\t\t}}\n')
+            + (f'{ind}\t\t\ticon = {{\n'
+               f'{ind}\t\t\t\tvisible = "[{icon_vis}]"\n'
+               f'{ind}\t\t\t\tsize = {{ {icon} {icon} }}\n'
+               f'{ind}\t\t\t\talwaystransparent = yes\n'
+               f'{ind}\t\t\t\ttexture = "{tex}"\n'
+               f'{ind}\t\t\t}}\n' if tex else '')
+            + f'{ind}\t\t}}\n')
     return (f'{ind}widget = {{\n'
             f'{ind}\tsize = {{ {size[0]} {size[1]} }}\n'
             f'{ind}\tbackground = {{\n'
@@ -1909,6 +2362,75 @@ def recipe_bar(bk, b, textures):
 """
 
 
+# Pat, 2026-10-13: a second stacked bar under the recipe bar for each second group PMR blends,
+# one row per group: the trade-offs mixed by local prices, and plantation treatment set by the
+# workforce's acceptance. The bar lines up under the recipe bar; the leading option and its share
+# sit in the employment bars' column beside it.
+OPTION_ROW_H, OPTION_BAR_H, OPTION_BAR_ICON = 26, 22, 18
+OPTION_ICON_SHARE = 25      # an option's slice shows its icon above this share, as on the recipe bar
+
+
+def option_bars(bk, groups, ind):
+    """The details panel's option rows for one building type, at indent ind. groups are (gi, mode,
+    none key, none texture, [Option]) per converted group."""
+    b = short(bk)
+    x = lambda name: state_var(b, name)    # noqa: E731
+    gt = lambda e, n: f"GreaterThan_CFixedPoint({e}, '(CFixedPoint){n}')"    # noqa: E731
+    i2, i3 = ind + '\t\t', ind + '\t\t\t'
+    rows = []
+    for gi, mode, none, none_tex, os_ in groups:
+        def piece(name, comment, rgb, tex):
+            e = x(name)
+            return (comment, gt(e, 0), f'FixedPointToInt({e})', gt(e, OPTION_ICON_SHARE), rgb, tex)
+        slices = [piece(f'pmr_xn_{gi}', f'{none}, grey', OPTION_NONE_COLOR, none_tex)]
+        for k, o in enumerate(os_):
+            name, rgb = OPTION_COLORS[k % len(OPTION_COLORS)]
+            slices.append(piece(f'pmr_x_{o.j}', f'{o.key}, {name.lower()}', rgb, o.texture))
+        tip = f'PMR_OPT_TOOLTIP_{b}_{gi}'
+        titles = ([(f'pmr_xlead0_{gi}', f'PMR_OPT_TITLE_{b}_{gi}_0')]
+                  + [(f'pmr_xlead_{o.j}', f'PMR_OPT_TITLE_{b}_{o.j}') for o in os_])
+        rows.append(
+            f'{ind}\twidget = {{\n{i2}size = {{ @panel_width {OPTION_ROW_H} }}\n'
+            f'{i2}widget = {{\n{i3}position = {{ {ROW_X} {(OPTION_ROW_H - OPTION_BAR_H) // 2} }}\n'
+            f'{i3}size = {{ {ROW_W} {OPTION_BAR_H} }}\n'
+            + slice_bar(slices, ('100%', '100%'), OPTION_BAR_ICON, i3, [(None, tip)])
+            + f'{i2}}}\n'
+            + ''.join(f'{i2}textbox = {{\n'
+                      f'{i3}visible = "[NotZero_CFixedPoint({x(flag)})]"\n'
+                      f'{i3}position = {{ {ROW_X + ROW_W + 12} 0 }}\n'
+                      f'{i3}size = {{ 223 {OPTION_ROW_H} }}\n'
+                      f'{i3}align = left|nobaseline\n{i3}elide = right\n'
+                      f'{i3}text = "{key}"\n{i3}tooltip = "{tip}"\n'
+                      f'{i3}using = tooltip_above\n{i2}}}\n' for flag, key in titles)
+            + f'{ind}\t}}\n')
+    return (f'{ind}# PMR: second groups of {bk}\n'
+            f'{ind}flowcontainer = {{\n{ind}\tvisible = "[{is_type(bk)}]"\n{ind}\tdirection = vertical\n'
+            + ''.join(rows) + f'{ind}}}\n')
+
+
+def patch_option_bars(text, opt_ui):
+    """building_details_panel.gui: an empty block at the end of condensed_building_information,
+    filled only by the details panel's own instance, so the Buildings tab rows stay as they are."""
+    if not opt_ui:
+        return text
+    end = '\t\t\t}\n\t\t}\n\t}\n\n\ttype building_type_nationalize_button = '
+    if text.count(end) != 1:
+        raise SystemExit('building_details_panel.gui: condensed_building_information no longer ends before '
+                         'building_type_nationalize_button; update patch_option_bars')
+    at = text.index(end) + len('\t\t\t}\n\t\t}\n')
+    text = text[:at] + '\n\t\t# PMR: second group bars (details panel only)\n\t\tblock "pmr_option_bars" {}\n' + text[at:]
+    inst = '\t\tcondensed_building_information = {\n\t\t\tmargin = { 7 0 }\n'
+    if text.count(inst) != 1:
+        raise SystemExit('building_details_panel.gui: expected one condensed_building_information with margin 7; '
+                         'update patch_option_bars')
+    at = text.index(inst) + len(inst)
+    return (text[:at] + '\n\t\t\tblockoverride "pmr_option_bars" {\n'
+            '\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n\t\t\t\t\tignoreinvisible = yes\n'
+            '\t\t\t\t\tmargin_bottom = 4\n'
+            + ''.join(option_bars(bk, groups, '\t\t\t\t\t') for bk, groups in opt_ui.items())
+            + '\t\t\t\t}\n\t\t\t}\n' + text[at:])
+
+
 def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extra='', labour_icon=True):
     """The one use of vanilla's condensed_building_information_pms in a GUI file, at indent ind: on a
     PMR building type it is hidden and the fixed labour icon stands in its place. The grid inside is
@@ -1938,7 +2460,7 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extr
     return hide + text[at:end] + labour + text[end:]
 
 
-def patch_building_panel(recipe_tex, text):
+def patch_building_panel(recipe_tex, text, opt_ui=None):
     buildings = list(recipe_tex)
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
@@ -1963,7 +2485,7 @@ def patch_building_panel(recipe_tex, text):
         raise SystemExit(f'building_details_panel.gui: expected one {anchor.strip()!r}, found '
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
     text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk]) for bk in buildings))
-    return patch_owners(text, recipe_tex)
+    return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {})
 
 
 # Pat, 2026-10-13: a Production Method column in the Owners list, with the icons of the recipes each
@@ -2274,6 +2796,41 @@ def panel_loc(recipe_keys):
     return loc
 
 
+def option_loc(opt_ui):
+    """Titles and tooltips of the second group bars."""
+    loc = [' PMR_EMPTY:0 ""', ' PMR_OPT_LOCKED:0 ", not unlocked here"', ' PMR_OPT_BARRED:0 ", barred here"']
+    for bk, groups in opt_ui.items():
+        b = short(bk)
+
+        def var(name, f='0'):
+            return f"[Building.GetState.MakeScope.Var('{name}_{b}').GetValue|{f}]"
+        for gi, mode, none, tex, os_ in groups:
+            loc.append(f' PMR_OPT_TITLE_{b}_{gi}_0:0 "#bold ${none}$#! {var(f"pmr_xn_{gi}")}%"')
+            loc += [f' PMR_OPT_TITLE_{b}_{o.j}:0 "#bold ${o.key}$#! {var(f"pmr_x_{o.j}")}%"' for o in os_]
+            group = os_[0].group
+            lines = [f'${none}$: #bold {var(f"pmr_xn_{gi}")}%#! ({var(f"pmr_xdn_{gi}", "+=")})']
+            for o in os_:
+                note = f"[Building.GetState.GetCustom('pmr_xlk_{b}_{o.j}')]"
+                if mode == 'market':
+                    lines.append(f'${o.key}$: #bold {var(f"pmr_x_{o.j}")}%#! ({var(f"pmr_xd_{o.j}", "+=")}), '
+                                 f'@money!{var(f"pmr_xw_{o.j}")} a week per level{note}')
+                else:
+                    lines.append(f'${o.key}$: #bold {var(f"pmr_x_{o.j}")}%#! ({var(f"pmr_xd_{o.j}", "+=")}){note}')
+            if mode == 'market':
+                head = f'#bold ${group}$, mixed by local prices#!'
+                foot = (f'Values are what each option adds over ${none}$ at this state\'s prices. Once a month '
+                        f'{TRADE_STEP} points move from the worst-paying share to the best-paying option, '
+                        f'if it pays more by over {round(TRADE_DEAD_BAND * 100)}% of the building\'s output.')
+            else:
+                lo, hi = TREAT_BANDS
+                head = f'#bold ${group}$, set by the workforce\'s acceptance#!'
+                foot = (f'#bold {var(f"pmr_xbv_{gi}")}%#! of the workforce has acceptance under {lo} and '
+                        f'#bold {var(f"pmr_xbh_{gi}")}%#! from {lo} to {hi - 1}. Recounted monthly. '
+                        'Where the law bars a treatment, its share goes to the next milder one.')
+            loc.append(f' PMR_OPT_TOOLTIP_{b}_{gi}:0 "{head}\\n' + '\\n'.join(lines) + f'\\n\\n{foot}"')
+    return loc
+
+
 ON_ACTIONS = '''# Appended to vanilla on_actions the documented way (_on_actions.md, MODDING INFO):
 # the vanilla on_action calls ours, nothing vanilla is overwritten.
 
@@ -2338,9 +2895,12 @@ pmr_on_acquired_technology = {
 }
 
 # Root = state. Backstop: recompute the shares and re-apply the blend once a month even if no event fired.
+# pmr_month marks the monthly tick: the trade-off shares step and the treatment shares are recounted.
 pmr_on_monthly_pulse_state = {
 	effect = {
+		set_variable = pmr_month
 		pmr_state_tick = yes
+		remove_variable = pmr_month
 		pmr_probe_state = yes
 	}
 }
