@@ -251,11 +251,16 @@ INVEST_EXCLUDE = ('bg_canals', 'bg_construction', 'bg_subsistence_agriculture', 
 WHITE = 'gfx/interface/backgrounds/white.dds'
 TRANSPARENT = 'gfx/interface/icons/generic_icons/transparent.dds'
 # Foreign or domestic investment (Pat 15:34Z), on the tariff bar's seven notches: 1 = strongly foreign, 4 = no
-# preference, 7 = strongly domestic. Each notch from the middle adds or takes FD_STEP of ai_value from every
-# investable building type in the player's states (GBP 1 a worker a year of vanilla's profit term, as CORP_BONUS).
+# preference, 7 = strongly domestic. The notch multiplies the score of every investable building type in the
+# country's states by FD_MULT (Pat 22:14Z: check the weights work). Until then each notch added GBP 1 a worker a
+# year of vanilla's profit term (144 of ai_value since the 20:12Z unit fix), a few percent of a typical score that
+# the random roll swamped: Pat's investors still built 41% abroad on Strongly Domestic. ai_value is added to the
+# engine's own profit terms, so the multiplier is applied to PMR's estimate of the score, the building's vanilla
+# ai_value plus PROFIT_WEIGHT x its earnings (as a retool site's), by adding (multiplier - 1) x that estimate. The
+# estimate reads earnings by a floor ladder, so toward Foreign the subtraction never exceeds the real score.
 FD_NOTCHES = 7
 SINCE = 'Counted since this version of the mod was loaded.'
-FD_STEP = PROFIT_WEIGHT
+FD_MULT = {1: 1 / 3, 2: 1 / 2, 3: 2 / 3, 4: 1, 5: 3 / 2, 6: 2, 7: 3}
 FD_ICONS = ('max_subvention', 'high_subvention', 'low_subvention', 'no_tariffs_no_subvention', 'low_tariffs',
             'high_tariffs', 'max_tariffs')
 CARD_W, CARD_H = 268, 380                 # law and policy cards, the same size (Pat 04:50Z), taller (Pat 13:05Z)
@@ -422,6 +427,16 @@ def script_values():
                 f'\t\t\tNOT = {{ has_variable = pmr_ipw_grace_{g} }}\n\t\t}}\n\t\tvalue = 1\n\t}}\n}}\n\n')
     out += ('pmr_ipw_lf = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { has_law_or_variant = law_type:law_laissez_faire }\n'
             '\t\tvalue = 1\n\t}\n}\n\n')
+    out += ('# Country scope, for the panel: 1 while the foreign-or-domestic bar is cooling down (Pat 22:14Z: the same\n'
+            '# 3-month cadence as the priorities).\n'
+            'pmr_fd_cooling = {\n\tvalue = 0\n\tif = {\n\t\tlimit = {\n\t\t\thas_variable = pmr_fd_cd\n'
+            '\t\t\tNOT = { has_variable = pmr_fd_grace }\n\t\t}\n\t\tvalue = 1\n\t}\n}\n\n')
+    mid = (FD_NOTCHES + 1) // 2
+    gains = ''.join(f'\t{"else_if" if j else "if"} = {{\n\t\tlimit = {{ owner ?= {{ has_variable = pmr_fd var:pmr_fd = {n - mid} }} }}\n'
+                    f'\t\tvalue = {FD_MULT[n] - 1:.4f}\n\t}}\n'
+                    for j, n in enumerate(n for n in range(1, FD_NOTCHES + 1) if n != mid))
+    out += ('# State scope: the state owner\'s foreign-or-domestic multiplier less 1 (FD_MULT), 0 with no preference.\n'
+            'pmr_fd_gain = {\n\tvalue = 0\n' + gains + '}\n\n')
     # straight lines through (25, LOW), (50, MID) and (75, HIGH), clamped
     s1, s2 = (POLICY_COST_MID - POLICY_COST_LOW) / 25, (POLICY_COST_HIGH - POLICY_COST_MID) / 25
     out += (f'# Country scope. A policy\'s authority cost by legitimacy (Pat 19:34Z): {POLICY_COST_LOW} at 25 or less, '
@@ -538,12 +553,24 @@ def sguis():
         f'if = {{\n\t\t\tlimit = {{ scope:step = {n} }}\n\t\t\tset_variable = {{ name = pmr_fd_i value = {n} }}\n'
         f'\t\t\tset_variable = {{ name = pmr_fd value = {n - (FD_NOTCHES + 1) // 2} }}\n\t\t}}\n'
         for n in range(1, FD_NOTCHES + 1))
+    mid = (FD_NOTCHES + 1) // 2
+    fd_changed = ('OR = {\n\t\t\t\tAND = { has_variable = pmr_fd_i NOT = { var:pmr_fd_i = scope:step } }\n'
+                  f'\t\t\t\tAND = {{ NOT = {{ has_variable = pmr_fd_i }} NOT = {{ scope:step = {mid} }} }}\n\t\t\t}}')
     out += ('# Foreign or domestic investment (Pat 15:34Z). Country scope; scope:step is the notch clicked, 1 (strongly\n'
             f'# foreign) .. {FD_NOTCHES} (strongly domestic). pmr_fd is the notch less the middle one, read by the ai_value of\n'
-            '# every investable building type in the country\'s states (pmr_ai_value_<b>).\n'
-            f'pmr_fd_sgui = {{\n\tscope = country\n\tsaved_scopes = {{ step }}\n\teffect = {{\n\t\t{notches}'
-            '\t\tdebug_log = "PMR;rec=FOCUS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
-            'notch=[THIS.Var(\'pmr_fd_i\').GetValue|0];bias=[THIS.Var(\'pmr_fd\').GetValue|0]"\n\t}\n}\n\n')
+            '# every investable building type in the country\'s states (pmr_ai_value_<b>, through pmr_fd_gain). Pat 22:14Z:\n'
+            f'# on the priorities\' clock, {GRACE_DAYS} days to think again after a change, then locked until {COOLDOWN_DAYS} days\n'
+            '# after it (pmr_fd_cd, pmr_fd_grace, pmr_fd_wk).\n'
+            f'pmr_fd_sgui = {{\n\tscope = country\n\tsaved_scopes = {{ step }}\n'
+            '\tis_valid = {\n\t\tOR = {\n\t\t\tNOT = { has_variable = pmr_fd_cd }\n\t\t\thas_variable = pmr_fd_grace\n\t\t}\n\t}\n'
+            f'\teffect = {{\n\t\tif = {{\n\t\t\tlimit = {{\n\t\t\t{fd_changed}\n\t\t\t}}\n\t\t\t'
+            + notches.replace('\n\t\t', '\n\t\t\t').replace('\n\t\t\t}\n', '\n\t\t\t}\n')
+            + '\t\t\tif = {\n\t\t\t\tlimit = { NOT = { has_variable = pmr_fd_cd } }\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_fd_cd value = 1 days = {COOLDOWN_DAYS} }}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_fd_grace value = 1 days = {GRACE_DAYS} }}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_fd_wk value = {COOLDOWN_WEEKS} }}\n\t\t\t}}\n'
+            '\t\t\tdebug_log = "PMR;rec=FOCUS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'notch=[THIS.Var(\'pmr_fd_i\').GetValue|0];bias=[THIS.Var(\'pmr_fd\').GetValue|0]"\n\t\t}\n\t}\n}\n\n')
     out += ('# The contributors chart, recounted whenever the Private tab is opened (and weekly); opening the tab also\n'
             '# starts the weekly clock if it is not running.\n'
             'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n\t\tpmr_pi_v2 = yes\n'
@@ -755,7 +782,11 @@ def policy_effects():
             + ''.join(f'\t\t\t1 = {{\n\t\t\t\ttrigger = {{ {can(k)} }}\n\t\t\t\tpmr_policy_adopt_{k} = yes\n\t\t\t}}\n'
                       for k in picks)
             + '\t\t}\n\t}\n}\n\n')
-    out += 'pmr_ipw_weekly = {\n'
+    out += ('pmr_ipw_weekly = {\n'
+            '\tif = {\n\t\tlimit = { has_variable = pmr_fd_wk }\n\t\tchange_variable = { name = pmr_fd_wk add = -1 }\n'
+            '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tvar:pmr_fd_wk <= 0\n'
+            '\t\t\t\t\tNOT = { has_variable = pmr_fd_cd }\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\tremove_variable = pmr_fd_wk\n\t\t}\n\t}\n')
     for g, *_r in GROUPS:
         wk = f'pmr_ipw_wk_{g}'
         out += (f'\tif = {{\n\t\tlimit = {{ has_variable = {wk} }}\n\t\tchange_variable = {{ name = {wk} add = -1 }}\n'
@@ -1408,8 +1439,10 @@ def invest_charts(ind):
 def fd_row(ind):
     """Foreign or domestic investment (Pat 15:34Z: a slider set apart from the priorities, laid out as the tariff
     bar): vanilla's set_level_bar with seven notches and the tariff bar's icons, Foreign on the left and Domestic on
-    the right, on its own framed row. Each notch runs pmr_fd_sgui with its number (1..7, 4 = no preference)."""
+    the right, on its own framed row. Each notch runs pmr_fd_sgui with its number (1..7, 4 = no preference). Like a
+    priority row (Pat 22:14Z), the notches are disabled while the bar is cooling down and their tooltips say so."""
     cur = f"{COUNTRY}.MakeScope.Var('pmr_fd_i').GetValue"
+    valid = f"GetScriptedGui('pmr_fd_sgui').IsValid(GuiScope.SetRoot({COUNTRY}.MakeScope).End)"
     i1, i2, i3, i4 = (ind + '\t' * k for k in range(1, 5))
     mid = (FD_NOTCHES + 1) // 2
     items = ''
@@ -1421,7 +1454,8 @@ def fd_row(ind):
                f".AddScope('step', MakeScopeValue('(CFixedPoint){n}')).End)")
         items += (f'{i3}set_level_bar_item = {{\n{i4}tooltip = "PMR_FD_NOTCH_{n}"\n'
                   f'{i4}blockoverride "button_texture" {{\n{i4}\ttexture = "gfx/interface/icons/trade_icons/{FD_ICONS[n - 1]}.dds"\n{i4}}}\n'
-                  f'{i4}blockoverride "click" {{\n{i4}\tonclick = "[{run}]"\n{i4}}}\n'
+                  f'{i4}blockoverride "click" {{\n{i4}\tenabled = "[{valid}]"\n{i4}\tonclick = "[{run}]"\n{i4}}}\n'
+                  f'{i4}blockoverride "is_clickable_alpha" {{\n{i4}\talpha = "[TransparentIfFalse({valid})]"\n{i4}}}\n'
                   f'{i4}blockoverride "is_selected_visibility" {{\n{i4}\tvisible = "[{sel}]"\n{i4}}}\n{i3}}}\n')
     side = lambda key: (f'{i2}textbox = {{\n{i3}parentanchor = vcenter\n{i3}autoresize = yes\n{i3}align = nobaseline\n'
                         f'{i3}text = "{key}"\n{i2}}}\n')
@@ -1785,8 +1819,9 @@ def patch_ai_value(text, owners, invest):
     """A building file: each building type a company lists (owners) or the investment bars count (invest) gets
     ai_value = pmr_ai_value_<b>, whose body is the vanilla ai_value (number, block, or the 1000 default), plus
     CORP_BONUS while the state's owner holds Favour Large Corporations and has one of those companies, plus the
-    owner's foreign-or-domestic notch (pmr_fd, -3..3) x FD_STEP on an investable type (Pat 15:34Z; ai_value is read
-    in the state's scope, so foreign investors see the same weight in the player's states). Returns (text, script
+    owner's foreign-or-domestic notch on an investable type (Pat 15:34Z, 22:14Z): (FD_MULT - 1) x (base +
+    PROFIT_WEIGHT x earnings), pmr_fd_gain. ai_value is read in the state's scope, so foreign investors see the same
+    weight in the player's states. Returns (text, script
     values)."""
     values, edits = [], []
     for k, _s, o, c in top_blocks(text):
@@ -1820,7 +1855,8 @@ def patch_ai_value(text, owners, invest):
                           f'\t\tadd = {add}\n\t}}\n')
         if k in invest:
             extra += ('\tif = {\n\t\tlimit = {\n\t\t\towner ?= { has_variable = pmr_fd }\n\t\t}\n'
-                      f'\t\tadd = {{\n\t\t\tvalue = owner.var:pmr_fd\n\t\t\tmultiply = {FD_STEP}\n\t\t}}\n\t}}\n'
+                      f'\t\tadd = {{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT}\n'
+                      f'\t\t\tadd = pmr_ai_base_{b}\n\t\t\tmultiply = pmr_fd_gain\n\t\t}}\n\t}}\n'
                       '\tif = {\n\t\tlimit = {\n\t\t\towner ?= { has_modifier = pmr_policy_bulls }\n\t\t}\n'
                       f'\t\tadd = {{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT // 2}\n\t\t}}\n\t}}\n')
         ladder = ''.join(f'\t\t{"else_if" if j else "if"} = {{\n\t\t\tlimit = {{ b:{k} = {{ earnings >= {e} }} }}\n'
@@ -1895,20 +1931,26 @@ def localization(types):
         ' PMR_FD_TITLE:0 "Foreign or Domestic Investment"',
         ' PMR_FD_FOREIGN:0 "Foreign"',
         ' PMR_FD_DOMESTIC:0 "Domestic"',
-        f' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\nTilts where investors build. Each notch from the '
-        f'middle makes every building in your states weigh as if it earned #v @money!{FD_STEP / CORP_BONUS * 10:g}#! more '
-        '(toward Domestic) or less (toward Foreign) a worker a year. Foreign investors weigh your states the same way. Toward '
-        'Foreign, your investors need investment rights abroad, or the pool waits for something at home worth it."',
+        ' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\nTilts where investors build. Toward Domestic, '
+        f'investors weigh every building in your states up to {FD_MULT[FD_NOTCHES]:g} times as much; toward Foreign, as '
+        'little as a third, so your investors look abroad. Foreign investors weigh your states the same way. Toward '
+        'Foreign, your investors need investment rights abroad, or the pool waits for something at home worth it.\\n'
+        f'Like a tariff, after a change you have {GRACE_DAYS} days to change it again, then it stays for 3 months."',
+        f' PMR_FD_COOLDOWN:0 "#N Changed recently#!\\nLike a tariff, this can be changed for {GRACE_DAYS} days after a '
+        f'change, then not until 3 months have passed. About #v [{var("pmr_fd_wk")}|0]#! weeks left."',
     ]
     mid = (FD_NOTCHES + 1) // 2
     names = {1: 'Strongly Foreign', 2: 'Foreign', 3: 'Leaning Foreign', 4: 'No Preference', 5: 'Leaning Domestic',
              6: 'Domestic', 7: 'Strongly Domestic'}
+    times = {1: 'a third', 2: 'half', 3: 'two thirds', 5: '1.5 times', 6: 'twice', 7: '3 times'}
+    assert all(abs(FD_MULT[n] - {1: 1 / 3, 2: 0.5, 3: 2 / 3, 5: 1.5, 6: 2, 7: 3}[n]) < 1e-9 for n in times)
+    cooling = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.ScriptValue('pmr_fd_cooling'), '(CFixedPoint)0')"
     for n in range(1, FD_NOTCHES + 1):
-        d = (n - mid) * FD_STEP / CORP_BONUS * 10
-        what = ('the game\'s own weighting' if d == 0 else
-                f'buildings in your states weigh as if they earned {"#P" if d > 0 else "#N"} @money!{abs(d):g}#! '
-                f'{"more" if d > 0 else "less"} a worker a year')
-        loc.append(f' PMR_FD_NOTCH_{n}:0 "#bold {names[n]}#!: {what}"')
+        what = ('the game\'s own weighting' if n == mid else
+                f'investors weigh buildings in your states {"#P" if n > mid else "#N"} {times[n]}#! as much')
+        loc.append(f' PMR_FD_NOTCH_{n}:0 "[SelectLocalization({cooling}, \'PMR_FD_COOLDOWN\', \'PMR_FD_OPEN_{n}\')]"')
+        loc.append(f' PMR_FD_OPEN_{n}:0 "#bold {names[n]}#!: {what}\\nAfter a change you have {GRACE_DAYS} days to change '
+                   'it again, then it stays for 3 months, as a tariff does."')
     for i, (k, name, _p) in enumerate(OWNERS):
         loc.append(f' PMR_PO_NAME_{k}:0 "{name}"')
         loc.append(f' PMR_PO_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_po_{i}")}|0]#! building levels, '
@@ -2079,8 +2121,9 @@ def write_all(game, write, header_text, out=None):
                    '# pmr_ai_base_<b>, its vanilla ai_value; pmr_ai_earn_<b>, the earnings per employee of the state\'s\n'
                    '# building of that type (0 without one); and pmr_ai_value_<b>, the ai_value: the base, plus\n'
                    f'# {CORP_BONUS} under Favour Large Corporations and half of (base + {PROFIT_WEIGHT} x earnings) under Market\n'
-                   '# Titans when the owner has a company listing the type, the owner\'s foreign-or-domestic notch x\n'
-                   f'# {FD_STEP}, and {PROFIT_WEIGHT // 2} x earnings under Bulls & Bears.\n'
+                   '# Titans when the owner has a company listing the type, (base + '
+                   f'{PROFIT_WEIGHT} x earnings) x pmr_fd_gain for the\n'
+                   f'# owner\'s foreign-or-domestic notch, and {PROFIT_WEIGHT // 2} x earnings under Bulls & Bears.\n'
                    + '\n'.join(wrapped))
         print(f'private investment: {n} private retool buildings take Re-invest; {len(names)} building types take '
               f'the company card or the investment focus, in {", ".join(patched)}')

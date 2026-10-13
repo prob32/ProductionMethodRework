@@ -1,4 +1,4 @@
-# PMR run sheet: the target follows your best recipe, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,7 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: a building targets the newest recipe you have (your current save works)
+## Latest: a building targets the newest recipe you have, and the Foreign or Domestic bar counts (your current save works)
 
 From your 22:07 and 22:09 messages. A building used to keep the recipe it ran when PMR first saw it (game start, or
 the coal mine your government built in West Bengal) as its target until the next recipe was researched, so new levels
@@ -33,6 +33,16 @@ lines, so every check here is something you see. Wait for the next 1st of the mo
 4. Expand a building that is behind (any of the above). **Expect** the new level to arrive on the newest recipe: a
    new slice on the right of the bar. **Null:** the bar's old recipe grows by a level: new levels still take the old
    target; tell me which building.
+5. Foreign or Domestic bar (your 22:14 message). It was working but far too weak: each notch added what £1 a worker
+   a year of profit adds to a score, so Strongly Domestic moved a typical building by a few percent and the random
+   roll hid it. Now a notch multiplies the weight of every building in your states: ⅓, ½, ⅔ toward Foreign, 1.5, 2,
+   3 toward Domestic. Your save is on Strongly Domestic already. **Expect** within a few months the private queue's
+   new entries almost all in your own states (Malabar and Hindustan tea and opium were 3 of 7 in your screenshot).
+   **Null:** still around a third abroad after three months: the weight doesn't reach the game's score; tell me.
+   Recent Investments counts from the start of the game, so its Domestic share moves slowly; judge by the queue.
+6. Click a different notch. **Expect** you can still change it for 7 days, then the notches turn transparent and
+   their tooltip says "Changed recently" with about 14 weeks left, as the priority rows do. **Null:** still
+   clickable after 7 days: the lock didn't take.
 
 ## Latest: Arts Academies and power plants retool, Urban Centers run their best methods (your current save should work)
 
