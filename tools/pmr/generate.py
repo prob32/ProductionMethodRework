@@ -248,7 +248,7 @@ THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the Workshop preview,
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')
 # The release build keeps only these log lines: the loop breaker's, and the one saying the mod loaded.
-RELEASE_LOGS = ('TRIP', 'LOADED')
+RELEASE_LOGS = ('TRIP', 'AUTO_TRIP', 'LOADED')
 
 
 # ---------------------------------------------------------------------------------------------
@@ -724,13 +724,15 @@ def main():
             # secular staff with AUTO_SECULAR), so the one that can run is asked, never the one running
             by_law = all(pdx.get(pms[p][0].value, 'unlocking_laws') or pdx.get(pms[p][0].value, 'disallowing_laws')
                          for p in order)
-            auto.setdefault(bk, []).append((g, order, by_law))
+            techs = {p: pdx.items(pdx.get(pms[p][0].value, 'unlocking_technologies'))
+                     if pdx.get(pms[p][0].value, 'unlocking_technologies') else [] for p in order}
+            auto.setdefault(bk, []).append((g, order, by_law, techs))
     report['auto_best'] = [{'building': bk, 'group': g, 'best_first': order, 'by_law': by_law}
-                           for bk, gl in auto.items() for g, order, by_law in gl]
+                           for bk, gl in auto.items() for g, order, by_law, _t in gl]
     # low_pop_method (vanilla's AI picks it in thinly peopled states) would fight the recipe the tick keeps
     # and the method AUTO_BEST keeps: pm_anchorage, the limited trade quantity.
     for p in dict.fromkeys([r.key for t in treated for r in t[3] if r.key in pms]
-                           + [p for gl in auto.values() for g, order, _l in gl for p in order]):
+                           + [p for gl in auto.values() for g, order, *_r in gl for p in order]):
         n, psrc = pms[p]
         lp = pdx.get(n.value, 'low_pop_method')
         if lp is not None:
@@ -2334,39 +2336,59 @@ def dispatch_effects(buildings):
     return ''.join(o)
 
 
+AUTO_TRIP = 3   # AUTO_BEST switches one building may make from method changes in a day before it waits for the next
+
+
 def auto_best_effects(auto):
     """AUTO_BEST: per building type, pmr_auto_<b> (state scope) activates each listed group's best method
     the state can activate, unless it already runs. activate_production_method runs on_production_method_changed
-    inside itself, so pmr_auto_busy on the state keeps that from running these again."""
+    inside itself, so pmr_auto_busy on the state keeps that from running these again. A method change from
+    anything else (the AI, the game replacing a method it no longer allows) runs it at most AUTO_TRIP times a
+    day per building (pmr_auto_runs_<b>): should the game and PMR disagree on a method, each would otherwise
+    switch it back the moment the other did, with no end (written after Pat's freeze of 2026-10-13, cause
+    unproven). Past that it logs AUTO_TRIP, flushed. A technology the method needs is asked of the owner as
+    well as through can_activate_production_method, which on 21 February 1836 allowed Great Britain
+    Switchboards (central_planning, era 4) in every administration."""
     o = ['# ===== best methods (AUTO_BEST; Pat, 2026-10-13 17:00Z: no retooling, always the best method)\n\n']
     for bk, gl in auto.items():
         o.append(f'# State scope: {bk} on its best methods, newest first.\npmr_auto_{short(bk)} = {{\n')
-        for g, order, by_law in gl:
+        for g, order, by_law, techs in gl:
             o.append(f'\t# {g}' + (', set by laws' if by_law else '') + '\n')
             for j, p in enumerate(order):
                 spec = f'building_type = {bk} production_method = {p}'
                 # A technology ladder asks "running or can run", as pmr_best_<b> does, so a running method is
                 # never stepped down from; a group the laws decide asks only which one the laws allow.
                 can = f'can_activate_production_method = {{ {spec} }}'
+                if techs[p]:
+                    can = (f'AND = {{ {can} owner = {{ '
+                           + ' '.join(f'has_technology_researched = {x}' for x in techs[p]) + ' } }')
                 o.append(f'\t{"if" if j == 0 else "else_if"} = {{\n'
                          + (f'\t\tlimit = {{ {can} }}\n' if by_law else
                             f'\t\tlimit = {{ OR = {{ is_production_method_active = {{ {spec} }} {can} }} }}\n')
                          + f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ is_production_method_active = {{ {spec} }} }} }}\n'
                          f'\t\t\tactivate_production_method = {{ {spec} }}\n'
-                         '\t\t\tif = { limit = { owner = { is_player = yes } } debug_log = "PMR;rec=AUTO;'
-                         'date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetState.GetNameNoFormatting];'
-                         f'building={bk};method={p}" }}\n\t\t}}\n\t}}\n')
+                         f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} {flush_log("AUTO", bk, ";method=" + p)} }}\n'
+                         '\t\t}\n\t}\n')
         o.append('}\n\n')
     o.append('# State scope (monthly, on research, at game start): every such building of the state.\n'
              'pmr_auto_best = {\n\tset_variable = pmr_auto_busy\n')
     for bk in auto:
         o.append(f'\tif = {{ limit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }} pmr_auto_{short(bk)} = yes }}\n')
     o.append('\tremove_variable = pmr_auto_busy\n}\n\n'
-             '# Building scope (on_production_method_changed, on_building_built): the building, if it is such a type.\n'
+             '# Building scope (on_production_method_changed, on_building_built): the building, if it is such a type,\n'
+             f'# at most {AUTO_TRIP} times a day.\n'
              'pmr_auto_building = {\n')
     for j, bk in enumerate(auto):
+        b = short(bk)
         o.append(f'\t{"if" if j == 0 else "else_if"} = {{\n\t\tlimit = {{ is_building_type = {bk} level >= 1 }}\n'
-                 f'\t\tstate = {{ set_variable = pmr_auto_busy pmr_auto_{short(bk)} = yes remove_variable = pmr_auto_busy }}\n\t}}\n')
+                 '\t\tstate = {\n'
+                 f'\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_auto_day_{b} }} }} '
+                 f'set_variable = {{ name = pmr_auto_day_{b} value = yes days = 1 }} set_variable = {{ name = pmr_auto_runs_{b} value = 0 }} }}\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_auto_runs_{b} add = 1 }}\n'
+                 f'\t\t\tif = {{ limit = {{ var:pmr_auto_runs_{b} <= {AUTO_TRIP} }} '
+                 f'set_variable = pmr_auto_busy pmr_auto_{b} = yes remove_variable = pmr_auto_busy }}\n'
+                 f'\t\t\telse_if = {{ limit = {{ var:pmr_auto_runs_{b} = {AUTO_TRIP + 1} }} {flush_log("AUTO_TRIP", bk)} }}\n'
+                 '\t\t}\n\t}\n')
     o.append('}\n')
     return ''.join(o)
 
@@ -3170,9 +3192,10 @@ pmr_on_production_method_changed = {
 			limit = { state = { NOT = { has_variable = pmr_in_tick } } }
 			pmr_tick_building = yes
 		}
-		# AUTO_BEST: a change away from the best method is undone at once (not the ones it makes itself)
+		# AUTO_BEST: a change away from the best method is undone at once (not the ones it makes itself, nor
+		# a PMR tick's share switches on a railway)
 		if = {
-			limit = { state = { NOT = { has_variable = pmr_auto_busy } } }
+			limit = { state = { NOT = { has_variable = pmr_auto_busy } NOT = { has_variable = pmr_in_tick } } }
 			pmr_auto_building = yes
 		}
 	}

@@ -23,7 +23,8 @@ save would lack them.
 - **Always the best method, no retooling, no selectors**: government administrations, universities, trade centres,
   and railways' passenger carriages (always the best carriages, so railways always carry passengers too). They
   switch on the 1st, when you research something, when built, and at once if anything else changes them. Each
-  switch in your states writes `PMR;rec=AUTO;...;building=...;method=...`.
+  switch in your states writes `PMR;rec=AUTO;...;building=...;method=...`, flushed to disk at once. A method the
+  owner lacks the technology for is never picked (21 February 1836 put your administrations on Switchboards).
 - **Clergy or bureaucrats by law**: administrations and universities staff clergy under State Religion, Millet
   System, People of the Book and Freedom of Conscience, and bureaucrats or academics under Total Separation and
   State Atheism. Hereditary or professional bureaucrats already followed the bureaucracy law.
@@ -40,6 +41,7 @@ paper from Horizontal Drawer Cabinets on. Research Centralization and check an a
 | `AUTO` lines for the same building every month, alternating methods | The game and PMR disagree on what can run. Send the lines. |
 | Under State Religion or Freedom of Conscience your administrations employ no clergy | The law gate didn't load. Check error.log for `07_government` and send the lines. |
 | A railway whose inputs show neither wood nor steel | No carriages are running: the switch failed. Send a screenshot of the railway and any `AUTO` lines. |
+| An `AUTO_TRIP` line | The game and PMR switched one building's method back and forth more than 3 times in a day; PMR stopped for the day. Send the line and the `AUTO` lines before it. (Added after the 16 August 1838 freeze, which left no log line; a loop like this is one candidate.) |
 
 ## Earlier: two Laissez-faire policies, and Recent Investments as tree maps (your current save works)
 
