@@ -1668,13 +1668,7 @@ def private_tab():
         + header('PMR_IPW_HEADER', i1) +
         f'{i1}widget = {{\n{i1}\tsize = {{ 540 6 }}\n{i1}}}\n'
         + fd_row(i1) +
-        # the law's lock on the rows, in one line (Pat 19:34Z)
-        ''.join(f'{i1}textbox = {{\n{i1}\tvisible = "[{shown}]"\n{i1}\tparentanchor = hcenter\n{i1}\tmargin_top = 6\n'
-                f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\tmax_width = 520\n{i1}\talign = hcenter|nobaseline\n'
-                f'{i1}\tusing = fontsize_small\n{i1}\ttext = "{key}"\n{i1}}}\n'
-                for shown, key in ((sv_on('pmr_ipw_lf'), 'PMR_IPW_LF_NOTE'),
-                                   (f"And(Not({sv_on('pmr_ipw_lf')}), {sv_on('pmr_ipw_locked_light')})",
-                                    'PMR_IPW_AGR_NOTE'))) +
+        # the law's lock on the rows is in each coin's tooltip only (Pat 20:25Z: no line under the header)
         f'{i1}widget = {{\n{i1}\tsize = {{ 540 6 }}\n{i1}}}\n'
         + ''.join(priority_row(g, i1) for g, *_r in GROUPS) +
         # 6. private construction, then recent investments
@@ -1965,10 +1959,7 @@ def localization(types):
     loc += [f' PMR_IPW_LOCK_LF:0 "#N Locked#! under {lf}: investors choose for themselves, so every priority counts '
             'as +0%. The coin you set is kept and counts again under another law."',
             ' PMR_IPW_LOCK_AGR:0 "#N Locked#! under [GetLawType(\'law_agrarianism\').GetName]: only Agriculture and '
-            'Resources can be given priority. The coin you set here is kept and counts again under another law."',
-            f' PMR_IPW_LF_NOTE:0 "Under {lf} investors choose for themselves: no priorities."',
-            ' PMR_IPW_AGR_NOTE:0 "Under [GetLawType(\'law_agrarianism\').GetName] only Agriculture and Resources can '
-            'be given priority."']
+            'Resources can be given priority. The coin you set here is kept and counts again under another law."']
     for g, *_r in GROUPS:
         loc += [f' PMR_IPW_LOCK_{g}:0 "[SelectLocalization({sv("pmr_ipw_lf")}, \'PMR_IPW_LOCK_LF\', \'PMR_IPW_LOCK_AGR\')]"',
                 f' PMR_IPW_COOLDOWN_{g}:0 "#N Changed recently#!\\nLike a tariff, a priority can be changed for '

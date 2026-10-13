@@ -40,7 +40,7 @@ From your 19:25 to 20:12 messages. Your current save works; wait for the game to
 - **Priority timer.** After you change a priority row you have 7 days to change it again, then it stays for 3
   months, as tariffs do. Each row has its own timer; a locked coin's tooltip says about how many weeks are left.
   Each change writes `PMR;rec=PRIORITY;...;group=...;value=...`.
-- **Law locks.** Under Laissez-faire every row is locked at +0% and a line under the header says so. Under
+- **Law locks.** Under Laissez-faire every row is locked at +0%; each coin's tooltip says why (no line under the header, your 20:25 ask). Under
   Agrarianism only Agriculture and Resources can be set. The coin you set before is kept and counts again under
   another law.
 - **Policy cost.** A policy now uses authority while held, set when you adopt it from your legitimacy: 200 at 25 or
