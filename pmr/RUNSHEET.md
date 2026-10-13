@@ -35,6 +35,11 @@ From your 19:25 to 20:28 messages. Your current save works; wait for the game to
 - **Test decisions.** Only "PMR test: pause or resume the monthly ticks" is left, for the timing run the
   performance review still needs. Grant Bessemer, grant Open Hearth, recompute retooling now and record trade-offs
   worldwide are gone.
+- **Publish review fixes** (20:53 to 20:56). Vanilla events and objectives that look for an automation method
+  (Dangerous Equipment, Untrained Hands, the watertube boiler and textile mill accidents, the steam donkey objective)
+  now read PMR's recipes. Your investors no longer retool government-owned levels abroad. In a power bloc with
+  the Transport principle, railways on Steam, Electric or Diesel get +25% throughput and the principle's extra
+  infrastructure (state modifiers named Transportation Infrastructure), with no retooling.
 - **Weekly Re-investment** (20:28) now holds 52 weeks, like the Investment Pool graph beside it, and its axis
   shows the same two dates. The weeks your save already recorded stay; the older half fills in as weeks pass.
 - **Policy cards** are as tall as their text. The last line holds the authority cost on the left and "Requires

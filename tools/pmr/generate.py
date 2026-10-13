@@ -238,6 +238,12 @@ BUILDING_ONLY = {'11_private_infrastructure.txt': ('building_port', 'building_ra
 # day its bloc dropped the principle.
 DROP_RECIPES = ('pm_steam_trains_principle_transport_3', 'pm_electric_trains_principle_transport_3',
                 'pm_diesel_trains_principle_transport_3')
+# Pat, 2026-10-13 20:56Z ("Restore it"): a power bloc principle that unlocked the dropped variants gives their
+# bonus on top of the recipe instead, so nothing retools when the bloc gains or loses it. Each month, in each
+# state of a member country, the levels on a recipe that had a variant get PRINCIPLE_THROUGHPUT more throughput
+# (vanilla's variants: 20 to 29% more transport for 20 to 33% more engines and fuel) and the variant's extra
+# infrastructure per level, scaled by the building's employment as the recipe's own infrastructure is.
+PRINCIPLE_THROUGHPUT = 0.25
 # Pat, 2026-10-13 17:00Z: these groups always run their best method, with no retooling and no selectors.
 # Best is the newest method the state can activate (vanilla lists them oldest first), a principle variant
 # before the method it replaces; PMR switches to it monthly, on research, when the building is built
@@ -556,11 +562,13 @@ def main():
                 gsrc.cuts.append(line_span(gsrc.text, n))
                 dropped.add(n.value)
         groups[g] = [p for p in groups[g] if p not in DROP_RECIPES]
+    drop_base = {}    # dropped principle variant -> the recipe it replaced (vanilla checks on it read that recipe)
     for p, (n, psrc) in pms.items():
         r = pdx.get(n.value, 'replacement_if_valid')
         if r is not None and r.value in DROP_RECIPES:
             psrc.cuts.append(line_span(psrc.text, r))
             dropped.add(r.value)
+            drop_base[r.value] = p
     if dropped != set(DROP_RECIPES):
         raise SystemExit(f'DROP_RECIPES not all found in a group and a replacement: {sorted(set(DROP_RECIPES) - dropped)}')
 
@@ -624,6 +632,7 @@ def main():
     # workforce-scaled modifiers move into the share methods.
     stripped = set()
     automation = {}   # building -> the automation methods folded into its recipes from AUTOMATION_FROM_TIER
+    auto_groups_of = {}   # building -> the automation groups that left it (their methods fold into the recipes)
     elec_pms = []     # the electric recipes' marker methods (ElectricRecipe), one per building that has one
     for bk, bn, s, recipes, g0, pg in treated:
         for r in recipes:
@@ -643,6 +652,7 @@ def main():
                 plain = [p for p in groups[g] if not Recipe(p, *pms[p]).needs(ELECTRICITY)]
                 folded.append(Recipe(plain[-1], *pms[plain[-1]]) if plain else None)
             automation[bk] = [a for a in folded if a is not None]
+            auto_groups_of[bk] = auto_groups
             for n in pg.value:
                 if n.key is None and n.value in auto_groups:
                     s.cuts.append(line_span(s.text, n))
@@ -1094,6 +1104,16 @@ def main():
     report['probe_treat'] = [t[0] for t in treat]
     write('common/script_values/pmr_probe_values.txt', header + probe_values(treat))
     write('common/scripted_effects/pmr_probe_effects.txt', header + probe_effects(treat, pms, goods_cost))
+    pb_eff, pb_mods, pb_loc = principle_bonus(treated, drop_base, pms)
+    write('common/scripted_effects/pmr_principle_effects.txt', header + pb_eff)
+    write('common/static_modifiers/pmr_principle_modifiers.txt', header + pb_mods)
+    loc += pb_loc
+    compat_trig, compat_files, compat_lines = vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users,
+                                                             drop_base)
+    write(COMPAT_TRIGGERS, header + compat_trig)
+    for rel, text in compat_files.items():
+        write(rel, text)
+    report['vanilla_compat'] = compat_lines
     write('common/scripted_guis/pmr_sguis.txt', header + SGUI_DOC + ''.join(gov_retool_sgui(bk) for bk in dispatch)
           + '# The same for every state at once, from the Buildings tab\'s building type row. Country scope.\n\n'
           + ''.join(gov_retool_country_sgui(bk) for bk in dispatch))
@@ -1932,9 +1952,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\tset_variable = {{ name = {v("pmr_gov_levels")} value = b:{bk}.level }}\n'
              f'\t{chg("pmr_gov_levels", "multiply", "var:" + v("pmr_gov_frac"))}\n'
              f'\tround_variable = {{ name = {v("pmr_gov_levels")} nearest = 1 }}\n'
-             '\t# Abroad (pmr_abroad_<b>) no script can queue a construction for a foreign government, so the\n'
-             '\t# player\'s investors retool every level there, the governments\' levels included.\n'
-             f'\tif = {{ limit = {{ has_variable = pmr_abroad_{b} }} {setv("pmr_gov_frac", 0)} {setv("pmr_gov_levels", 0)} }}\n'
+             '\t# Abroad (pmr_abroad_<b>) too: the player\'s investors retool only privately owned levels there, never a\n'
+             '\t# government\'s (Pat 2026-10-13 20:54Z). The fraction counts every government\'s levels together.\n'
              '}\n\n')
 
     # Which recipes the government's own levels run (pmr_lvg_<i>), so it retools only those. Pat,
@@ -2723,6 +2742,180 @@ def probe_effects(treat, pms, goods_cost):
 
 
 
+def principle_bonus(treated, drop_base, pms):
+    """(effects, static modifiers, loc) for the bonus of the dropped principle variants (PRINCIPLE_THROUGHPUT)."""
+    def infra(p):
+        sm = pdx.get(pms[p][0].value, 'state_modifiers')
+        ws = sm and pdx.get(sm.value, 'workforce_scaled')
+        n = ws and pdx.get(ws.value, 'state_infrastructure_add')
+        return num(n.value, p) if n else 0.0
+
+    by_principle = {}   # principle -> {building: {recipe index: extra infrastructure per level}}
+    for variant, base in drop_base.items():
+        up = pdx.get(pms[variant][0].value, 'unlocking_principles')
+        principle = pdx.items(up)[0] if up else None
+        if principle is None:
+            raise SystemExit(f'{variant}: no unlocking_principles; PRINCIPLE_THROUGHPUT cannot place its bonus')
+        for bk, _, _, recipes, _, _ in treated:
+            for i, r in enumerate(recipes, 1):
+                if r.key == base:
+                    by_principle.setdefault(principle, {}).setdefault(bk, {})[i] = infra(variant) - infra(base)
+    eff, mods, loc = [], [], []
+    for principle, per in sorted(by_principle.items()):
+        icon = 'gfx/interface/icons/principles_icons/transport.dds' if 'transport' in principle else GENERIC_ICON
+        for bk, extra in sorted(per.items()):
+            b = short(bk)
+            thr, inf = f'pmr_pb_{principle}_{b}_thr', f'pmr_pb_{principle}_{b}_inf'
+            mods.append(f'{thr} = {{\n\ticon = "{icon}"\n\tbuilding_{b}_throughput_add = 0.01\n}}\n\n'
+                        f'{inf} = {{\n\ticon = "{icon}"\n\tstate_infrastructure_add = 1\n}}\n\n')
+            group = 'principle_group_' + re.sub(r'_\d+$', '', principle[len('principle_'):])   # its name in vanilla loc
+            loc += [f' {thr}:0 "${group}$"', f' {inf}:0 "${group}$"']
+            lvs = ' '.join(f'add = var:pmr_lv_{i}_{b}' for i in sorted(extra))
+            eff.append(
+                f'\tif = {{ limit = {{ has_modifier = {thr} }} remove_modifier = {thr} }}\n'
+                f'\tif = {{ limit = {{ has_modifier = {inf} }} remove_modifier = {inf} }}\n'
+                '\tif = {\n\t\tlimit = {\n'
+                f'\t\t\towner = {{ power_bloc ?= {{ has_principle = principle:{principle} }} }}\n'
+                f'\t\t\thas_building = {bk}\n\t\t\tb:{bk} = {{ level >= 1 }}\n'
+                + ''.join(f'\t\t\thas_variable = pmr_lv_{i}_{b}\n' for i in sorted(extra)) +
+                '\t\t}\n'
+                f'\t\t# the levels on recipes {sorted(extra)}, as a share of the building, times {fmt(PRINCIPLE_THROUGHPUT * 100)}%\n'
+                f'\t\tset_variable = {{ name = pmr_pb_thr value = {{ value = 0 {lvs} multiply = {fmt(PRINCIPLE_THROUGHPUT * 100)} divide = b:{bk}.level }} }}\n'
+                '\t\tif = { limit = { var:pmr_pb_thr > 0 } add_modifier = { name = ' + thr + ' multiplier = var:pmr_pb_thr } }\n'
+                '\t\t# the extra infrastructure, by recipe, scaled by employment\n'
+                '\t\tset_variable = { name = pmr_pb_inf value = { value = 0 '
+                + ' '.join(f'add = {{ value = var:pmr_lv_{i}_{b} multiply = {fmt(x)} }}' for i, x in sorted(extra.items()) if x) + ' } }\n'
+                f'\t\tset_variable = {{ name = pmr_pb_occ value = 0 }}\n'
+                f'\t\tif = {{ limit = {{ b:{bk} = {{ occupancy >= 0.9 }} }} set_variable = {{ name = pmr_pb_occ value = 1 }} }}\n'
+                f'\t\telse_if = {{ limit = {{ b:{bk} = {{ occupancy >= 0.7 }} }} set_variable = {{ name = pmr_pb_occ value = 0.8 }} }}\n'
+                f'\t\telse_if = {{ limit = {{ b:{bk} = {{ occupancy >= 0.5 }} }} set_variable = {{ name = pmr_pb_occ value = 0.6 }} }}\n'
+                f'\t\telse_if = {{ limit = {{ b:{bk} = {{ occupancy >= 0.3 }} }} set_variable = {{ name = pmr_pb_occ value = 0.4 }} }}\n'
+                f'\t\telse_if = {{ limit = {{ b:{bk} = {{ occupancy > 0 }} }} set_variable = {{ name = pmr_pb_occ value = 0.2 }} }}\n'
+                '\t\tchange_variable = { name = pmr_pb_inf multiply = var:pmr_pb_occ }\n'
+                '\t\tif = { limit = { var:pmr_pb_inf > 0 } add_modifier = { name = ' + inf + ' multiplier = var:pmr_pb_inf } }\n'
+                '\t\tremove_variable = pmr_pb_thr\n\t\tremove_variable = pmr_pb_inf\n\t\tremove_variable = pmr_pb_occ\n'
+                '\t}\n')
+    return ('# State scope, monthly: the bonus of a power bloc principle whose recipe variants PMR drops (PRINCIPLE_THROUGHPUT).\n'
+            'pmr_principle_bonus = {\n' + ''.join(eff) + '}\n'), ''.join(mods), loc
+
+
+# ---------------------------------------------------------------------------------------------
+# Vanilla checks on methods PMR takes out (Pat, 2026-10-13, before the first upload)
+#
+# Vanilla events, journal entries and scripted triggers ask for automation methods by name (Mechanized
+# Looms, Watertube Boiler, Steam Donkey...) and for the Transport principle's train variants. PMR folds a
+# building's automation into its recipes and drops the variants, so those checks named methods the
+# building no longer has: they never matched (Dangerous Equipment, Untrained Hands, the steam donkey
+# objective) or matched the wrong buildings (NOT Traditional Looms). PMR shadows each vanilla file
+# holding such a check, unchanged but for the checks, which ask PMR's equivalent instead:
+#   - an automation method counts as running while any level of the building runs a recipe whose folded
+#     automation is of its kind: the group's first method (no automation) on the recipes below
+#     AUTOMATION_FROM_TIER, any other method that runs without electricity on the recipes from it (the
+#     recipe folds the group's best such method, so an older one like the Watertube Boiler counts too),
+#     and one that needs electricity on the electric recipe. A recipe runs while its share is above 0.
+#   - a dropped principle variant reads as the recipe it replaced (the principle's bonus is applied on
+#     top of that recipe, so it runs wherever the variant would have).
+# The building files under common/history are left alone: their starting buildings name the methods in
+# create_building, which only logs an error and builds them anyway.
+COMPAT_DIRS = ('common', 'events')
+COMPAT_SKIP = ('common/history/', 'common/buildings/', 'common/production_methods/', 'common/production_method_groups/')
+COMPAT_TRIGGERS = 'common/scripted_triggers/00_00_pmr_vanilla_compat_triggers.txt'   # sorts before 00_scripted_triggers
+
+
+def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop_base):
+    """Returns (scripted triggers, {published path: shadowed vanilla file}, [report lines])."""
+    def kind(p, g):
+        if p == groups[g][0]:
+            return 'none'
+        return 'elec' if Recipe(p, *pms[p]).needs(ELECTRICITY) else 'auto'
+
+    recipes_of = {t[0]: t[3] for t in treated}
+    runs = {}   # method -> [(building, [recipe indices on which a method of its kind runs])]
+    for bk, ags in auto_groups_of.items():
+        for g in ags:
+            plain = [p for p in groups[g] if not Recipe(p, *pms[p]).needs(ELECTRICITY)]
+            on = []   # the method of group g each recipe runs, by recipe index
+            for i, r in enumerate(recipes_of[bk], 1):
+                if isinstance(r, ElectricRecipe):
+                    on.append((i, groups[g][-1]))
+                else:
+                    on.append((i, plain[-1] if i >= AUTOMATION_FROM_TIER and plain else groups[g][0]))
+            for p in groups[g]:
+                k = kind(p, g)
+                runs.setdefault(p, []).append((bk, [i for i, q in on if kind(q, g) == k]))
+    folded_bks = set(auto_groups_of)
+    pm_users = {}
+    for g, lst in groups.items():
+        for p in lst:
+            pm_users.setdefault(p, set()).update(group_users.get(g, set()))
+    still = {p for p in runs if pm_users.get(p, set()) - folded_bks}   # still a method of some other building
+
+    used, files, lines = set(), {}, []
+
+    def walk(src, nodes, rel):
+        for n in nodes:
+            if not n.is_block:
+                if n.key == 'has_active_production_method' and (n.value in runs or n.value in drop_base):
+                    rep = (f'has_active_production_method = {drop_base[n.value]}' if n.value in drop_base
+                           else f'pmr_has_{n.value} = yes')
+                    used.add(n.value)
+                    src.cuts.append((n.start, n.end))
+                    src.inserts.append((n.start, rep))
+                continue
+            if n.key == 'is_production_method_active':
+                kv = {c.key: c.value for c in n.value if c.key}
+                p, b = kv.get('production_method'), kv.get('building_type')
+                if p in drop_base:
+                    rep = f'is_production_method_active = {{ building_type = {b} production_method = {drop_base[p]} }}'
+                elif p in runs:
+                    rep = f'AND = {{ has_building = {b} b:{b} = {{ pmr_has_{p} = yes }} }}'
+                else:
+                    continue
+                used.add(p)
+                src.cuts.append((n.start, n.end))
+                src.inserts.append((n.start, rep))
+                continue
+            walk(src, n.value, rel)
+
+    names = set(runs) | set(drop_base)
+    for top in COMPAT_DIRS:
+        for root, _, fs in os.walk(os.path.join(game, top)):
+            for fn in sorted(fs):
+                path = os.path.join(root, fn)
+                rel = os.path.relpath(path, game).replace(os.sep, '/')
+                if not fn.endswith('.txt') or rel.startswith(COMPAT_SKIP):
+                    continue
+                with open(path, encoding='utf-8-sig', errors='replace') as f:
+                    raw = f.read()
+                if not any(nm in raw for nm in names):
+                    continue
+                src = Source(path)
+                walk(src, src.nodes, rel)
+                if not src.cuts:
+                    continue
+                out = src.render()
+                code = '\n'.join(line.split('#')[0] for line in out.splitlines())
+                left = sorted(nm for nm in names if re.search(rf'\b{nm}\b', code))
+                if left:
+                    raise SystemExit(f'{rel}: {left} still named in a form PMR does not rewrite; extend vanilla_compat')
+                files[rel] = ('\ufeff# PMR: vanilla file, shadowed only to point its checks on methods PMR folds into '
+                              'recipes at PMR\'s equivalents (pmr_has_*, ' + COMPAT_TRIGGERS.split('/')[-1] + ').\n'
+                              + out.lstrip('\ufeff'))
+                lines.append(f'{rel}: {len(src.cuts)} checks')
+
+    trig = ['# Each vanilla check on a method PMR folds into recipes, building scope: true while a level of the\n'
+            '# building runs a recipe with automation of the same kind (see vanilla_compat in generate.py).\n\n']
+    for p in sorted(used & set(runs)):
+        alts = [f'\t\thas_active_production_method = {p}\n'] if p in still else []
+        for bk, idx in runs[p]:
+            if idx:
+                alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tOR = {{ '
+                            + ' '.join(f'NOT = {{ has_active_production_method = pm_pmr_share_{short(bk)}_{i}_0 }}'
+                                       for i in idx) + ' }\n\t\t}\n')
+        trig.append(f'pmr_has_{p} = {{\n' + (f'\tOR = {{\n{"".join(alts)}\t}}\n' if alts else '\talways = no\n') + '}\n\n')
+    return ''.join(trig), files, lines
+
+
 # ---------------------------------------------------------------------------------------------
 # Building panel
 
@@ -3014,9 +3207,9 @@ OWN_NAME_W, OWN_PM_W, OWN_LEVELS_W = 200, 120, 90
 
 
 def owners_cell(bk, textures):
-    """Abroad (pmr_abroad_<b>) PMR tracks every owner's levels together in pmr_lvp_* (the government's share is
-    retooled by the player's investors there), so a government row abroad shows those (Pat 15:33Z: Great Britain's
-    row in a West Bengal coal mine showed no recipe)."""
+    """Government rows show the governments' levels (pmr_lvg_*), at home and abroad, where every government's
+    levels are counted together and the player's investors leave them alone (Pat 20:54Z); private rows show
+    pmr_lvp_*."""
     b = short(bk)
     abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
     rows = []
@@ -3027,8 +3220,7 @@ def owners_cell(bk, textures):
             lvp = f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvp_{i}')}, '(CFixedPoint)0')"
             if not gov:
                 return lvp
-            lvg = f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvg_{i}')}, '(CFixedPoint)0')"
-            return f'Or(And(Not({abroad}), {lvg}), And({abroad}, {lvp}))'
+            return f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvg_{i}')}, '(CFixedPoint)0')"
         icons = ''.join(
             '\t\t\t\t\t\t\t\t\ticon = {\n'
             f'\t\t\t\t\t\t\t\t\t\tvisible = "[{shown(i)}]"\n'
@@ -3311,9 +3503,9 @@ def panel_loc(recipe_keys):
             f' PMR_OWNERS_PRIV_TOOLTIP_{b}:0 "#bold Privately owned levels by recipe#!'
             + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvp_{i}", "0")}#!' for i, key in enumerate(keys, 1))
             + '\\n\\nAll private owners together: retooling is tracked for the government and for private owners, not owner by owner."',
-            f' PMR_OWNERS_ABROAD_TOOLTIP_{b}:0 "#bold Levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvp_{i}", "0")}#!' for i, key in enumerate(keys, 1))
-            + '\\n\\nAbroad every owner\'s levels are tracked together: your investors retool your government\'s levels here too."',
+            f' PMR_OWNERS_ABROAD_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
+            + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvg_{i}", "0")}#!' for i, key in enumerate(keys, 1))
+            + '\\n\\nAbroad every government\'s levels are counted together. Your investors retool only privately owned levels here, never a government\'s."',
         ]
 
         def cvar(name, f):
@@ -3467,6 +3659,7 @@ pmr_on_monthly_pulse_state = {
 		pmr_state_tick = yes
 		remove_variable = pmr_month
 		pmr_auto_best = yes
+		pmr_principle_bonus = yes
 		pmr_probe_state = yes
 	}
 }
