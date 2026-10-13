@@ -7,8 +7,8 @@ testing; it rewrites the mod folder in place.
     python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"
 
 With ``--release`` it writes the build players get, to pmr/release/ProductionMethodRework: no "PMR test:"
-decision, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED. The default
-build keeps them for testing.
+decision, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED; its
+English text is copied to every other game language. The default build keeps the test tools.
 
 What it does, building by building (see pmr/README.md for the design):
 
@@ -266,6 +266,9 @@ RELEASE_OUT = os.path.join(ROOT, 'pmr', 'release', MOD_NAME)
 THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the Workshop preview, 1024 x 1024 (.metadata/thumbnail.png)
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')
+# The game's other languages (1.14.5 game/localization). The release build gives each the English text.
+OTHER_LANGUAGES = ('braz_por', 'french', 'german', 'japanese', 'korean', 'polish', 'russian', 'simp_chinese',
+                   'spanish', 'turkish')
 # The release build keeps only these log lines: the loop breaker's, and the one saying the mod loaded.
 RELEASE_LOGS = ('TRIP', 'AUTO_TRIP', 'LOADED')
 
@@ -1148,6 +1151,9 @@ def main():
     if args.trace_from:
         write('common/scripted_effects/pmr_trace_effects.txt', header + trace_pm_effects(game, args.out, args.trace_from))
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
+    if args.release:    # a game set to another language shows raw keys where it has no text: give it the English
+        for lang in OTHER_LANGUAGES:
+            write(f'localization/{lang}/pmr_l_{lang}.yml', f'l_{lang}:\n' + '\n'.join(loc) + '\n')
 
     write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy"\n}}\n'
           f'name="Production Method Rework"\nsupported_version="{SUPPORTED_VERSION}"\n', bom=False)
@@ -2678,10 +2684,12 @@ def probe_effects(treat, pms, goods_cost):
                  f'cur={var("pmr_tr_cur")};vb={var("pmr_tr_vb")};hb={var("pmr_tr_hb")};'
                  + ';'.join(f'{m}{band}={var(f"pmr_tr_{m}{band}")}'
                             for m in 'wn' for band in ('', 'v', 'h', 's')) + '"\n\t}\n')
-    o.append(''.join(f'\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n' for n in tvars)
+    # Without the probe nothing sets these: the clean-up would only log "used but never set" at startup.
+    o.append(''.join(f'\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
+                     for n in (tvars if PROBE_TREAT else []))
              + '}\n\n')
 
-    steps = list(range(75, 0, -PRICE_STEP))
+    steps = list(range(75, 0, -PRICE_STEP)) if PROBE_PRICE else []
     o.append(f'# PRICE: where {PRICE_PROBE_BUILDING} stands, the local price of each probed good against its base,\n'
              f'# in steps of {PRICE_STEP}%: f reads the ladder with thresholds written as fractions (0.05 = 5%),\n'
              '# p with the same thresholds written as percent (5 = 5%), because the docs don\'t say which\n'
@@ -2689,7 +2697,7 @@ def probe_effects(treat, pms, goods_cost):
              '# suggests fractions; then p reads 0 for every good.\n'
              'pmr_probe_price = {\n'
              f'\tif = {{\n\t\tlimit = {{ has_building = {PRICE_PROBE_BUILDING} b:{PRICE_PROBE_BUILDING} = {{ level >= 1 }} }}\n')
-    for good in PRICE_PROBE_GOODS:
+    for good in (PRICE_PROBE_GOODS if PROBE_PRICE else ()):
         o.append(f'\t\tif = {{\n\t\t\tlimit = {{ exists = sg:{good} }}\n')
         for name, scale in (('pmr_pr_f', 100), ('pmr_pr_p', 1)):
             ladder = [(f'state_goods_pricier > {fmt(x / scale)}', x) for x in steps] + \
