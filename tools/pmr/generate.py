@@ -499,8 +499,9 @@ def main():
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     write('gui/production_methods.gui', patch_type_grids(vanilla_gui('production_methods.gui'), dispatch,
                                                          'production_methods.gui', 3), bom=False)
-    write('gui/building_browser_panel.gui', patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch,
-                                                             'building_browser_panel.gui', 1), bom=False)
+    write('gui/building_browser_panel.gui', patch_grid_instance(
+        patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1),
+        dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(50, 50), cell=50, anchor='center'), bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1), bom=False)
     loc += panel_loc(recipe_keys)
@@ -1164,20 +1165,49 @@ def recipe_bar(bk, b, k):
 """
 
 
+def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor=''):
+    """The one use of vanilla's condensed_building_information_pms in a GUI file, at indent ind: on a
+    PMR building type it is hidden and the fixed labour icon stands in its place. The grid inside is
+    a fixedgridbox, which keeps a column for every production method group even when the item is
+    hidden: with a share and a lock group per recipe, an iron mine's 13 groups made the details
+    panel's row 936 px wide and pushed the panel's contents off its left edge (seen in 1.14.5).
+    Hiding the grid's items is therefore not enough; the whole grid goes."""
+    inst = f'{ind}condensed_building_information_pms = {{\n'
+    if text.count(inst) != 1:
+        raise SystemExit(f'{name}: expected one condensed_building_information_pms at this indent, found '
+                         f'{text.count(inst)}; update patch_grid_instance')
+    at = text.index(inst) + len(inst)
+    end = block_end(text, text.index(inst))
+    icons = ''.join(f'{ind}\t\ticon = {{\n{ind}\t\t\tvisible = "[{is_type(bk)}]"\n'
+                    f'{ind}\t\t\tsize = {{ 80% 80% }}\n{ind}\t\t\tparentanchor = center\n'
+                    f'{ind}\t\t\ttexture = "gfx/interface/icons/production_method_icons/pmr_labour_{short(bk)}.dds"\n'
+                    f'{ind}\t\t}}\n' for bk in buildings)
+    labour = (f'\n{ind}# PMR: the fixed labour icon in the grid\'s place\n'
+              f'{ind}widget = {{\n{ind}\tvisible = "[{any_type(buildings)}]"\n{ind}\tsize = {{ {outer[0]} {outer[1]} }}\n'
+              + (f'{ind}\tparentanchor = {anchor}\n' if anchor else '') +
+              f'{ind}\twidget = {{\n{ind}\t\tsize = {{ {cell} {cell} }}\n{ind}\t\tparentanchor = vcenter\n'
+              f'{ind}\t\ttooltip = "PMR_LABOUR_ICON_TOOLTIP"\n'
+              f'{ind}\t\tusing = tooltip_ne\n{icons}{ind}\t}}\n{ind}}}')
+    return (text[:at] + f'{ind}\t# PMR: no grid on PMR building types\n{ind}\tvisible = "[Not({any_type(buildings)})]"\n'
+            + text[at:end] + labour + text[end:])
+
+
 def patch_building_panel(recipe_keys, text):
     buildings = list(recipe_keys)
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
-    # 1. In the condensed production method grid, a PMR building type shows only its single-method
-    #    groups (the fixed labour slot); recipe and automation selectors are hidden. Decided by
-    #    building type, so it needs no script state.
-    type_at = text.index('type condensed_building_information_pms')
-    item = 'datacontext = "[ProductionMethodGroup]"\n'
-    at = text.index(item, type_at) + len(item)
-    indent = text[text.rfind('\n', 0, at - len(item)) + 1:at - len(item)]
-    text = (text[:at] + indent + '# PMR: fixed labour only on PMR building types\n' + indent +
-            f'visible = "[Or(Not({any_type(buildings)}), EqualTo_int32(GetDataModelSize(ProductionMethodGroup.'
-            "AccessBuildingProductionMethods(Building.Self)), '(int32)1'))]\"\n" + text[at:])
+    # 1. The production method row: on a PMR building type, the fixed labour icon instead of the grid.
+    text = patch_grid_instance(text, buildings, '\t\t\t\t\t', 'building_details_panel.gui', outer=(208, 70), cell=70)
+    inst = '\t\t\t\t\tcondensed_building_information_pms = {\n'
+    ind = '\t\t\t\t\t'
+    # A flowcontainer still makes room for hidden children unless told not to (vanilla sets this
+    # wherever it hides some).
+    fc = text.rfind('flowcontainer = {\n', 0, text.index(inst))
+    fc_at = fc + len('flowcontainer = {\n')
+    if text[fc_at:text.index(inst)].count('{') != 0:
+        raise SystemExit('building_details_panel.gui: the method grid is no longer a direct child of a '
+                         'flowcontainer; update patch_building_panel')
+    text = text[:fc_at] + f'{ind}# PMR: hidden children take no room\n{ind}ignoreinvisible = yes\n' + text[fc_at:]
 
     # 2. The recipe bar beside it, in the details panel's PMs / employment / cash reserves row.
     anchor = '\t\t\t\tblock "extra_items_in_production_methods_list" {}\n'
@@ -1270,6 +1300,11 @@ def patch_building_grids(text, buildings, name, expected):
                 "'(int32)1'))]\"\n")
         text = text[:w] + line + text[w:]
         pos = w + len(line)
+        # The hidden share and lock groups must take no room in the list (vanilla's default keeps it).
+        dl = text.index('\n', at) + 1
+        dind = text[text.rfind('\n', 0, at) + 1:at]
+        text = text[:dl] + f'{dind}ignoreinvisible = yes  # PMR\n' + text[dl:]
+        pos += len(f'{dind}ignoreinvisible = yes  # PMR\n')
     return text
 
 
@@ -1278,6 +1313,7 @@ def panel_loc(recipe_keys):
         ' PMR_RECIPE_BAR_TITLE:0 "#bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
         ' PMR_RECIPE_BAR_TITLE_RETOOLING:0 "Retooling to #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
         ' PMR_BAR_FULL:0 "#bold 100%#!"',
+        ' PMR_LABOUR_ICON_TOOLTIP:0 "#bold Fixed workforce#!\\nThis building employs the same workforce whatever recipe it runs. Its recipes change only its goods, as the bar beside this shows."',
         ' PMR_BAR_FULL_TOOLTIP:0 "Every level runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!."',
         ' PMR_RECIPE_BAR_TOOLTIP:0 "This building runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!. When your country researches a newer recipe it switches automatically, and the change takes effect as retooling construction completes."',
     ]
