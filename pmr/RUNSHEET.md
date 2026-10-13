@@ -1,4 +1,4 @@
-# PMR run sheet: blended workforce, automation, electricity, Buildings tab row
+# PMR run sheet: government levels, Owners column, retool crews, taller bar
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,30 +10,60 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-**Start a new game for this build.** It moves every building's workforce into the recipe shares and
-takes the automation groups off buildings with three or more recipes, so a save from the last build
-would keep automation methods its buildings no longer have. Leave `fastresearch` off for the full
-run: it lets every country research instantly and fills every construction queue with retooling.
+**Start a new game for this build.** Retooling is now counted separately for the government and for
+private owners, and a save from the last build has no record of which side's levels were retooled.
+Leave `fastresearch` off for the full run.
 
 ## What changed in this build
 
-- **Building panel:** no goods icon. The recipe name, the bar and the upgrade button start at the
-  panel's left edge, with the button still against the employment bar.
-- **Workforce blends** like the goods: each recipe's jobs count by its share of the levels. The
-  "Fixed workforce" slot is gone.
-- **Full automation from the third recipe:** recipes 3 and later include the building's most
-  advanced automation (mines: Steam Donkey and Rail Transport; most factories: Assembly Lines), and
-  the automation selector groups are gone from those buildings.
-- **Electricity:** a recipe that needs electricity becomes a building's target only while its state
-  produces electricity, and retooling towards one pauses while it produces none. Government and
-  private alike.
-- **Buildings tab type row:** the recipe bar over all your buildings of that type replaces the gold
-  icon, and the upgrade button sits left of nationalize. It queues the government's retooling in every
-  state at once. Expanding the type shows each building's own row with its own bar and button.
-- **Private retooling diagnostics:** every `TICK` line now ends with
-  `elec=;home_investors=;pool=` (and `elec_wait=` where a recipe needs electricity).
+- **Government upgrade button:** the government retools only its own levels that don't run the new
+  recipe yet. Levels it builds new arrive on the new recipe and never count. (Your Sicily sulfur mine:
+  2 new government levels on Atmospheric Engine Pump, 5 private levels on Picks and Shovels. The
+  button offered 2; it now offers 0 and stays grey, and the private side gets all 5.)
+- **Owners list:** a Production Method column between Owner and Levels Owned, with the icons of the
+  recipes that owner's levels run. The government's row shows the government's levels; every private
+  row shows the private owners' together (PMR tracks the two sides, not each owner). Hover for counts.
+- **Recipe bar** in the building panel is 32 px tall, as tall as the cash reserves bar looks.
+- **Buildings tab type row:** the bar was black until the first month passed, because at game start
+  no country is a player's yet and the country totals were skipped. They are now computed for every
+  country at game start. Each monthly recount writes `PMR;rec=CSUM`.
+- **Retool crews:** each private retooling building has a fixed crew of 10 laborers, whatever its
+  level, so it counts as fully employed and investors may add levels to it. Each empty one still
+  takes one level as a new construction; the rest of the private room goes to the first one with a
+  finished level. One whose crew hasn't reached 80% 90 days after its last level landed is removed
+  once counted, as before.
+- **Companies** list Retooling again (the first private retooling building of each type they list),
+  so company panels show one Retooling icon per building type.
+- `TICK` lines add `gov_lv=` (the government's levels per recipe), `slots=` (each private retooling
+  building's levels including queued) and `crew=` (-1 no finished level, 0 nobody hired, 1 some,
+  2 at least 80%).
 
 ## Checks
+
+1. **Government button.** In a new game, research a newer recipe for a building the government
+   partly owns and let the government build a new level of it. The new level runs the new recipe;
+   its `TICK` line shows `gov_lv=` with that level on the new recipe and `room_gov=` without it. If the
+   government owns no old levels, the arrow is grey.
+2. **Owners column.** Open a building with government and private owners. The Production Method
+   column shows the government row's recipe icons and the private rows' icons; hover each for counts.
+   Send a screenshot of the Owners list.
+3. **Buildings tab bar.** On the first day, each PMR type row shows its recipe bar in the tier colours,
+   not black.
+4. **Recipe bar height.** The bar lines up with the cash reserves bar. Screenshot.
+5. **Stacking.** Let two years pass. On `TICK` lines with `room_priv` above 1, `slots=` should show
+   2 or more on one building once its `crew=` reads 2.
+
+| You see | It means |
+| --- | --- |
+| The government arrow is lit on a building whose government levels all run the new recipe | The government's levels per recipe went wrong. Send me the `TICK` line (its `gov_lv=` and `gov_levels=`). |
+| The Owners list overlaps or runs past the panel | The narrower copy of the row didn't take its new widths. Screenshot. |
+| The type row bar is still black on day one and `PMR;rec=CSUM` lines appear from the first month | The totals exist but the bar can't read the country's variables. Screenshot plus any `error.log` line with `pmr_c_`. |
+| The type row bar is black and there is no `CSUM` line after a month | The monthly recount never runs. Send me the `error.log` lines with `pmr_`. |
+| `crew=0` on a building with a finished level for 90 days | Nobody was hired: the game ignores a crew that doesn't scale with level, or no laborers would take the job. That building drops back to one level at a time. Open it from the state's building list and send its Workforce tab. |
+| `crew=2`, `room_priv` above 1 and `slots=` never above 1 for two years | Employment was not what stopped investors stacking levels. Send me the lines. |
+| `crew=2` and `slots=` 2 or more on one building | Stacking works. |
+
+## Checks from the previous build (b9c7304), still to confirm
 
 1. **Panel row.** Open any PMR building. There is no goods icon; the recipe name starts at the left
    edge and the bar is about 290 px wide, ending where the employment bar starts.
@@ -43,10 +73,7 @@ run: it lets every country research instantly and fills every construction queue
 3. **Automation.** A mine whose newest recipe is Condensing Engine Pump: that recipe's share line in
    the Modifiers tab includes engines, coal and transportation inputs and fewer laborers. No mine,
    steel mill or factory shows an automation selector.
-4. **Buildings tab.** Open the Buildings tab. Each PMR building type's row shows the recipe bar where
-   the gold icon was, and the gold arrow left of the flag (nationalize). Hover the bar: levels by
-   recipe across your country, levels still to retool, and how many government levels the arrow would
-   queue. Click a lit arrow: one `rec=GOV_QUEUE` line per state with room, and the arrow greys out.
+4. **Buildings tab.** Now check 3 of this build.
 5. **Private retooling.** Let a year pass. For each building with `room_priv` above 0, read
    `home_investors` and `pool` on its `TICK` lines.
 
@@ -54,7 +81,6 @@ run: it lets every country research instantly and fills every construction queue
 | --- | --- |
 | A building's jobs never change as levels land, but its goods do | The share methods' employment is not read by the game. Send me the Workforce and Modifiers tabs. |
 | A mine still shows an automation selector, or `error.log` names a production method group | The building file edit did not take. Send me the `error.log` lines. |
-| The Buildings tab row is empty where the icon was | The country totals are missing or the bar cannot read them. Hover where the bar should be and send me a screenshot, plus any `error.log` line with `pmr_c_`. |
 | The arrow on the type row never lights although a state's building panel arrow is lit | The country scripted GUI cannot see the state flags. Send me a screenshot of both. |
 | A `TICK` line with `elec=0` shows `to=` an electric recipe that was not running before | The electricity lock failed. Send me the line. |
 | `room_priv` above 0 for a year, `queued_priv=0`, `home_investors=0` | Your country's investors do not own enough of the building (at home they need more levels than the government) to fund its retooling. Ownership, not the pool. |
