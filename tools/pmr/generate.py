@@ -452,7 +452,7 @@ def main():
             for i, r in enumerate(recipes, 1))))
 
     if os.path.isdir(args.out):
-        for sub in ('common', 'localization', '.metadata', 'gfx', 'gui'):
+        for sub in ('common', 'events', 'localization', '.metadata', 'gfx', 'gui'):
             shutil.rmtree(os.path.join(args.out, sub), ignore_errors=True)
     os.makedirs(args.out, exist_ok=True)
 
@@ -703,6 +703,7 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
+    write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
           '# Investment pool randomness (Pat, 2026-10-13): the building-type roll goes from 1/21..21 to\n'
@@ -1453,20 +1454,32 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
              '\t}\n'
              f'\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} remove_variable = {v("pmr_switched")} }}\n'
              '}\n\n')
-    # Country scope: the player's totals over every state with this building, for the Buildings tab
-    # row (its recipe bar and upgrade button). Recomputed after each single tick, and once for all
-    # building types after the ticks that run state by state (pmr_bulk; see pmr_c_sum_all).
+    # Country scope: the country's totals for the Buildings tab row (its recipe bar and upgrade
+    # button). Recomputed after each single tick, and once for all building types after the ticks that
+    # run state by state (pmr_bulk; see pmr_c_sum_all). The tab also lists buildings abroad that the
+    # country or its investors own levels in (Pat's cotton plantations in the East India Company's
+    # states, 2026-10-13), so a player's bar counts those buildings too, whole, as their own bars do.
+    # Only a player's: it scans every state in the world. The upgrade button's room stays domestic.
+    live = f'has_variable = pmr_mix_{b} has_building = {bk} b:{bk} = {{ level >= 1 }}'
+    adds = ''.join(f'\t\t\tchange_variable = {{ name = pmr_c_{n}_{b} add = scope:pmr_st.var:pmr_{n}_{b} }}\n'
+                   for n in ['level', 'need'] + [f'lv_{i}' for i in range(1, k + 1)])
     o.append(f'pmr_c_sum_{b} = {{\n'
+             '\tsave_temporary_scope_as = pmr_ctry\n'
              + ''.join(f'\tset_variable = {{ name = pmr_c_{n}_{b} value = 0 }}\n'
                        for n in ['level', 'need', 'room_gov'] + [f'lv_{i}' for i in range(1, k + 1)])
-             + f'\tevery_scope_state = {{\n\t\tlimit = {{ has_variable = pmr_mix_{b} has_building = {bk} b:{bk} = {{ level >= 1 }} }}\n'
+             + f'\tevery_scope_state = {{\n\t\tlimit = {{ {live} }}\n'
              '\t\tsave_temporary_scope_as = pmr_st\n\t\towner = {\n'
-             + ''.join(f'\t\t\tchange_variable = {{ name = pmr_c_{n}_{b} add = scope:pmr_st.var:pmr_{n}_{b} }}\n'
-                       for n in ['level', 'need'] + [f'lv_{i}' for i in range(1, k + 1)])
+             + adds
              + '\t\t}\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} has_variable = pmr_room_gov_{b} }}\n'
              f'\t\t\towner = {{ change_variable = {{ name = pmr_c_room_gov_{b} add = scope:pmr_st.var:pmr_room_gov_{b} }} }}\n'
              '\t\t}\n\t}\n'
+             '\tif = {\n\t\tlimit = { is_player = yes }\n'
+             f'\t\tevery_state = {{\n\t\t\tlimit = {{\n\t\t\t\tNOT = {{ owner = scope:pmr_ctry }}\n\t\t\t\t{live}\n'
+             f'\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:pmr_ctry value >= 1 }} }}\n\t\t\t}}\n'
+             '\t\t\tsave_temporary_scope_as = pmr_st\n\t\t\tscope:pmr_ctry = {\n'
+             + adds.replace('\t\t\t', '\t\t\t\t')
+             + '\t\t\t}\n\t\t}\n\t}\n'
              + ''.join(f'\tset_variable = {{ name = pmr_c_sh_{i}_{b} value = 0 }}\n' for i in range(1, k + 1))
              + f'\tif = {{\n\t\tlimit = {{ var:pmr_c_level_{b} > 0 }}\n'
              + ''.join(f'\t\tset_variable = {{ name = pmr_c_sh_{i}_{b} value = var:pmr_c_lv_{i}_{b} }}\n'
@@ -2191,8 +2204,8 @@ def panel_loc(recipe_keys):
         ctiers = ''.join(f'\\n{TIER_COLORS[i - 1][0]}, ${key}$: #bold {cvar(f"pmr_c_sh_{i}", "%0")}#!'
                          for i, key in enumerate(keys, 1))
         loc += [
-            f' PMR_CBAR_TOOLTIP_{b}:0 "#bold Levels by recipe in your country#!{ctiers}'
-            f'\\n\\n#bold {cvar("pmr_c_level", "0")}#! levels in your states, #bold {cvar("pmr_c_need", "0")}#! still to retool.'
+            f' PMR_CBAR_TOOLTIP_{b}:0 "#bold Levels by recipe, at home and abroad#!{ctiers}'
+            f'\\n\\n#bold {cvar("pmr_c_level", "0")}#! levels in your states and in buildings abroad your investors own part of, #bold {cvar("pmr_c_need", "0")}#! still to retool.'
             f'\\nGovernment retooling the upgrade button would queue now: #bold {cvar("pmr_c_room_gov", "0")}#! levels."',
             f' PMR_GOV_RETOOL_C_TOOLTIP_{b}:0 "#bold Retool the government\'s levels everywhere#!'
             f'\\nQueues every government retooling level your ${bk}$ still need, in every state, in your government construction queue: #bold {cvar("pmr_c_room_gov", "0")}#! now.'
@@ -2221,6 +2234,8 @@ pmr_on_game_started = {
 		every_country = {
 			every_scope_state = { pmr_state_tick = yes }
 			pmr_c_sum_every = yes
+			# A day later the players exist: their totals then add buildings abroad (pmr.1).
+			trigger_event = { id = pmr.1 days = 1 }
 		}
 	}
 }
@@ -2273,6 +2288,19 @@ pmr_on_monthly_pulse_state = {
 # (whichever pulse runs first, a change made only by the monthly tick shows within a month).
 pmr_on_monthly_pulse_country = {
 	effect = {
+		pmr_c_sum_all = yes
+	}
+}
+'''
+
+EVENTS = '''namespace = pmr
+
+# Country, the day after game start (from pmr_on_game_started): no country is a player's at game start,
+# so the players' Buildings tab totals are summed again here, now including buildings abroad.
+pmr.1 = {
+	type = country_event
+	hidden = yes
+	immediate = {
 		pmr_c_sum_all = yes
 	}
 }

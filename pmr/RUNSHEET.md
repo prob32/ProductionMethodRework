@@ -24,6 +24,11 @@ full run.
   building moves to it only when its owner has both technologies (Vulcanization and Conveyors for
   tools) and its state produces electricity. Textile mills, furniture, tooling, motor, arms and
   artillery each get one.
+- **Buildings tab type rows count buildings abroad.** The tab lists buildings in other countries'
+  states that you or your investors own levels in (your cotton plantations in the East India
+  Company's states). The type row's bar summed only your own states, so a type with every building
+  abroad stayed black. A player's bar now adds those buildings, whole, as their own bars show them,
+  recounted monthly and the day after game start. The upgrade button still queues at home only.
 - **Investment randomness** (your call in the investment thread): the investment pool's random roll
   on each building type now spans 1/11 to 11 instead of 1/21 to 21, for every building, through
   `common/defines/zz_pmr_ai.txt`. The 80% employment gate is unchanged.
@@ -63,8 +68,9 @@ full run.
 2. **Owners column.** Open a building with government and private owners. The Production Method
    column shows the government row's recipe icons and the private rows' icons; hover each for counts.
    Send a screenshot of the Owners list.
-3. **Buildings tab bar.** On the first day, each PMR type row shows its recipe bar in the tier colours,
-   not black.
+3. **Buildings tab bar.** From the second day, each PMR type row shows its recipe bar in the tier
+   colours, not black, including Cotton Plantations, whose buildings are all abroad. Hover it: the
+   level count includes the buildings abroad.
 4. **Recipe bar height.** The bar lines up with the cash reserves bar. Screenshot.
 5. **Stacking.** Let two years pass. On `TICK` lines with `room_priv` above 1, `slots=` should show
    2 or more on one building once its `crew=` reads 2.
@@ -78,6 +84,7 @@ full run.
 | The government arrow is lit on a building whose government levels all run the new recipe | The government's levels per recipe went wrong. Send me the `TICK` line (its `gov_lv=` and `gov_levels=`). |
 | The Owners list overlaps or runs past the panel | The narrower copy of the row didn't take its new widths. Screenshot. |
 | The type row bar is still black on day one and `PMR;rec=CSUM` lines appear from the first month | The totals exist but the bar can't read the country's variables. Screenshot plus any `error.log` line with `pmr_c_`. |
+| Only types whose buildings are all abroad stay black after the second day, and a `CSUM` line was logged | The scan of states abroad finds nothing, so the ownership check doesn't match. Send the `error.log` lines with `levels_owned_by_country` or `pmr_c_sum`. |
 | The type row bar is black and there is no `CSUM` line after a month | The monthly recount never runs. Send me the `error.log` lines with `pmr_`. |
 | `crew=0` on a building with a finished level for 90 days | Nobody was hired: the game ignores a crew that doesn't scale with level, or no laborers would take the job. That building drops back to one level at a time. Open it from the state's building list and send its Workforce tab. |
 | `crew=2`, `room_priv` above 1 and `slots=` never above 1 for two years | Employment was not what stopped investors stacking levels. Send me the lines. |
