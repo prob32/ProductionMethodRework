@@ -1952,8 +1952,19 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\tset_variable = {{ name = {v("pmr_gov_levels")} value = b:{bk}.level }}\n'
              f'\t{chg("pmr_gov_levels", "multiply", "var:" + v("pmr_gov_frac"))}\n'
              f'\tround_variable = {{ name = {v("pmr_gov_levels")} nearest = 1 }}\n'
-             '\t# Abroad (pmr_abroad_<b>) too: the player\'s investors retool only privately owned levels there, never a\n'
-             '\t# government\'s (Pat 2026-10-13 20:54Z). The fraction counts every government\'s levels together.\n'
+             '\t# Abroad (pmr_abroad_<b>) too: the player\'s investors retool only privately owned levels there, never\n'
+             '\t# another government\'s (Pat 2026-10-13 20:54Z). The fraction counts every government\'s levels together,\n'
+             '\t# so the player\'s own government levels abroad are told apart only where the host owns no level of the\n'
+             '\t# building: every government level there is then a foreign one, read as the player\'s when the player\n'
+             '\t# and its investors own at least that many, and retooled by the player\'s investors with the private\n'
+             '\t# levels, since no script can queue a construction for a government abroad (Pat 21:19Z).\n'
+             '\t# pmr_abroad_<b> = 2 marks it for the Owners list.\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} var:{v("pmr_gov_levels")} > 0 }}\n'
+             '\t\towner = { save_temporary_scope_as = pmr_host }\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ b:{bk} = {{ NOT = {{ levels_owned_by_country = {{ target = scope:pmr_host value >= 1 }} }} '
+             f'levels_owned_by_country = {{ target = global_var:pmr_player value >= state.var:{v("pmr_gov_levels")} }} }} }}\n'
+             f'\t\t\t{setv("pmr_gov_frac", 0)}\n\t\t\t{setv("pmr_gov_levels", 0)}\n'
+             f'\t\t\tset_variable = {{ name = pmr_abroad_{b} value = 2 }}\n\t\t}}\n\t}}\n'
              '}\n\n')
 
     # Which recipes the government's own levels run (pmr_lvg_<i>), so it retools only those. Pat,
@@ -3209,12 +3220,16 @@ OWN_NAME_W, OWN_PM_W, OWN_LEVELS_W = 200, 120, 90
 def owners_cell(bk, textures):
     """Government rows show the governments' levels (pmr_lvg_*), at home and abroad, where every government's
     levels are counted together and the player's investors leave them alone (Pat 20:54Z); private rows show
-    pmr_lvp_*."""
+    pmr_lvp_*. Abroad where the host owns no level (pmr_abroad_<b> = 2) the governments' levels are read as the
+    player's and tracked with the private ones, so a government row there shows pmr_lvp_* (Pat 21:19Z)."""
     b = short(bk)
     abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
+    mine = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)1')"
     rows = []
-    for side, gov in (('gov', True), ('priv', False)):
-        who = 'BuildingOwnership.IsCountryOwned' if gov else 'Not(BuildingOwnership.IsCountryOwned)'
+    for side, gov in (('gov', True), ('mine', False), ('priv', False)):
+        who = {'gov': f'And(BuildingOwnership.IsCountryOwned, Not({mine}))',
+               'mine': f'And(BuildingOwnership.IsCountryOwned, {mine})',
+               'priv': 'Not(BuildingOwnership.IsCountryOwned)'}[side]
 
         def shown(i):
             lvp = f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvp_{i}')}, '(CFixedPoint)0')"
@@ -3226,8 +3241,8 @@ def owners_cell(bk, textures):
             f'\t\t\t\t\t\t\t\t\t\tvisible = "[{shown(i)}]"\n'
             f'\t\t\t\t\t\t\t\t\t\tsize = {{ 26 26 }}\n\t\t\t\t\t\t\t\t\t\ttexture = "{tex}"\n'
             '\t\t\t\t\t\t\t\t\t}\n' for i, tex in enumerate(textures, 1))
-        tooltip = (f"[SelectLocalization({abroad}, 'PMR_OWNERS_ABROAD_TOOLTIP_{b}', 'PMR_OWNERS_GOV_TOOLTIP_{b}')]"
-                   if gov else f'PMR_OWNERS_PRIV_TOOLTIP_{b}')
+        tooltip = {'gov': f"[SelectLocalization({abroad}, 'PMR_OWNERS_ABROAD_TOOLTIP_{b}', 'PMR_OWNERS_GOV_TOOLTIP_{b}')]",
+                   'mine': f'PMR_OWNERS_MINE_TOOLTIP_{b}', 'priv': f'PMR_OWNERS_PRIV_TOOLTIP_{b}'}[side]
         rows.append('\t\t\t\t\t\t\t\tflowcontainer = {\n'
                     f'\t\t\t\t\t\t\t\t\tvisible = "[And({is_type(bk)}, {who})]"\n'
                     '\t\t\t\t\t\t\t\t\tparentanchor = center\n\t\t\t\t\t\t\t\t\tspacing = 2\n'
@@ -3505,7 +3520,10 @@ def panel_loc(recipe_keys):
             + '\\n\\nAll private owners together: retooling is tracked for the government and for private owners, not owner by owner."',
             f' PMR_OWNERS_ABROAD_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
             + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvg_{i}", "0")}#!' for i, key in enumerate(keys, 1))
-            + '\\n\\nAbroad every government\'s levels are counted together. Your investors retool only privately owned levels here, never a government\'s."',
+            + '\\n\\nAbroad every government\'s levels are counted together. Your investors retool only privately owned levels here, never another government\'s."',
+            f' PMR_OWNERS_MINE_TOOLTIP_{b}:0 "#bold Levels by recipe#!'
+            + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvp_{i}", "0")}#!' for i, key in enumerate(keys, 1))
+            + '\\n\\nThe host owns no level of this building, so its government levels are yours. Your investors retool them with the privately owned levels."',
         ]
 
         def cvar(name, f):
