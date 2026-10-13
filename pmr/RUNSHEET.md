@@ -1,4 +1,4 @@
-# PMR run sheet: government levels, Owners column, retool crews, taller bar
+# PMR run sheet: electric automation as its own recipe, TREAT and PRICE probes, government levels, Owners column, retool crews
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,12 +10,20 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-**Start a new game for this build.** Retooling is now counted separately for the government and for
-private owners, and a save from the last build has no record of which side's levels were retooled.
-Leave `fastresearch` off for the full run.
+**Start a new game for this build**, including if you started one on d920da5. Recipes from the third
+on change what they consume, and six building types gain a recipe. Leave `fastresearch` off for the
+full run.
 
 ## What changed in this build
 
+- **Electric automation is a recipe of its own.** Your Yorkshire tooling workshop on Steel Tools was
+  using oil and electricity, because every recipe from the third on included Assembly Lines. Recipes
+  from the third on now include the best automation that runs without electricity (Rotary Valve Engine
+  for tools, so Steel Tools uses wood, steel and coal). Assembly Lines and Automatic Power Looms
+  become one more recipe on top of the newest, e.g. "Machined Steel Tools + Assembly Lines". A
+  building moves to it only when its owner has both technologies (Vulcanization and Conveyors for
+  tools) and its state produces electricity. Textile mills, furniture, tooling, motor, arms and
+  artillery each get one.
 - **Government upgrade button:** the government retools only its own levels that don't run the new
   recipe yet. Levels it builds new arrive on the new recipe and never count. (Your Sicily sulfur mine:
   2 new government levels on Atmospheric Engine Pump, 5 private levels on Picks and Shovels. The
@@ -35,8 +43,10 @@ Leave `fastresearch` off for the full run.
 - **Companies** list Retooling again (the first private retooling building of each type they list),
   so company panels show one Retooling icon per building type.
 - `TICK` lines add `gov_lv=` (the government's levels per recipe), `slots=` (each private retooling
-  building's levels including queued) and `crew=` (-1 no finished level, 0 nobody hired, 1 some,
-  2 at least 80%).
+  building's levels including queued), `crew=` (-1 no finished level, 0 nobody hired, 1 some,
+  2 at least 80%) and `unemp=` (the state's unemployment, at least 1, 2, 5, 10 or 20%; 0 below 1%).
+- **Two log-only probes** for the next batch, plantation treatment and the market blend. They change
+  nothing in game. See "Probes for the next batch" below.
 
 ## Checks
 
@@ -52,6 +62,10 @@ Leave `fastresearch` off for the full run.
 4. **Recipe bar height.** The bar lines up with the cash reserves bar. Screenshot.
 5. **Stacking.** Let two years pass. On `TICK` lines with `room_priv` above 1, `slots=` should show
    2 or more on one building once its `crew=` reads 2.
+6. **Electric recipes.** On day one, open the Yorkshire tooling workshop. Its Process box shows wood,
+   steel and coal going in, and no oil or electricity. No PMR building whose recipe isn't one of the
+   electric ones (or a vanilla recipe that uses electricity itself, such as Electric Arc Process)
+   lists electricity. Screenshot the tooling workshop.
 
 | You see | It means |
 | --- | --- |
@@ -62,6 +76,49 @@ Leave `fastresearch` off for the full run.
 | `crew=0` on a building with a finished level for 90 days | Nobody was hired: the game ignores a crew that doesn't scale with level, or no laborers would take the job. That building drops back to one level at a time. Open it from the state's building list and send its Workforce tab. |
 | `crew=2`, `room_priv` above 1 and `slots=` never above 1 for two years | Employment was not what stopped investors stacking levels. Send me the lines. |
 | `crew=2` and `slots=` 2 or more on one building | Stacking works. |
+| Steel Tools still lists oil or electricity | The game loaded the old build. Check the date of `common/production_methods/pmr_electric_production_methods.txt` in the mod folder, then send the Modifiers tab. |
+| A building runs a "+ Assembly Lines" or "+ Automatic Power Looms" recipe whose owner lacks either technology, or in a state with no power plant | The gate failed. Send that building's `TICK` line. |
+| `crew=2`, `room_priv` above 1, `slots=` stuck at 1 and `unemp=0` | The state is short of workers. The investment pool scores buildings x0.25 there once they employ anyone, so a strong rival may be winning the picks. Send the lines; compare with a state where `unemp` is 5 or more. |
+
+## Probes for the next batch (log only)
+
+Both run once a month in your own states and change nothing in game.
+
+**TREAT**, one line per plantation:
+`PMR;rec=TREAT;...;building=building_coffee_plantation;level=…;cur=…;vb=…;hb=…;w=…;wv=…;wh=…;ws=…;n=…;nv=…;nh=…;ns=…`
+
+- `w` is the plantation's workforce. `wv`, `wh` and `ws` split it by acceptance: under 40 (Violent
+  Hostility, Cultural Erasure: the violent share), 40 to 59 (Open Prejudice: the harsh share), 60 and
+  over (standard). `n`, `nv`, `nh` and `ns` are the same counted by pop size, dependents included,
+  as a fallback in case `w` reads 0.
+- `cur` is the treatment it runs now: 2 Violent Treatment, 1 Exploitative Practices, 0 Standard
+  Labor, 3 another method (tobacco's lectors or radio stations).
+- `vb=1` means the owner's laws bar Violent Treatment; `hb=1` means they bar Exploitative Practices.
+
+**PRICE**, two lines (hardwood and wood) per state with a logging camp:
+`PMR;rec=PRICE;...;good=hardwood;base=40;f=…;p=…`
+
+- `f` is the local price against the base price in steps of 5%: `f=35` means 35 to 40% above base,
+  `f=-10` means 10 to 15% below. `p` reads the same with the threshold written in percent instead of
+  as a fraction, because the game's docs don't say which it takes. One of the two will stay at 0.
+
+7. **TREAT.** Pick a plantation with a `TREAT` line. Its `w` matches the employee total on its
+   Workforce tab, and `wv + wh + ws = w`. Send a screenshot of the Workforce tab and the line. If one
+   of your states has discriminated plantation workers, check their band against that state's Pops tab.
+8. **PRICE.** Pick a state with a logging camp and open its market panel. The local price of hardwood
+   and of wood should be base x (1 + f/100), within 5%. Send a screenshot and the two lines.
+
+| You see | It means |
+| --- | --- |
+| No `TREAT` or `PRICE` lines at all after a month | The probe never ran. This is not a result about plantations or prices. Send the `error.log` lines with `pmr_probe` or `pmr_tr_`. |
+| `w=0` on a staffed plantation and `n` above 0 | Workforce can't be summed this way. The build will count by pop size (`n`) instead. |
+| `w=0` and `n=0` on a staffed plantation | No pop matched, so either the employment check or both counts read nothing. Send the `error.log` lines naming `workforce`, `total_size` or `pop_employment_building`. |
+| `ws` equals `w` in a state whose Pops tab shows plantation workers under 60 acceptance | Acceptance read wrong. Send the Pops tab. |
+| `wv + wh + ws` differs from `w` | The bands miss some pops. Send the line. |
+| `f=0` and `p=0` for both goods in every state for a year | The price ladder never reads true. This does not mean prices sit at base. Send the `error.log` lines with `state_goods`. |
+| `p` varies and `f` reads 75 or -75 almost everywhere | The threshold is in percent. The build will use the `p` ladder. |
+| `f` varies and `p` stays 0 | The threshold is a fraction, as vanilla's railway rule suggests. The build will use the `f` ladder. |
+| `sg=none` | The state has no market entry for that good. Harmless. |
 
 ## Checks from the previous build (b9c7304), still to confirm
 

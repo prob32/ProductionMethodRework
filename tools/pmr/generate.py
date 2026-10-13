@@ -15,7 +15,9 @@ What it does, building by building (see pmr/README.md for the design):
 2. Recipes stay vanilla production methods but carry no goods and no workforce: they mark the
    recipe the building runs (the retool target) and gate it by technology. Everything they scaled
    by workforce (goods, pollution, ...) and their employment move into share methods, and so does
-   full automation from AUTOMATION_FROM_TIER (the building's automation groups leave it).
+   the best automation that runs without electricity from AUTOMATION_FROM_TIER (the building's
+   automation groups leave it). Automation that needs electricity becomes a recipe of its own on top
+   of the newest one, ``pm_pmr_elec_<b>``, inserted into the vanilla recipe group.
 3. Per recipe i, a share group ``pmg_pmr_share_<b>_<i>`` holds SHARE_STEPS + 1 methods
    ``pm_pmr_share_<b>_<i>_<n>`` carrying recipe i's workforce-scaled modifiers and its employment
    x n / SHARE_STEPS.
@@ -85,15 +87,31 @@ COMPANY_RETOOL_SLOTS = 1
 TIER_COLORS = [('Bronze', (0.60, 0.43, 0.27)), ('Ochre', (0.74, 0.60, 0.30)), ('Steel blue', (0.29, 0.43, 0.62)),
                ('Plum', (0.48, 0.34, 0.53)), ('Slate', (0.43, 0.48, 0.53))]
 RECIPE_ICON_SHARE = 0.25   # a recipe's slice of the bar shows its icon above this share (Pat, 2026-10-13)
-# Pat, 2026-10-13: every recipe from this tier up includes full automation, blended with it. Full
-# automation is the last (most advanced) method of each of the building's automation groups (vanilla
-# names them pmg_automation_*, pmg_steam_automation_*, pmg_train_automation_*); those groups leave
+# Pat, 2026-10-13: every recipe from this tier up includes the building's automation, blended with it:
+# from each automation group (vanilla names them pmg_automation_*, pmg_steam_automation_*,
+# pmg_train_automation_*) the most advanced method that runs without electricity. Those groups leave
 # the building, since the recipes now carry them. Buildings with fewer recipes keep their groups.
+# Pat, later that day: automation that needs electricity (assembly lines, power looms) is not folded
+# into those recipes. It becomes one more recipe on top of the newest, needing the newest recipe's and
+# the automation's technologies and electricity in the state (ElectricRecipe).
 AUTOMATION_FROM_TIER = 3
 # Pat, 2026-10-13: a recipe that needs electricity (its own goods, its folded automation, or vanilla's
 # required_input_goods) can't become a building's target unless its state produces electricity, and
 # retooling towards it pauses while the state has none. One rule for government and private retooling.
 ELECTRICITY = 'electricity'
+# Log-only probes for the next batch (Pat approved both 2026-10-13). They change nothing in game; each
+# writes one line a month per player-owned state where it applies.
+# TREAT: each plantation's workforce by acceptance band, for plantation treatment by acceptance
+# (pmr/treatment-by-acceptance.md). Acceptance below TREAT_BANDS[0] (levels 1-2) is the violent band,
+# below TREAT_BANDS[1] (level 3) the harsh band, the rest standard (Pat's levels).
+PROBE_TREAT = True
+TREAT_BANDS = (40, 60)
+# PRICE: the local price of PRICE_PROBE_GOODS, read through the state_goods_pricier/cheaper ladder the
+# market blend of the trade-off groups will use (pmr/second-groups.md), where PRICE_PROBE_BUILDING stands.
+PROBE_PRICE = True
+PRICE_PROBE_BUILDING = 'building_logging_camp'
+PRICE_PROBE_GOODS = ('hardwood', 'wood')
+PRICE_STEP = 5             # ladder resolution, % of base price; the game clamps prices to +-75%
 GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
@@ -238,6 +256,37 @@ class Recipe:
                     self.src.cuts.append(line_span(self.src.text, n))
 
 
+ELECTRIC_DOC = """# Electric recipes (Pat, 2026-10-13): a building whose automation needs electricity (assembly lines,
+# power looms) gets one more recipe on top of its newest, pm_pmr_elec_<b>: the newest recipe with that
+# automation. Like every recipe it carries nothing itself and marks the retool target; its share methods
+# carry the goods and workforce. The tick makes it the target only when the owner has researched every
+# technology below and the state produces electricity (pmr_best_<b>). unlocking_technologies lists them all
+# as well, in case the game reads the list as all-of.
+
+"""
+
+
+class ElectricRecipe:
+    """The newest recipe with electric automation, as a recipe of its own on top of it."""
+    def __init__(self, bk, base, autos, pms):
+        self.key = f'pm_pmr_elec_{short(bk)}'
+        self.base, self.autos = base, autos
+        elec = [a for a in autos if a.needs(ELECTRICITY)]
+        self.texture = elec[0].texture
+        self.techs = []
+        for m in [base] + elec:
+            ut = pdx.get(pms[m.key][0].value, 'unlocking_technologies')
+            for t in (pdx.items(ut) if ut else []):
+                if t not in self.techs:
+                    self.techs.append(t)
+
+    def method(self):
+        return (f'{self.key} = {{\n\ttexture = "{self.texture}"\n'
+                + (f'\tunlocking_technologies = {{\n' + ''.join(f'\t\t{t}\n' for t in self.techs) + '\t}\n'
+                   if self.techs else '')
+                + '}\n')
+
+
 def effective(r, autos):
     """What recipe r's share methods carry: its workforce-scaled modifiers (blend) and its workforce
     (level-scaled employment), plus those of the folded automation methods autos; and whether it needs
@@ -283,11 +332,12 @@ def main():
     p_srcs = load_dir(game, 'production_methods')
     all_b_srcs = load_dir(game, 'buildings')
 
-    groups = {}
+    groups, group_src = {}, {}
     for s in g_srcs:
         for k, n in s.objects().items():
             pm = pdx.get(n.value, 'production_methods')
             groups[k] = pdx.items(pm) if pm else []
+            group_src[k] = (s, pm)
     pms = {}
     for s in p_srcs:
         for k, n in s.objects().items():
@@ -346,7 +396,8 @@ def main():
     # the building runs (the retool target) and gate it by technology. Their goods and other
     # workforce-scaled modifiers move into the share methods.
     stripped = set()
-    automation = {}   # building -> the full automation methods folded into its recipes from AUTOMATION_FROM_TIER
+    automation = {}   # building -> the automation methods folded into its recipes from AUTOMATION_FROM_TIER
+    elec_pms = []     # the electric recipes' marker methods (ElectricRecipe), one per building that has one
     for bk, bn, s, recipes, g0, pg in treated:
         for r in recipes:
             if r.key not in stripped:
@@ -356,13 +407,32 @@ def main():
                 stripped.add(r.key)
         auto_groups = [g for g in pdx.items(pg) if g != g0 and 'automation' in g]
         if len(recipes) >= AUTOMATION_FROM_TIER and auto_groups:
-            automation[bk] = [Recipe(groups[g][-1], *pms[groups[g][-1]]) for g in auto_groups]
+            # Pat, 2026-10-13: recipes from AUTOMATION_FROM_TIER fold the best automation that runs
+            # without electricity; automation that needs it (assembly lines, power looms) becomes a
+            # recipe of its own on top of the newest one (ElectricRecipe).
+            tops = [Recipe(groups[g][-1], *pms[groups[g][-1]]) for g in auto_groups]
+            folded = []
+            for g in auto_groups:
+                plain = [p for p in groups[g] if not Recipe(p, *pms[p]).needs(ELECTRICITY)]
+                folded.append(Recipe(plain[-1], *pms[plain[-1]]) if plain else None)
+            automation[bk] = [a for a in folded if a is not None]
             for n in pg.value:
                 if n.key is None and n.value in auto_groups:
                     s.cuts.append(line_span(s.text, n))
-            report.setdefault('automation', []).append(
-                {'building': bk, 'groups': auto_groups, 'folded': [a.key for a in automation[bk]],
-                 'from_tier': AUTOMATION_FROM_TIER})
+            entry = {'building': bk, 'groups': auto_groups, 'folded': [a.key for a in automation[bk]],
+                     'from_tier': AUTOMATION_FROM_TIER}
+            if any(a.needs(ELECTRICITY) for a in tops):
+                if group_users.get(g0, set()) != {bk}:
+                    raise SystemExit(f'{bk}: {g0} is shared with {sorted(group_users[g0] - {bk})}; '
+                                     'the electric recipe would need one marker per building')
+                er = ElectricRecipe(bk, recipes[-1], tops, pms)
+                recipes.append(er)
+                elec_pms.append(er)
+                gsrc, gpm = group_src[g0]
+                gsrc.inserts.append((gpm.end - 1, f'\t{er.key}  # PMR: {recipes[-2].key} with electric automation\n\t'))
+                entry['electric_recipe'] = {'key': er.key, 'automation': [a.key for a in tops],
+                                            'technologies': er.techs}
+            report.setdefault('automation', []).append(entry)
         # First in the list, so the building panel's grid shows it in the first slot and the hidden
         # recipe and automation slots after it leave no gap.
         brace = s.text.index('{', pg.start) + 1
@@ -396,6 +466,12 @@ def main():
     for s in p_srcs:
         if s.cuts:
             write(f'common/production_methods/{s.name}', s.render())
+    # Vanilla recipe groups that gain an electric recipe, whole, with only its line inserted.
+    for s in g_srcs:
+        if s.inserts:
+            write(f'common/production_method_groups/{s.name}', s.render())
+    write('common/production_methods/pmr_electric_production_methods.txt', header + ELECTRIC_DOC
+          + '\n'.join(er.method() for er in elec_pms))
 
     # ---- new script ------------------------------------------------------------------------------
     labour_pms, labour_groups, retools, costs, loc = [], [], [], [], []
@@ -470,6 +546,9 @@ def main():
         for rbx in priv_slots(b):
             loc += [f' {rbx}:0 "Retooling: ${bk}$"',
                     f' {rbx}_desc:0 "Privately funded construction that switches one level of ${bk}$ to its newest recipe. Investors from countries that own part of the building fund the privately owned share. A crew of {RETOOL_CREW} keeps it staffed so investors can add more levels to it."']
+        for r in recipes:
+            if isinstance(r, ElectricRecipe):
+                loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
         loc += [f' pmg_pmr_labour_{b}:0 "Recipes"',
                 f' pm_pmr_labour_{b}:0 "Blended Recipes"',
                 f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
@@ -489,8 +568,12 @@ def main():
         # _any), not SHARE_STEPS + 2.
         elec_tiers = []
         for i, r in enumerate(recipes, 1):
-            autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER else []
-            blend, emp, elec, clamped = effective(r, autos)
+            if isinstance(r, ElectricRecipe):
+                autos = r.autos
+                blend, emp, elec, clamped = effective(r.base, autos)
+            else:
+                autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER else []
+                blend, emp, elec, clamped = effective(r, autos)
             if elec:
                 elec_tiers.append(i)
             if clamped:
@@ -614,6 +697,16 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
+    treat = treatment_buildings(all_b_srcs, groups, pms)
+    goods_cost = {}
+    for gs in load_dir(game, 'goods'):
+        for gk, gn in gs.objects().items():
+            c = pdx.get(gn.value, 'cost')
+            if c is not None:
+                goods_cost[gk] = num(c.value, f'{gk} cost')
+    report['probe_treat'] = [t[0] for t in treat]
+    write('common/script_values/pmr_probe_values.txt', header + probe_values(treat))
+    write('common/scripted_effects/pmr_probe_effects.txt', header + probe_effects(treat, pms, goods_cost))
     write('common/scripted_guis/pmr_sguis.txt', header + SGUI_DOC + ''.join(gov_retool_sgui(bk) for bk in dispatch)
           + '# The same for every state at once, from the Buildings tab\'s building type row. Country scope.\n\n'
           + ''.join(gov_retool_country_sgui(bk) for bk in dispatch))
@@ -1224,6 +1317,10 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
         r = recipes[i - 1]
         kw = 'if' if i == k else 'else_if'
         can = f'can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}'
+        if getattr(r, 'techs', None):
+            # the electric recipe: its newest recipe's and its automation's technologies, all of them
+            can = (f'AND = {{ {can} owner = {{ '
+                   + ' '.join(f'has_technology_researched = {t}' for t in r.techs) + ' } }')
         if i in elec_tiers:
             can = f'AND = {{ {can} var:pmr_elec = 1 }}'
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{\n\t\t\t{active(r)}\n'
@@ -1253,7 +1350,8 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
              + ';slots=' + '/'.join(f(f'pmr_retool_q_priv{j}') for j in range(1, RETOOL_SLOTS + 1))
              + ';crew=' + '/'.join(f(f'pmr_staff_priv{j}') for j in range(1, RETOOL_SLOTS + 1))
              + f";elec=[THIS.Var('pmr_elec').GetValue|0]" + (f";elec_wait={f('pmr_elec_wait')}" if elec_tiers else '')
-             + f";home_investors={f('pmr_inv_home')};pool=[THIS.Var('pmr_pool').GetValue|0]")
+             + f";home_investors={f('pmr_inv_home')};pool=[THIS.Var('pmr_pool').GetValue|0]"
+             + ";unemp=[THIS.Var('pmr_unemp').GetValue|0]")
     done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
 
     # Every method change, including the tick's own, fires on_production_method_changed, and its tick
@@ -1393,7 +1491,9 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
 
 def shared_effects():
     return '''# State scope. pmr_elec: 1 while the state produces electricity (a local good, so only the state's
-# own power plants count). pmr_pool: the owner's investment pool by order of magnitude, for the log.
+# own power plants count). pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp:
+# the state's unemployment rate in % (lower bound of 1/2/5/10/20), for the log. The investment pool
+# scores a building x0.25 in a state short of workers, which can cost a retool site with a crew a pick.
 pmr_read_elec = {
 	if = {
 		limit = { exists = sg:electricity sg:electricity = { state_goods_production > 0 } }
@@ -1402,7 +1502,10 @@ pmr_read_elec = {
 	else = { set_variable = { name = pmr_elec value = 0 } }
 	set_variable = { name = pmr_pool value = 0 }
 ''' + ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ owner = {{ investment_pool >= {x} }} }} set_variable = {{ name = pmr_pool value = {x} }} }}\n'
-              for j, x in enumerate((100000, 10000, 1000, 100))) + '}\n\n'
+              for j, x in enumerate((100000, 10000, 1000, 100))) + \
+        '\tset_variable = { name = pmr_unemp value = 0 }\n' + \
+        ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ state_unemployment_rate > {fmt(x / 100)} }} set_variable = {{ name = pmr_unemp value = {x} }} }}\n'
+                for j, x in enumerate((20, 10, 5, 2, 1))) + '}\n\n'
 
 
 def dispatch_effects(buildings):
@@ -1453,6 +1556,129 @@ def dispatch_effects(buildings):
              '\t\tdebug_log = "PMR;rec=CSUM;date=[TimeKeeper.GetCurrentDate.GetString]"\n'
              '\t}\n}\n')
     return ''.join(o)
+
+
+# ---------------------------------------------------------------------------------------------
+# Log-only probes (PROBE_TREAT, PROBE_PRICE). State scope, from the monthly state pulse.
+
+def treatment_buildings(all_b_srcs, groups, pms):
+    """Buildings with a working-conditions group: [(building, group, violent pm, harsh pm, [standard pms])]."""
+    out = []
+    for s in all_b_srcs:
+        for bk, bn in s.objects().items():
+            pg = pdx.get(bn.value, 'production_method_groups')
+            for g in (pdx.items(pg) if pg else []):
+                lst = groups.get(g, [])
+                viol = [p for p in lst if p.startswith('slave_exploitation_') and p in pms]
+                harsh = [p for p in lst if p.startswith('worker_exploitation_') and p in pms]
+                std = [p for p in lst if p.startswith('default_labour')]
+                if viol or harsh:
+                    out.append((bk, g, viol[0] if viol else None, harsh[0] if harsh else None, std))
+    return out
+
+
+def barring_laws(pms, pm):
+    if not pm:
+        return []
+    dl = pdx.get(pms[pm][0].value, 'disallowing_laws')
+    return pdx.items(dl) if dl else []
+
+
+def probe_values(treat):
+    """State scope: workforce (and pop size, the fallback) employed in each treated building type,
+    in total and per acceptance band. A state has at most one building of a type, so the pops of the
+    state employed in that type are that building's workforce."""
+    lo, hi = TREAT_BANDS
+    bands = [('', ''), ('v', f' pop_acceptance < {lo}'),
+             ('h', f' pop_acceptance >= {lo} pop_acceptance < {hi}'), ('s', f' pop_acceptance >= {hi}')]
+    o = ['# State scope. pmr_tr_<measure><band>_<b>: the pops of the state employed in building type <b>,\n'
+         f'# summed by workforce (w) and, as the fallback if workforce reads 0, by total_size (n); all of\n'
+         f'# them, then acceptance below {lo} (v), {lo} to {hi - 1} (h), {hi} and over (s).\n\n']
+    for bk, *_ in treat:
+        b = short(bk)
+        for measure, field in (('w', 'workforce'), ('n', 'total_size')):
+            for band, cond in bands:
+                o.append(f'pmr_tr_{measure}{band}_{b} = {{\n\tvalue = 0\n\tevery_scope_pop = {{\n'
+                         f'\t\tlimit = {{ pop_employment_building = {bk}{cond} }}\n'
+                         f'\t\tadd = {field}\n\t}}\n}}\n')
+    return ''.join(o)
+
+
+def probe_effects(treat, pms, goods_cost):
+    def var(name, d=0):
+        return f"[THIS.Var('{name}').GetValue|{d}]"
+    where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+             'state=[THIS.GetState.GetNameNoFormatting]')
+    o = ['# Log-only probes for the next batch: nothing here changes the game.\n\n']
+    tvars = ['pmr_tr_level', 'pmr_tr_cur', 'pmr_tr_vb', 'pmr_tr_hb'] + [
+        f'pmr_tr_{m}{band}' for m in 'wn' for band in ('', 'v', 'h', 's')]
+    o.append('# TREAT: one line per treated plantation. cur = the treatment it runs (2 violent, 1 exploitative,\n'
+             '# 0 standard, 3 another method of the group); vb / hb = 1 while the owner\'s laws bar violent /\n'
+             '# exploitative treatment; w, v, h, s = workforce in all, violent band, harsh band, standard band;\n'
+             '# n, nv, nh, ns = the same by pop size.\n'
+             'pmr_probe_treat = {\n')
+    for bk, g, viol, harsh, std in treat:
+        b = short(bk)
+        o.append(f'\tif = {{\n\t\tlimit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_tr_level value = b:{bk}.level }}\n'
+                 '\t\tset_variable = { name = pmr_tr_cur value = 3 }\n')
+        cur = [(viol, 2), (harsh, 1)]
+        for p, code in cur:
+            if p:
+                o.append(f'\t\tif = {{ limit = {{ b:{bk} = {{ has_active_production_method = {p} }} }} '
+                         f'set_variable = {{ name = pmr_tr_cur value = {code} }} }}\n')
+        for p in std:
+            o.append(f'\t\tif = {{ limit = {{ b:{bk} = {{ has_active_production_method = {p} }} }} '
+                     'set_variable = { name = pmr_tr_cur value = 0 } }\n')
+        for p, name in ((viol, 'pmr_tr_vb'), (harsh, 'pmr_tr_hb')):
+            o.append(f'\t\tset_variable = {{ name = {name} value = 0 }}\n')
+            laws = barring_laws(pms, p)
+            if laws:
+                o.append(f'\t\tif = {{ limit = {{ owner = {{ OR = {{ '
+                         + ' '.join(f'has_law = law_type:{law}' for law in laws)
+                         + f' }} }} }} set_variable = {{ name = {name} value = 1 }} }}\n')
+        for m in 'wn':
+            for band in ('', 'v', 'h', 's'):
+                o.append(f'\t\tset_variable = {{ name = pmr_tr_{m}{band} value = pmr_tr_{m}{band}_{b} }}\n')
+        o.append(f'\t\tdebug_log = "PMR;rec=TREAT;{where};building={bk};level={var("pmr_tr_level")};'
+                 f'cur={var("pmr_tr_cur")};vb={var("pmr_tr_vb")};hb={var("pmr_tr_hb")};'
+                 + ';'.join(f'{m}{band}={var(f"pmr_tr_{m}{band}")}'
+                            for m in 'wn' for band in ('', 'v', 'h', 's')) + '"\n\t}\n')
+    o.append(''.join(f'\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n' for n in tvars)
+             + '}\n\n')
+
+    steps = list(range(75, 0, -PRICE_STEP))
+    o.append(f'# PRICE: where {PRICE_PROBE_BUILDING} stands, the local price of each probed good against its base,\n'
+             f'# in steps of {PRICE_STEP}%: f reads the ladder with thresholds written as fractions (0.05 = 5%),\n'
+             '# p with the same thresholds written as percent (5 = 5%), because the docs don\'t say which\n'
+             '# state_goods_pricier means. Vanilla writes "state_goods_pricier > 0.5" (railways), which\n'
+             '# suggests fractions; then p reads 0 for every good.\n'
+             'pmr_probe_price = {\n'
+             f'\tif = {{\n\t\tlimit = {{ has_building = {PRICE_PROBE_BUILDING} b:{PRICE_PROBE_BUILDING} = {{ level >= 1 }} }}\n')
+    for good in PRICE_PROBE_GOODS:
+        o.append(f'\t\tif = {{\n\t\t\tlimit = {{ exists = sg:{good} }}\n')
+        for name, scale in (('pmr_pr_f', 100), ('pmr_pr_p', 1)):
+            ladder = [(f'state_goods_pricier > {fmt(x / scale)}', x) for x in steps] + \
+                     [(f'state_goods_cheaper > {fmt(x / scale)}', -x) for x in steps]
+            for j, (cond, x) in enumerate(ladder):
+                o.append(f'\t\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ sg:{good} = {{ {cond} }} }} '
+                         f'set_variable = {{ name = {name} value = {x} }} }}\n')
+            o.append(f'\t\t\telse = {{ set_variable = {{ name = {name} value = 0 }} }}\n')
+        o.append(f'\t\t\tdebug_log = "PMR;rec=PRICE;{where};good={good};base={fmt(goods_cost.get(good, 0))};'
+                 f'f={var("pmr_pr_f")};p={var("pmr_pr_p")}"\n'
+                 '\t\t\tremove_variable = pmr_pr_f\n\t\t\tremove_variable = pmr_pr_p\n\t\t}\n'
+                 f'\t\telse = {{ debug_log = "PMR;rec=PRICE;{where};good={good};sg=none" }}\n')
+    o.append('\t}\n}\n\n')
+    # Last: a scripted effect must be defined above its first use.
+    o.append('# State scope, monthly. Player-owned states only, as for the tick logs.\n'
+             'pmr_probe_state = {\n\tif = {\n\t\tlimit = { owner = { is_player = yes } }\n')
+    if PROBE_TREAT and treat:
+        o.append('\t\tpmr_probe_treat = yes\n')
+    if PROBE_PRICE:
+        o.append('\t\tpmr_probe_price = yes\n')
+    o.append('\t}\n}\n')
+    return ''.join(o)
+
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2028,6 +2254,7 @@ pmr_on_acquired_technology = {
 pmr_on_monthly_pulse_state = {
 	effect = {
 		pmr_state_tick = yes
+		pmr_probe_state = yes
 	}
 }
 
