@@ -54,6 +54,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import icons  # noqa: E402
 import pdx  # noqa: E402
+import private_investment  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Tunables. Change here and regenerate; nothing below hard-codes them.
@@ -976,6 +977,9 @@ def main():
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
     write('common/decisions/pmr_test_decisions.txt', header + DECISIONS + world_blend_decision(options))
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"'] + DECISION_LOC + WORLD_LOC
+    # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
+    # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
+    loc += private_investment.write_all(game, write, header, args.out)
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
 
     write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy"\n}}\n'
