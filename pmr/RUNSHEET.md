@@ -1,4 +1,4 @@
-# PMR run sheet: plantation treatment by acceptance, trade-offs by local prices, June 16 freeze diagnostics, electric automation as its own recipe, government levels, Owners column
+# PMR run sheet: faster trade-offs and a worldwide record, plantation treatment by acceptance, trade-offs by local prices, June 16 freeze diagnostics
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,28 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: plantation treatment and trade-offs blend (start a new game)
+## Latest: faster trade-offs, and a record of trade-offs worldwide (your current save carries on)
+
+- **Trade-offs move by how much better the option pays.** Each month the best-paying option takes
+  as many points as its lead over the worst-paying share, in % of the building's output, from 2 to
+  20. Your rye farms' Apple Orchards lead by about 48% of a rye farm's output, so they now take 20
+  points a month and finish in two months; an option ahead by 10% moves 10 points; the move slows
+  as prices answer. An option that can no longer run sheds 20 points a month.
+- **New test decision, "PMR test: record trade-offs worldwide".** Load your current save, take it
+  once, then save and quit so the log reaches disk. It writes one `WORLD` line per state and
+  building type for every country, with the levels, shares, which options can run and their values.
+  From those I'll set where new games start each building type.
+
+Check: the month after loading, the rye farm in Yorkshire goes 66% to 86% Apple Orchards (`x` in its
+`OPT` line), and Ireland's potatoes drop 20 points a month.
+
+| What you see | What it means |
+| --- | --- |
+| Shares still move 2 points a month | The new step didn't load; check error.log for `pmr_m`. |
+| The decision writes no `WORLD` lines | Its loop over the world's states found no state with a trade-off building. Tell me. |
+| `WORLD` lines stop partway, with no `WORLD_DONE` after them | The log hadn't reached disk; save and quit before sending. |
+
+## Earlier: plantation treatment and trade-offs blend (start a new game)
 
 **Start a new game.** Buildings gain new production method groups, which a running save can't take.
 
@@ -21,9 +42,9 @@ error there means the mechanism below never ran, and a missing log line is then 
   (Britain bans slavery), that share is treated exploitatively, and where Exploitative Practices are
   barred too, it goes to Standard Labor. Recounted monthly.
 - **Trade-offs follow local prices.** Hardwood, the farms' secondary crops, the luxury lines (textile
-  mills, furniture, glassworks), canning and distilling, aeroplanes and tanks. Once a month 2 points
+  mills, furniture, glassworks), canning and distilling, aeroplanes and tanks. Once a month points
   move from the worst-paying option to the best-paying one, if it adds over 5% of the building's
-  output value more at this state's prices. At game start every building keeps vanilla's choice; one
+  output value more at this state's prices (2 points a month in that build; see Latest). At game start every building keeps vanilla's choice; one
   built later starts on the best-paying option.
 - **A second bar under the recipe bar** on the building panel, one per group (food industry has two):
   grey for none (Standard Labor, Prioritize Softwood Production, Jars), then each option. Beside it,
@@ -50,7 +71,7 @@ Checks:
 1. **Treatment.** On a Jamaican sugar plantation (or any of your plantations), the exploitative share
    in `x` equals `band_v + band_h`, since Britain bars violent treatment (`can=0/1`). Its panel's
    second bar shows the same split.
-2. **Prices.** On a logging camp, a hardwood option gains 2 points a month whenever its `value` beats
+2. **Prices.** On a logging camp, a hardwood option gains points each month whenever its `value` beats
    the worst-paying share by more than 5% of the camp's output; otherwise `x` stays put. At base
    prices hardwood loses money (`value=-100`), so expect movement only where hardwood is dear.
 3. **The bar.** Open a food industry: two bars under the recipe bar, Canning and Distillery.

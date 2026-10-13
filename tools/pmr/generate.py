@@ -130,8 +130,11 @@ FLUSH_PAD = 4500
 # option by technology, law and recipe as vanilla would. Tech ladders (automation, rail, explosives,
 # ...) are not converted yet.
 # Trade-offs (pmr/second-groups.md): once a month each option is valued at local prices (outputs minus
-# inputs per level, goods only), and TRADE_STEP points move from the worst-paying option with a share to
-# the best-paying one, when the gap beats TRADE_DEAD_BAND of the building's output value per level.
+# inputs per level, goods only), and points move from the worst-paying option with a share to the
+# best-paying one, when the gap beats TRADE_DEAD_BAND of the building's output value per level. Pat,
+# 2026-10-13 (2 points a month took Yorkshire's rye farms 33 months to reach 66% Apple Orchards): the
+# move is the gap in % of that output value times TRADE_GAIN, within TRADE_STEP_MIN..TRADE_STEP_MAX
+# points, so an option paying 10% more moves 10 points a month, and the move slows as prices answer.
 # "None" is worth 0. A building built during the game starts on the best-paying option.
 TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_building_textile_mill',
                 'pmg_luxury_building_furniture_manufactory', 'pmg_luxury_building_glassworks',
@@ -139,7 +142,8 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 'pmg_secondary_building_rye_farm', 'pmg_secondary_building_wheat_farm',
                 'pmg_secondary_building_rice_farm', 'pmg_secondary_building_maize_farm',
                 'pmg_secondary_building_millet_farm')
-TRADE_STEP = 2
+TRADE_GAIN = 1.0
+TRADE_STEP_MIN, TRADE_STEP_MAX = 2, 20
 TRADE_DEAD_BAND = 0.05
 # Treatment (pmr/treatment-by-acceptance.md): Violent Treatment's share is the building's workforce
 # with acceptance under TREAT_BANDS[0], Exploitative Practices' (Pat's "harsh") the workforce from
@@ -951,8 +955,8 @@ def main():
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1), bom=False)
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
-    write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
-    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"'] + DECISION_LOC
+    write('common/decisions/pmr_test_decisions.txt', header + DECISIONS + world_blend_decision(options))
+    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"'] + DECISION_LOC + WORLD_LOC
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
 
     write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy"\n}}\n'
@@ -1109,7 +1113,12 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                  '\t\tset_variable = { name = pmr_gap value = var:pmr_bv }\n'
                  '\t\tchange_variable = { name = pmr_gap subtract = var:pmr_wv }\n'
                  f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_gap > {fmt(band)} }}\n'
-                 f'\t\t\tset_variable = {{ name = pmr_m value = {TRADE_STEP} }}\n'
+                 # the gap in % of the output value per level, times TRADE_GAIN
+                 '\t\t\tset_variable = { name = pmr_m value = var:pmr_gap }\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_m multiply = {fmt(TRADE_GAIN * 100 * TRADE_DEAD_BAND / band)} }}\n'
+                 '\t\t\tround_variable = { name = pmr_m nearest = 1 }\n'
+                 f'\t\t\tif = {{ limit = {{ var:pmr_m < {TRADE_STEP_MIN} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MIN} }} }}\n'
+                 f'\t\t\tif = {{ limit = {{ var:pmr_m > {TRADE_STEP_MAX} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MAX} }} }}\n'
                  f'\t\t\tif = {{ limit = {{ var:pmr_wi = 0 var:{xv("pmr_xn", gi)} < var:pmr_m }} '
                  f'set_variable = {{ name = pmr_m value = var:{xv("pmr_xn", gi)} }} }}\n'
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} var:{xv("pmr_x", x.j)} < var:pmr_m }} '
@@ -2819,8 +2828,9 @@ def option_loc(opt_ui):
             if mode == 'market':
                 head = f'#bold ${group}$, mixed by local prices#!'
                 foot = (f'Values are what each option adds over ${none}$ at this state\'s prices. Once a month '
-                        f'{TRADE_STEP} points move from the worst-paying share to the best-paying option, '
-                        f'if it pays more by over {round(TRADE_DEAD_BAND * 100)}% of the building\'s output.')
+                        f'the best-paying option takes points from the worst-paying share, if it pays more by over '
+                        f'{round(TRADE_DEAD_BAND * 100)}% of the building\'s output: as many points as that lead in %, '
+                        f'from {TRADE_STEP_MIN} to {TRADE_STEP_MAX}.')
             else:
                 lo, hi = TREAT_BANDS
                 head = f'#bold ${group}$, set by the workforce\'s acceptance#!'
@@ -2996,6 +3006,38 @@ COUNT_QUEUES = '''pmr_count_queues = {
 	}
 }
 '''
+
+def world_blend_decision(options):
+    """Pat, 2026-10-13: to start trade-offs near where games take them, a test decision logs every
+    state's trade-off shares in the world (PMR;rec=WORLD), AI countries included: the monthly OPT
+    lines cover the player's states only. The shares are ticked worldwide, so the state variables
+    are there to read."""
+    f = lambda name, d=0: f"[THIS.Var('{name}').GetValue|{d}]"   # noqa: E731
+    out = []
+    for bk, conv in options.items():
+        b = short(bk)
+        opts = [o for g, gi, mode, none, os_, std in conv if mode == 'market' for o in os_]
+        if not opts:
+            continue
+        line = (f'PMR;rec=WORLD;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+                f'state=[THIS.GetState.GetNameNoFormatting];building={bk};level={f(f"pmr_level_{b}")}'
+                + ';x=' + '/'.join(f(f'pmr_x_{o.j}_{b}') for o in opts)
+                + ';can=' + '/'.join(f(f'pmr_xav_{o.j}_{b}') for o in opts)
+                + ';value=' + '/'.join(f(f'pmr_xv_{o.j}_{b}') for o in opts))
+        out.append(f'\t\tevery_state = {{\n\t\t\tlimit = {{ has_variable = pmr_xinit_{b} }}\n'
+                   f'\t\t\tdebug_log = "{line}"\n\t\t}}\n')
+    return ('\n# Logs every state\'s trade-off shares in the world, one WORLD line per state and building type.\n'
+            'pmr_test_world_blends_decision = {\n\tis_shown = { always = yes }\n\tpossible = { always = yes }\n'
+            '\twhen_taken = {\n' + ''.join(out)
+            + '\t\tcapital = { debug_log = "PMR;rec=WORLD_DONE;date=[TimeKeeper.GetCurrentDate.GetString]" }\n'
+            '\t}\n\tai_chance = { value = 0 }\n}\n')
+
+
+WORLD_LOC = [
+    ' pmr_test_world_blends_decision:0 "PMR test: record trade-offs worldwide"',
+    ' pmr_test_world_blends_decision_desc:0 "Writes every state\'s trade-off shares (hardwood, secondary crops, luxury lines, canning, distilling, aeroplanes, tanks) to the debug log, for every country. Changes nothing in game."',
+]
+
 
 DECISION_LOC = [
     ' pmr_test_setup_decision:0 "PMR test: grant Bessemer and a steel mill"',
