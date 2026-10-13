@@ -1111,6 +1111,8 @@ def main():
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     loc += private_investment.write_all(game, write, header, args.out)
+    if args.trace_from:
+        write('common/scripted_effects/pmr_trace_effects.txt', header + trace_pm_effects(game, args.out, args.trace_from))
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
 
     write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy"\n}}\n'
@@ -1220,6 +1222,51 @@ def block_end(text, i):
     raise SystemExit(f'--trace-from: unbalanced block at {i}')
 
 
+L0_TRIP = 20
+
+
+def trace_pm_effects(game, out, since):
+    """--trace-from: pmr_trace_pms (building scope) logs a building's active methods, one PM line each;
+    pmr_l0_guard (building scope, below level 1) opens every share lock (key and xk groups to _any) on
+    the L0_TRIP-th method change in a day and writes a flushed L0_TRIP line. 16 August 1838: the engine
+    switched an unbuilt Hanoverian rye farm's methods without end while PMR's own handler did nothing."""
+    groups = {}
+    for d in (os.path.join(game, 'common', 'production_method_groups'),
+              os.path.join(out, 'common', 'production_method_groups')):
+        for path in sorted(glob.glob(os.path.join(d, '*.txt'))):
+            for n in pdx.parse(pdx.strip_bom(open(path, encoding='utf-8-sig').read())):
+                if n.key and n.is_block and pdx.get(n.value, 'production_methods') is not None:
+                    groups[n.key] = pdx.items(pdx.get(n.value, 'production_methods'))
+    types = {}
+    for path in sorted(glob.glob(os.path.join(out, 'common', 'buildings', '*.txt'))):
+        for n in pdx.parse(pdx.strip_bom(open(path, encoding='utf-8-sig').read())):
+            g = n.key and n.is_block and pdx.get(n.value, 'production_method_groups')
+            if g and any(x.startswith('pmg_pmr_') for x in pdx.items(g)):
+                types[n.key] = pdx.items(g)
+    logs, guards = [], []
+    for i, (bk, gs) in enumerate(sorted(types.items())):
+        kw = 'if' if i == 0 else 'else_if'
+        logs.append(f'\t{kw} = {{\n\t\tlimit = {{ is_building_type = {bk} }}\n'
+                    + ''.join(f'\t\tif = {{ limit = {{ has_active_production_method = {p} }} '
+                              f'debug_log = "PMR;rec=PM;group={g};pm={p}" }}\n' for g in gs for p in groups[g])
+                    + '\t}\n')
+        b = short(bk)
+        locks = [p for g in gs if g.startswith(('pmg_pmr_key_', 'pmg_pmr_xk_')) for p in groups[g] if p.endswith('_any')]
+        guards.append(f'\t{kw} = {{\n\t\tlimit = {{ is_building_type = {bk} }}\n\t\tstate = {{\n'
+                      f'\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_l0_day_{b} }} }} '
+                      f'set_variable = {{ name = pmr_l0_day_{b} value = yes days = 1 }} set_variable = {{ name = pmr_l0_runs_{b} value = 0 }} }}\n'
+                      f'\t\t\tchange_variable = {{ name = pmr_l0_runs_{b} add = 1 }}\n'
+                      f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_l0_runs_{b} = {L0_TRIP} }}\n'
+                      f'\t\t\t\t{flush_log("L0_TRIP", bk)}\n\t\t\t\tset_variable = pmr_l0_busy\n'
+                      + ''.join(f'\t\t\t\tif = {{ limit = {{ NOT = {{ is_production_method_active = {{ building_type = {bk} production_method = {p} }} }} }} '
+                                f'activate_production_method = {{ building_type = {bk} production_method = {p} }} }}\n' for p in locks)
+                      + '\t\t\t\tremove_variable = pmr_l0_busy\n\t\t\t}\n\t\t}\n\t}\n')
+    return ('# --trace-from only (see trace_pm_effects in tools/pmr/generate.py).\n\n'
+            'pmr_trace_pms = {\n' + ''.join(logs) + '}\n\n'
+            'pmr_l0_guard = {\n\tif = {\n\t\tlimit = { state = { NOT = { has_variable = pmr_l0_busy } } }\n'
+            + ''.join('\t' + line + '\n' for line in ''.join(guards).rstrip('\n').split('\n')) + '\t}\n}\n')
+
+
 def add_trace(rel, text, since):
     """The --trace-from lines for one generated file (see TRACE_FIELDS)."""
     if rel.startswith(('common/on_actions/', 'events/')):
@@ -1235,7 +1282,11 @@ def add_trace(rel, text, since):
                 raise SystemExit(f'--trace-from: {name} has no effect or immediate block')
             close = block_end(text, body.end() - 1)
             close = text.rfind('\n', 0, close) + 1
-            text = (text[:body.end()] + '\n\t\t' + trace_line(since, name + ':in', TRACE_FIELDS[scope])
+            extra = ''
+            if name == 'pmr_on_production_method_changed':   # an unbuilt building: its methods, and the guard
+                extra = (f'\n\t\tif = {{ limit = {{ level < 1 }} if = {{ limit = {{ game_date >= {since} }} pmr_trace_pms = yes }} '
+                         'pmr_l0_guard = yes }')
+            text = (text[:body.end()] + '\n\t\t' + trace_line(since, name + ':in', TRACE_FIELDS[scope]) + extra
                     + text[body.end():close] + '\t\t' + trace_line(since, name + ':out') + '\n' + text[close:])
     elif rel.startswith('common/scripted_effects/'):
         state = TRACE_FIELDS['state']

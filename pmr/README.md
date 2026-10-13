@@ -20,7 +20,9 @@ workforce are the mix of the recipes its levels run.
   on_action, event and effect they call writes a flushed `PMR;rec=T;at=<name>:in` line as it starts and an
   `:out` line as it ends, and each building type's tick, automatic method, building removal and government
   retool construction writes one as it starts. The last `T` line before the freeze names what was running;
-  an `:out` line last means PMR had finished and the engine froze. Never combined with `--release`.
+  an `:out` line last means PMR had finished and the engine froze. A building below level 1 whose methods
+  change also logs every active method (`PMR;rec=PM`), and on its 20th change in a day every share lock
+  (key and xk groups) moves to `_any` with a flushed `L0_TRIP` line. Never combined with `--release`.
 
 The mod output is not committed. It is generated locally from the installed game's script and copied
 into the mod folder; only the generator, the design notes and the run sheet live in the repo. Target:
