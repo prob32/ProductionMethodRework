@@ -118,11 +118,17 @@ switches its methods with state-scope `activate_production_method`.
   Financial Districts score; standing alone, 1.14.5 never gave it a private investor. Countries
   whose private investment comes only from Manor Houses (which score manufacturing 0) may never
   retool their private share.
-- **AI value steers the investment pool** (seen in game on 1.14.5): a 1,000,000 retool building is
+- **AI value steers the investment pool** (seen in game on 1.14.5 at 1,000,000): a retool building is
   picked ahead of everything else, at home and abroad. That is why the ownership check matters.
   `ai_value` replaces the base weight of 1,000; the profit terms in `00_ai.txt` are per pound of
-  predicted profit per employee and per pound of goods produced, and a retool building has neither,
-  so a loss-making building is retooled as eagerly as a profitable one.
+  predicted profit per employee and per pound of goods produced, and a retool building has neither.
+  So PMR builds the weight itself (Pat, 2026-10-13, with the roll at 1/11..11): what vanilla would
+  score an expansion of the building from its profit, 1,000 + 7,500 × e, with e the building's
+  earnings per employee read with a ladder (`earnings`, 2 to 50, 0 below), plus a top-up of 150,000.
+  Retooling is then the likelier pick, about three times a new building earning the same at e = 10,
+  but the random roll and vanilla's multipliers (a shortage ×5, a company) can still beat it, as Pat
+  wanted. Until then the weight was a flat 1,000,000. The same weight applies to AI governments'
+  government retooling. `TICK` lines log `earn=` and `ai_w=`.
 - **The retool buildings are gated.** `potential` is true only while script holds a state variable
   for that retool, so neither shows in any construction list outside a retool.
 

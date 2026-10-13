@@ -61,7 +61,19 @@ import pdx  # noqa: E402
 N = 1                      # retool levels per real building level (Pat, 2026-10-12: one per level)
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
-RETOOL_AI_VALUE = 1000000  # AI weight of a retool building while it has room; vanilla's default is 1000
+# AI weight of a retool building while it has room (Pat, 2026-10-13, with the investment roll at
+# 1/11..11): what vanilla would score an expansion of the building from its profit, plus a top-up, so
+# retooling is the likelier pick but not a certain one. Vanilla scores a candidate from its ai_value
+# (base 1000, ai:831) plus 5000 x 1.5 per pound of predicted profit per employee for the investment pool
+# (ai:833, ai:909); PMR stands in the building's earnings per employee (the game's annual earnings per
+# employee, read with RETOOL_EARNINGS_LADDER; anything under the lowest step, losses included, counts as
+# 0). RETOOL_AI_TOPUP is about two new buildings' worth at 10 per employee (75,000 each), so retooling a
+# building earning 10 scores about three times a new one earning the same. Until 2026-10-13 the weight
+# was a flat 1,000,000, far above anything vanilla scores.
+RETOOL_AI_BASE = 1000
+RETOOL_AI_PER_EARNING = 7500
+RETOOL_AI_TOPUP = 150000
+RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
 RETOOL_SLOTS = 4           # private retool buildings per building type; each starts as one new construction
 # Pat, 2026-10-13: private retool buildings get a crew so investors can expand them. 1.14.5's AI
@@ -864,9 +876,13 @@ def retool_buildings(b, bk, icon):
             f'\t# Open only while script is retooling a {bk} in this state.\n'
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             + who +
-            '\t# Very attractive while there is room, so investors (or an AI government) pick it first.\n'
+            '\t# While there is room: what an expansion of the building would score from its earnings, plus\n'
+            '\t# a top-up, so investors (or an AI government) are likelier to pick it than a new building\n'
+            '\t# (pmr_ai_w_<b>, set by the tick).\n'
             f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ has_variable = {flag} }}\n'
-            f'\t\t\tvalue = {RETOOL_AI_VALUE}\n\t\t}}\n\t}}\n'
+            f'\t\t\tvalue = {RETOOL_AI_BASE + RETOOL_AI_TOPUP}\n'
+            f'\t\t\tif = {{ limit = {{ has_variable = pmr_ai_w_{b} }} value = var:pmr_ai_w_{b} }}\n'
+            '\t\t}\n\t}\n'
             f'\trequired_construction = pmr_retool_cost_{b}\n'
             f'\tproduction_method_groups = {{\n\t\t{pmgs}\n\t}}\n'
             f'\tbackground = "{RETOOL_BACKGROUND}"\n}}\n')
@@ -1322,6 +1338,16 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
                        for n in (f'pmr_retool_gate_{b}', v('pmr_cap_gov'), v('pmr_gov_levels'))) +
              '\t}\n}\n\n')
 
+    # The building's earnings per employee (ladder lower bound, 0 below the lowest step) and the
+    # retool buildings' AI weight from it: RETOOL_AI_BASE + RETOOL_AI_PER_EARNING x earnings + RETOOL_AI_TOPUP.
+    o.append(f'pmr_read_earnings_{b} = {{\n\t{setv("pmr_earn", 0)}\n'
+             + ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ b:{bk} = {{ earnings >= {x} }} }} {setv("pmr_earn", x)} }}\n'
+                       for j, x in enumerate(RETOOL_EARNINGS_LADDER))
+             + f'\t{setv("pmr_ai_w", "var:" + v("pmr_earn"))}\n'
+             f'\t{chg("pmr_ai_w", "multiply", RETOOL_AI_PER_EARNING)}\n'
+             f'\t{chg("pmr_ai_w", "add", RETOOL_AI_BASE + RETOOL_AI_TOPUP)}\n'
+             '}\n\n')
+
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first. A recipe
     # that needs electricity counts only while the state produces it (pmr_elec, read by the tick).
     o.append(f'pmr_best_{b} = {{\n\t{setv("pmr_best_now", 0)}\n')
@@ -1363,6 +1389,7 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
              + ';crew=' + '/'.join(f(f'pmr_staff_priv{j}') for j in range(1, RETOOL_SLOTS + 1))
              + f";elec=[THIS.Var('pmr_elec').GetValue|0]" + (f";elec_wait={f('pmr_elec_wait')}" if elec_tiers else '')
              + f";home_investors={f('pmr_inv_home')};pool=[THIS.Var('pmr_pool').GetValue|0]"
+             + f";earn={f('pmr_earn')};ai_w={f('pmr_ai_w')}"
              + ";unemp=[THIS.Var('pmr_unemp').GetValue|0]")
     done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
 
@@ -1377,6 +1404,7 @@ def tick_effect(bk, b, recipes, elec_tiers=()):
     o.append(f'pmr_tick_body_{b} = {{\n'
              f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
              '\tpmr_read_elec = yes\n'
+             f'\tpmr_read_earnings_{b} = yes\n'
              f'\tpmr_best_{b} = yes\n'
              '\t# First sight (game start, a new building, or a save from before the level mix): every\n'
              '\t# level runs the recipe the building runs now. Retool levels already built\n'

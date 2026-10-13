@@ -29,6 +29,12 @@ full run.
   Company's states). The type row's bar summed only your own states, so a type with every building
   abroad stayed black. A player's bar now adds those buildings, whole, as their own bars show them,
   recounted monthly and the day after game start. The upgrade button still queues at home only.
+- **Retooling priority follows profit.** Investors now weigh a retooling site as vanilla would weigh
+  expanding the building from its profit (1,000 + 7,500 per pound the building earns per worker) plus
+  a top-up of 150,000, in place of a flat 1,000,000. Retooling is the likelier pick, about three times
+  a new building earning the same, but not a certain one. `TICK` lines add `earn=` (the building's
+  earnings per worker: 0, or at least 2, 4, 6, 8, 10, 12, 15, 20, 25, 30, 40 or 50) and `ai_w=` (the
+  weight).
 - **Investment randomness** (your call in the investment thread): the investment pool's random roll
   on each building type now spans 1/11 to 11 instead of 1/21 to 21, for every building, through
   `common/defines/zz_pmr_ai.txt`. The 80% employment gate is unchanged.
@@ -74,6 +80,9 @@ full run.
 4. **Recipe bar height.** The bar lines up with the cash reserves bar. Screenshot.
 5. **Stacking.** Let two years pass. On `TICK` lines with `room_priv` above 1, `slots=` should show
    2 or more on one building once its `crew=` reads 2.
+5a. **Retool priority.** On `TICK` lines, `earn=` varies between buildings and is 0 on loss-makers.
+   Over two years, investors should queue retooling more often than new buildings, but not every
+   time, and sooner on buildings with a higher `earn=`.
 6. **Electric recipes.** On day one, open the Yorkshire tooling workshop. Its Process box shows wood,
    steel and coal going in, and no oil or electricity. No PMR building whose recipe isn't one of the
    electric ones (or a vanilla recipe that uses electricity itself, such as Electric Arc Process)
@@ -90,6 +99,9 @@ full run.
 | `crew=2`, `room_priv` above 1 and `slots=` never above 1 for two years | Employment was not what stopped investors stacking levels. Send me the lines. |
 | `crew=2` and `slots=` 2 or more on one building | Stacking works. |
 | An `error.log` line naming `zz_pmr_ai` or the define | The randomness change did not load, and the roll is still vanilla's 1/21 to 21. Send the line. |
+| `earn=0` on every `TICK` line, profitable buildings included | The earnings ladder never reads true, so every retooling site weighs 151,000 whatever the building earns. Send the `error.log` lines with `earnings`. |
+| Investors build almost nothing but new buildings while yours show `room_priv` above 0 and `home_investors=1` | The top-up is too small against vanilla's weights. Tell me and I'll raise `RETOOL_AI_TOPUP`. |
+| Investors retool and never build anything new while any room is left | The top-up is too large. Tell me and I'll lower it. |
 | Steel Tools still lists oil or electricity | The game loaded the old build. Check the date of `common/production_methods/pmr_electric_production_methods.txt` in the mod folder, then send the Modifiers tab. |
 | A building runs a "+ Assembly Lines" or "+ Automatic Power Looms" recipe whose owner lacks either technology, or in a state with no power plant | The gate failed. Send that building's `TICK` line. |
 | `crew=2`, `room_priv` above 1, `slots=` stuck at 1 and `unemp=0` | The state is short of workers. The investment pool scores buildings x0.25 there once they employ anyone, so a strong rival may be winning the picks. Send the lines; compare with a state where `unemp` is 5 or more. |
