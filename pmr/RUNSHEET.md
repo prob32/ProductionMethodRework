@@ -10,15 +10,31 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: retooling abroad, policy cards, priorities on a timer and locked by law, policy costs (your current save works)
+## Latest: retooling weighed against the building, a 5-year policy lock, retooling abroad, priorities on a timer (your current save works)
 
-From your 19:25 and 19:34 messages. Your current save works; wait for the game to reach the 1st before checking.
+From your 19:25 to 20:12 messages. Your current save works; wait for the game to reach the 1st before checking.
 
+- **Retooling weight** (20:12). A retool site now weighs twice what an expansion of its building would score: the
+  building's own AI value plus its earnings, the way the game scores profit. Before, PMR counted a year's earnings
+  as if they were a week's and added 150,000, so in your 1838 autosave retool sites scored 39,000 to 75,000 against
+  30 to 3,400 for new builds and took every pick. A building scoring well above a retool site, like the tea
+  plantation at 14,000, now wins. The foreign-or-domestic bar (£1 a worker a year per notch), Favour Large
+  Corporations, Bulls & Bears and Market Titans had the same 52-fold error and were scaled down with it.
+- **Policies** (20:06, 20:08). The text at the top of the policy window is gone; how policies work is in the Add
+  Policy and Change Policy tooltips. A policy adopted from now on is kept for 5 years: the other cards read "Locked,
+  N months" until then. After that an X at the top right of the policy card on the Private tab cancels it. A
+  policy you already hold has no lock, so its X shows at once. Cancelling writes `PMR;rec=POLICY;...;policy=cancelled`.
 - **Retooling abroad.** No level you own abroad had ever retooled. The game's investors pick one state for each
   retool site before checking who may build there, and in your 1844 save all 15 of Britain's picks abroad were in
   states where only the host could build (your West Bengal coal mine waited a year with both sites open). Each
   building now has a fifth retool site, opened only where you own levels in another country's state; the other
   four open only at home, and foreign investors now give those a weight of 0.
+- **Companies abroad** (your 20:00 card). Companies now list the abroad site as well as the first home site, so a
+  company owning levels abroad can own their retooling and its company weight counts there. A company panel shows
+  two Retooling icons for each building type it lists.
+- **Test decisions.** Only "PMR test: pause or resume the monthly ticks" is left, for the timing run the
+  performance review still needs. Grant Bessemer, grant Open Hearth, recompute retooling now and record trade-offs
+  worldwide are gone.
 - **Policy cards** are as tall as their text. The last line holds the authority cost on the left and "Requires
   Investment Banks" or "Current Policy" on the right, so nothing sits on the effects. Each law has its own window.
 - **Priority timer.** After you change a priority row you have 7 days to change it again, then it stays for 3
@@ -49,6 +65,11 @@ after a week. Open the policy window. After a few months check your private queu
 | You adopt a policy and the topbar authority tooltip shows no Economic Policy line | The authority cost didn't apply. Send the `POLICY` line and error.log lines containing `pmr_policy`. |
 | No `POLICY` line for any AI country two months after you load | The AI pick never ran, or no AI country could afford one. Send error.log lines containing `pmr_policy`. |
 | The policy window's cards overflow again | My height estimate is off for that text. Send a screenshot. |
+| A company panel shows only one Retooling icon per building type | The abroad site didn't make it into the company files. Send error.log lines containing `company_types`. |
+| Your private queue is still all retooling a few months on | Retool sites still outscore new builds. Send your latest autosave. |
+| No retooling queued at all for three months where some was before | The new weight came out too low or failed to read. Send error.log lines containing `pmr_ai_value`. |
+| After adopting a policy, the other cards stay clickable | The lock didn't load. Send error.log lines containing `pmr_policy_lock`. |
+| No X on your current policy's card | The cancel button didn't load. Send a screenshot and error.log lines containing `pmr_policy_cancel`. |
 
 ## Earlier: ports and railways retool; administration, universities and trade centres pick their best method (start a new game)
 

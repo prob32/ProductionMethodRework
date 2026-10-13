@@ -7,7 +7,7 @@ testing; it rewrites the mod folder in place.
     python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"
 
 With ``--release`` it writes the build players get, to pmr/release/ProductionMethodRework: no "PMR test:"
-decisions, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED. The default
+decision, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED. The default
 build keeps them for testing.
 
 What it does, building by building (see pmr/README.md for the design):
@@ -68,18 +68,21 @@ import private_investment  # noqa: E402
 N = 1                      # retool levels per real building level (Pat, 2026-10-12: one per level)
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
-# AI weight of a retool building while it has room (Pat, 2026-10-13, with the investment roll at
-# 1/11..11): what vanilla would score an expansion of the building from its profit, plus a top-up, so
-# retooling is the likelier pick but not a certain one. Vanilla scores a candidate from its ai_value
-# (base 1000, ai:831) plus 5000 x 1.5 per pound of predicted profit per employee for the investment pool
-# (ai:833, ai:909); PMR stands in the building's earnings per employee (the game's annual earnings per
-# employee, read with RETOOL_EARNINGS_LADDER; anything under the lowest step, losses included, counts as
-# 0). RETOOL_AI_TOPUP is about two new buildings' worth at 10 per employee (75,000 each), so retooling a
-# building earning 10 scores about three times a new one earning the same. Until 2026-10-13 the weight
-# was a flat 1,000,000, far above anything vanilla scores.
+# AI weight of a retool building while it has room (Pat, 2026-10-13 20:12Z): what vanilla would score an
+# expansion of the building, times RETOOL_AI_MULT, so retooling a building is likelier than expanding it
+# but a building that scores well above it (say a profitable plantation) still wins. Vanilla scores a
+# candidate from its ai_value (base 1000, ai:831) plus 5000 x 1.5 per pound of predicted WEEKLY profit per
+# employee (ai:833, ai:909). PMR stands in the building's earnings per employee, which the game gives a
+# YEAR (read with RETOOL_EARNINGS_LADDER; anything under the lowest step, losses included, counts as 0), so
+# a pound of earnings weighs 7500 / 52. Pat's 1838-01-01 autosave (20:06Z) bears the units out: a new
+# coal mine level's predicted profit of 517 over its 5,000 workers is GBP 0.10 a week, GBP 5.4 a year,
+# and PMR read its earnings as 4..8; iron mines 1,857 -> 19 a year, read as 15..30. Until then PMR
+# weighed a pound at 7,500 and added 150,000, so retool sites scored 39,000..75,000 before the roll
+# against 30..3,400 for new builds (a tea plantation 14,000) and took every pick. For the 48 investable
+# types private_investment.py swaps RETOOL_AI_BASE for the building's own ai_value (pmr_ai_value_<b>).
 RETOOL_AI_BASE = 1000
-RETOOL_AI_PER_EARNING = 7500
-RETOOL_AI_TOPUP = 150000
+RETOOL_AI_PER_EARNING = round(7500 / 52)
+RETOOL_AI_MULT = 2
 RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
 RETOOL_SLOTS = 5           # private retool buildings per building type; each starts as one new construction
@@ -113,6 +116,10 @@ RETOOL_CREW_STAFFED = 0.8
 # can stack, so each company panel shows one Retooling icon per building type it lists.
 COMPANY_RETOOL = True
 COMPANY_RETOOL_SLOTS = 1
+# Pat, 2026-10-13 20:00Z: companies also list ABROAD_SLOT, so a company owning levels abroad can own their
+# retooling and its company weight counts there; the first slot opens only at home since 2d3f175. A company
+# panel then shows a second Retooling icon per building type it lists.
+COMPANY_RETOOL_ABROAD = True
 # Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
 # building. Pat, 2026-10-13: muted, in Victoria 3's own style, and no red or green, which read as bad
 # and good. Drawn on vanilla's stacked bar chart texture, as the Owners bar is.
@@ -1002,15 +1009,18 @@ def main():
     # When the investment pool builds a building type a company lists in building_types, the company
     # can be chosen as owner (OWNER_COMPANY_EXPANSION_CHANCE_MULTIPLIER, x OWNER_COMPANY_OWN_STATE_MULT
     # in its headquarters state). With COMPANY_RETOOL each treated type's first COMPANY_RETOOL_SLOTS
-    # private retool buildings are listed beside it, rewriting the vanilla company files with only
-    # those lines inserted. Off 2026-10-12 to keep Retooling icons out of the company panels; on again
-    # 2026-10-13 (Pat): the autonomous investment AI favours expanding a building a company lists
+    # private retool buildings (and ABROAD_SLOT with COMPANY_RETOOL_ABROAD) are listed beside it,
+    # rewriting the vanilla company files with only those lines inserted. Off 2026-10-12 to keep
+    # Retooling icons out of the company panels; on again 2026-10-13 (Pat): the autonomous investment
+    # AI favours expanding a building a company lists
     # (AUTONOMOUS_INVESTMENT_COMPANY_TARGET_STATE_WITH_BUILDING_CONSTRUCTION_FACTOR), which is how
     # retool levels stack. A company-owned building retools either way: its headquarters owns levels
     # the way a Financial District does, so levels_owned_by_country counts them for its country.
     report['company_types'] = []
     if COMPANY_RETOOL:
-        retool_of = {t[0]: priv_slots(short(t[0]))[:COMPANY_RETOOL_SLOTS] for t in treated}
+        retool_of = {t[0]: priv_slots(short(t[0]))[:COMPANY_RETOOL_SLOTS]
+                     + (priv_slots(short(t[0]))[ABROAD_SLOT - 1:ABROAD_SLOT] if COMPANY_RETOOL_ABROAD else [])
+                     for t in treated}
         for csrc in load_dir(game, 'company_types'):
             for ck, cn in csrc.objects().items():
                 bt = pdx.get(cn.value, 'building_types')
@@ -1069,7 +1079,7 @@ def main():
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(option_goods(options)) + '\n'.join(tick_effects)
-          + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES + '\n' + auto_best_effects(auto))
+          + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-')))
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
@@ -1129,9 +1139,9 @@ def main():
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"']
-    if not args.release:    # the "PMR test:" decisions are for testing only: every player would see them
-        write('common/decisions/pmr_test_decisions.txt', header + DECISIONS + world_blend_decision(options))
-        loc += DECISION_LOC + WORLD_LOC
+    if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
+        write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
+        loc += DECISION_LOC
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     loc += private_investment.write_all(game, write, header, args.out)
@@ -1668,12 +1678,13 @@ def retool_buildings(b, bk, icon):
             + (', where the player owns levels abroad' if j == ABROAD_SLOT else '') + '.\n'
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             + who +
-            '\t# While there is room: what an expansion of the building would score from its earnings, plus\n'
-            '\t# a top-up, so investors (or an AI government) are likelier to pick it than a new building\n'
-            '\t# (pmr_ai_w_<b>, set by the tick).\n'
+            '\t# While there is room: what an expansion of the building would score from its earnings\n'
+            f'\t# (pmr_ai_w_<b>, set by the tick), x {RETOOL_AI_MULT}, so investors (or an AI government) are likelier\n'
+            '\t# to retool it than to expand it.\n'
             f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ has_variable = {flag} }}\n'
-            f'\t\t\tvalue = {RETOOL_AI_BASE + RETOOL_AI_TOPUP}\n'
+            f'\t\t\tvalue = {RETOOL_AI_BASE}\n'
             f'\t\t\tif = {{ limit = {{ has_variable = pmr_ai_w_{b} }} value = var:pmr_ai_w_{b} }}\n'
+            f'\t\t\tmultiply = {RETOOL_AI_MULT}\n'
             '\t\t}\n\t}\n'
             f'\trequired_construction = pmr_retool_cost_{b}\n'
             f'\tproduction_method_groups = {{\n\t\t{pmgs}\n\t}}\n'
@@ -2159,13 +2170,13 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              '\t}\n}\n\n')
 
     # The building's earnings per employee (ladder lower bound, 0 below the lowest step) and the
-    # retool buildings' AI weight from it: RETOOL_AI_BASE + RETOOL_AI_PER_EARNING x earnings + RETOOL_AI_TOPUP.
+    # retool buildings' AI weight from it, before RETOOL_AI_MULT: RETOOL_AI_BASE + RETOOL_AI_PER_EARNING x earnings.
     o.append(f'pmr_read_earnings_{b} = {{\n'
              + highest(sorted(RETOOL_EARNINGS_LADDER), lambda x: f'b:{bk} = {{ earnings >= {x} }}',
                        lambda x: setv("pmr_earn", x or 0))
              + f'\t{setv("pmr_ai_w", "var:" + v("pmr_earn"))}\n'
              f'\t{chg("pmr_ai_w", "multiply", RETOOL_AI_PER_EARNING)}\n'
-             f'\t{chg("pmr_ai_w", "add", RETOOL_AI_BASE + RETOOL_AI_TOPUP)}\n'
+             f'\t{chg("pmr_ai_w", "add", RETOOL_AI_BASE)}\n'
              '}\n\n')
 
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first. A recipe
@@ -3479,45 +3490,10 @@ pmr.1 = {
 }
 '''
 
-DECISIONS = '''# Test decisions. The AI never takes them (ai_chance 0). Each writes PMR;rec=TEST lines to debug.log.
-
-pmr_test_setup_decision = {
-	is_shown = { always = yes }
-	possible = { always = yes }
-	when_taken = {
-		# The mill first, seen on Blister; then Bessemer, so the next tick sees the research.
-		capital = {
-			if = {
-				limit = { NOT = { has_building = building_steel_mill } }
-				# Government-owned, so retooling it is the government's to queue.
-				create_building = {
-					building = building_steel_mill
-					add_ownership = { country = { country = root levels = 5 } }
-				}
-			}
-			pmr_state_tick = yes
-			debug_log = "PMR;rec=TEST;arm=SETUP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting]"
-		}
-		add_technology_researched = bessemer_process
-		capital = { pmr_state_tick = yes }
-	}
-	ai_chance = { value = 0 }
-}
-
-# A newer recipe arriving mid-retool: the levels already on Bessemer stay on it, and every level
-# not on Open Hearth is now to retool.
-pmr_test_open_hearth_decision = {
-	is_shown = { has_technology_researched = bessemer_process }
-	possible = { always = yes }
-	when_taken = {
-		add_technology_researched = open_hearth_process
-		capital = {
-			debug_log = "PMR;rec=TEST;arm=OPEN_HEARTH;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting]"
-		}
-		every_scope_state = { pmr_state_tick = yes }
-	}
-	ai_chance = { value = 0 }
-}
+DECISIONS = '''# Test decision. The AI never takes it (ai_chance 0). It writes PMR;rec=TEST lines to debug.log.
+# Pat, 2026-10-13 20:00Z: the other test decisions (grant Bessemer and a steel mill, grant Open Hearth,
+# recompute retooling now, record trade-offs worldwide) are gone; this one stays for the performance
+# review's timing run.
 
 # Performance test (2026-10-13): stops the monthly and research ticks worldwide, or starts them again,
 # so a year can be timed in the same save with and without them. Methods, buildings and the per-building
@@ -3539,78 +3515,11 @@ pmr_test_pause_ticks_decision = {
 	}
 	ai_chance = { value = 0 }
 }
-
-pmr_test_tick_decision = {
-	is_shown = { always = yes }
-	possible = { always = yes }
-	when_taken = {
-		every_scope_state = { pmr_state_tick = yes }
-		capital = {
-			pmr_count_queues = yes
-			debug_log = "PMR;rec=TEST;arm=TICK_NOW;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];queued_gov=[THIS.Var('pmr_q_gov').GetValue|0];queued_priv=[THIS.Var('pmr_q_priv').GetValue|0]"
-		}
-	}
-	ai_chance = { value = 0 }
-}
 '''
-
-# State scope: the owner's queued building levels, government and private, into pmr_q_gov / pmr_q_priv.
-# The triggers only compare, so count up to them.
-COUNT_QUEUES = '''pmr_count_queues = {
-	set_variable = { name = pmr_q_gov value = 0 }
-	while = {
-		limit = { owner = { construction_queue_num_queued_government_levels > prev.var:pmr_q_gov } }
-		change_variable = { name = pmr_q_gov add = 1 }
-	}
-	set_variable = { name = pmr_q_priv value = 0 }
-	while = {
-		limit = { owner = { construction_queue_num_queued_private_levels > prev.var:pmr_q_priv } }
-		change_variable = { name = pmr_q_priv add = 1 }
-	}
-}
-'''
-
-def world_blend_decision(options):
-    """Pat, 2026-10-13: to start trade-offs near where games take them, a test decision logs every
-    state's trade-off shares in the world (PMR;rec=WORLD), AI countries included: the monthly OPT
-    lines cover the player's states only. The shares are ticked worldwide, so the state variables
-    are there to read."""
-    f = lambda name, d=0: f"[THIS.Var('{name}').GetValue|{d}]"   # noqa: E731
-    out = []
-    for bk, conv in options.items():
-        b = short(bk)
-        opts = [o for g, gi, mode, none, os_, std in conv if mode == 'market' for o in os_]
-        if not opts:
-            continue
-        line = (f'PMR;rec=WORLD;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
-                f'state=[THIS.GetState.GetNameNoFormatting];building={bk};level={f(f"pmr_level_{b}")}'
-                + ';x=' + '/'.join(f(f'pmr_x_{o.j}_{b}') for o in opts)
-                + ';can=' + '/'.join(f(f'pmr_xav_{o.j}_{b}') for o in opts)
-                + ';value=' + '/'.join(f(f'pmr_xv_{o.j}_{b}') for o in opts))
-        out.append(f'\t\tevery_state = {{\n\t\t\tlimit = {{ has_variable = pmr_xinit_{b} }}\n'
-                   f'\t\t\tdebug_log = "{line}"\n\t\t}}\n')
-    return ('\n# Logs every state\'s trade-off shares in the world, one WORLD line per state and building type.\n'
-            'pmr_test_world_blends_decision = {\n\tis_shown = { always = yes }\n\tpossible = { always = yes }\n'
-            '\twhen_taken = {\n' + ''.join(out)
-            + '\t\tcapital = { debug_log = "PMR;rec=WORLD_DONE;date=[TimeKeeper.GetCurrentDate.GetString]" }\n'
-            '\t}\n\tai_chance = { value = 0 }\n}\n')
-
-
-WORLD_LOC = [
-    ' pmr_test_world_blends_decision:0 "PMR test: record trade-offs worldwide"',
-    ' pmr_test_world_blends_decision_desc:0 "Writes every state\'s trade-off shares (hardwood, secondary crops, luxury lines, canning, distilling, aeroplanes, tanks) to the debug log, for every country. Changes nothing in game."',
-]
-
 
 DECISION_LOC = [
-    ' pmr_test_setup_decision:0 "PMR test: grant Bessemer and a steel mill"',
-    ' pmr_test_setup_decision_desc:0 "If the capital has no Steel Mills, creates five government-owned levels there; then researches the Bessemer Process, which switches every Steel Mills to it and opens retooling."',
-    ' pmr_test_open_hearth_decision:0 "PMR test: grant Open Hearth"',
-    ' pmr_test_open_hearth_decision_desc:0 "Researches the Open Hearth Process, which switches every Steel Mills to it, including mills still part way through retooling to Bessemer."',
-    ' pmr_test_tick_decision:0 "PMR test: recompute retooling now"',
     ' pmr_test_pause_ticks_decision:0 "PMR test: pause or resume the monthly ticks"',
     ' pmr_test_pause_ticks_decision_desc:0 "Stops PMR\'s monthly and research ticks for every country, or starts them again, so the game\'s speed can be timed with and without them in the same save. Shares hold still while paused."',
-    ' pmr_test_tick_decision_desc:0 "Runs the monthly PMR tick on every state you own immediately, instead of waiting for the month to turn, and logs how many building levels sit in each construction queue."',
 ]
 
 

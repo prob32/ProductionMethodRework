@@ -125,8 +125,12 @@ NO_GROUP = 'none'          # a scored building group outside the five (Manufactu
 # The chart counts private levels of these building groups; subsistence farms and ranches are no investors' business.
 CHART_EXCLUDE = ('bg_subsistence_agriculture', 'bg_subsistence_ranching')
 REINVEST_PER_POINT = 0.99  # Re-invest: retool ai_value x (1 + this x slider%): x100 at 100%
-CORP_BONUS = 75000         # Favour Large Corporations: ai_value added, = GBP 10/worker of vanilla's profit term
-PROFIT_WEIGHT = 7500       # vanilla's profit term a pound of earnings per employee (x5000 x1.5, 00_ai.txt)
+# Vanilla's profit term is 5000 x 1.5 a pound of predicted WEEKLY profit per employee (00_ai.txt); the
+# earnings PMR reads (pmr_ai_earn_<b>) are a YEAR's, so a pound of them weighs 7500 / 52. Until 20:12Z PMR
+# weighed it at 7,500, which made every weight below about 50 times too strong (Pat's 1838 autosave: new
+# builds scored 30..3,400 before the roll, retool sites 39,000..75,000; see generate.py RETOOL_AI_MULT).
+PROFIT_WEIGHT = round(7500 / 52)
+CORP_BONUS = 10 * PROFIT_WEIGHT   # Favour Large Corporations: ai_value added, = GBP 10/worker a year of profit
 LIBERAL_WEIGHT = 1.25      # Bulls & Bears: Market Liberal leader weights x this (Pat 16:06Z: +25%)
 TITANS_APPROVAL = -2       # Market Titans: Industrialists approval per institution (Pat 16:06Z)
 TITANS_INSTITUTIONS = ('institution_health_system', 'institution_schools')
@@ -221,9 +225,13 @@ LAW_ROWS = {'law_laissez_faire': (), 'law_agrarianism': ('agriculture', 'resourc
 # straight lines between. It is fixed when the policy is adopted and used while the policy is held, as vanilla
 # charges authority for patronage (an add_modifier of country_authority_cost_add x the cost, 00_ep2_04_modifiers.txt).
 POLICY_COST_LOW, POLICY_COST_MID, POLICY_COST_HIGH = 200, 100, 50
-POLICY_INTRO = ('Click a policy to adopt it. One at a time, while your economic system law lasts. It uses @aut! '
-                f'authority while held, set by your legitimacy when you adopt it: {POLICY_COST_LOW} at 25 or less, '
-                f'{POLICY_COST_MID} at 50, {POLICY_COST_HIGH} at 75 or more.')
+# How the policy window works, now in the Add Policy and Change Policy tooltips (Pat 20:06Z: no text in the window).
+POLICY_HOW = ('One can be held at a time, and it lapses if your economic system law changes. It uses @aut! authority '
+              f'while held, set by your legitimacy when you adopt it: {POLICY_COST_LOW} at 25 or less, {POLICY_COST_MID} '
+              f'at 50, {POLICY_COST_HIGH} at 75 or more.')
+# Pat 20:06Z: a policy is kept for 5 years once adopted; then it can be swapped, or cancelled with the card's X (20:08Z).
+# pmr_policy_lock_m counts the months left, down on each monthly pulse.
+POLICY_LOCK_MONTHS = 60
 AI_SKIP = ('steer',)       # the AI never picks Steer the Economy: it only raises the cap of the player's priorities
 RI_WEEKS = 26              # re-investment chart: one column per week (Pat 14:28Z), newest on the right
 RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 7    # columns are measured in rows of 6 px, from zero to the highest week
@@ -242,10 +250,10 @@ WHITE = 'gfx/interface/backgrounds/white.dds'
 TRANSPARENT = 'gfx/interface/icons/generic_icons/transparent.dds'
 # Foreign or domestic investment (Pat 15:34Z), on the tariff bar's seven notches: 1 = strongly foreign, 4 = no
 # preference, 7 = strongly domestic. Each notch from the middle adds or takes FD_STEP of ai_value from every
-# investable building type in the player's states (about GBP 1 a worker of vanilla's profit term, as CORP_BONUS).
+# investable building type in the player's states (GBP 1 a worker a year of vanilla's profit term, as CORP_BONUS).
 FD_NOTCHES = 7
 SINCE = 'Counted since this version of the mod was loaded.'
-FD_STEP = 7500
+FD_STEP = PROFIT_WEIGHT
 FD_ICONS = ('max_subvention', 'high_subvention', 'low_subvention', 'no_tariffs_no_subvention', 'low_tariffs',
             'high_tariffs', 'max_tariffs')
 CARD_W, CARD_H = 268, 380                 # law and policy cards, the same size (Pat 04:50Z), taller (Pat 13:05Z)
@@ -420,6 +428,13 @@ def script_values():
             f'\t\tmultiply = {s1:g}\n\t\tadd = {POLICY_COST_LOW - s1 * 25:g}\n\t}}\n'
             f'\telse = {{\n\t\tmultiply = {s2:g}\n\t\tadd = {POLICY_COST_MID - s2 * 50:g}\n\t}}\n'
             f'\tmin = {POLICY_COST_HIGH}\n\tmax = {POLICY_COST_LOW}\n\tround = yes\n}}\n\n'
+            '# Country scope, for the panel: 1 while the held policy is in its first 5 years (POLICY_LOCK_MONTHS); 1 once\n'
+            '# a held policy may be cancelled.\n'
+            'pmr_policy_locked = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { has_variable = pmr_policy_lock_m }\n\t\tvalue = 1\n\t}\n}\n\n'
+            'pmr_policy_cancellable = {\n\tvalue = 0\n\tif = {\n\t\tlimit = {\n\t\t\thas_variable = pmr_policy\n'
+            '\t\t\tNOT = { has_variable = pmr_policy_lock_m }\n\t\t}\n\t\tvalue = 1\n\t}\n}\n\n'
+            + ''.join(f'pmr_policy_no_tech_{k} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{ has_technology_researched = {tech} }}\n'
+                      '\t\tvalue = 0\n\t}\n}\n\n' for k, tech in POLICY_TECH.items()) +
             '# Country scope. The authority a new policy needs free: its cost less what the policy held now uses.\n'
             'pmr_policy_cost_net = {\n\tvalue = pmr_policy_cost\n\tif = {\n\t\tlimit = { has_variable = pmr_policy_paid }\n'
             '\t\tsubtract = var:pmr_policy_paid\n\t}\n\tmin = 0\n}\n\n')
@@ -462,11 +477,13 @@ def script_values():
     excl = ''.join(f'\t\t\tis_building_group = {bg}\n' for bg in CHART_EXCLUDE)
     for g, _n, _d, _c, bgs in GROUPS:
         ors = ''.join(f'\t\t\t\tis_building_group = {bg}\n' for bg in bgs)
-        out += (f'pmr_pc_{g} = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{\n'
+        out += (f'pmr_pc_{g} = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{\n\t\t\tlevel > 0\n'
                 f'\t\t\tOR = {{\n{ors}\t\t\t}}\n\t\t\tNOR = {{\n{excl}\t\t\t}}\n'
                 '\t\t\tprivate_ownership_fraction >= 0.125\n\t\t}\n\t\tadd = pmr_pc_levels\n\t}\n}\n\n')
     # The owners chart (Pat 15:33Z): levels by who owns them, in the same building groups. The ownership triggers
-    # are comparisons, so each building's shares are read to the nearest eighth of its levels.
+    # are comparisons, so each building's shares are read to the nearest eighth of its levels. Both charts skip
+    # buildings still at level 0: the ownership triggers need a built building (1.14.5 error.log, "ownership_fraction
+    # requires the building to be built", a building under its first construction).
     def eighths(trigger):
         cuts = [(k + 0.5) / 8 for k in range(8)]
         out = ''
@@ -484,7 +501,7 @@ def script_values():
             '# Country scope. Those levels summed over the buildings of the five priority groups.\n')
     ors = ''.join(f'\t\t\t\tis_building_group = {bg}\n' for *_r, bgs in GROUPS for bg in bgs)
     for k in ('gov', 'self', 'rest'):
-        out += (f'pmr_po_{k} = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{\n'
+        out += (f'pmr_po_{k} = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{\n\t\t\tlevel > 0\n'
                 f'\t\t\tOR = {{\n{ors}\t\t\t}}\n\t\t\tNOR = {{\n{excl}\t\t\t}}\n\t\t}}\n'
                 f'\t\tadd = pmr_po_{k}_levels\n\t}}\n}}\n\n')
     return out
@@ -542,8 +559,17 @@ def sguis():
         out += (f'pmr_policy_{k}_sgui = {{\n\tscope = country\n'
                 f'\tis_shown = {{ {law} }}\n'
                 f'\tis_valid = {{\n\t\t{law}\n{tech}\t\tNOT = {{ has_modifier = pmr_policy_{k} }}\n'
+                '\t\tNOT = { has_variable = pmr_policy_lock_m }\n'
                 '\t\tauthority >= pmr_policy_cost_net\n\t}\n'
                 f'\teffect = {{\n\t\tpmr_policy_adopt_{k} = yes\n\t}}\n}}\n\n')
+    drop_all = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_modifier = pmr_policy_{k} }}\n\t\t\tremove_modifier = pmr_policy_{k}\n\t\t}}\n'
+                       for k, *_r in POLICIES)
+    out += ('# The X on the held policy\'s card (Pat 20:08Z), once its 5 years are up: ends the policy and its authority cost.\n'
+            'pmr_policy_cancel_sgui = {\n\tscope = country\n\tis_shown = { has_variable = pmr_policy }\n'
+            '\tis_valid = { NOT = { has_variable = pmr_policy_lock_m } }\n\teffect = {\n' + drop_all +
+            '\t\tpmr_policy_drop = yes\n\t\tpmr_policy_upkeep = yes\n'
+            '\t\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'policy=cancelled"\n\t}\n}\n\n')
     return out
 
 
@@ -662,6 +688,9 @@ def on_actions():
             '# afford (Pat 19:34Z). The player\'s weekly clock is restarted here if its chain broke (pmr_pi_start_clock).\n'
             'pmr_pi_monthly_country = {\n\teffect = {\n'
             + drop +
+            '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_policy_lock_m }\n'
+            '\t\t\tchange_variable = { name = pmr_policy_lock_m add = -1 }\n'
+            '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_policy_lock_m <= 0 }\n\t\t\t\tremove_variable = pmr_policy_lock_m\n\t\t\t}\n\t\t}\n'
             '\t\tpmr_policy_upkeep = yes\n'
             '\t\tpmr_policy_ai_pick = yes\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
@@ -689,7 +718,8 @@ def upkeep_effect():
 
 def policy_effects():
     """Country scope. Adopting a policy (the policy window and the AI, Pat 19:34Z): its modifier replaces any other,
-    and its authority cost (pmr_policy_cost, by legitimacy now) is fixed in pmr_policy_paid and used while it is held.
+    and its authority cost (pmr_policy_cost, by legitimacy now) is fixed in pmr_policy_paid and used while it is held;
+    it is then kept POLICY_LOCK_MONTHS months (pmr_policy_lock_m, counted down monthly in on_actions).
     Dropping one when its law goes. An AI country with no policy picks one of those it can afford, at random, each
     month (AI_SKIP aside). The weekly countdown of each priority row's cooldown, for the panel."""
     out = ''
@@ -702,10 +732,13 @@ def policy_effects():
                 '\tadd_modifier = {\n\t\tname = pmr_policy_authority\n\t\tmultiplier = var:pmr_policy_paid\n\t}\n'
                 f'\tadd_modifier = {{ name = pmr_policy_{k} }}\n'
                 f'\tset_variable = {{ name = pmr_policy value = {i} }}\n'
+                f'\tset_variable = {{ name = pmr_policy_lock_m value = {POLICY_LOCK_MONTHS} }}\n'
                 '\tpmr_policy_upkeep = yes\n'
                 f'\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
                 f'policy={k};authority=[THIS.Var(\'pmr_policy_paid\').GetValue|0]"\n}}\n\n')
+    # A law change that drops the policy also ends its lock (the drop is not the player's choice).
     out += ('pmr_policy_drop = {\n\tremove_variable = pmr_policy\n'
+            '\tif = {\n\t\tlimit = { has_variable = pmr_policy_lock_m }\n\t\tremove_variable = pmr_policy_lock_m\n\t}\n'
             '\tif = {\n\t\tlimit = { has_modifier = pmr_policy_authority }\n\t\tremove_modifier = pmr_policy_authority\n\t}\n'
             '\tif = {\n\t\tlimit = { has_variable = pmr_policy_paid }\n\t\tremove_variable = pmr_policy_paid\n\t}\n}\n\n')
 
@@ -1446,7 +1479,7 @@ def open_window(ind):
 def policy_card(ind):
     """The policy card on the tab: a plus in the middle like vanilla's Add Principle slot (Pat 04:50Z) that opens
     the policy window (Pat 13:05Z); a held policy shows its name and benefits and a Change Policy button that opens
-    the same window."""
+    the same window, and once its 5 years are up an X that cancels it (Pat 20:08Z)."""
     avail = f"GetScriptedGui('pmr_policy_available_sgui').IsShown(GuiScope.SetRoot({COUNTRY}.MakeScope).End)"
     held_any = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint)0')"
     held = lambda i: f"EqualTo_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint){i}')"
@@ -1458,7 +1491,14 @@ def policy_card(ind):
     inner += (f'{i1}button = {{\n{i2}visible = "[{held_any}]"\n{i2}using = default_button\n'
               f'{i2}size = {{ 160 32 }}\n{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -12 }}\n'
               f'{i2}text = "PMR_POLICY_CHANGE"\n{i2}enabled = "[{avail}]"\n' + open_window(i2) +
-              f'{i2}tooltip = "PMR_POLICY_CHANGE_TT"\n{i2}using = tooltip_above\n{i1}}}\n')
+              f'{i2}tooltip = "PMR_POLICY_CHANGE_SEL_TT"\n{i2}using = tooltip_above\n{i1}}}\n')
+    # Pat 20:08Z: once its 5 years are up, an X at the card's top right cancels the policy (vanilla's close button)
+    cancel = f"GetScriptedGui('pmr_policy_cancel_sgui')"
+    inner += (f'{i1}close_button = {{\n{i2}visible = "[{sv_on("pmr_policy_cancellable")}]"\n{i2}size = {{ 30 30 }}\n'
+              f'{i2}parentanchor = top|right\n{i2}position = {{ -6 6 }}\n'
+              f'{i2}enabled = "[{cancel}.IsValid(GuiScope.SetRoot({COUNTRY}.MakeScope).End)]"\n'
+              f'{i2}onclick = "[{cancel}.Execute(GuiScope.SetRoot({COUNTRY}.MakeScope).End)]"\n'
+              f'{i2}blockoverride "tooltip" {{\n{i3}tooltip = "PMR_POLICY_CANCEL_TT"\n{i2}}}\n{i1}}}\n')
     inner += (f'{i1}flowcontainer = {{\n{i2}visible = "[Not({held_any})]"\n{i2}parentanchor = center\n'
               f'{i2}direction = vertical\n{i2}spacing = 8\n'
               f'{i2}new_principle_slot = {{\n{i3}parentanchor = hcenter\n'
@@ -1472,17 +1512,16 @@ def policy_card(ind):
     return card(ind, inner)
 
 
-def policy_content(k, icon, ind, w, cost, foot):
+def policy_content(k, icon, ind, w, cost, foots):
     """A policy's face: its icon, name and benefits only (Pat 14:28Z), then a last line with its authority cost on
-    the left (cost: a loc key, Pat 19:34Z) and its status on the right (foot: the textbox's visible condition and
-    text, or None); click-through so its card takes the click. That line is the last of the card's own flow, so it
-    can never sit on the benefits (Pat 19:25Z)."""
+    the left (cost: a loc key, Pat 19:34Z) and its status on the right (foots: (visible condition, text) per status,
+    at most one shown at a time); click-through so its card takes the click. That line is the last of the card's own
+    flow, so it can never sit on the benefits (Pat 19:25Z)."""
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
     status = (f'{i1}widget = {{\n{i2}size = {{ {w - 24} 20 }}\n{i2}alwaystransparent = yes\n'
               f'{i2}textbox = {{\n{i3}size = {{ 100% 20 }}\n{i3}align = left|nobaseline\n{i3}using = fontsize_small\n'
               f'{i3}alwaystransparent = yes\n{i3}text = "{cost}"\n{i2}}}\n')
-    if foot:
-        shown, text = foot
+    for shown, text in foots:
         status += (f'{i2}textbox = {{\n' + (f'{i3}visible = "[{shown}]"\n' if shown else '') +
                    f'{i3}size = {{ 100% 20 }}\n{i3}align = right|nobaseline\n{i3}using = fontsize_small\n'
                    f'{i3}alwaystransparent = yes\n{i3}text = "{text}"\n{i2}}}\n')
@@ -1506,8 +1545,11 @@ def policy_choice(k, i, icon, ind, h):
     sg = f"GetScriptedGui('pmr_policy_{k}_sgui')"
     held = f"EqualTo_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint){i}')"
     i1, i2 = ind + '\t', ind + '\t\t'
-    # a card that needs a technology says so while the country lacks it (its law is held, or the row is hidden)
-    req = (f'Not({sg}.IsValid({scope}))', f'PMR_POLICY_{k}_REQ') if k in POLICY_TECH else None
+    # In the 5 years after an adoption every other card says how long is left (Pat 20:06Z); otherwise a card that
+    # needs a technology says so while the country lacks it (its law is held, or the row is hidden).
+    foots = [(sv_on('pmr_policy_locked'), 'PMR_POLICY_LOCKED_FOR')]
+    if k in POLICY_TECH:
+        foots.append((f"And(Not({sv_on('pmr_policy_locked')}), {sv_on(f'pmr_policy_no_tech_{k}')})", f'PMR_POLICY_{k}_REQ'))
     return (f'{ind}widget = {{\n{i1}size = {{ {PCARD_W} {h} }}\n'
             f'{i1}button = {{\n{i2}visible = "[Not({held})]"\n{i2}using = default_button\n'
             f'{i2}size = {{ {PCARD_W} {h} }}\n'
@@ -1515,11 +1557,11 @@ def policy_choice(k, i, icon, ind, h):
             f'{i2}onclick = "[{sg}.Execute({scope})]"\n'
             f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n'
             f'{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
-            + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_COST', req) + f'{i1}}}\n'
+            + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_COST', foots) + f'{i1}}}\n'
             f'{i1}widget = {{\n{i2}visible = "[{held}]"\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
             f'{i2}background = {{\n{i2}\tusing = entry_bg\n{i2}}}\n'
             f'{i2}background = {{\n{i2}\tusing = highlighted_selected_square_selection\n{i2}}}\n'
-            + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_PAID', (None, 'PMR_POLICY_CURRENT')) +
+            + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_PAID', [(None, 'PMR_POLICY_CURRENT')]) +
             f'{i1}}}\n{ind}}}\n')
 
 
@@ -1549,7 +1591,7 @@ def policy_window(law, items):
             rows += policy_choice(k, i, icon, i3, h)
         rows += f'{i2}}}\n'
     w = 2 * PCARD_W + 10 + 40
-    h = 84 + text_lines(POLICY_INTRO, w - 40) * PCARD_LINE_H + 10 + body + 14
+    h = 84 + body + 10    # the rows and their spacing, then a margin; no intro text (Pat 20:06Z)
     return (f'\ttype pmr_policy_window_{law} = widget {{\n'
             f'{i1}visible = "[And(And(InformationPanel.IsTabSelected(\'{TAB}\'), GetVariableSystem.Exists(\'{PICK}\')), '
             f'{shown})]"\n'
@@ -1567,8 +1609,6 @@ def policy_window(law, items):
             f'{i1}close_button_large = {{\n{i2}parentanchor = right\n{i2}position = {{ -14 18 }}\n'
             f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n{i1}}}\n'
             f'{i1}flowcontainer = {{\n{i2}position = {{ 20 84 }}\n{i2}direction = vertical\n{i2}spacing = 10\n'
-            f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}multiline = yes\n{i3}max_width = {w - 40}\n'
-            f'{i3}align = nobaseline\n{i3}text = "PMR_POLICY_WINDOW_INTRO"\n{i2}}}\n'
             + rows + f'{i1}}}\n\t}}\n')
 
 
@@ -1707,8 +1747,11 @@ def company_owners(game):
     return owners
 
 
-def patch_retool_ai(text, btype, parent):
-    """pmr_retool_buildings.txt: each private retool building's ai_value ends with multiply = pmr_reinvest_mult_<group>."""
+def patch_retool_ai(text, btype, parent, invest):
+    """pmr_retool_buildings.txt: each private retool building's ai_value ends with multiply = pmr_reinvest_mult_<group>,
+    and for an investable type (invest) its base is the building's own ai_value, pmr_ai_value_<b> (vanilla's, with the
+    foreign-or-domestic notch and the company policies), plus PROFIT_WEIGHT x its earnings: the score of an expansion
+    of the building, which generate.py's ai_value then multiplies by RETOOL_AI_MULT (Pat 20:12Z)."""
     edits, n = [], 0
     for k, _s, o, c in top_blocks(text):
         m = re.fullmatch(r'building_pmr_retool_(.+)_(\d+)', k)
@@ -1721,12 +1764,22 @@ def patch_retool_ai(text, btype, parent):
         if a < 0:
             fail('pmr_retool_buildings.txt', f'{k} has no ai_value block')
         close = block_end(text, text.index('{', a))
-        edits.append((close, f'\t# PMR: Re-invest card, x the {g} priority\n\t\tmultiply = pmr_reinvest_mult_{g}\n\t'))
+        b = m.group(1)
+        if 'building_' + b in invest:
+            fallback = re.compile(r'\t\t\tvalue = \d+\n\t\t\tif = \{ limit = \{ has_variable = pmr_ai_w_' + b
+                                  + r' \} value = var:pmr_ai_w_' + b + r' \}\n')
+            f = fallback.search(text, a, close)
+            if not f:
+                fail('pmr_retool_buildings.txt', f'{k}: ai_value base not found')
+            edits.append((f.start(), f'\t\t\t# PMR: the building\'s own ai_value and earnings\n\t\t\tvalue = pmr_ai_value_{b}\n'
+                                     f'\t\t\tif = {{ limit = {{ has_variable = pmr_earn_{b} }} add = {{ value = var:pmr_earn_{b} '
+                                     f'multiply = {PROFIT_WEIGHT} }} }}\n', f.end()))
+        edits.append((close, f'\t# PMR: Re-invest card, x the {g} priority\n\t\tmultiply = pmr_reinvest_mult_{g}\n\t', close))
         n += 1
     if not n:
         fail('pmr_retool_buildings.txt', 'found no private retool buildings')
-    for pos, ins in sorted(edits, reverse=True):
-        text = text[:pos] + ins + text[pos:]
+    for pos, ins, end in sorted(edits, reverse=True):
+        text = text[:pos] + ins + text[end:]
     return text, n
 
 
@@ -1819,13 +1872,19 @@ def localization(types):
         f'retooling included: #v [{var("pmr_iv_for")}|0]#! (#v [{var("pmr_iv_fsh")}|0%]#!).\\n{SINCE}"',
         ' PMR_IV_NONE:0 ""',
         ' PMR_POLICY_ADD:0 "Add Policy"',
-        ' PMR_POLICY_ADD_TT:0 "Choose an economic policy. One can be held at a time, and it lapses if your economic '
-        'system law changes."',
+        f' PMR_POLICY_ADD_TT:0 "Choose an economic policy. {POLICY_HOW} Once adopted it is kept for 5 years."',
         f' PMR_POLICY_LOCKED:0 "Requires {law}, {lf} or [GetLawType(\'law_agrarianism\').GetName]"',
         ' PMR_POLICY_CHANGE:0 "Change Policy"',
-        ' PMR_POLICY_CHANGE_TT:0 "See every policy and swap this one for another. Only one can be held at a time."',
+        f' PMR_POLICY_CHANGE_SEL_TT:0 "[SelectLocalization({sv_on("pmr_policy_locked")}, \'PMR_POLICY_CHANGE_LOCK_TT\', '
+        '\'PMR_POLICY_CHANGE_TT\')]"',
+        f' PMR_POLICY_CHANGE_TT:0 "See every policy and swap this one for another. {POLICY_HOW} A new policy is kept for '
+        '5 years. The X on this card cancels the policy."',
+        ' PMR_POLICY_CHANGE_LOCK_TT:0 "See every policy. A policy is kept for 5 years once adopted: this one can be '
+        f'swapped or cancelled in #v [{var("pmr_policy_lock_m")}|0]#! months."',
+        f' PMR_POLICY_LOCKED_FOR:0 "#N Locked, [{var("pmr_policy_lock_m")}|0] months#!"',
+        ' PMR_POLICY_CANCEL_TT:0 "#header Cancel Policy#!\\nEnds this policy and the authority it uses. You can adopt '
+        'another at once."',
         ' PMR_POLICY_WINDOW_TITLE:0 "Economic Policies"',
-        f' PMR_POLICY_WINDOW_INTRO:0 "{POLICY_INTRO}"',
         f' PMR_POLICY_COST:0 "@aut! #v [{COUNTRY}.MakeScope.ScriptValue(\'pmr_policy_cost\')|0]#! Authority"',
         f' PMR_POLICY_PAID:0 "@aut! #v [{var("pmr_policy_paid")}|0]#! Authority"',
         ' pmr_policy_authority:0 "Economic Policy"',
@@ -1842,7 +1901,7 @@ def localization(types):
         ' PMR_FD_DOMESTIC:0 "Domestic"',
         f' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\nTilts where investors build. Each notch from the '
         f'middle makes every building in your states weigh as if it earned #v @money!{FD_STEP / CORP_BONUS * 10:g}#! more '
-        '(toward Domestic) or less (toward Foreign) a worker. Foreign investors weigh your states the same way. Toward '
+        '(toward Domestic) or less (toward Foreign) a worker a year. Foreign investors weigh your states the same way. Toward '
         'Foreign, your investors need investment rights abroad, or the pool waits for something at home worth it."',
     ]
     mid = (FD_NOTCHES + 1) // 2
@@ -1852,7 +1911,7 @@ def localization(types):
         d = (n - mid) * FD_STEP / CORP_BONUS * 10
         what = ('the game\'s own weighting' if d == 0 else
                 f'buildings in your states weigh as if they earned {"#P" if d > 0 else "#N"} @money!{abs(d):g}#! '
-                f'{"more" if d > 0 else "less"} a worker')
+                f'{"more" if d > 0 else "less"} a worker a year')
         loc.append(f' PMR_FD_NOTCH_{n}:0 "#bold {names[n]}#!: {what}"')
     for i, (k, name, _p) in enumerate(OWNERS):
         loc.append(f' PMR_PO_NAME_{k}:0 "{name}"')
@@ -1993,10 +2052,10 @@ def write_all(game, write, header_text, out=None):
     if out:
         btype, parent = building_groups(game)
         rpath = os.path.join(out, 'common', 'buildings', 'pmr_retool_buildings.txt')
-        text, n = patch_retool_ai(open(rpath, encoding='utf-8-sig').read(), btype, parent)
+        invest = {f'building_{s}' for s, _g, _c in types}
+        text, n = patch_retool_ai(open(rpath, encoding='utf-8-sig').read(), btype, parent, invest)
         write('common/buildings/pmr_retool_buildings.txt', text)
         owners = company_owners(game)
-        invest = {f'building_{s}' for s, _g, _c in types}
         wrapped, patched, done = [], [], set()
         # generate.py's building files, this feature's copy of SOURCE_FILE, and the vanilla files holding other
         # investable types (06_urban_center.txt: the art academy and the power plant), shadowed
