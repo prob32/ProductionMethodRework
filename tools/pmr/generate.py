@@ -96,6 +96,10 @@ RETOOL_SLOTS = 5           # private retool buildings per building type; each st
 # bg_pmr_retool with foreign_investment_ai_factor = 0 (vanilla's building-group weight for investing abroad), and
 # ABROAD_SLOT opens only where the player owns levels abroad (pmr_abroad_<b>), in bg_pmr_retool_abroad, so the
 # player's pool finds a state its investors may build in.
+# Pat, 2026-10-13 22:37Z: still only home retooling, with the West Bengal coal mine's abroad slot open since 1839.
+# The state pick tests can_build_private as the host's investors would (pmr_retool_investor_abroad_<b>), so the
+# abroad slot lets the host pass; and its Focus on Infrastructure weight is the investor's, not the host's
+# (private_investment.py, pmr_reinvest_mult_abroad_<g>).
 ABROAD_SLOT = RETOOL_SLOTS
 # Pat, 2026-10-13: private retool buildings get a crew so investors can expand them. 1.14.5's AI
 # expands no building under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8) employment unless it
@@ -292,6 +296,7 @@ OTHER_LANGUAGES = ('braz_por', 'french', 'german', 'japanese', 'korean', 'polish
                    'spanish', 'turkish')
 # The release build keeps only these log lines: the loop breaker's, and the one saying the mod loaded.
 RELEASE_LOGS = ('TRIP', 'AUTO_TRIP', 'LOADED')
+RELEASE = False   # set by main(): --release, so code that only feeds the log is left out
 
 
 # ---------------------------------------------------------------------------------------------
@@ -549,6 +554,8 @@ def main():
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
+    global RELEASE
+    RELEASE = args.release
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
         raise SystemExit('--trace-from takes a game date like 1838.8.15 and never goes into a release build')
     args.out = args.out or (RELEASE_OUT if args.release else DEFAULT_OUT)
@@ -814,7 +821,7 @@ def main():
 
     def write(rel, text, bom=True):
         if args.release and rel.endswith('.txt'):
-            text = unlogged.sub('', text)
+            text = drop_empty(unlogged.sub('', text))
         if args.trace_from and rel.endswith('.txt'):
             text = add_trace(rel, text, args.trace_from)
         path = os.path.join(args.out, rel)
@@ -1050,6 +1057,11 @@ def main():
     # (AUTONOMOUS_INVESTMENT_COMPANY_TARGET_STATE_WITH_BUILDING_CONSTRUCTION_FACTOR), which is how
     # retool levels stack. A company-owned building retools either way: its headquarters owns levels
     # the way a Financial District does, so levels_owned_by_country counts them for its country.
+    # Pat, 2026-10-13 22:53Z: the retooling of a company's additional industries (extension_building_types, the
+    # industry charter's choice) too. 1.14.5 gives script no way to read which one the charter picked (no trigger,
+    # value or effect names it; only the company panel does), so both are listed in building_types all the time:
+    # a company may own the retooling of an additional industry it has not chosen, and its panel shows those icons.
+    # In extension_building_types they would be offered as additional industries of their own instead.
     report['company_types'] = []
     if COMPANY_RETOOL:
         retool_of = {t[0]: priv_slots(short(t[0]))[:COMPANY_RETOOL_SLOTS]
@@ -1061,10 +1073,14 @@ def main():
                 if not bt or not bt.is_block:
                     continue
                 listed = pdx.items(bt)
-                new = [(x, rbx) for x in listed if x in retool_of for rbx in retool_of[x] if rbx not in listed]
+                ext = pdx.get(cn.value, 'extension_building_types')
+                extra = [x for x in (pdx.items(ext) if ext and ext.is_block else []) if x not in listed]
+                new = [(x, rbx) for x in listed + extra if x in retool_of for rbx in retool_of[x] if rbx not in listed]
                 if not new:
                     continue
-                csrc.inserts.append((bt.end - 1, ''.join(f'\t{rbx}  # PMR: retooling of {x}\n\t' for x, rbx in new)))
+                csrc.inserts.append((bt.end - 1, ''.join(f'\t{rbx}  # PMR: retooling of {x}'
+                                                          + (' (additional industry)' if x in extra else '') + '\n\t'
+                                                          for x, rbx in new)))
                 report['company_types'].append({'company': ck, 'file': csrc.name, 'added': [rbx for _, rbx in new]})
             if csrc.inserts:
                 write(f'common/company_types/{csrc.name}', csrc.render())
@@ -1239,6 +1255,22 @@ def log(rec, bk, b, k, extra=''):
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk};'
             f"to={v('pmr_to', 0)};level={v('pmr_level', 0)};levels={levels};"
             f"p={v('pmr_p', 3)};to_retool={v('pmr_need', 0)}{extra}\" }}")
+
+
+# What the release build's stripped log lines leave behind: an if or else_if with nothing but its limit, an else
+# with nothing at all. They do nothing but still run their checks, several in every building's monthly tick. An if
+# followed by an else or else_if is kept, as removing it would change the chain.
+EMPTY_IF = re.compile(r'(?:(?<![\w])|\belse_)if = \{ limit = \{ (?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})* \}[ \t]*\}'
+                      r'(?![ \t\n]*else)')
+EMPTY_ELSE = re.compile(r'\n[ \t]*else = \{[ \t]*\}(?=[ \t]*\n)|(?<=\}) else = \{[ \t]*\}')
+
+
+def drop_empty(text):
+    while True:
+        new = EMPTY_ELSE.sub('', EMPTY_IF.sub('', text))
+        if new == text:
+            return text
+        text = new
 
 
 def flush_log(rec, bk, extra=''):
@@ -1678,6 +1710,7 @@ RETOOL_TRIGGERS_DOC = """# State scope. pmr_retool_room_gov_<b>: true while the 
 # pmr_retool_room_priv_<b>_<n>: the same for private retool building n, against pmr_cap_priv<n>_<b>.
 # pmr_retool_investor_<b>: true when scope:investor_country's investors own part of the building, so
 # an investment agreement alone does not let a foreign pool retool it.
+# pmr_retool_investor_abroad_<b>: the same for the abroad slot, where the host's own investors also pass.
 
 """
 
@@ -1711,9 +1744,11 @@ def retool_buildings(b, bk, icon):
                    '\townership_type = self\n'
                    f'\tcan_build_government = {{ always = no }}\n'
                    '\t# This one open, room left under its cap, and only investors from a country whose investors\n'
-                   '\t# own part of the building.\n'
+                   '\t# own part of the building'
+                   + (', or the host\'s, whose check the game makes first (pmr_retool_investor_abroad_<b>)'
+                      if j == ABROAD_SLOT else '') + '.\n'
                    f'\tcan_build_private = {{\n\t\thas_variable = {flag}\n\t\tpmr_retool_room_priv_{b}_{j} = yes\n'
-                   f'\t\tpmr_retool_investor_{b} = yes\n\t}}\n')
+                   f'\t\tpmr_retool_investor{"_abroad" if j == ABROAD_SLOT else ""}_{b} = yes\n\t}}\n')
             pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_dummy'
         elif side == 'gov':
             flag = f'pmr_retool_open_gov_{b}'
@@ -1805,6 +1840,22 @@ def retool_triggers(b, bk):
         f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
         '\t}\n'
         f'\ttrigger_else = {{\n\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value >= 1 }} }}\n\t}}\n'
+        '}\n')
+    # The abroad slot (ABROAD_SLOT): any investors who own part of the building, and the host's own whatever they
+    # own. The investment AI picks a building type's one candidate state by testing can_build_private with the
+    # state's owner as scope:investor_country, and only then tests the investor itself (inferred from Pat's
+    # autosaves of 1 July 1839 and 1 January 1841: Britain's abroad slots were picked in exactly the states where
+    # the host's own investors owned levels, e.g. the Mysore coffee plantation and Quebec shipyard, and never in
+    # West Bengal, whose coal and iron mines Britain owns whole). So the host must pass for the player's investors
+    # to be offered the state at all; its own investors may then retool there too.
+    out.append(
+        f'pmr_retool_investor_abroad_{b} = {{\n'
+        '\texists = scope:investor_country\n'
+        f'\texists = b:{bk}\n'
+        '\tOR = {\n'
+        '\t\towner = scope:investor_country\n'
+        f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value >= 1 }} }}\n'
+        '\t}\n'
         '}\n')
     return '\n'.join(out)
 
@@ -2219,11 +2270,12 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                 + on_index('pmr_to', lambda i: f'if = {{ limit = {{ var:pmr_elec = 0 }} {setv("pmr_room", 0)} {setv("pmr_elec_wait", 1)} }}'
                            if i in elec_tiers else f'{setv("pmr_elec_wait", 0)}')
                 if elec_tiers else '') +
-             '\t# Diagnostic for the log: may the home investment pool fund this building\'s private retooling?\n'
-             '\tif = {\n\t\tlimit = { owner = { is_player = yes } }\n'
-             '\t\towner = { save_temporary_scope_as = investor_country }\n'
-             f'\t\tif = {{ limit = {{ pmr_retool_investor_{b} = yes }} {setv("pmr_inv_home", 1)} }}\n'
-             f'\t\telse = {{ {setv("pmr_inv_home", 0)} }}\n\t}}\n'
+             ('' if RELEASE else
+                '\t# Diagnostic for the log: may the home investment pool fund this building\'s private retooling?\n'
+                '\tif = {\n\t\tlimit = { owner = { is_player = yes } }\n'
+                '\t\towner = { save_temporary_scope_as = investor_country }\n'
+                f'\t\tif = {{ limit = {{ pmr_retool_investor_{b} = yes }} {setv("pmr_inv_home", 1)} }}\n'
+                f'\t\telse = {{ {setv("pmr_inv_home", 0)} }}\n\t}}\n') +
              f'\t{setv("pmr_room_gov", "var:" + v("pmr_retool_gov"))}\n'
              f'\t{chg("pmr_room_gov", "subtract", "var:" + v("pmr_pending_gov"))}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} < 0 }} {setv("pmr_room_gov", 0)} }}\n'
@@ -2461,8 +2513,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\tpmr_progress_{b} = yes\n'
              f'\tpmr_mix_{b} = yes\n'
              f'\tpmr_blend_{b} = yes\n'
-             '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
-             f'\tif = {{ limit = {{ owner = {{ is_player = yes }} }} pmr_read_blend_{b} = yes }}\n'
+             + ('' if RELEASE else
+                '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
+                f'\tif = {{ limit = {{ owner = {{ is_player = yes }} }} pmr_read_blend_{b} = yes }}\n')
              + (f'\tpmr_opts_{b} = yes\n' if opts else '') +
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
              f'\t\tset_variable = {v("pmr_retooling")}\n'
@@ -2472,7 +2525,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t\telse = {{ {log("TICK", bk, b, k, extra=split)} }}\n'
              '\t}\n'
              '\telse = {\n'
-             f'\t\tpmr_close_retool_{b} = yes\n'
+             '\t\t# Without the gate nothing is open, queued or standing: the close that removed it removed the last\n'
+             '\t\t# site, and no site can be built without it (potential). So a quiet building skips the close.\n'
+             f'\t\tif = {{ limit = {{ has_variable = pmr_retool_gate_{b} }} pmr_close_retool_{b} = yes }}\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = {v("pmr_retooling")} }}\n'
              f'\t\t\tremove_variable = {v("pmr_retooling")}\n'
              f'\t\t\t{log("DONE", bk, b, k, extra=done)}\n'
@@ -2570,15 +2625,15 @@ pmr_read_elec = {
 		set_variable = { name = pmr_elec value = 1 }
 	}
 	else = { set_variable = { name = pmr_elec value = 0 } }
-	# pool and unemployment are read only for the log, so only in the player's states
+''' + ('}\n\n' if RELEASE else '''	# pool and unemployment are read only for the log, so only in the player's states (not in a release build)
 	if = {
 		limit = { owner = { is_player = yes } }
 		set_variable = { name = pmr_pool value = 0 }
 ''' + ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ owner = {{ investment_pool >= {x} }} }} set_variable = {{ name = pmr_pool value = {x} }} }}\n'
-              for j, x in enumerate((100000, 10000, 1000, 100))) + \
-        '\t\tset_variable = { name = pmr_unemp value = 0 }\n' + \
+              for j, x in enumerate((100000, 10000, 1000, 100))) +
+        '\t\tset_variable = { name = pmr_unemp value = 0 }\n' +
         ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ state_unemployment_rate > {fmt(x / 100)} }} set_variable = {{ name = pmr_unemp value = {x} }} }}\n'
-                for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n'
+                for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n')
 
 
 def dispatch_effects(buildings):

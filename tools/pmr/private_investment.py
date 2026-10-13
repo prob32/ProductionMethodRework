@@ -481,6 +481,24 @@ def script_values():
         out += (f'pmr_reinvest_mult_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
                 f'\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
                 f'\t\tvalue = owner.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n')
+    # Pat, 2026-10-13 22:37Z: the player's investors, on Focus on Infrastructure with Resources at the top, retooled
+    # only at home, x100 there and x1 abroad, as the host's card was read. The abroad slot reads the investors' own
+    # card where the game names them (scope:investor_country) and the player's otherwise (pmr_reinvest_<g>, a global
+    # the player's weekly clock keeps): the slot opens only where the player's levels need retooling.
+    out += ('# Country scope: the country\'s own Focus on Infrastructure multiplier for a group (as pmr_reinvest_mult_<g>).\n')
+    for g in keys:
+        v = VAR.format(g)
+        out += (f'pmr_reinvest_own_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\thas_modifier = pmr_policy_reinvest\n'
+                f'\t\t\thas_variable = {v}\n\t\t}}\n\t\tvalue = var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n')
+    out += ('# State scope, multiplied into the abroad retool slot\'s ai_value: the investors\' own multiplier where the game\n'
+            '# names them, else the player\'s (pmr_reinvest_<g>, set by pmr_reinvest_publish).\n')
+    for g in keys:
+        v = VAR.format(g)
+        out += (f'pmr_reinvest_mult_abroad_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\texists = scope:investor_country\n'
+                f'\t\t\tscope:investor_country = {{\n\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
+                f'\t\tvalue = scope:investor_country.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n'
+                f'\telse_if = {{\n\t\tlimit = {{\n\t\t\tNOT = {{ exists = scope:investor_country }}\n'
+                f'\t\t\thas_global_variable = pmr_reinvest_{g}\n\t\t}}\n\t\tvalue = global_var:pmr_reinvest_{g}\n\t}}\n}}\n\n')
     # The contributors chart: privately owned levels per priority group (the game's per-building amounts exist only
     # as text). private_ownership_fraction is a comparison, so a building's private share is read to the nearest
     # quarter.
@@ -724,6 +742,7 @@ def on_actions():
             '\t\tpmr_policy_ai_pick = yes\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
             '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
+            '\t\t\tpmr_reinvest_publish = yes\n'
             '\t\t\tpmr_pi_start_clock = yes\n\t\t}\n'
             '\t}\n}\n\n'
             '# Root = building, a level of it starting construction (the Recent Investments bars).\n'
@@ -782,6 +801,11 @@ def policy_effects():
             + ''.join(f'\t\t\t1 = {{\n\t\t\t\ttrigger = {{ {can(k)} }}\n\t\t\t\tpmr_policy_adopt_{k} = yes\n\t\t\t}}\n'
                       for k in picks)
             + '\t\t}\n\t}\n}\n\n')
+    out += ('# Country scope, the player (weekly clock, monthly pulse): its Focus on Infrastructure multipliers as globals,\n'
+            '# read by the abroad retool slot (pmr_reinvest_mult_abroad_<g>).\n'
+            'pmr_reinvest_publish = {\n'
+            + ''.join(f'\tset_global_variable = {{ name = pmr_reinvest_{g} value = pmr_reinvest_own_{g} }}\n' for g, *_r in GROUPS)
+            + '}\n\n')
     out += ('pmr_ipw_weekly = {\n'
             '\tif = {\n\t\tlimit = { has_variable = pmr_fd_wk }\n\t\tchange_variable = { name = pmr_fd_wk add = -1 }\n'
             '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tvar:pmr_fd_wk <= 0\n'
@@ -825,7 +849,7 @@ def events():
             'pmr_pi.1 = {\n\ttype = country_event\n\thidden = yes\n\timmediate = {\n\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
             '\t\t\tset_variable = { name = pmr_pi_clock days = 9 }\n'
             '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
-            '\t\t\tpmr_pc_record = yes\n\t\t\tpmr_rw_record = yes\n\t\t\tpmr_ipw_weekly = yes\n'
+            '\t\t\tpmr_pc_record = yes\n\t\t\tpmr_rw_record = yes\n\t\t\tpmr_ipw_weekly = yes\n\t\t\tpmr_reinvest_publish = yes\n'
             '\t\t\ttrigger_event = { id = pmr_pi.1 days = 7 }\n\t\t}\n\t}\n}\n')
 
 
@@ -1806,7 +1830,8 @@ def patch_retool_ai(text, btype, parent, invest):
             edits.append((f.start(), f'\t\t\t# PMR: the building\'s own ai_value and earnings\n\t\t\tvalue = pmr_ai_value_{b}\n'
                                      f'\t\t\tif = {{ limit = {{ has_variable = pmr_earn_{b} }} add = {{ value = var:pmr_earn_{b} '
                                      f'multiply = {PROFIT_WEIGHT} }} }}\n', f.end()))
-        edits.append((close, f'\t# PMR: Re-invest card, x the {g} priority\n\t\tmultiply = pmr_reinvest_mult_{g}\n\t', close))
+        mult = f'pmr_reinvest_mult_abroad_{g}' if 'building_group = bg_pmr_retool_abroad' in text[o:c] else f'pmr_reinvest_mult_{g}'
+        edits.append((close, f'\t# PMR: Re-invest card, x the {g} priority\n\t\tmultiply = {mult}\n\t', close))
         n += 1
     if not n:
         fail('pmr_retool_buildings.txt', 'found no private retool buildings')

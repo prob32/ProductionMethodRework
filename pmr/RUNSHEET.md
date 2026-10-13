@@ -1,4 +1,4 @@
-# PMR run sheet: the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -9,6 +9,33 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
+
+## Latest: your investors retool abroad, and companies own their additional industries' retooling (your current save works)
+
+The release build writes no `PMR;rec=` lines, so these are read in the game's own panels. Load
+`autosave_exit` (January 1841, Great Britain) and keep Strongly Foreign, Resources at the top and Focus on
+Infrastructure as they were.
+
+1. **Retool sites abroad appear.** Run 3 months at any speed. The AI looks at each building type again
+   about once a month, so give it that long. Then open West Bengal's buildings (or the construction queue
+   with the location filter on India): expect **Retooling: Coal Mines** or **Retooling: Iron Mines** there,
+   or in Madras, Agra, Central Provinces or Gujarat (iron, textile, fishing). Your Private queue should show
+   some of them beside the home coal mines.
+   - A site there that **isn't** in your Private queue was built by the East India Company's own
+     investors. The game checks the host's investors before yours, so they may now retool there too. Your
+     levels get retooled either way; tell me if you want them kept out at the cost of slower retooling.
+   - **What a null means:** after 3 months, no retool site anywhere in India, and your queue still holds
+     only home coal mines. Then the fix did not take. Send me the newest autosave; it records each building
+     type's chosen state.
+2. **The West Bengal coal mine** (2 levels yours, 2 your investors'): the investors' 2 levels should reach
+   your newest recipe once its site completes. Its bar then shows them on the newest recipe. A null here is
+   the same as in item 1.
+3. **The East India Company panel**: Available Industries gains four icons, Silk and Sugar Plantations twice
+   each (home and abroad retooling), whether or not you chartered them. 1.14.5 gives script no way to read
+   the charter's choice, so a company lists its additional industries' retooling all the time. **Null:** the
+   same ten icons as before means the company files did not load; check `error.log` for `company_types`.
+4. **Speed**: nothing to see. Four small savings, none changing what happens in game: a building with nothing
+   to retool skips the retooling cleanup, and the release build drops checks that only fed log lines.
 
 ## Latest: a building targets the newest recipe you have, and the Foreign or Domestic bar counts (your current save works)
 
