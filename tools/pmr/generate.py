@@ -719,7 +719,9 @@ def tick_effect(bk, b, recipes):
     # switching lock _any is active. To change share, the lock moves to _any (the running share stays
     # unlocked), then the share moves (the new one is unlocked), then the lock moves to the new step:
     # no step ever locks out the running share method, so the game never has to replace it itself.
-    # A lock left off its step for any reason is put back on the next tick.
+    # A lock left off its step for any reason is put back on the next tick. Each activation checks
+    # first that its method is not already running: activating a running share again counted its
+    # goods twice (see pmr_tick_<b>).
     def pm(kind, i, n):
         return f'pm_pmr_{kind}_{b}_{i}_{n}'
 
@@ -746,7 +748,7 @@ def tick_effect(bk, b, recipes):
             o.append(f'\t{kw} = {{\n\t\tlimit = {{ var:{v(f"pmr_n_{i}")} = {n} }}\n'
                      f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ {pm_active("share", i, n)} }} }}\n'
                      f'\t\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, "any")} }} }} {act("key", i, "any")} }}\n'
-                     f'\t\t\t{act("share", i, n)}\n\t\t}}\n'
+                     f'\t\t\tif = {{ limit = {{ NOT = {{ {pm_active("share", i, n)} }} }} {act("share", i, n)} }}\n\t\t}}\n'
                      f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, n)} }} }} {act("key", i, n)} }}\n\t}}\n')
     o.append('}\n\n')
 
@@ -949,7 +951,19 @@ def tick_effect(bk, b, recipes):
              f";room_gov={f('pmr_room_gov')};room_priv={f('pmr_room_priv')}")
     done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
 
+    # Every method change, including the tick's own, fires on_production_method_changed, and its tick
+    # runs inside the change (seen in 1.14.5: a SWITCH line logged before the line of the tick that
+    # made the switch, and about ten identical lines per change). Re-entered that way, the outer tick
+    # re-activated a share the inner tick had already applied, and the game then counted that share's
+    # goods twice (Pat's Sicily sulfur mine, two identical "(… of levels)" lines per switched recipe;
+    # cause inferred from the log order).
+    # So only the outermost tick runs; the flag expires after a day in case a tick never finishes.
     o.append(f'pmr_tick_{b} = {{\n'
+             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_busy_{b} }} }}\n'
+             f'\t\tset_variable = {{ name = pmr_busy_{b} value = yes days = 1 }}\n'
+             f'\t\tpmr_tick_body_{b} = yes\n'
+             f'\t\tremove_variable = pmr_busy_{b}\n\t}}\n}}\n\n')
+    o.append(f'pmr_tick_body_{b} = {{\n'
              f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
              f'\tpmr_best_{b} = yes\n'
              '\t# First sight (game start, a new building, or a save from before the level mix): every\n'

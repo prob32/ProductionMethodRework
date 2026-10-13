@@ -19,26 +19,31 @@ alone, step 4 below grants one technology to you only.
 
 ## What changed in this build
 
-- **Goods counted once.** A building whose shares the tick had changed listed its inputs and outputs
-  about twice over: Sicily's 11-level sulfur mine at 25/10/25/40 showed tools 255, coal 101 and oil 42
-  where its blend comes to about 130, 50 and 21, and its oil tooltip showed two share lines although
-  only **Diesel Pump** uses oil. Buildings still on their starting share were right. The tick now switches a share
-  through a switching lock, so the running share is never locked out mid-change. The cause is inferred:
-  the game replaced the locked-out share itself, and the tick then applied the same share again.
+- **Goods counted once.** A building whose shares the tick had changed listed each switched recipe
+  twice: Sicily's sulfur mine showed **Condensing Engine Pump (15% of levels)** and **Diesel Pump
+  (10% of levels)** twice each in its Modifiers tab, and its inputs at about twice its blend.
+  Buildings still on their starting share were right. A method change runs the tick it triggers
+  inside the change, so one level landing ran about ten ticks nested in each other, and the log shows
+  it (`SWITCH` written before the line of the tick that made the switch). Now only the outermost tick
+  runs, and no share is activated while it already runs. Why the nesting doubled the goods is
+  inferred: the outer tick activated again a share the inner one had already applied. The first try
+  at this, the switching lock, stays: it does no harm and keeps the running share unlocked mid-change.
 
 ### The doubling check, first
 
 1. Load your save (or start a new game) and open the Sicily sulfur mine, or any building with two
    recipes in its bar.
-2. Hover each input. Each recipe appears **once**, as **Recipe (… of levels)**, and the figure is
-   that line times the throughput. Sicily's tools, coal and oil should be about half what they were
-   at the same employment.
-3. Let a retool level land on that building, then hover again. Still once.
+2. Open its **Modifiers** tab and hover each input. Each recipe appears **once**, as **Recipe (…
+   of levels)**, and the figure is that line times the throughput. Sicily's tools, coal and oil
+   should be about half what they were at the same employment.
+3. Let a retool level land on that building, then hover again. Still once, and the log has one
+   `rec=TICK` line for that building on that day, not ten.
 
 | You see | It means |
 | --- | --- |
 | Right after loading, each recipe once and the figures halved, and still once after a level lands | Fixed. |
-| Right after loading, each recipe once, but a recipe is listed twice again after a level lands | Loading cleared it, and the switching lock did not stop it. The doubling comes from the switch itself. Send me that building's `PMR;rec=` lines for that day and the tooltip. |
+| Right after loading, each recipe once, but a recipe is listed twice again after a level lands | The guard did not stop it. Send me that building's `PMR;rec=` lines for that day and the Modifiers tab. |
+| A landing day still writes many identical `rec=TICK` lines for one building | The guard flag is not holding, so ticks still nest. Send me a few of the lines. |
 | Right after loading, a recipe is still listed twice | The doubling is saved with the building, not made at runtime, so loading does not clear it. A new game is the test of this build; send me the tooltip either way. |
 | A tier's `active` reads `-1`, or `active` and `blend` differ on two lines in a row for one building | The switching lock left a share group without a method. Send me the lines. |
 
