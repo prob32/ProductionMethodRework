@@ -6,6 +6,10 @@ testing; it rewrites the mod folder in place.
 
     python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"
 
+With ``--release`` it writes the build players get, to pmr/release/ProductionMethodRework: no "PMR test:"
+decisions, no GENERATION_REPORT.json, and no PMR log lines but TRIP (the loop breaker) and LOADED. The default
+build keeps them for testing.
+
 What it does, building by building (see pmr/README.md for the design):
 
 1. The building gets one extra production method group, ``pmg_pmr_labour_<b>``, holding one
@@ -213,6 +217,12 @@ RETOOL_BACKGROUND = 'gfx/interface/icons/building_icons/backgrounds/building_pan
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_OUT = os.path.join(ROOT, 'pmr', MOD_NAME)
+RELEASE_OUT = os.path.join(ROOT, 'pmr', 'release', MOD_NAME)
+THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the Workshop preview, 1024 x 1024 (.metadata/thumbnail.png)
+SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
+                     'construction, and their output blends the recipes their levels run.')
+# The release build keeps only these log lines: the loop breaker's, and the one saying the mod loaded.
+RELEASE_LOGS = ('TRIP', 'LOADED')
 
 
 # ---------------------------------------------------------------------------------------------
@@ -462,9 +472,13 @@ def short(building_key):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--game', required=True, help='path to the Victoria 3 "game" folder')
-    ap.add_argument('--out', default=DEFAULT_OUT)
+    ap.add_argument('--out', default=None, help=f'default {DEFAULT_OUT}, or {RELEASE_OUT} with --release')
+    ap.add_argument('--release', action='store_true',
+                    help='the build players get: no test decisions, no generation report, no log lines but '
+                         + ' and '.join(RELEASE_LOGS))
     ap.add_argument('--version-label', default='', help='game build label written into the README header')
     args = ap.parse_args()
+    args.out = args.out or (RELEASE_OUT if args.release else DEFAULT_OUT)
     game = args.game
 
     b_srcs = load_dir(game, 'buildings', BUILDING_FILES)
@@ -647,9 +661,16 @@ def main():
     if os.path.isdir(args.out):
         for sub in ('common', 'events', 'localization', '.metadata', 'gfx', 'gui'):
             shutil.rmtree(os.path.join(args.out, sub), ignore_errors=True)
+        if args.release:    # files only the test build carries
+            for name in ('GENERATION_REPORT.json', 'RUNSHEET.md'):
+                if os.path.exists(os.path.join(args.out, name)):
+                    os.remove(os.path.join(args.out, name))
     os.makedirs(args.out, exist_ok=True)
+    unlogged = re.compile(r'debug_log = "PMR;rec=(?!(?:' + '|'.join(RELEASE_LOGS) + r');)[^"]*"')
 
     def write(rel, text, bom=True):
+        if args.release and rel.endswith('.txt'):
+            text = unlogged.sub('', text)
         path = os.path.join(args.out, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if bom and not text.startswith('\ufeff'):
@@ -983,8 +1004,10 @@ def main():
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1), bom=False)
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
-    write('common/decisions/pmr_test_decisions.txt', header + DECISIONS + world_blend_decision(options))
-    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"'] + DECISION_LOC + WORLD_LOC
+    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"']
+    if not args.release:    # the "PMR test:" decisions are for testing only: every player would see them
+        write('common/decisions/pmr_test_decisions.txt', header + DECISIONS + world_blend_decision(options))
+        loc += DECISION_LOC + WORLD_LOC
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     loc += private_investment.write_all(game, write, header, args.out)
@@ -995,13 +1018,14 @@ def main():
     write('.metadata/metadata.json', json.dumps({
         'name': 'Production Method Rework', 'id': 'org.prob32.pmr', 'version': MOD_VERSION,
         'game_id': 'victoria3', 'supported_game_version': SUPPORTED_VERSION,
-        'short_description': 'Fixed labour, tech-swapped recipes, and recipe switches that take effect '
-                             'gradually as retooling construction completes.',
+        'short_description': SHORT_DESCRIPTION,
         'tags': ['Gameplay', 'Economy'], 'relationships': [],
         'game_custom_data': {'multiplayer_synchronized': True}}, indent=2) + '\n', bom=False)
     report['settings'] = {'N': N, 'retool_share': RETOOL_SHARE, 'gov_fraction_step': GOV_FRACTION_STEP,
                           'game': args.version_label}
-    write('GENERATION_REPORT.json', json.dumps(report, indent=1) + '\n', bom=False)
+    shutil.copyfile(THUMBNAIL, os.path.join(args.out, '.metadata', 'thumbnail.png'))
+    if not args.release:
+        write('GENERATION_REPORT.json', json.dumps(report, indent=1) + '\n', bom=False)
     print(f"treated {len(report['treated'])} buildings, skipped {len(report['skipped'])}, "
           f"{len(report['blended'])} recipes blended by share ({len(blend_pms)} methods), "
           f"{len(report['company_types'])} company types may own retooling")

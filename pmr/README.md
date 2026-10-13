@@ -12,6 +12,10 @@ workforce are the mix of the recipes its levels run.
   every beta update: `python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"`.
 - `GENERATION_REPORT.json`, written into the generated mod folder, lists every building treated, every building
   skipped and why, and every recipe whose modifiers moved into share methods.
+- `--release` writes the build players get (the Workshop upload) to `pmr/release/ProductionMethodRework`: no
+  "PMR test:" decisions, no `GENERATION_REPORT.json` or `RUNSHEET.md`, and no `PMR;rec=` log lines but `TRIP` and
+  `LOADED`. Both builds carry `.metadata/thumbnail.png` (from `pmr/thumbnail.png`). Bump `MOD_VERSION` before each
+  upload.
 
 The mod output is not committed. It is generated locally from the installed game's script and copied
 into the mod folder; only the generator, the design notes and the run sheet live in the repo. Target:
