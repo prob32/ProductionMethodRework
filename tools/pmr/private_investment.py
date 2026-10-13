@@ -850,7 +850,7 @@ def retool_types(game, out):
     index = {k: i for i, (k, *_r) in enumerate(GROUPS)}
     res = []
     for k, _s, _o, _c in top_blocks(text):
-        m = re.fullmatch(r'building_pmr_retool_gov_(.+)', k) or re.fullmatch(r'building_pmr_retool_(.+)_\d+', k)
+        m = re.fullmatch(r'building_pmr_retool_gova?_(.+)', k) or re.fullmatch(r'building_pmr_retool_(.+)_\d+', k)
         if not m:
             continue
         b = m.group(1)
@@ -909,7 +909,8 @@ def invest_effects(types, retools):
                             ''.join(call(k, s, g, c, t) for k, (s, g, c, t) in enumerate(retools)).rstrip('\n').split('\n'))
             out += ('\t\telse_if = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tis_building_group = bg_pmr_retool\n'
                     '\t\t\t\t\tis_building_group = bg_pmr_retool_abroad\n'
-                    '\t\t\t\t\tis_building_group = bg_pmr_retool_gov\n\t\t\t\t}\n\t\t\t}\n' + inner + '\t\t}\n')
+                    '\t\t\t\t\tis_building_group = bg_pmr_retool_gov\n'
+                    '\t\t\t\t\tis_building_group = bg_pmr_retool_gov_abroad\n\t\t\t\t}\n\t\t\t}\n' + inner + '\t\t}\n')
         return out
     where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
              'state=[THIS.GetState.GetNameNoFormatting];building=$S$')

@@ -10,6 +10,30 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
+## Latest: your government retools its levels abroad from the upgrade button (your current save works)
+
+From your 21:26 message. Government levels abroad now go through your government construction queue, the same
+button as at home. The release build writes no PMR log lines, so every check here is something you see.
+
+No script effect can queue a construction for your government in another country's state; only the game's own
+expand can. So while your government has levels to retool in a state abroad, PMR keeps a "Retooling (Government):
+<building>" site standing there with one level owned by your government (it retools nothing itself). The upgrade
+button expands that site once per level of room (up to 8 a click). Only your own government's levels count: PMR
+reads them as the levels you and your investors own less every privately owned level, so another government's
+levels are never retooled. The Buildings tab button on a building type row still covers only your own states.
+
+1. Open a building abroad where your government owns levels on an older recipe (the West Bengal coal mine,
+   "Great Britain 1 level"), after the next 1st of the month. **Expect** a "Retooling (Government): Coal Mines"
+   site in that state and the upgrade button beside the recipe name lit; its tooltip says how many levels it queues.
+   **Null:** no site and the tooltip says 0: PMR read none of the government levels as yours (other countries'
+   investors owning levels there make it read fewer). Tell me the Owners list.
+2. Click it. **Expect** that many levels of "Retooling (Government): Coal Mines" in West Bengal in your government
+   construction queue, and the button greys. **Null:** the site stands, the tooltip shows room, but the button is
+   grey or nothing is queued: the game won't let your government expand there, so this route doesn't work in that
+   country. More queued than the tooltip said: the game doesn't recheck the room between clicks; tell me both numbers.
+3. As each level completes, the recipe bar moves a level and the Owners list's Great Britain row shows the new
+   recipe. Once every level is on it, the site goes.
+
 ## Latest: retooling weighed against the building, a 5-year policy lock, a year of weekly re-investment, retooling abroad, priorities on a timer (your current save works)
 
 From your 19:25 to 20:28 messages. Your current save works; wait for the game to reach the 1st before checking.
@@ -37,7 +61,7 @@ From your 19:25 to 20:28 messages. Your current save works; wait for the game to
   worldwide are gone.
 - **Publish review fixes** (20:53 to 20:56). Vanilla events and objectives that look for an automation method
   (Dangerous Equipment, Untrained Hands, the watertube boiler and textile mill accidents, the steam donkey objective)
-  now read PMR's recipes. Your investors no longer retool government-owned levels abroad. In a power bloc with
+  now read PMR's recipes. Your investors no longer retool government-owned levels abroad (your government does, above). In a power bloc with
   the Transport principle, railways on Steam, Electric or Diesel get +25% throughput and the principle's extra
   infrastructure (state modifiers named Transportation Infrastructure), with no retooling.
 - **Weekly Re-investment** (20:28) now holds 52 weeks, like the Investment Pool graph beside it, and its axis

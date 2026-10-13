@@ -38,6 +38,8 @@ What it does, building by building (see pmr/README.md for the design):
    building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, built
    by investors who own part of the building (the last, ABROAD_SLOT, only where the player owns
    levels abroad; the others only elsewhere), and one government one, ``building_pmr_retool_gov_<b>``, queued by the government.
+   Abroad the player's government retools its own levels on ``building_pmr_retool_gova_<b>``, a site the tick keeps
+   standing so the upgrade button can expand it into the government construction queue.
    The government retools the levels it owns that don't run the target yet; private investors the
    rest. The building panel's Owners list shows which recipes each side's levels run.
 5. Recipes switch on research: when a newer recipe becomes available the building activates it,
@@ -905,7 +907,9 @@ def main():
         loc += [f' pmg_pmr_labour_{b}:0 "Recipes"',
                 f' pm_pmr_labour_{b}:0 "Blended Recipes"',
                 f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
-                f' building_pmr_retool_gov_{b}_desc:0 "Government construction that switches the government-owned share of ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."']
+                f' building_pmr_retool_gov_{b}_desc:0 "Government construction that switches the government-owned share of ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."',
+                f' building_pmr_retool_gova_{b}:0 "Retooling (Government): ${bk}$"',
+                f' building_pmr_retool_gova_{b}_desc:0 "Your government\'s construction that switches its own levels of ${bk}$ in another country\'s state to a new recipe. One level stands while there is retooling to do, so the upgrade button can add more."']
 
         # Blended recipe: per recipe i, a share group of SHARE_STEPS + 1 methods carrying recipe i's
         # workforce-scaled modifiers x n / SHARE_STEPS, so the building's goods are the level-weighted
@@ -1081,7 +1085,12 @@ def main():
           '# AI governments by ai_value. Shaped on bg_government, which is how vanilla marks government-only\n'
           '# construction; the lens puts it in the development construction list.\n'
           'bg_pmr_retool_gov = {\n\tcategory = urban\n\tis_government_funded = yes\n\talways_possible = yes\n'
-          '\tlens = development\n\tis_shown_in_outliner = no\n}\n')
+          '\tlens = development\n\tis_shown_in_outliner = no\n}\n\n'
+          '# The player\'s government retooling its own levels abroad (Pat 2026-10-13 21:26Z). Not government-funded,\n'
+          '# like any building a government builds in another country\'s state (inferred: vanilla\'s government-funded\n'
+          '# groups are administration, military and public works, which only a state\'s owner builds).\n'
+          'bg_pmr_retool_gov_abroad = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
+          '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n')
     write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers))
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
@@ -1161,7 +1170,7 @@ def main():
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
-            ' bg_pmr_retool_gov:0 "Government Retooling"']
+            ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
         write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
         loc += DECISION_LOC
@@ -1648,6 +1657,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
 
 RETOOL_TRIGGERS_DOC = """# State scope. pmr_retool_room_gov_<b>: true while the government may add scope:num_levels more
 # retool levels in the state, against pmr_cap_gov_<b>, recomputed by pmr_split_retool_<b> every tick.
+# pmr_retool_room_gova_<b>: the same for the player's government abroad (pmr_abroad_<b>), on its own site.
 # pmr_retool_room_priv_<b>_<n>: the same for private retool building n, against pmr_cap_priv<n>_<b>.
 # pmr_retool_investor_<b>: true when scope:investor_country's investors own part of the building, so
 # an investment agreement alone does not let a foreign pool retool it.
@@ -1674,9 +1684,11 @@ def retool_buildings(b, bk, icon):
     sides = [('priv', 'bg_pmr_retool_abroad' if j == ABROAD_SLOT else 'bg_pmr_retool', rbx, j)
              for j, rbx in enumerate(priv_slots(b), 1)]
     sides.append(('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}', 0))
+    sides.append(('gova', 'bg_pmr_retool_gov_abroad', f'building_pmr_retool_gova_{b}', 0))
     for side, group, rb, j in sides:
         if side == 'priv':
             flag = f'pmr_retool_open_priv_{b}_{j}'
+            ai_limit = f'has_variable = {flag}'
             who = ('\t# Private investors only, for the privately owned share. Every building vanilla lets private\n'
                    '\t# investors build says ownership_type = self.\n'
                    '\townership_type = self\n'
@@ -1686,10 +1698,19 @@ def retool_buildings(b, bk, icon):
                    f'\tcan_build_private = {{\n\t\thas_variable = {flag}\n\t\tpmr_retool_room_priv_{b}_{j} = yes\n'
                    f'\t\tpmr_retool_investor_{b} = yes\n\t}}\n')
             pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_dummy'
+        elif side == 'gov':
+            flag = f'pmr_retool_open_gov_{b}'
+            who = ('\t# The government only, for the government-owned share, where the player owns no levels abroad\n'
+                   '\t# (there building_pmr_retool_gova_<b>, for the player\'s government only).\n'
+                   f'\tcan_build_government = {{ pmr_retool_room_gov_{b} = yes }}\n'
+                   '\tcan_build_private = { always = no }\n')
+            pmgs = 'pmg_dummy'
+            ai_limit = f'has_variable = {flag} NOT = {{ has_variable = pmr_abroad_{b} }}'
         else:
             flag = f'pmr_retool_open_gov_{b}'
-            who = ('\t# The government only, for the government-owned share.\n'
-                   f'\tcan_build_government = {{ pmr_retool_room_gov_{b} = yes }}\n'
+            who = ('\t# The player\'s government only, for its own levels abroad (pmr_abroad_<b>): the upgrade button\n'
+                   '\t# expands the site the tick keeps standing there (Building.QueueConstruction), never an AI.\n'
+                   f'\tcan_build_government = {{ pmr_retool_room_gova_{b} = yes }}\n'
                    '\tcan_build_private = { always = no }\n')
             pmgs = 'pmg_dummy'
         out.append(
@@ -1704,14 +1725,15 @@ def retool_buildings(b, bk, icon):
             + (', where the player owns levels abroad' if j == ABROAD_SLOT else '') + '.\n'
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             + who +
-            '\t# While there is room: what an expansion of the building would score from its earnings\n'
-            f'\t# (pmr_ai_w_<b>, set by the tick), x {RETOOL_AI_MULT}, so investors (or an AI government) are likelier\n'
-            '\t# to retool it than to expand it.\n'
-            f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ has_variable = {flag} }}\n'
-            f'\t\t\tvalue = {RETOOL_AI_BASE}\n'
-            f'\t\t\tif = {{ limit = {{ has_variable = pmr_ai_w_{b} }} value = var:pmr_ai_w_{b} }}\n'
-            f'\t\t\tmultiply = {RETOOL_AI_MULT}\n'
-            '\t\t}\n\t}\n'
+            ('\t# Only ever the player\'s click: no AI scores it.\n\tai_value = 0\n' if side == 'gova' else
+             '\t# While there is room: what an expansion of the building would score from its earnings\n'
+             f'\t# (pmr_ai_w_<b>, set by the tick), x {RETOOL_AI_MULT}, so investors (or an AI government) are likelier\n'
+             '\t# to retool it than to expand it.\n'
+             f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ {ai_limit} }}\n'
+             f'\t\t\tvalue = {RETOOL_AI_BASE}\n'
+             f'\t\t\tif = {{ limit = {{ has_variable = pmr_ai_w_{b} }} value = var:pmr_ai_w_{b} }}\n'
+             f'\t\t\tmultiply = {RETOOL_AI_MULT}\n'
+             '\t\t}\n\t}\n') +
             f'\trequired_construction = pmr_retool_cost_{b}\n'
             f'\tproduction_method_groups = {{\n\t\t{pmgs}\n\t}}\n'
             f'\tbackground = "{RETOOL_BACKGROUND}"\n}}\n')
@@ -1720,9 +1742,20 @@ def retool_buildings(b, bk, icon):
 
 def retool_triggers(b, bk):
     rbg = f'building_pmr_retool_gov_{b}'
+    rbga = f'building_pmr_retool_gova_{b}'
     cap = f'pmr_cap_gov_{b}'
     out = [
+        f'pmr_retool_room_gova_{b} = {{\n'
+        f'\thas_variable = pmr_abroad_{b}\n'
+        f'\thas_variable = {cap}\n'
+        '\ttrigger_if = {\n'
+        f'\t\tlimit = {{ exists = b:{rbga} }}\n'
+        f'\t\tb:{rbga} = {{ level_after_queued_constructions <= pmr_room_value_gov_{b} }}\n'
+        '\t}\n'
+        f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
+        '}\n',
         f'pmr_retool_room_gov_{b} = {{\n'
+        f'\tNOT = {{ has_variable = pmr_abroad_{b} }}\n'
         f'\thas_variable = {cap}\n'
         '\t# b: finds the retool building even while all of it is still queued (seen in 1.14.5).\n'
         '\ttrigger_if = {\n'
@@ -1771,8 +1804,14 @@ def gov_retool_sgui(bk):
     b = short(bk)
     return (f'pmr_gov_retool_{b}_sgui = {{\n\tscope = state\n'
             f'\tis_shown = {{ exists = b:{bk} }}\n'
-            f'\tis_valid = {{ has_variable = pmr_retool_open_gov_{b} }}\n'
-            f'\teffect = {{ pmr_queue_gov_{b} = yes }}\n}}\n\n')
+            f'\tis_valid = {{ has_variable = pmr_retool_open_gov_{b} NOT = {{ has_variable = pmr_abroad_{b} }} }}\n'
+            f'\teffect = {{ pmr_queue_gov_{b} = yes }}\n}}\n\n'
+            '# Abroad the button queues through the game (Building.QueueConstruction on the standing site), then this\n'
+            '# ticks the building so the room, and with it the button, drops to what is left.\n'
+            f'pmr_gov_retool_tick_{b}_sgui = {{\n\tscope = state\n'
+            f'\tis_shown = {{ exists = b:{bk} }}\n'
+            f'\tis_valid = {{ has_variable = pmr_abroad_{b} }}\n'
+            f'\teffect = {{ pmr_tick_{b} = yes }}\n}}\n\n')
 
 
 def gov_retool_country_sgui(bk):
@@ -1829,6 +1868,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
         return (f'has_variable = pmr_abroad_{b}' if j == ABROAD_SLOT
                 else f'NOT = {{ has_variable = pmr_abroad_{b} }}')
     rbg = f'building_pmr_retool_gov_{b}'
+    rbga = f'building_pmr_retool_gova_{b}'   # the player's government's site abroad
     v = lambda name: f'{name}_{b}'           # noqa: E731  state variable for this building type
     lv = lambda i: v(f'pmr_lv_{i}')          # noqa: E731
     lvg = lambda i: v(f'pmr_lvg_{i}')        # noqa: E731  of those, the government's
@@ -1953,7 +1993,18 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t{chg("pmr_gov_levels", "multiply", "var:" + v("pmr_gov_frac"))}\n'
              f'\tround_variable = {{ name = {v("pmr_gov_levels")} nearest = 1 }}\n'
              '\t# Abroad (pmr_abroad_<b>) too: the player\'s investors retool only privately owned levels there, never a\n'
-             '\t# government\'s (Pat 2026-10-13 20:54Z). The fraction counts every government\'s levels together.\n'
+             '\t# government\'s (Pat 2026-10-13 20:54Z). The fraction counts every government\'s levels together, so the\n'
+             '\t# player\'s own government levels (pmr_gov_mine_<b>), which its government retools through its own\n'
+             '\t# construction queue (Pat 21:26Z), are read as at least the levels the player and its investors own\n'
+             '\t# less every privately owned level, and never more than all the governments\' levels.\n'
+             f'\t{setv("pmr_gov_mine", 0)}\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} has_global_variable = pmr_player var:{v("pmr_gov_levels")} > 0 }}\n'
+             f'\t\t{setv("pmr_gm_n", f"b:{bk}.level")}\n'
+             f'\t\t{chg("pmr_gm_n", "subtract", "var:" + v("pmr_gov_levels"))}\n'
+             f'\t\twhile = {{\n\t\t\tlimit = {{\n\t\t\t\tvar:{v("pmr_gov_mine")} < var:{v("pmr_gov_levels")}\n'
+             f'\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = global_var:pmr_player value > state.var:{v("pmr_gm_n")} }} }}\n'
+             '\t\t\t}\n'
+             f'\t\t\t{chg("pmr_gov_mine", "add", 1)}\n\t\t\t{chg("pmr_gm_n", "add", 1)}\n\t\t}}\n\t}}\n'
              '}\n\n')
 
     # Which recipes the government's own levels run (pmr_lvg_<i>), so it retools only those. Pat,
@@ -2010,7 +2061,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                 f'\t{chg("pmr_pending", "add", "var:" + v("pmr_pending_gov"))}\n')
     o.append(f'pmr_read_retool_{b} = {{\n'
              '\t# A retool still entirely under construction may not count for has_building.\n'
-             + ''.join(read_side(rbx, f'priv{j}') for j, rbx in slots) + read_side(rbg, 'gov') + totals() +
+             + ''.join(read_side(rbx, f'priv{j}') for j, rbx in slots) + read_side(rbg, 'gov') + read_side(rbga, 'gova')
+             + '\t# the player\'s government\'s site abroad is the government side there\n'
+             f'\t{chg("pmr_retool_built_gov", "add", "var:" + v("pmr_retool_built_gova"))}\n'
+             f'\t{chg("pmr_retool_q_gov", "add", "var:" + v("pmr_retool_q_gova"))}\n'
+             + totals() +
              '}\n\n')
 
     # A government retool building whose levels are all counted and with nothing queued on it is
@@ -2019,10 +2074,13 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     # the crew is still short RETOOL_CREW_GRACE_DAYS after its last level landed. Never removed while
     # anything is queued on it (that leaves a NULL_STATE construction).
     def release(rbx, side, keep=''):
-        seen = 'pmr_seen_gov' if side == 'gov' else 'pmr_seen_priv'
+        seen = 'pmr_seen_gov' if side.startswith('gov') else 'pmr_seen_priv'
         built = v('pmr_retool_built_' + side)
         # A crewed private one may still have staff when it goes: logged (flush_log) in case that hangs.
-        crumb = '' if side == 'gov' else f"\t\t{flush_log('RELEASE', rbx, f';built=[THIS.Var({built!r}).GetValue|0]')}\n"
+        crumb = '' if side.startswith('gov') else f"\t\t{flush_log('RELEASE', rbx, f';built=[THIS.Var({built!r}).GetValue|0]')}\n"
+        # the abroad site's levels are also in the government side's totals
+        merged = (f'\t\t{chg("pmr_retool_built_gov", "subtract", "var:" + built)}\n'
+                  f'\t\t{chg("pmr_retool_q_gov", "subtract", "var:" + v("pmr_retool_q_gova"))}\n' if side == 'gova' else '')
         return (f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_retool_built_" + side)} > 0 '
                 f'var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} {keep}'
                 f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
@@ -2030,6 +2088,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                 f'\t\tremove_building = {rbx}\n'
                 + crumb.replace('RELEASE', 'RELEASED') +
                 f'\t\t{chg(seen, "subtract", "var:" + v("pmr_retool_built_" + side))}\n'
+                + merged +
                 f'\t\t{setv("pmr_retool_built_" + side, 0)}\n'
                 f'\t\t{setv("pmr_retool_q_" + side, 0)}\n\t}}\n')
 
@@ -2092,6 +2151,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                                             f'change_variable = {{ name = {lvg(i)} add = var:{v("pmr_ggain")} }}')
              + ''.join(release(rbx, f'priv{j}', keep_crew(j) if RETOOL_CREW else '') for j, rbx in slots)
              + release(rbg, 'gov')
+             # the abroad site stands while the player's government still has room (pmr_split_retool_<b>)
+             + release(rbga, 'gova', f'NOT = {{ AND = {{ has_variable = pmr_abroad_{b} has_variable = pmr_retool_open_gov_{b} }} }} ')
              + totals() + '}\n\n')
 
     # Shares for the bar and the blend, the levels still to retool, and p (share on the target).
@@ -2152,11 +2213,32 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              + clamp_to("pmr_room_gov", "pmr_room") +
              f'\t{setv("pmr_room_priv", "var:" + v("pmr_room"))}\n'
              f'\t{chg("pmr_room_priv", "subtract", "var:" + v("pmr_room_gov"))}\n'
+             '\t# Abroad the government side is the player\'s own government levels (pmr_gov_mine_<b>) less the\n'
+             '\t# governments\' levels already on the target: other governments\' levels there are never retooled\n'
+             '\t# (Pat 20:54Z), and they stay out of the private room above.\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} }}\n'
+             f'\t\t{setv("pmr_gm_room", "var:" + v("pmr_gov_mine"))}\n'
+             f'\t\t{chg("pmr_gm_room", "subtract", "var:" + v("pmr_gov_on_to"))}\n'
+             f'\t\t{chg("pmr_gm_room", "multiply", "pmr_retool_levels_per_level")}\n'
+             f'\t\t{chg("pmr_gm_room", "subtract", "var:" + v("pmr_pending_gov"))}\n'
+             f'\t\tif = {{ limit = {{ var:{v("pmr_gm_room")} < 0 }} {setv("pmr_gm_room", 0)} }}\n'
+             f'\t\tif = {{ limit = {{ var:{v("pmr_room_gov")} > var:{v("pmr_gm_room")} }} {setv("pmr_room_gov", "var:" + v("pmr_gm_room"))} }}\n'
+             '\t}\n'
              f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
              f'\t{chg("pmr_cap_gov", "add", "var:" + v("pmr_room_gov"))}\n'
              f'\tset_variable = pmr_retool_gate_{b}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} > 0 }} set_variable = pmr_retool_open_gov_{b} }}\n'
              f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_gov_{b} }} remove_variable = pmr_retool_open_gov_{b} }}\n'
+             '\t# Abroad no script effect queues a construction for the player\'s government: the upgrade button\n'
+             '\t# expands a site that stands (Building.QueueConstruction). So while its government has room the\n'
+             '\t# tick keeps one, a level owned by the player\'s government that counts as used (pmr_seen_gov).\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} has_variable = pmr_retool_open_gov_{b} has_global_variable = pmr_player '
+             f'NOT = {{ has_building = {rbga} }} NOT = {{ exists = b:{rbga} }} }}\n'
+             f'\t\tcreate_building = {{\n\t\t\tbuilding = {rbga}\n'
+             '\t\t\tadd_ownership = { country = { country = global_var:pmr_player levels = 1 } }\n\t\t}\n'
+             f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_seen_gov")} }} }} {setv("pmr_seen_gov", 0)} }}\n'
+             f'\t\t{chg("pmr_seen_gov", "add", 1)}\n'
+             f'\t\t{chg("pmr_cap_gov", "add", 1)}\n\t}}\n'
              '\t# Private: each empty retool building may take one level, as a new construction; the rest\n'
              '\t# of the room goes to the first one with a finished level, whose crew lets investors\n'
              '\t# expand it. Each gets a cap (pmr_cap_priv<j>_<b>) of what it has plus its share.\n'
@@ -2187,7 +2269,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
              + ''.join(f'\tif = {{ limit = {{ var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} '
                        f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }} remove_building = {rbx} }}\n'
-                       for rbx, side in [(rbx, f'priv{j}') for j, rbx in slots] + [(rbg, 'gov')])
+                       for rbx, side in [(rbx, f'priv{j}') for j, rbx in slots] + [(rbg, 'gov'), (rbga, 'gova')])
              + f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_pending")} <= 0 }}\n'
              f'\t\t{setv("pmr_seen_gov", 0)}\n\t\t{setv("pmr_seen_priv", 0)}\n'
              + ''.join(f'\t\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
@@ -2446,7 +2528,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     # the building still needs, as if the player had built them one by one, then tick so the room,
     # and with it the button, drops to nothing.
     o.append(f'pmr_queue_gov_{b} = {{\n'
-             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} }}\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} NOT = {{ has_variable = pmr_abroad_{b} }} }}\n'
              f'\t\t{setv("pmr_q", "var:" + v("pmr_room_gov"))}\n'
              f'\t\t{log("GOV_QUEUE", bk, b, k, extra=";queueing=" + f("pmr_q"))}\n'
              f'\t\twhile = {{\n\t\t\tlimit = {{ var:{v("pmr_q")} > 0 }}\n'
@@ -2506,7 +2588,7 @@ def dispatch_effects(buildings):
     for i, bk in enumerate(buildings):
         b = short(bk)
         kw = 'if' if i == 0 else 'else_if'
-        types = priv_slots(b) + [f'building_pmr_retool_gov_{b}']
+        types = priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in types) + ' } }\n'
                  f'\t\tstate = {{\n\t\t\t{flush_log("RETOOL_LEVEL", bk)}\n'
                  f'\t\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t\t}}\n\t}}\n')
@@ -3002,22 +3084,54 @@ def slice_bar(slices, size, icon, ind, tips):
             + f'{ind}}}\n')
 
 
+GOV_ABROAD_CLICKS = 8   # most government retool levels one click queues abroad; more take another click
+
+
 def gov_button(b, size, ind, place=''):
     """The government upgrade button: queues every government retool level the building still
-    needs (pmr_gov_retool_<b>_sgui). Greyed out unless the state is the player's and the government
-    has room left, which needs government-owned levels still to retool."""
+    needs (pmr_gov_retool_<b>_sgui). Greyed out unless the government has room left, which needs
+    government-owned levels still to retool. At home the scripted GUI queues them; abroad (pmr_abroad_<b>,
+    Pat 21:26Z) no script can queue a construction for the player's government, so the button expands the
+    site the tick keeps standing there (Building.QueueConstruction, the game's own expand, into the
+    government construction queue) once per level of room, then ticks. A GUI can't loop, so there is one
+    button per room of 1 .. GOV_ABROAD_CLICKS levels, each with that many clicks."""
     sgui = f"GetScriptedGui('pmr_gov_retool_{b}_sgui')"
+    tick = f"GetScriptedGui('pmr_gov_retool_tick_{b}_sgui')"
     scope = 'GuiScope.SetRoot(Building.GetState.MakeScope).End'
-    return (f'{ind}button_icon_round = {{\n{place}'
-            f'{ind}\tsize = {{ {size} {size} }}\n'
-            f'{ind}\tenabled = "[And(ObjectsEqual(Building.GetState.GetOwner.Self, GetPlayer.Self), {sgui}.IsValid({scope}))]"\n'
-            f'{ind}\tonclick = "[{sgui}.Execute({scope})]"\n'
-            f'{ind}\ttooltip = "PMR_GOV_RETOOL_TOOLTIP_{b}"\n'
-            f'{ind}\tusing = tooltip_ne\n'
-            f'{ind}\tusing = confirm_button_sound\n'
-            f'{ind}\tblockoverride "icon" {{\n{ind}\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t}}\n'
-            f'{ind}\tblockoverride "icon_size" {{\n{ind}\t\tsize = {{ 80% 80% }}\n{ind}\t}}\n'
-            f'{ind}}}\n')
+    abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
+    site = f"Building.GetState.GetBuilding('building_pmr_retool_gova_{b}')"
+    room = state_var(b, 'pmr_room_gov')
+
+    def button(visible, enabled, clicks, tooltip):
+        return (f'{ind}button_icon_round = {{\n{place}'
+                f'{ind}\tvisible = "[{visible}]"\n'
+                f'{ind}\tsize = {{ {size} {size} }}\n'
+                f'{ind}\tenabled = {enabled}\n'
+                + ''.join(f'{ind}\tonclick = "[{c}]"\n' for c in clicks) +
+                f'{ind}\ttooltip = "{tooltip}"\n'
+                f'{ind}\tusing = tooltip_ne\n'
+                f'{ind}\tusing = confirm_button_sound\n'
+                f'{ind}\tblockoverride "icon" {{\n{ind}\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t}}\n'
+                f'{ind}\tblockoverride "icon_size" {{\n{ind}\t\tsize = {{ 80% 80% }}\n{ind}\t}}\n'
+                f'{ind}}}\n')
+
+    def room_is(n):
+        at_least = f"GreaterThanOrEqualTo_CFixedPoint({room}, '(CFixedPoint){n}')"
+        if n == GOV_ABROAD_CLICKS:
+            return at_least
+        return f"And({at_least}, LessThan_CFixedPoint({room}, '(CFixedPoint){n + 1}'))"
+
+    out = button(f'Not({abroad})',
+                 f'"[And(ObjectsEqual(Building.GetState.GetOwner.Self, GetPlayer.Self), {sgui}.IsValid({scope}))]"',
+                 [f'{sgui}.Execute({scope})'], f'PMR_GOV_RETOOL_TOOLTIP_{b}')
+    out += button(f"And({abroad}, Or(Not({site}.IsValid), LessThan_CFixedPoint({room}, '(CFixedPoint)1')))",
+                  'no', [], f'PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}')
+    for n in range(1, GOV_ABROAD_CLICKS + 1):
+        out += button(f'And({abroad}, And({site}.IsValid, {room_is(n)}))',
+                      f'"[IsValid({site}.QueueConstruction)]"',
+                      [f'Execute({site}.QueueConstruction)'] * n + [f'{tick}.Execute({scope})'],
+                      f'PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}')
+    return out
 
 
 ROW_X, ROW_W = 6, 287   # the recipe row: from the panel's left edge to 12 px short of the employment bar
@@ -3208,8 +3322,8 @@ OWN_NAME_W, OWN_PM_W, OWN_LEVELS_W = 200, 120, 90
 
 def owners_cell(bk, textures):
     """Government rows show the governments' levels (pmr_lvg_*), at home and abroad, where every government's
-    levels are counted together and the player's investors leave them alone (Pat 20:54Z); private rows show
-    pmr_lvp_*."""
+    levels are counted together, the player's investors leave them alone (Pat 20:54Z) and the player's
+    government retools its own with the upgrade button (Pat 21:26Z); private rows show pmr_lvp_*."""
     b = short(bk)
     abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
     rows = []
@@ -3497,7 +3611,11 @@ def panel_loc(recipe_keys):
             f' PMR_GOV_RETOOL_TOOLTIP_{b}:0 "#bold Retool the government\'s levels#!'
             f'\\nQueues every government retooling level this building still needs in your government construction queue: #bold {var("pmr_room_gov", "0")}#! now.'
             f'\\n\\n{gov} Privately owned levels are retooled by their investors.'
-            f'\\n\\nUnavailable when the government\'s own levels already run the new recipe, it has already queued them all, the new recipe needs electricity and this state produces none, or the state is not yours."',
+            f'\\n\\nUnavailable when the government\'s own levels already run the new recipe, it has already queued them all, or the new recipe needs electricity and this state produces none."',
+            f' PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}:0 "#bold Retool your government\'s levels#!'
+            f'\\nQueues your government\'s retooling levels in this state in your government construction queue: #bold {var("pmr_room_gov", "0")}#! now, up to {GOV_ABROAD_CLICKS} a click.'
+            f'\\n\\nOnly the levels your own government owns here. Another government\'s levels are not retooled, and privately owned levels are retooled by their investors.'
+            f'\\n\\nUnavailable when your government\'s levels here already run the new recipe or are all queued, the new recipe needs electricity and this state produces none, or you may not build in this country."',
             f' PMR_OWNERS_GOV_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
             + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvg_{i}", "0")}#!' for i, key in enumerate(keys, 1)) + '"',
             f' PMR_OWNERS_PRIV_TOOLTIP_{b}:0 "#bold Privately owned levels by recipe#!'
@@ -3505,7 +3623,7 @@ def panel_loc(recipe_keys):
             + '\\n\\nAll private owners together: retooling is tracked for the government and for private owners, not owner by owner."',
             f' PMR_OWNERS_ABROAD_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
             + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvg_{i}", "0")}#!' for i, key in enumerate(keys, 1))
-            + '\\n\\nAbroad every government\'s levels are counted together. Your investors retool only privately owned levels here, never a government\'s."',
+            + '\\n\\nAbroad every government\'s levels are counted together. Your government retools its own levels here with the upgrade button; another government\'s levels are not retooled, and your investors retool only privately owned levels."',
         ]
 
         def cvar(name, f):
