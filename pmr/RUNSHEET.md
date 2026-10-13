@@ -1,4 +1,4 @@
-# PMR run sheet: Arts Academies and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,12 +10,12 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: Arts Academies retool, Urban Centers run their best methods (your current save should work)
+## Latest: Arts Academies and power plants retool, Urban Centers run their best methods (your current save should work)
 
-From your 21:39 and 21:51 messages. Arts Academies are PMR buildings now: their art (Traditional, Realist,
-Photographic, Film) retools level by level like a mine, your upgrade button for government levels and investors for
-the rest. Their patronage runs its best (Independent Artists once Realism is researched). Urban Centers retool
-nothing: every group runs its best method automatically, at no cost, and their method icons are hidden like the
+From your 21:39, 21:51 and 22:01 messages. Arts Academies and power plants are PMR buildings now: an academy's art
+(Traditional, Realist, Photographic, Film) and a power plant's recipe (Early, Coal-Fired, Oil-Fired) retool level by
+level like a mine, your upgrade button for government levels and investors for the rest. An academy's patronage
+runs its best (Independent Artists once Realism is researched). Urban Centers retool nothing: every group runs its best method automatically, at no cost, and their method icons are hidden like the
 administration's. Gas Streetlights need no technology, so every Urban Center lights with gas, buying coal; Arcades and
 Electric Streetlights run only in states that produce electricity. The release build writes no PMR log lines, so
 every check here is something you see. Wait for the next 1st of the month.
@@ -29,6 +29,9 @@ every check here is something you see. Wait for the next 1st of the month.
 3. With Realism researched, the Arts Academy's target is Realist Art: **expect** a "Retooling: Arts Academies"
    site from investors in time, or the upgrade button lit where your government owns levels. **Null:** the bar
    stays on Traditional Art and the button's tooltip says 0 after a few months: tell me who owns the levels.
+4. Once you research Steam Turbine, open a power plant: **expect** the recipe bar on Early Power Plant with Coal-Fired as
+   the target, and the upgrade button lit where your government owns levels. **Null:** no recipe bar, or a vanilla
+   method icon still showing: the panel didn't take the new building type.
 
 ## Latest: your government retools its levels abroad from the upgrade button (your current save works)
 

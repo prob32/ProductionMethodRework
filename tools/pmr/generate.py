@@ -234,10 +234,10 @@ BUILDING_FILES = ['01_industry.txt', '02_agro.txt', '03_mines.txt', '04_plantati
                   '09_misc_resource.txt', '11_private_infrastructure.txt']
 # Pat, 2026-10-13 17:00Z: ports and railways retool like the rest. Only these buildings of a file listed
 # here are candidates; the file's others (trade centres, Financial Districts, Manor Houses) stay vanilla.
-# Pat, 21:39Z: Arts Academies retool too (the Urban Center runs its best methods instead, AUTO_BEST; the
-# power plant stays vanilla).
+# Pat, 21:39Z and 22:01Z: Arts Academies and power plants retool too (the Urban Center runs its best methods
+# instead, AUTO_BEST).
 BUILDING_ONLY = {'11_private_infrastructure.txt': ('building_port', 'building_railway'),
-                 '06_urban_center.txt': ('building_art_academy',)}
+                 '06_urban_center.txt': ('building_art_academy', 'building_power_plant')}
 # Buildings whose recipes carry no workforce because vanilla puts it in another group, which stays on the
 # building (kept on its best method by AUTO_BEST). The share methods then blend only the recipes' goods.
 WORKFORCE_ELSEWHERE = {'building_art_academy': 'pmg_ownership_building_art_academy'}
