@@ -1,4 +1,4 @@
-# PMR run sheet: ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,47 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: ports and railways retool; administration, universities and trade centres pick their best method (start a new game)
+## Latest: retooling abroad, policy cards, priorities on a timer and locked by law, policy costs (your current save works)
+
+From your 19:25 and 19:34 messages. Your current save works; wait for the game to reach the 1st before checking.
+
+- **Retooling abroad.** No level you own abroad had ever retooled. The game's investors pick one state for each
+  retool site before checking who may build there, and in your 1844 save all 15 of Britain's picks abroad were in
+  states where only the host could build (your West Bengal coal mine waited a year with both sites open). Each
+  building now has a fifth retool site, opened only where you own levels in another country's state; the other
+  four open only at home, and foreign investors now give those a weight of 0.
+- **Policy cards** are as tall as their text. The last line holds the authority cost on the left and "Requires
+  Investment Banks" or "Current Policy" on the right, so nothing sits on the effects. Each law has its own window.
+- **Priority timer.** After you change a priority row you have 7 days to change it again, then it stays for 3
+  months, as tariffs do. Each row has its own timer; a locked coin's tooltip says about how many weeks are left.
+  Each change writes `PMR;rec=PRIORITY;...;group=...;value=...`.
+- **Law locks.** Under Laissez-faire every row is locked at +0% and a line under the header says so. Under
+  Agrarianism only Agriculture and Resources can be set. The coin you set before is kept and counts again under
+  another law.
+- **Policy cost.** A policy now uses authority while held, set when you adopt it from your legitimacy: 200 at 25 or
+  less, 100 at 50, 50 at 75 or more, in straight lines between. The card shows the price; the held card shows what
+  it uses. A policy you already hold stays free until you change it. `PMR;rec=POLICY` lines now end in
+  `authority=<cost>`.
+- **Agrarianism policies.** Landed Credit: +25% Aristocrats' investment efficiency, +10% Agriculture throughput,
+  +2 Landowners, -2 Industrialists. Crown Concessions: +10% Mining and Logging throughput, +10% government
+  dividends efficiency, -2 Rural Folk.
+- **AI policies.** On the 1st, an AI country under one of the three laws with no policy picks one it can afford,
+  at random (never Steer the Economy, which only widens your priority cap).
+
+What to do: play on from your save for six months. Open the Private tab and change one priority, then try it again
+after a week. Open the policy window. After a few months check your private queue and the West Bengal coal mine.
+
+| What you see | What it means |
+| --- | --- |
+| Six months on, nothing queued at the West Bengal coal mine and it is still 0% on Condensing Engine Pump | The investors still don't pick the abroad site. Send your latest autosave; I'll read Britain's picks for `building_pmr_retool_coal_mine_5`. |
+| No `RETOOL_LEVEL` line for any of your home states in three months, where there were before | The weight of 0 for foreign investors also stopped your own. Send error.log lines containing `bg_pmr_retool`. |
+| Clicking a coin writes no `PRIORITY` line, or the coins are still clickable 8 days after a change | The timer didn't load. Send error.log lines containing `pmr_ipw`. |
+| Under Laissez-faire a row shows anything but +0%, or its coins are clickable | The law lock didn't load. Send a screenshot and error.log lines containing `pmr_ipw_law_lock`. |
+| You adopt a policy and the topbar authority tooltip shows no Economic Policy line | The authority cost didn't apply. Send the `POLICY` line and error.log lines containing `pmr_policy`. |
+| No `POLICY` line for any AI country two months after you load | The AI pick never ran, or no AI country could afford one. Send error.log lines containing `pmr_policy`. |
+| The policy window's cards overflow again | My height estimate is off for that text. Send a screenshot. |
+
+## Earlier: ports and railways retool; administration, universities and trade centres pick their best method (start a new game)
 
 From your 17:00 message. Start a **new game**: ports and railways gain PMR's recipe slots, and buildings in an older
 save would lack them.
