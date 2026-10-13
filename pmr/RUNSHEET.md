@@ -12,6 +12,11 @@ error there means the mechanism below never ran, and a missing log line is then 
 
 ## Latest: the Private construction tab (your current save works; a new game gives a clean chart)
 
+**Revised 2026-10-13 after your first look:** the weekly re-investment is a trend line in vanilla's
+graph frame (the GDP graph's), the policy card is the law card's size with an Add Policy plus in the
+middle, and each investment priority is the budget page's five-coin selector (0, 25, 50, 75 or 100%
+of the cap). The contributors stay as the game's own list for now: the game gives them only as text.
+
 Built in the investment sliders thread to your design. The construction panel's tabs are now
 Government, Private, Foreign and Ships; the Government/Private funding filter is gone, and so is the
 investment pool from the Government tab. The policy cards need Interventionism: play a country that
@@ -26,14 +31,18 @@ has it, or enact it. Besides `PMR;rec=` in debug.log, look in error.log for `pmr
    investments and privatizations.
 3. **Weekly re-investment** at the top matches the weekly income in vanilla's investment pool tooltip
    (hover the number for that tooltip).
-4. **Chart.** Reads "Recorded once a month" at first. On each 1st of the month a
-   `PMR;rec=REINVEST;...;weekly=...` line appears and a column is added on the right.
-5. **Sliders.** Click the last notch of Light Industries: it reads +50%. Hover its row: x1.00, and
-   every other group's row x0.67. Set Heavy Industries to full too: both read x1.00.
-6. **Steer the Economy.** Pick it: a `PMR;rec=POLICY;...;policy=steer` line, the full slider reads +75%,
-   and with Light Industries alone at full the other rows read x0.57.
-7. **Card lock.** Under another economic law the policy card says it needs Interventionism and has no
-   buttons. Repeal Interventionism while holding a card: the next 1st of the month logs
+4. **Trend line.** Reads "Recorded on the 1st of each month" until the next 1st. Then each 1st logs
+   `PMR;rec=REINVEST;...;weekly=...;min=...;max=...;row=...` and the line gains a point on the right;
+   the axis shows the lowest and highest month, hovering a month shows its figure.
+5. **Coins.** Click the fifth coin of Light Industries: its frame moves there and the row reads +50%
+   weight. Hover the figure: x1.00, and every other group's x0.67. Fifth coin on Heavy Industries
+   too: both read x1.00.
+6. **Policy card.** It matches the law card's size, with Add Policy in the middle. Click it: the four
+   policies appear in the card. Pick Steer the Economy: a `PMR;rec=POLICY;...;policy=steer` line, the
+   card shows Steer with a Change Policy button, the fifth coin reads +75%, and with Light Industries
+   alone at the fifth coin the other rows read x0.57.
+7. **Card lock.** Under another economic law Add Policy is greyed with "Requires Interventionism"
+   under it. Repeal Interventionism while holding a card: the next 1st of the month logs
    `policy=dropped` and the card clears.
 8. **Priorities in play.** Light Industries at full, nothing else: over a year, new private
    construction leans to light industry. The 1/11 to 11 roll swamps a x1.5 on any one pick, so judge
@@ -50,9 +59,11 @@ has it, or enact it. Besides `PMR;rec=` in debug.log, look in error.log for `pmr
 | Three tabs, or the funding filter still there | The panel files didn't load; send me error.log lines naming `construction_panel` or `construction_queue`. |
 | An empty Private tab | The tab's layout (`pmr_private_tab`) didn't load; send error.log lines naming `pmr_private_investment`. |
 | Weekly re-investment reads 0 while the pool grows | `investment_pool_income` reads differently from the tooltip. |
-| No `REINVEST` line on the 1st | The monthly country pulse never ran. A line but no column means the chart's layout is wrong. |
-| A notch click does nothing | The slider's scripted GUI didn't run. |
-| The notch moves but every row reads x1.00 | The slider values aren't evaluated. |
+| No `REINVEST` line on the 1st | The monthly country pulse never ran. A line with `row=` above 0 but no line drawn means the chart cells don't read the variables. |
+| The graph frame is missing or empty with no message | `v3_plotline` didn't take the overrides; send error.log lines naming `pmr_private_investment`. |
+| A coin click does nothing | The priority's scripted GUI didn't run. |
+| The frame moves but every row reads x1.00 | The priority values aren't evaluated. |
+| Add Policy does nothing | The GUI flag `pmr_policy_pick` isn't kept; tell me. |
 | No `POLICY` line when you pick a card | The card's scripted GUI didn't run. |
 | A card stays after Interventionism goes | The monthly law check failed. |
 | Re-invest or Favour Large Corporations change nothing | The weight isn't read where I put it (`pmr_reinvest_mult`, `pmr_ai_value`); look for those in error.log. |

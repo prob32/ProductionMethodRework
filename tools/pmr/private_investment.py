@@ -50,7 +50,7 @@ It must run after the building files and pmr_retool_buildings.txt are written: i
 import os
 import re
 
-STEPS = tuple(range(0, 101, 10))   # slider notches, percent (Pat 04:03Z: 0 to 100%)
+STEPS = (0, 25, 50, 75, 100)       # priority levels, percent of the cap (Pat 04:50Z: the budget page's five coins)
 PIP_COLOR = (0.74, 0.60, 0.30)     # ochre, from TIER_COLORS: muted, never red or green
 VAR = 'pmr_ipw_{}'                 # country variable per group, 0..100
 ON = 'pmr_ipw_on'                  # set once the player touches any slider
@@ -81,8 +81,10 @@ POLICIES = [
      'Shopkeepers put more into the investment pool, and new building levels are likelier to be owned by the building itself.'),
 ]
 POLICY_LAW = 'law_interventionism'
-RI_MONTHS = 24             # re-investment chart: one column per month, newest on the right
-RI_HEIGHT = 120            # chart height, px
+RI_MONTHS = 24             # re-investment chart: one point per month, newest on the right
+RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 19   # the line is drawn on a 20-row grid, 6 px a row, 19 px a month
+LINE_COLOR = (0.9, 0.9, 0.9)              # vanilla's trend line colour (v3_plotline_gdp)
+CARD_W, CARD_H = 268, 260                 # law and policy cards, the same size (Pat 04:50Z)
 MOD_NAMES = {  # how each modifier reads on a policy card
     'country_private_construction_allocation_mult': ('Private construction allocation', True),
     'country_government_dividends_reinvestment_add': ('Government dividends reinvested', True),
@@ -231,7 +233,7 @@ def sguis(sliders):
                 f'\tis_valid = {{\n\t\thas_law_or_variant = law_type:{POLICY_LAW}\n\t\tNOT = {{ has_modifier = pmr_policy_{k} }}\n\t}}\n'
                 f'\teffect = {{\n{others}\t\tadd_modifier = {{ name = pmr_policy_{k} }}\n'
                 f'\t\tset_variable = {{ name = pmr_policy value = {i} }}\n'
-                f'\t\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetNameNoFormatting];policy={k}"\n'
+                f'\t\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];policy={k}"\n'
                 '\t}\n}\n\n')
     return out
 
@@ -247,27 +249,45 @@ def reinvest_effect():
     """Country scope, monthly, players only. The game keeps no history of the pool's weekly income (the budget's
     Investment Pool Transfer trend is money drawn out for construction), so PMR samples investment_pool_income
     (a country value; its description string is in the 1.14.5 exe) once a month into pmr_ri_0 (newest) ..
-    pmr_ri_<N-1>, and stores each column's height in percent of the largest, plus one, for the GUI."""
-    n = RI_MONTHS
+    pmr_ri_<N-1>. For the trend line (Pat 04:50Z: like the GDP graph; GUI plot lines only take the engine's own
+    trends) each month gets its row on a RI_ROWS grid between the lowest and highest month shown (pmr_ri_b_<i>,
+    1 = bottom), and each pair of neighbouring months the rows the line climbs between them (pmr_ri_lo_<i>,
+    pmr_ri_hi_<i>, joining month i to month i + 1)."""
+    n, top_row = RI_MONTHS, RI_ROWS - 1
     shift = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_ri_{i - 1} }}\n'
                     f'\t\t\tset_variable = {{ name = pmr_ri_{i} value = var:pmr_ri_{i - 1} }}\n\t\t}}\n'
                     for i in range(n - 1, 0, -1))
-    top = ''.join(f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ has_variable = pmr_ri_{i} }}\n\t\t\t\t\tmin = var:pmr_ri_{i}\n\t\t\t\t}}\n'
-                  for i in range(n))
-    heights = ''.join(
+
+    def fold(op):
+        return ''.join(f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ has_variable = pmr_ri_{i} }}\n\t\t\t\t\t{op} = var:pmr_ri_{i}\n\t\t\t\t}}\n'
+                       for i in range(1, n))
+    rows = ''.join(
         f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_ri_{i} }}\n'
-        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_h_{i}\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:pmr_ri_{i}\n'
-        f'\t\t\t\t\tdivide = var:pmr_ri_max\n\t\t\t\t\tmultiply = 100\n\t\t\t\t\tround = yes\n\t\t\t\t\tadd = 1\n\t\t\t\t}}\n\t\t\t}}\n'
-        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_g_{i}\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = 102\n'
-        f'\t\t\t\t\tsubtract = var:pmr_ri_h_{i}\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
+        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_b_{i}\n\t\t\t\tvalue = {{\n'
+        f'\t\t\t\t\tvalue = {RI_ROWS // 2}\n'
+        f'\t\t\t\t\tif = {{\n\t\t\t\t\t\tlimit = {{ var:pmr_ri_span > 0 }}\n'
+        f'\t\t\t\t\t\tvalue = var:pmr_ri_{i}\n\t\t\t\t\t\tsubtract = var:pmr_ri_min\n\t\t\t\t\t\tdivide = var:pmr_ri_span\n'
+        f'\t\t\t\t\t\tmultiply = {top_row}\n\t\t\t\t\t\tround = yes\n\t\t\t\t\t\tadd = 1\n\t\t\t\t\t}}\n'
+        f'\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
         for i in range(n))
+    joins = ''.join(
+        f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_ri_{i + 1} }}\n'
+        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_lo_{i}\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:pmr_ri_b_{i}\n'
+        f'\t\t\t\t\tmax = var:pmr_ri_b_{i + 1}\n\t\t\t\t}}\n\t\t\t}}\n'
+        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_hi_{i}\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:pmr_ri_b_{i}\n'
+        f'\t\t\t\t\tmin = var:pmr_ri_b_{i + 1}\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
+        for i in range(n - 1))
     return ('pmr_ri_record = {\n'
             + shift +
             '\t\tset_variable = {\n\t\t\tname = pmr_ri_0\n\t\t\tvalue = {\n\t\t\t\tvalue = investment_pool_income\n\t\t\t\tmin = 0\n\t\t\t}\n\t\t}\n'
-            '\t\tset_variable = {\n\t\t\tname = pmr_ri_max\n\t\t\tvalue = {\n\t\t\t\tvalue = 1\n' + top + '\t\t\t}\n\t\t}\n'
-            + heights +
-            '\t\tdebug_log = "PMR;rec=REINVEST;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetNameNoFormatting];'
-            'weekly=[THIS.Var(\'pmr_ri_0\').GetValue|0];max=[THIS.Var(\'pmr_ri_max\').GetValue|0]"\n'
+            '\t\t# highest and lowest month shown (min = X keeps a value at least X, max = X at most X)\n'
+            '\t\tset_variable = {\n\t\t\tname = pmr_ri_max\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ri_0\n' + fold('min') + '\t\t\t}\n\t\t}\n'
+            '\t\tset_variable = {\n\t\t\tname = pmr_ri_min\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ri_0\n' + fold('max') + '\t\t\t}\n\t\t}\n'
+            '\t\tset_variable = {\n\t\t\tname = pmr_ri_span\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ri_max\n\t\t\t\tsubtract = var:pmr_ri_min\n\t\t\t}\n\t\t}\n'
+            + rows + joins +
+            '\t\tdebug_log = "PMR;rec=REINVEST;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'weekly=[THIS.Var(\'pmr_ri_0\').GetValue|0];min=[THIS.Var(\'pmr_ri_min\').GetValue|0];max=[THIS.Var(\'pmr_ri_max\').GetValue|0];'
+            'row=[THIS.Var(\'pmr_ri_b_0\').GetValue|0]"\n'
             '}\n')
 
 
@@ -281,7 +301,7 @@ def on_actions():
             f'\t\t\tlimit = {{\n\t\t\t\thas_variable = pmr_policy\n\t\t\t\tNOT = {{ has_law_or_variant = law_type:{POLICY_LAW} }}\n\t\t\t}}\n'
             + drop +
             '\t\t\tremove_variable = pmr_policy\n'
-            '\t\t\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetNameNoFormatting];policy=dropped"\n'
+            '\t\t\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];policy=dropped"\n'
             '\t\t}\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n\t\t\tpmr_ri_record = yes\n\t\t}\n'
             '\t}\n}\n')
@@ -398,98 +418,94 @@ def header(key, ind):
     return f'{ind}default_header = {{\n{ind}\tblockoverride "text" {{\n{ind}\t\ttext = "{key}"\n{ind}\t}}\n{ind}}}\n'
 
 
-def notch_row(g, ind):
+def priority_row(g, ind):
+    """One building group's investment priority, on the budget page's own five-coin selector (Pat 04:50Z):
+    vanilla's tax_exp_frame_coin with its coins, sounds and selected frame, each coin one of STEPS."""
     v = VAR.format(g)
     cur = f"{COUNTRY}.MakeScope.Var('{v}').GetValue"
-    r, gr, b = PIP_COLOR
 
     def execute(s):
         return (f"GetScriptedGui('{v}_sgui').Execute(GuiScope.SetRoot({COUNTRY}.MakeScope)"
                 f".AddScope('step', MakeScopeValue('(CFixedPoint){s}')).End)")
 
-    notches = ''
-    for s in STEPS:
-        lit = (f"GreaterThanOrEqualTo_CFixedPoint({cur}, '(CFixedPoint){s}')" if s else
-               f"Not(GreaterThan_CFixedPoint({cur}, '(CFixedPoint)0'))")
-        notches += (f'{ind}\t\tbutton = {{\n'
-                    f'{ind}\t\t\tsize = {{ {18 if s == 0 else 24} 18 }}\n'
-                    f'{ind}\t\t\tusing = default_button\n'
-                    f'{ind}\t\t\tonclick = "[{execute(s)}]"\n'
-                    f'{ind}\t\t\ttooltip = "PMR_IPW_NOTCH_{s}"\n'
-                    f'{ind}\t\t\tusing = tooltip_above\n'
-                    f'{ind}\t\t\tusing = confirm_button_sound\n'
-                    f'{ind}\t\t\ticon = {{\n'
-                    f'{ind}\t\t\t\tvisible = "[{lit}]"\n'
-                    f'{ind}\t\t\t\tsize = {{ 100% 100% }}\n'
-                    f'{ind}\t\t\t\talwaystransparent = yes\n'
-                    f'{ind}\t\t\t\ttexture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
-                    f'{ind}\t\t\t\tcolor = {{ {r} {gr} {b} {0.5 if s == 0 else 1} }}\n'
-                    f'{ind}\t\t\t\tspriteborder = {{ 3 3 }}\n'
-                    f'{ind}\t\t\t}}\n'
-                    f'{ind}\t\t}}\n')
-    return (f'{ind}# {g}\n'
-            f'{ind}widget = {{\n'
-            f'{ind}\tsize = {{ @pmr_w 26 }}\n'
-            f'{ind}\ttooltip = "PMR_IPW_ROW_{g}"\n'
-            f'{ind}\tusing = tooltip_above\n'
-            f'{ind}\ttextbox = {{\n'
-            f'{ind}\t\tparentanchor = vcenter\n{ind}\t\tposition = {{ 10 0 }}\n'
-            f'{ind}\t\tautoresize = yes\n{ind}\t\tmax_width = 190\n{ind}\t\tusing = elide_fontsize_min\n'
-            f'{ind}\t\talign = nobaseline\n'
-            f'{ind}\t\ttext = "{g}"\n'
-            f'{ind}\t}}\n'
-            f'{ind}\thbox = {{\n'
-            f'{ind}\t\tparentanchor = vcenter\n{ind}\t\tposition = {{ 205 0 }}\n'
-            f'{ind}\t\tspacing = 2\n'
-            + notches +
-            f'{ind}\t}}\n'
-            f'{ind}\ttextbox = {{\n'
-            f'{ind}\t\tparentanchor = right|vcenter\n{ind}\t\tposition = {{ -10 0 }}\n'
-            f'{ind}\t\tautoresize = yes\n{ind}\t\talign = right|nobaseline\n'
-            f'{ind}\t\traw_text = "#v +[{COUNTRY}.MakeScope.ScriptValue(\'{v}_pct\')|0]%#!"\n'
-            f'{ind}\t}}\n'
-            f'{ind}}}\n')
+    def selected(k):
+        # the nearest coin, so a value set on the earlier ten-notch slider still shows a coin
+        lo = (STEPS[k - 1] + STEPS[k]) // 2 if k else None
+        hi = (STEPS[k] + STEPS[k + 1]) // 2 if k + 1 < len(STEPS) else None
+        tests = ([f"GreaterThanOrEqualTo_CFixedPoint({cur}, '(CFixedPoint){lo}')"] if lo is not None else []) + \
+                ([f"LessThan_CFixedPoint({cur}, '(CFixedPoint){hi}')"] if hi is not None else [])
+        return tests[0] if len(tests) == 1 else f'And({tests[0]}, {tests[1]})'
+
+    out = (f'{ind}# {g}\n{ind}tax_exp_frame_coin = {{\n{ind}\tparentanchor = hcenter\n'
+           f'{ind}\tblockoverride "tutorial_highilight_name" {{}}\n'
+           f'{ind}\tblockoverride "text_upper" {{\n{ind}\t\ttext = "{g}"\n{ind}\t}}\n'
+           f'{ind}\tblockoverride "second_line" {{}}\n'
+           f'{ind}\tblockoverride "text_money" {{\n'
+           f'{ind}\t\traw_text = "#v +[{COUNTRY}.MakeScope.ScriptValue(\'{v}_pct\')|0]%#! weight"\n'
+           f'{ind}\t\ttooltip = "PMR_IPW_ROW_{g}"\n{ind}\t}}\n')
+    for k, s in enumerate(STEPS):
+        n = k + 1
+        out += (f'{ind}\tblockoverride "button_{n}_click" {{\n{ind}\t\tonclick = "[{execute(s)}]"\n{ind}\t}}\n'
+                f'{ind}\tblockoverride "tooltip_{n}" {{\n{ind}\t\ttooltip = "PMR_IPW_NOTCH_{s}"\n{ind}\t}}\n'
+                f'{ind}\tblockoverride "is_selected_visibility_{n}" {{\n{ind}\t\tvisible = "[{selected(k)}]"\n{ind}\t}}\n')
+    return out + f'{ind}}}\n'
 
 
 def reinvest_chart(ind):
-    """The weekly re-investment, one column per month (pmr_ri_<i>, 0 = newest, drawn rightmost). Each column is a
-    vbox split by stretch factors: an empty part (pmr_ri_g_<i>) over the bar (pmr_ri_h_<i>), percent of the largest."""
+    """The weekly re-investment as a trend line in vanilla's graph frame (v3_plotline, as the GDP graph; Pat
+    04:50Z). GUI plot lines only take the engine's own trends, so the line is drawn from cells: for each month
+    (pmr_ri_<i>, 0 = newest, rightmost) a flat segment on its row (pmr_ri_b_<i>), and at the month's left edge
+    a riser through the rows between it and the month before (pmr_ri_lo_<i> .. pmr_ri_hi_<i>)."""
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
-    r, g, b = PIP_COLOR
-    cols = ''
-    for i in range(RI_MONTHS - 1, -1, -1):
-        has = f"GreaterThan_CFixedPoint({var(f'pmr_ri_h_{i}')}, '(CFixedPoint)0')"
-        cols += (f'{ind}\t\tvbox = {{\n{ind}\t\t\tsize = {{ 18 {RI_HEIGHT} }}\n'
-                 f'{ind}\t\t\ttooltip = "PMR_RI_COLUMN_{i}"\n{ind}\t\t\tusing = tooltip_above\n'
-                 f'{ind}\t\t\twidget = {{\n{ind}\t\t\t\tvisible = "[{has}]"\n'
-                 f'{ind}\t\t\t\tlayoutpolicy_horizontal = expanding\n{ind}\t\t\t\tlayoutpolicy_vertical = expanding\n'
-                 f'{ind}\t\t\t\tlayoutstretchfactor_vertical = "[FixedPointToInt({var(f"pmr_ri_g_{i}")})]"\n{ind}\t\t\t}}\n'
-                 f'{ind}\t\t\twidget = {{\n{ind}\t\t\t\tvisible = "[{has}]"\n'
-                 f'{ind}\t\t\t\tlayoutpolicy_horizontal = expanding\n{ind}\t\t\t\tlayoutpolicy_vertical = expanding\n'
-                 f'{ind}\t\t\t\tlayoutstretchfactor_vertical = "[FixedPointToInt({var(f"pmr_ri_h_{i}")})]"\n'
-                 f'{ind}\t\t\t\tbackground = {{\n{ind}\t\t\t\t\ttexture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
-                 f'{ind}\t\t\t\t\tcolor = {{ {r} {g} {b} 1 }}\n{ind}\t\t\t\t\tspriteborder = {{ 3 3 }}\n{ind}\t\t\t\t}}\n'
-                 f'{ind}\t\t\t}}\n{ind}\t\t}}\n')
-    return (f'{ind}widget = {{\n{ind}\tsize = {{ @pmr_w 34 }}\n'
-            f'{ind}\ttextbox = {{\n{ind}\t\tparentanchor = right|vcenter\n{ind}\t\tposition = {{ -20 0 }}\n{ind}\t\tautoresize = yes\n'
-            f'{ind}\t\talign = right|nobaseline\n{ind}\t\ttext = "PMR_RI_PEAK"\n{ind}\t}}\n{ind}}}\n'
-            f'{ind}widget = {{\n{ind}\tsize = {{ @pmr_w {RI_HEIGHT + 30} }}\n'
-            f'{ind}\thbox = {{\n{ind}\t\tparentanchor = hcenter\n{ind}\t\tposition = {{ 0 4 }}\n{ind}\t\tspacing = 2\n'
-            f'{ind}\t\tbackground = {{\n{ind}\t\t\tusing = dark_area\n{ind}\t\t}}\n'
-            + cols +
-            f'{ind}\t}}\n'
-            f'{ind}\ttextbox = {{\n{ind}\t\tvisible = "[Not(GreaterThan_CFixedPoint({var("pmr_ri_h_0")}, \'(CFixedPoint)0\'))]"\n'
-            f'{ind}\t\tparentanchor = center\n{ind}\t\tautoresize = yes\n{ind}\t\talign = nobaseline\n'
-            f'{ind}\t\tusing = empty_state_text_properties\n{ind}\t\ttext = "PMR_RI_EMPTY"\n{ind}\t}}\n'
-            f'{ind}\ttextbox = {{\n{ind}\t\tparentanchor = bottom|hcenter\n{ind}\t\tautoresize = yes\n{ind}\t\talign = nobaseline\n'
-            f'{ind}\t\ttext = "PMR_RI_AXIS"\n{ind}\t}}\n{ind}}}\n')
+    fp = lambda x: f"'(CFixedPoint){x}'"
+    w, h = RI_MONTHS * RI_COL_W, RI_ROWS * RI_ROW_H
+    mid = lambda row: h - row * RI_ROW_H + RI_ROW_H // 2   # centre of a row, 1 = bottom
+    r, g, b = LINE_COLOR
+    i2, i3 = ind + '\t\t', ind + '\t\t\t'
+
+    def cell(vis, x, y, cw, ch):
+        return (f'{i2}icon = {{\n{i3}visible = "[{vis}]"\n{i3}position = {{ {x} {y} }}\n{i3}size = {{ {cw} {ch} }}\n'
+                f'{i3}texture = "gfx/interface/colors/white.dds"\n{i3}color = {{ {r} {g} {b} 1 }}\n{i3}alwaystransparent = yes\n{i2}}}\n')
+    cells, hover = '', ''
+    for c in range(RI_MONTHS):
+        i = RI_MONTHS - 1 - c
+        for row in range(1, RI_ROWS + 1):
+            cells += cell(f"EqualTo_CFixedPoint({var(f'pmr_ri_b_{i}')}, {fp(row)})", c * RI_COL_W, mid(row) - 1, RI_COL_W, 3)
+        if c:
+            for row in range(1, RI_ROWS):
+                cells += cell(f"And(LessThanOrEqualTo_CFixedPoint({var(f'pmr_ri_lo_{i}')}, {fp(row)}), "
+                              f"GreaterThan_CFixedPoint({var(f'pmr_ri_hi_{i}')}, {fp(row)}))",
+                              c * RI_COL_W - 1, mid(row + 1) - 1, 3, RI_ROW_H + 2)
+        hover += (f'{i2}widget = {{\n{i3}visible = "[GreaterThan_CFixedPoint({var(f"pmr_ri_b_{i}")}, {fp(0)})]"\n'
+                  f'{i3}position = {{ {c * RI_COL_W} 0 }}\n{i3}size = {{ {RI_COL_W} {h} }}\n'
+                  f'{i3}tooltip = "PMR_RI_COLUMN_{i}"\n{i3}using = tooltip_above\n{i2}}}\n')
+    has = f"GreaterThan_CFixedPoint({var('pmr_ri_b_0')}, {fp(0)})"
+    bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
+    return (f'{ind}v3_plotline = {{\n{ind}\tparentanchor = hcenter\n'
+            + bo('header', f'{ind}\t\ttext = "PMR_RI_CHART_HEADER"\n')
+            + bo('size', f'{ind}\t\tsize = {{ {w} {h} }}\n')
+            + bo('singleitem', '') + bo('multiitem', '')
+            + bo('extra_plotlines', cells + hover)
+            + bo('maxvalue', f'{ind}\t\traw_text = "@money![{var("pmr_ri_max")}|K]"\n')
+            + bo('minvalue', f'{ind}\t\traw_text = "@money![{var("pmr_ri_min")}|K]"\n')
+            + bo('startdate', f'{ind}\t\ttext = "PMR_RI_AXIS_START"\n')
+            + bo('enddate', f'{ind}\t\ttext = "PMR_RI_AXIS_END"\n')
+            + bo('empty_state_visibility', f'{ind}\t\tvisible = "[Not({has})]"\n')
+            + bo('everything_that_is_not_empty_state_visibility', f'{ind}\t\tvisible = "[{has}]"\n')
+            + bo('empty_state_text', f'{ind}\t\ttext = "PMR_RI_EMPTY"\n')
+            + f'{ind}}}\n')
 
 
-def card(ind, inner):
-    return (f'{ind}flowcontainer = {{\n'
-            f'{ind}\tdirection = vertical\n{ind}\tminimumsize = {{ 268 150 }}\n{ind}\tmaximumsize = {{ 268 -1 }}\n'
-            f'{ind}\tmargin = {{ 10 10 }}\n{ind}\tspacing = 6\n'
+def card(ind, inner, extra=''):
+    """A fixed CARD_W x CARD_H card, so the law and policy cards match (Pat 04:50Z)."""
+    return (f'{ind}widget = {{\n{ind}\tsize = {{ {CARD_W} {CARD_H} }}\n{extra}'
             f'{ind}\tbackground = {{\n{ind}\t\tusing = entry_bg\n{ind}\t}}\n'
+            + inner + f'{ind}}}\n')
+
+
+def card_column(ind, inner, visible=None):
+    vis = f'{ind}\tvisible = "[{visible}]"\n' if visible else ''
+    return (f'{ind}flowcontainer = {{\n{vis}{ind}\tdirection = vertical\n{ind}\tmargin = {{ 10 10 }}\n{ind}\tspacing = 6\n'
             + inner + f'{ind}}}\n')
 
 
@@ -509,30 +525,59 @@ def card_text(key, ind, visible=None, raw=False):
 
 
 def policy_card(ind):
+    """The policy card: a plus in the middle like vanilla's Add Principle slot (Pat 04:50Z); the plus opens the
+    four choices in the card (a GUI-only flag, pmr_policy_pick); a held policy shows its name and effects and a
+    Change button."""
     scope = f'GuiScope.SetRoot({COUNTRY}.MakeScope).End'
     avail = f"GetScriptedGui('pmr_policy_available_sgui').IsShown({scope})"
+    pick = "GetVariableSystem.Exists('pmr_policy_pick')"
+    held_any = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint)0')"
     held = lambda i: f"EqualTo_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint){i}')"
+    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
     inner = ''
-    # Title and effects of the policy held, or the empty states
+    # A policy held: its title and effects, and Change at the bottom
     for i, (k, _s, _n, icon, _m, _e) in enumerate(POLICIES, 1):
-        inner += card_title(icon, f'PMR_POLICY_{k}', ind + '\t', f'And({avail}, {held(i)})')
-        inner += card_text(f'PMR_POLICY_{k}_DESC', ind + '\t', f'And({avail}, {held(i)})')
-    inner += card_text('PMR_POLICY_CHOOSE', ind + '\t',
-                       f"And({avail}, Not(GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint)0')))")
-    inner += card_text('PMR_POLICY_LOCKED', ind + '\t', f'Not({avail})')
-    # The four choices, two by two
-    buttons = ''
-    for k, short, *_r in POLICIES:
+        inner += card_column(i1, card_title(icon, f'PMR_POLICY_{k}', i2) + card_text(f'PMR_POLICY_{k}_DESC', i2),
+                             f'And(Not({pick}), {held(i)})')
+    inner += (f'{i1}button = {{\n{i2}visible = "[And(Not({pick}), {held_any})]"\n{i2}using = default_button\n'
+              f'{i2}size = {{ 140 30 }}\n{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -10 }}\n'
+              f'{i2}text = "PMR_POLICY_CHANGE"\n{i2}enabled = "[{avail}]"\n'
+              f'{i2}onclick = "[GetVariableSystem.Set(\'pmr_policy_pick\', \'yes\')]"\n'
+              f'{i2}tooltip = "PMR_POLICY_CHANGE_TT"\n{i2}using = tooltip_above\n{i1}}}\n')
+    # None held: vanilla's Add Principle slot, centred, and what it requires beneath it
+    inner += (f'{i1}flowcontainer = {{\n{i2}visible = "[And(Not({pick}), Not({held_any}))]"\n{i2}parentanchor = center\n'
+              f'{i2}direction = vertical\n{i2}spacing = 8\n'
+              f'{i2}new_principle_slot = {{\n{i3}parentanchor = hcenter\n'
+              f'{i3}blockoverride "onclick" {{\n{i3}\tonclick = "[GetVariableSystem.Set(\'pmr_policy_pick\', \'yes\')]"\n'
+              f'{i3}\tenabled = "[{avail}]"\n{i3}}}\n'
+              f'{i3}blockoverride "slot_tooltip" {{\n{i3}\ttooltip = "PMR_POLICY_ADD_TT"\n{i3}}}\n'
+              f'{i3}blockoverride "slot_text" {{\n{i3}\ttext = "PMR_POLICY_ADD"\n{i3}}}\n{i2}}}\n'
+              f'{i2}textbox = {{\n{i3}visible = "[Not({avail})]"\n{i3}parentanchor = hcenter\n{i3}autoresize = yes\n'
+              f'{i3}multiline = yes\n{i3}max_width = 240\n{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n'
+              f'{i3}text = "PMR_POLICY_LOCKED"\n{i2}}}\n{i1}}}\n')
+    # Choosing: the four policies, each closing the choice once taken
+    choices = ''
+    for k, _s, _n, icon, _m, _e in POLICIES:
         sg = f"GetScriptedGui('pmr_policy_{k}_sgui')"
-        buttons += (f'{ind}\t\tbutton = {{\n{ind}\t\t\tsize = {{ 122 30 }}\n{ind}\t\t\tusing = default_button\n'
-                    f'{ind}\t\t\ttext = "PMR_POLICY_{k}_SHORT"\n'
-                    f'{ind}\t\t\tenabled = "[{sg}.IsValid({scope})]"\n'
-                    f'{ind}\t\t\tonclick = "[{sg}.Execute({scope})]"\n'
-                    f'{ind}\t\t\ttooltip = "PMR_POLICY_{k}_TT"\n{ind}\t\t\tusing = tooltip_above\n'
-                    f'{ind}\t\t\tusing = confirm_button_sound\n{ind}\t\t}}\n')
-    inner += (f'{ind}\tfixedgridbox = {{\n{ind}\t\tvisible = "[{avail}]"\n{ind}\t\taddcolumn = 124\n{ind}\t\taddrow = 32\n'
-              f'{ind}\t\tmaxhorizontalslots = 2\n{ind}\t\tflipdirection = yes\n'
-              + buttons + f'{ind}\t}}\n')
+        choices += (f'{i2}button = {{\n{i3}using = default_button\n{i3}size = {{ 248 42 }}\n'
+                    f'{i3}enabled = "[{sg}.IsValid({scope})]"\n'
+                    f'{i3}onclick = "[{sg}.Execute({scope})]"\n'
+                    f'{i3}onclick = "[GetVariableSystem.Clear(\'pmr_policy_pick\')]"\n'
+                    f'{i3}tooltip = "PMR_POLICY_{k}_TT"\n{i3}using = tooltip_above\n{i3}using = confirm_button_sound\n'
+                    f'{i3}icon = {{\n{i3}\tsize = {{ 34 34 }}\n{i3}\tparentanchor = vcenter\n{i3}\tposition = {{ 6 0 }}\n'
+                    f'{i3}\ttexture = "{icon}"\n{i3}\talwaystransparent = yes\n{i3}}}\n'
+                    f'{i3}textbox = {{\n{i3}\tparentanchor = vcenter\n{i3}\tposition = {{ 48 0 }}\n{i3}\tautoresize = yes\n'
+                    f'{i3}\tmax_width = 190\n{i3}\telide = right\n{i3}\talign = nobaseline\n'
+                    f'{i3}\ttext = "PMR_POLICY_{k}"\n{i3}\talwaystransparent = yes\n{i3}}}\n{i2}}}\n')
+    inner += (f'{i1}flowcontainer = {{\n{i2}visible = "[And({avail}, {pick})]"\n{i2}direction = vertical\n'
+              f'{i2}margin = {{ 10 10 }}\n{i2}spacing = 6\n'
+              f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}align = nobaseline\n{i3}text = "PMR_POLICY_PICK_TITLE"\n{i2}}}\n'
+              + choices + f'{i1}}}\n'
+              f'{i1}button = {{\n{i2}visible = "[And({avail}, {pick})]"\n{i2}using = default_button\n'
+              f'{i2}size = {{ 26 26 }}\n{i2}parentanchor = right|top\n{i2}position = {{ -8 8 }}\n'
+              f'{i2}onclick = "[GetVariableSystem.Clear(\'pmr_policy_pick\')]"\n{i2}tooltip = "PMR_POLICY_CANCEL"\n'
+              f'{i2}icon = {{\n{i3}size = {{ 100% 100% }}\n{i3}texture = "gfx/interface/buttons/button_icons/close.dds"\n'
+              f'{i3}alwaystransparent = yes\n{i2}}}\n{i1}}}\n')
     return card(ind, inner)
 
 
@@ -552,9 +597,9 @@ def private_tab(sliders):
     queue = ('Country.AccessPagedPrivateConstructionQueue(ConstructionPanel.AccessCurrentPrivateConstructionQueuePage('
              'GetMetaPlayer.GetPlayedOrObservedCountry), ConstructionPanel.GetFilter)')
     law = f"{COUNTRY}.GetActiveLawFromGroup('lawgroup_economic_system')"
-    law_card = card(i3, f'{i3}\tdatacontext = "[{law}]"\n'
-                    + card_title('[Law.GetTexture]', '[Law.GetNameNoFormatting]', i3 + '\t')
-                    + card_text('[Law.GetLawType.GetEffectDesc(GetPlayer.Self)]', i3 + '\t', raw=True))
+    law_card = card(i2, card_column(i2 + '\t', card_title('[Law.GetTexture]', '[Law.GetNameNoFormatting]', i2 + '\t\t')
+                                    + card_text('[Law.GetLawType.GetEffectDesc(GetPlayer.Self)]', i2 + '\t\t', raw=True)),
+                    f'{i2}\tdatacontext = "[{law}]"\n')
     return (
         '@pmr_w = 554\n\n'
         'types pmr_private_investment {\n'
@@ -577,9 +622,8 @@ def private_tab(sliders):
         f'{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 10 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = hcenter|nobaseline\n{i1}\ttext = "NEXT_PRIVATE_CONSTRUCTION"\n'
         f'{i1}\tbackground = {{\n{i1}\t\tusing = dark_area\n{i1}\t}}\n{i1}}}\n'
-        # 2. the pool over time
-        + header('PMR_PI_TREND_HEADER', i1) +
-        reinvest_chart(i1) +
+        # 2. the weekly re-investment over time, titled inside its graph frame like vanilla's
+        + reinvest_chart(i1) +
         # 3. contributors: the game's own breakdown (Pat 04:12Z picked this over an estimate)
         header('PMR_PI_SOURCES_HEADER', i1) +
         f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 14 8 }}\n'
@@ -594,7 +638,7 @@ def private_tab(sliders):
         + header('PMR_IPW_HEADER', i1) +
         f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 6 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = nobaseline\n{i1}\ttext = "PMR_IPW_EXPLAIN"\n{i1}}}\n'
-        + ''.join(notch_row(g, i1) for g in sliders) +
+        + ''.join(priority_row(g, i1) for g in sliders) +
         # 6. private construction, then recent investments
         f'{i1}default_header_2texts = {{\n{i1}\tblockoverride "text1" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_HEADER"\n{i1}\t}}\n'
         f'{i1}\tblockoverride "text2" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_COUNT"\n{i1}\t}}\n{i1}}}\n'
@@ -729,19 +773,24 @@ def localization(sliders):
         ' PMR_TAB_PRIVATE:0 "Private"',
         ' PMR_TAB_PRIVATE_TT:0 "The investment pool, economic policy, investment priorities and private construction"',
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
-        ' PMR_PI_TREND_HEADER:0 "Weekly Re-investment"',
         ' PMR_RI_LABEL:0 "Weekly re-investment:"',
-        f' PMR_RI_PEAK:0 "Highest shown: #v @money![{COUNTRY}.MakeScope.Var(\'pmr_ri_max\').GetValue|D]#!"',
-        ' PMR_RI_EMPTY:0 "Recorded once a month from the first month of play"',
-        f' PMR_RI_AXIS:0 "{RI_MONTHS} months ago to now"',
+        ' PMR_RI_CHART_HEADER:0 "Weekly Re-investment"',
+        ' PMR_RI_EMPTY:0 "Recorded on the 1st of each month"',
+        f' PMR_RI_AXIS_START:0 "{RI_MONTHS - 1} months ago"',
+        ' PMR_RI_AXIS_END:0 "This month"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
         ' PMR_PI_SOURCES_HEADER:0 "Buildings Adding to the Pool"',
         ' PMR_PI_QUEUE_HEADER:0 "Private Construction"',
         ' PMR_PI_QUEUE_COUNT:0 ""',
         ' PMR_PI_QUEUE_EMPTY:0 "No private construction is queued"',
         ' PMR_PI_RECENT_HEADER:0 "Recent Investments and Privatizations"',
-        ' PMR_POLICY_CHOOSE:0 "Choose a policy below. One can be held at a time, and it lapses if [GetLawType(\'law_interventionism\').GetName] is repealed."',
-        ' PMR_POLICY_LOCKED:0 "Economic policies are only available under [GetLawType(\'law_interventionism\').GetName]."',
+        ' PMR_POLICY_ADD:0 "Add Policy"',
+        ' PMR_POLICY_ADD_TT:0 "Choose an economic policy. One can be held at a time, and it lapses if [GetLawType(\'law_interventionism\').GetName] is repealed."',
+        ' PMR_POLICY_LOCKED:0 "Requires [GetLawType(\'law_interventionism\').GetName]"',
+        ' PMR_POLICY_PICK_TITLE:0 "Choose a Policy"',
+        ' PMR_POLICY_CANCEL:0 "Close without choosing"',
+        ' PMR_POLICY_CHANGE:0 "Change Policy"',
+        ' PMR_POLICY_CHANGE_TT:0 "Swap this policy for another. Only one can be held at a time."',
         ' PMR_IPW_HEADER:0 "Investment Priorities"',
         ' PMR_IPW_EXPLAIN:0 "Raise how much your investors favour a building group over the others: a full slider adds '
         '#v +[FixedPointToInt(Multiply_CFixedPoint(GetPlayer.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint)100\'))]%#! weight '
