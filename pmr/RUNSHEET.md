@@ -1,4 +1,4 @@
-# PMR run sheet: retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Arts Academies and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -9,6 +9,26 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
+
+## Latest: Arts Academies retool, Urban Centers run their best methods (your current save should work)
+
+From your 21:39 and 21:51 messages. Arts Academies are PMR buildings now: their art (Traditional, Realist,
+Photographic, Film) retools level by level like a mine, your upgrade button for government levels and investors for
+the rest. Their patronage runs its best (Independent Artists once Realism is researched). Urban Centers retool
+nothing: every group runs its best method automatically, at no cost, and their method icons are hidden like the
+administration's. Gas Streetlights need no technology, so every Urban Center lights with gas, buying coal; Arcades and
+Electric Streetlights run only in states that produce electricity. The release build writes no PMR log lines, so
+every check here is something you see. Wait for the next 1st of the month.
+
+1. Open London's Urban Center. **Expect** coal in its inputs (Gas Streetlights), engines if you have Railways
+   (Trams), and glass with wood or steel (Market Squares or Covered Markets, by your technology). **Null:** no coal:
+   PMR's monthly switch didn't reach Urban Centers. Check error.log for `pmr_auto_urban_center` and tell me.
+2. Open an Arts Academy (Britain has one with 3 levels). **Expect** the recipe bar beside the employment bar on
+   Traditional Art, and the patronage method's workforce: academics 2,000 a level once you have Realism.
+   **Null:** the vanilla method icons still show and no recipe bar: the panel didn't take the new building type.
+3. With Realism researched, the Arts Academy's target is Realist Art: **expect** a "Retooling: Arts Academies"
+   site from investors in time, or the upgrade button lit where your government owns levels. **Null:** the bar
+   stays on Traditional Art and the button's tooltip says 0 after a few months: tell me who owns the levels.
 
 ## Latest: your government retools its levels abroad from the upgrade button (your current save works)
 
