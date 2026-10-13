@@ -36,7 +36,8 @@ What it does, building by building (see pmr/README.md for the design):
    (a new building can inherit them from two different buildings; with ``_any`` last that froze the game).
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
    building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, built
-   by investors who own part of the building, and one government one, ``building_pmr_retool_gov_<b>``, queued by the government.
+   by investors who own part of the building (the last, ABROAD_SLOT, only where the player owns
+   levels abroad; the others only elsewhere), and one government one, ``building_pmr_retool_gov_<b>``, queued by the government.
    The government retools the levels it owns that don't run the target yet; private investors the
    rest. The building panel's Owners list shows which recipes each side's levels run.
 5. Recipes switch on research: when a newer recipe becomes available the building activates it,
@@ -81,7 +82,16 @@ RETOOL_AI_PER_EARNING = 7500
 RETOOL_AI_TOPUP = 150000
 RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
-RETOOL_SLOTS = 4           # private retool buildings per building type; each starts as one new construction
+RETOOL_SLOTS = 5           # private retool buildings per building type; each starts as one new construction
+# The last slot is the player's investors' abroad (Pat 2026-10-13 19:25Z: no level abroad ever retooled). 1.14.5's
+# investment AI picks one state per building type and investor and only then tests can_build_private: Great
+# Britain's 15 retool candidates abroad in the 1844 save all sat in states where the host's own slot was open and
+# Britain owned no level, so none could be built, and the West Bengal coal mine (Britain's two levels, both
+# slots open a year) never got one. So slots 1..ABROAD_SLOT-1 open only where investors retool at home, in
+# bg_pmr_retool with foreign_investment_ai_factor = 0 (vanilla's building-group weight for investing abroad), and
+# ABROAD_SLOT opens only where the player owns levels abroad (pmr_abroad_<b>), in bg_pmr_retool_abroad, so the
+# player's pool finds a state its investors may build in.
+ABROAD_SLOT = RETOOL_SLOTS
 # Pat, 2026-10-13: private retool buildings get a crew so investors can expand them. 1.14.5's AI
 # expands no building under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8) employment unless it
 # hired last week, and a building under MINIMUM_EMPLOYEES (10) employees always tries to hire, even
@@ -1037,8 +1047,13 @@ def main():
           '# Districts, Manor Houses) pick by the building groups their investment_scores name, which a\n'
           '# child group inherits from its parent. bg_manufacturing is the parent with no land usage or\n'
           '# resource cap to inherit; Financial Districts score it.\n'
+          '# Investors retool at home in bg_pmr_retool and abroad in bg_pmr_retool_abroad (see ABROAD_SLOT in\n'
+          '# tools/pmr/generate.py): a foreign pool weighs the home slots at 0, so it does not pick a state where\n'
+          '# only the host\'s investors may build.\n'
           'bg_pmr_retool = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
-          '\talways_possible = yes\n\tis_shown_in_outliner = no\n}\n\n'
+          '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n\n'
+          'bg_pmr_retool_abroad = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
+          '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 1\n}\n\n'
           '# The government-owned share is retooled by the government: the player builds it from the state,\n'
           '# AI governments by ai_value. Shaped on bg_government, which is how vanilla marks government-only\n'
           '# construction; the lens puts it in the development construction list.\n'
@@ -1112,7 +1127,8 @@ def main():
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
-    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"']
+    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
+            ' bg_pmr_retool_gov:0 "Government Retooling"']
     if not args.release:    # the "PMR test:" decisions are for testing only: every player would see them
         write('common/decisions/pmr_test_decisions.txt', header + DECISIONS + world_blend_decision(options))
         loc += DECISION_LOC + WORLD_LOC
@@ -1619,7 +1635,8 @@ def priv_slots(b):
 
 def retool_buildings(b, bk, icon):
     out = []
-    sides = [('priv', 'bg_pmr_retool', rbx, j) for j, rbx in enumerate(priv_slots(b), 1)]
+    sides = [('priv', 'bg_pmr_retool_abroad' if j == ABROAD_SLOT else 'bg_pmr_retool', rbx, j)
+             for j, rbx in enumerate(priv_slots(b), 1)]
     sides.append(('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}', 0))
     for side, group, rb, j in sides:
         if side == 'priv':
@@ -1647,7 +1664,8 @@ def retool_buildings(b, bk, icon):
             f'\tdownsizeable = no\n'
             '\t# Retool levels come only from the funders below, never from auto-expansion.\n'
             '\tshould_auto_expand = { always = no }\n'
-            f'\t# Open only while script is retooling a {bk} in this state.\n'
+            f'\t# Open only while script is retooling a {bk} in this state'
+            + (', where the player owns levels abroad' if j == ABROAD_SLOT else '') + '.\n'
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             + who +
             '\t# While there is room: what an expansion of the building would score from its earnings, plus\n'
@@ -1768,6 +1786,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     building's goods are the level-weighted mix of its recipes in its own production figures."""
     k = len(recipes)
     slots = list(enumerate(priv_slots(b), 1))
+
+    def slot_here(j):
+        # the abroad slot only where the player owns levels abroad, the home slots everywhere else (ABROAD_SLOT)
+        return (f'has_variable = pmr_abroad_{b}' if j == ABROAD_SLOT
+                else f'NOT = {{ has_variable = pmr_abroad_{b} }}')
     rbg = f'building_pmr_retool_gov_{b}'
     v = lambda name: f'{name}_{b}'           # noqa: E731  state variable for this building type
     lv = lambda i: v(f'pmr_lv_{i}')          # noqa: E731
@@ -2101,12 +2124,14 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              '\t# Private: each empty retool building may take one level, as a new construction; the rest\n'
              '\t# of the room goes to the first one with a finished level, whose crew lets investors\n'
              '\t# expand it. Each gets a cap (pmr_cap_priv<j>_<b>) of what it has plus its share.\n'
+             '\t# The home slots where investors retool at home, the abroad slot where the player owns levels\n'
+             '\t# abroad (ABROAD_SLOT).\n'
              f'\t{setv("pmr_slots_left", "var:" + v("pmr_room_priv"))}\n'
              + ''.join(f'\t{setv(f"pmr_alloc{j}", 0)}\n' for j, _ in slots)
-             + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 var:{v(f"pmr_retool_q_priv{j}")} <= 0 }}\n'
+             + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 var:{v(f"pmr_retool_q_priv{j}")} <= 0 {slot_here(j)} }}\n'
                        f'\t\t{setv(f"pmr_alloc{j}", 1)}\n\t\t{chg("pmr_slots_left", "subtract", 1)}\n\t}}\n'
                        for j, _ in slots)
-             + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 var:{v(f"pmr_retool_built_priv{j}")} > 0 }}\n'
+             + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 var:{v(f"pmr_retool_built_priv{j}")} > 0 {slot_here(j)} }}\n'
                        f'\t\t{chg(f"pmr_alloc{j}", "add", "var:" + v("pmr_slots_left"))}\n\t\t{setv("pmr_slots_left", 0)}\n\t}}\n'
                        for j, _ in slots)
              + ''.join(f'\tset_variable = {{ name = pmr_cap_priv{j}_{b} value = var:{v(f"pmr_retool_q_priv{j}")} }}\n'
