@@ -1,4 +1,4 @@
-# PMR run sheet: trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices, June 16 freeze diagnostics
+# PMR run sheet: the Private construction tab, trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,54 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: trade-offs start where your 1838 save was heading, and the second bar's label is vanilla's group name
+## Latest: the Private construction tab (your current save works; a new game gives a clean chart)
+
+Built in the investment sliders thread to your design. The construction panel's tabs are now
+Government, Private, Foreign and Ships; the Government/Private funding filter is gone, and so is the
+investment pool from the Government tab. The policy cards need Interventionism: play a country that
+has it, or enact it. Besides `PMR;rec=` in debug.log, look in error.log for `pmr_ipw`, `pmr_policy`,
+`pmr_ri`, `pmr_ai_value` and `pmr_pi`.
+
+1. **Tabs.** Four tabs: Government, Private, Foreign, Ships. Government shows the construction
+   sector and the government queue, with no investment pool and no funding filter.
+2. **Private tab**, top to bottom: weekly re-investment, its chart, buildings adding to the pool,
+   economic policy (the law card, and the policy card to its right), investment priorities (one row
+   per building group), private construction with the All/Domestic/Abroad filter, then recent
+   investments and privatizations.
+3. **Weekly re-investment** at the top matches the weekly income in vanilla's investment pool tooltip
+   (hover the number for that tooltip).
+4. **Chart.** Reads "Recorded once a month" at first. On each 1st of the month a
+   `PMR;rec=REINVEST;...;weekly=...` line appears and a column is added on the right.
+5. **Sliders.** Click the last notch of Light Industries: it reads +50%. Hover its row: x1.00, and
+   every other group's row x0.67. Set Heavy Industries to full too: both read x1.00.
+6. **Steer the Economy.** Pick it: a `PMR;rec=POLICY;...;policy=steer` line, the full slider reads +75%,
+   and with Light Industries alone at full the other rows read x0.57.
+7. **Card lock.** Under another economic law the policy card says it needs Interventionism and has no
+   buttons. Repeal Interventionism while holding a card: the next 1st of the month logs
+   `policy=dropped` and the card clears.
+8. **Priorities in play.** Light Industries at full, nothing else: over a year, new private
+   construction leans to light industry. The 1/11 to 11 roll swamps a x1.5 on any one pick, so judge
+   over many builds.
+9. **Re-invest.** Hold it with Light Industries at full, with a light industry building on an old
+   recipe and a newer one researched: private retooling of it is picked almost every time it is offered.
+10. **Favour Large Corporations.** Hold it with a company founded: private builds of that company's
+    building types rise.
+11. **error.log** has no line naming the five filters above. A "set but never used" warning on
+    `pmr_ipw_on` is harmless.
+
+| What you see | What it means |
+| --- | --- |
+| Three tabs, or the funding filter still there | The panel files didn't load; send me error.log lines naming `construction_panel` or `construction_queue`. |
+| An empty Private tab | The tab's layout (`pmr_private_tab`) didn't load; send error.log lines naming `pmr_private_investment`. |
+| Weekly re-investment reads 0 while the pool grows | `investment_pool_income` reads differently from the tooltip. |
+| No `REINVEST` line on the 1st | The monthly country pulse never ran. A line but no column means the chart's layout is wrong. |
+| A notch click does nothing | The slider's scripted GUI didn't run. |
+| The notch moves but every row reads x1.00 | The slider values aren't evaluated. |
+| No `POLICY` line when you pick a card | The card's scripted GUI didn't run. |
+| A card stays after Interventionism goes | The monthly law check failed. |
+| Re-invest or Favour Large Corporations change nothing | The weight isn't read where I put it (`pmr_reinvest_mult`, `pmr_ai_value`); look for those in error.log. |
+
+## Earlier: trade-offs start where your 1838 save was heading, and the second bar's label is vanilla's group name (you confirmed both)
 
 - **The label beside each second bar is now vanilla's name for the group**: Hardwood Production,
   Secondary (farms), Luxury Production, Canning, Distilleries, Working Conditions (plantations),
