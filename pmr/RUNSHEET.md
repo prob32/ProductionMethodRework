@@ -32,6 +32,8 @@ From your 16:06 and 16:12 messages.
     Education"; they appear on the 1st or when you adopt it). Executives' bonuses are not doubled: 1.14.5 has no
     modifier or script link for them.
 - Adopting a policy writes `PMR;rec=POLICY;...;policy=bulls` or `policy=titans`.
+- **Favour Large Corporations** (your 16:42 message) now gives only +1 free charter and the investment weight; the
+  Company Throughput Bonus and Company Government Dividends are gone.
 
 | What you see | What it means |
 | --- | --- |

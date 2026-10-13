@@ -41,7 +41,7 @@ Pat also asked for a few fitting benefits to round them out: the modifiers in PO
   - Favour Large Corporations (Pat 04:15Z): the pool weighs building types your companies list higher. There is no
     modifier or per-country define for company weighting, so each company building type in PMR's building files gets
     ai_value = pmr_ai_value_<b>: its vanilla ai_value plus CORP_BONUS while the card is held. Its other benefits
-    work the interventionist way (Pat 14:28Z): a free charter, one more company, the state's cut of company profits.
+    work the interventionist way: since Pat 16:42Z only a free charter.
   - Re-invest (Pat 04:15Z): private retooling of a building is weighted by its group's slider, x(1 + 0.99 x slider%),
     so x100 at a full slider. Retool weight is mostly ai_value (no profit terms), so this multiplies
     pmr_retool_buildings.txt's private ai_value.
@@ -137,7 +137,8 @@ BASE_AI_VALUE = 1000       # PRODUCTION_BUILDING_BASE_VALUE, when a building has
 # details (hover). Pat 14:28Z: the cards show benefits only, the explanation goes in the hover; construction and
 # investment efficiency belong to Laissez-faire. Pat 15:33Z: Favour Large Corporations drops the extra company and
 # takes benefits for the companies themselves (he named output prices and lower wages; 1.14.5 has no company price or
-# wage modifier, so it takes the Company Throughput Bonus and keeps the free charter and the state's cut); Small
+# wage modifier, so it took the Company Throughput Bonus and kept the free charter and the state's cut; Pat 16:42Z
+# removed the throughput bonus and the state's cut, leaving the free charter and the investment weight); Small
 # Businesses gives shopkeepers +25%; Re-invest becomes Focus on Infrastructure (railway and port throughput instead of
 # dividends reinvestment, a gold rail icon; the key stays so saves keep it).
 POLICIES = [
@@ -149,12 +150,11 @@ POLICIES = [
      'The state sets investment targets and leans on banks and boards to meet them. Investors still choose what to '
      'build, but within the priorities you set.'),
     ('corporations', 'Favour Large Corporations', 'gfx/interface/icons/law_icons/corporate_state.dds',
-     {'country_free_charters_add': 1, 'country_company_throughput_bonus_add': 0.1,
-      'building_company_government_dividends_add': 0.1},
+     {'country_free_charters_add': 1},     # Pat 16:42Z: throughput bonus and government dividends removed
      '#P Higher#! Investment Weight for Company Industries',
      'Investors weigh building types your companies own as if each earned #P @money!10#! more per worker. A monopoly '
      'is a company charter, so the free charter lets one more of your companies hold one without spending authority.',
-     'National champions get licences, contracts and charters, and the state takes its cut of their profits.'),
+     'National champions get licences, contracts and charters ahead of their smaller rivals.'),
     ('reinvest', 'Focus on Infrastructure', 'gfx/interface/icons/ai_strategy_icons/unused/infrastructure_expansion.dds',
      {'building_railway_throughput_add': 0.1, 'building_port_throughput_add': 0.1},
      '#P Up to 100×#! Investment Weight for Retooling',
