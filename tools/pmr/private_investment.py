@@ -233,10 +233,12 @@ POLICY_HOW = ('One can be held at a time, and it lapses if your economic system 
 # pmr_policy_lock_m counts the months left, down on each monthly pulse.
 POLICY_LOCK_MONTHS = 60
 AI_SKIP = ('steer',)       # the AI never picks Steer the Economy: it only raises the cap of the player's priorities
-RI_WEEKS = 26              # re-investment chart: one column per week (Pat 14:28Z), newest on the right
-RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 7    # columns are measured in rows of 6 px, from zero to the highest week
+# Re-investment chart: one column per week (Pat 14:28Z), newest on the right, over the year the engine's investment
+# pool trend covers beside it (Pat 20:28Z: the same dates; the trend held 30 Jan 1840 .. 22 Jan 1841, 52 weeks).
+RI_WEEKS = 52
+RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 4    # columns are measured in rows of 6 px, from zero to the highest week
 PLOT_MARGINS = (52, 14)    # v3_plotline's left and right margins, narrowed so two graphs share the row
-POOL_GRAPH_W = 200         # the vanilla investment pool graph beside it (Pat 14:28Z)
+POOL_GRAPH_W = 192         # the vanilla investment pool graph beside it (Pat 14:28Z), so both fit 540 px
 # Recent investments as the market panel's Exports and Imports charts (Pat 16:12Z): vanilla compact_chart
 # (politics_panel_types.gui), a 120 px tree map in its frame with legend rows of 28 px, four to a column.
 TREE = 120
@@ -1218,8 +1220,9 @@ def reinvest_chart(ind):
             + bo('extra_plotlines', columns + hover)
             + bo('maxvalue', f'{ind}\t\traw_text = "@money![{var("pmr_rw_max")}|K]"\n')
             + bo('minvalue', f'{ind}\t\traw_text = "@money!0"\n')
-            + bo('startdate', f'{ind}\t\ttext = "PMR_RW_AXIS_START"\n')
-            + bo('enddate', f'{ind}\t\ttext = "PMR_RW_AXIS_END"\n')
+            # the pool graph's own dates (Pat 20:28Z): its trend covers the same RI_WEEKS weeks
+            + bo('startdate', f'{ind}\t\ttext = "[GetOldestDate({COUNTRY}.GetInvestmentFundTrend)]"\n')
+            + bo('enddate', f'{ind}\t\ttext = "[GetLatestDate({COUNTRY}.GetInvestmentFundTrend)]"\n')
             + bo('empty_state_visibility', f'{ind}\t\tvisible = "[Not({has})]"\n')
             + bo('everything_that_is_not_empty_state_visibility', f'{ind}\t\tvisible = "[{has}]"\n')
             + bo('empty_state_text', f'{ind}\t\ttext = "PMR_RW_EMPTY"\n')
@@ -1843,8 +1846,6 @@ def localization(types):
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
         ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
         ' PMR_RW_EMPTY:0 "No historical data"',
-        f' PMR_RW_AXIS_START:0 "{RI_WEEKS - 1} weeks ago"',
-        ' PMR_RW_AXIS_END:0 "This week"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
         ' PMR_PI_SOURCES_HEADER:0 "Buildings Adding to the Pool"',
         ' PMR_PC_CAPTION:0 "Privately owned building levels"',

@@ -10,9 +10,9 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: retooling weighed against the building, a 5-year policy lock, retooling abroad, priorities on a timer (your current save works)
+## Latest: retooling weighed against the building, a 5-year policy lock, a year of weekly re-investment, retooling abroad, priorities on a timer (your current save works)
 
-From your 19:25 to 20:12 messages. Your current save works; wait for the game to reach the 1st before checking.
+From your 19:25 to 20:28 messages. Your current save works; wait for the game to reach the 1st before checking.
 
 - **Retooling weight** (20:12). A retool site now weighs twice what an expansion of its building would score: the
   building's own AI value plus its earnings, the way the game scores profit. Before, PMR counted a year's earnings
@@ -35,6 +35,8 @@ From your 19:25 to 20:12 messages. Your current save works; wait for the game to
 - **Test decisions.** Only "PMR test: pause or resume the monthly ticks" is left, for the timing run the
   performance review still needs. Grant Bessemer, grant Open Hearth, recompute retooling now and record trade-offs
   worldwide are gone.
+- **Weekly Re-investment** (20:28) now holds 52 weeks, like the Investment Pool graph beside it, and its axis
+  shows the same two dates. The weeks your save already recorded stay; the older half fills in as weeks pass.
 - **Policy cards** are as tall as their text. The last line holds the authority cost on the left and "Requires
   Investment Banks" or "Current Policy" on the right, so nothing sits on the effects. Each law has its own window.
 - **Priority timer.** After you change a priority row you have 7 days to change it again, then it stays for 3
