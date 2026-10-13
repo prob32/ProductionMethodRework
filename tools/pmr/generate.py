@@ -1948,7 +1948,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              '\t# Abroad: the player (global_var:pmr_player) owns levels here, in a state another country owns.\n'
              f'\tif = {{\n\t\tlimit = {{ has_global_variable = pmr_player NOT = {{ owner = global_var:pmr_player }} '
              f'b:{bk} = {{ levels_owned_by_country = {{ target = global_var:pmr_player value >= 1 }} }} }}\n'
-             f'\t\tset_variable = pmr_abroad_{b}\n'
+             f'\t\tset_variable = {{ name = pmr_abroad_{b} value = 1 }}  # a value, so the Owners list can read it\n'
              '\t\tset_variable = { name = pmr_abroad_any days = 62 }\n\t}\n'
              f'\telse_if = {{ limit = {{ has_variable = pmr_abroad_{b} }} remove_variable = pmr_abroad_{b} }}\n'
              f'\tpmr_best_{b} = yes\n'
@@ -2636,20 +2636,32 @@ OWN_NAME_W, OWN_PM_W, OWN_LEVELS_W = 200, 120, 90
 
 
 def owners_cell(bk, textures):
+    """Abroad (pmr_abroad_<b>) PMR tracks every owner's levels together in pmr_lvp_* (the government's share is
+    retooled by the player's investors there), so a government row abroad shows those (Pat 15:33Z: Great Britain's
+    row in a West Bengal coal mine showed no recipe)."""
     b = short(bk)
+    abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
     rows = []
     for side, gov in (('gov', True), ('priv', False)):
         who = 'BuildingOwnership.IsCountryOwned' if gov else 'Not(BuildingOwnership.IsCountryOwned)'
-        name = 'pmr_lvg' if gov else 'pmr_lvp'
+
+        def shown(i):
+            lvp = f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvp_{i}')}, '(CFixedPoint)0')"
+            if not gov:
+                return lvp
+            lvg = f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvg_{i}')}, '(CFixedPoint)0')"
+            return f'Or(And(Not({abroad}), {lvg}), And({abroad}, {lvp}))'
         icons = ''.join(
             '\t\t\t\t\t\t\t\t\ticon = {\n'
-            f"\t\t\t\t\t\t\t\t\t\tvisible = \"[GreaterThan_CFixedPoint({state_var(b, f'{name}_{i}')}, '(CFixedPoint)0')]\"\n"
+            f'\t\t\t\t\t\t\t\t\t\tvisible = "[{shown(i)}]"\n'
             f'\t\t\t\t\t\t\t\t\t\tsize = {{ 26 26 }}\n\t\t\t\t\t\t\t\t\t\ttexture = "{tex}"\n'
             '\t\t\t\t\t\t\t\t\t}\n' for i, tex in enumerate(textures, 1))
+        tooltip = (f"[SelectLocalization({abroad}, 'PMR_OWNERS_ABROAD_TOOLTIP_{b}', 'PMR_OWNERS_GOV_TOOLTIP_{b}')]"
+                   if gov else f'PMR_OWNERS_PRIV_TOOLTIP_{b}')
         rows.append('\t\t\t\t\t\t\t\tflowcontainer = {\n'
                     f'\t\t\t\t\t\t\t\t\tvisible = "[And({is_type(bk)}, {who})]"\n'
                     '\t\t\t\t\t\t\t\t\tparentanchor = center\n\t\t\t\t\t\t\t\t\tspacing = 2\n'
-                    f'\t\t\t\t\t\t\t\t\ttooltip = "PMR_OWNERS_{side.upper()}_TOOLTIP_{b}"\n'
+                    f'\t\t\t\t\t\t\t\t\ttooltip = "{tooltip}"\n'
                     '\t\t\t\t\t\t\t\t\tusing = tooltip_above\n'
                     + icons + '\t\t\t\t\t\t\t\t}\n')
     return ''.join(rows)
@@ -2918,6 +2930,9 @@ def panel_loc(recipe_keys):
             f' PMR_OWNERS_PRIV_TOOLTIP_{b}:0 "#bold Privately owned levels by recipe#!'
             + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvp_{i}", "0")}#!' for i, key in enumerate(keys, 1))
             + '\\n\\nAll private owners together: retooling is tracked for the government and for private owners, not owner by owner."',
+            f' PMR_OWNERS_ABROAD_TOOLTIP_{b}:0 "#bold Levels by recipe#!'
+            + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvp_{i}", "0")}#!' for i, key in enumerate(keys, 1))
+            + '\\n\\nAbroad every owner\'s levels are tracked together: your investors retool your government\'s levels here too."',
         ]
 
         def cvar(name, f):

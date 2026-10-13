@@ -1,4 +1,4 @@
-# PMR run sheet: retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,50 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: retooling what you own abroad, and the Private tab, fourth round (your current save works)
+## Latest: the Private tab, fifth round, and your government's row abroad (your current save works)
+
+From your 15:33 and 15:34 messages. Open the Private tab once after loading, as before.
+
+- **Owners list abroad.** In the West Bengal coal mine, Great Britain's row now shows recipe icons. Abroad, PMR
+  tracks every owner's levels together, so your row shows the same recipes as the Financial Districts row, and
+  its hover says so. The flag that marks a building abroad is set on the 1st of the month (or when you research
+  something), so the icons appear from then.
+- **Weekly chart.** No white line; each week is a column from zero, split by group. Until the first week is
+  recorded the frame reads "No historical data".
+- **Two tree maps.** The existing one (privately owned levels by priority group), and under it building levels
+  by owner: Government, Local Shop Owners, Companies, and Manor Houses with Financial Districts together.
+  `PMR;rec=CONTRIB` now ends with `owner_gov=`, `owner_self=`, `owner_company=`, `owner_invest=`.
+- **Three bars at the top of Recent Investments**, drawn like the game's own ownership bar: Domestic or
+  Foreign, by priority group, and who built it (Government, Your Investors, Local Owners, Foreign Investors).
+  Each segment and each legend entry has a tooltip; a group's tooltip lists each building type with its
+  points and levels. They now count **every level completed in your states, and every level you build
+  abroad**, government building and retooling included. Retooling counts under the building it retools. The
+  record from the previous version starts again from zero, so the bars stay hidden until the next level
+  completes.
+- **Foreign or Domestic Investment.** Replaces the priorities text: its own framed row with seven notches, the
+  tariff bar's icons, Foreign on the left and Domestic on the right. Each notch from the middle makes every
+  building in your states weigh as if it earned £1 more (Domestic) or less (Foreign) a worker. Foreign
+  investors see your states the same way. Clicking a notch writes `PMR;rec=FOCUS;...;notch=<1-7>;bias=<-3..3>`.
+- **Policies.** Favour Large Corporations: +1 free charter, +10% Company Throughput Bonus, +10% company
+  government dividends (no more extra company). 1.14.5 has no company price or wage modifier. Favour Small
+  Businesses: shopkeepers' investment efficiency +25%. Re-invest is now **Focus on Infrastructure** with a gold
+  rail icon: +10% railway and +10% port throughput, and it keeps the retooling weight.
+
+Each completed level now writes
+`PMR;rec=INVEST;...;building=<type>;kind=gov|investors|local|foreign|not_counted;levels=<levels added>;player_levels=;government_levels=;local_levels=;points=`.
+
+| What you see | What it means |
+| --- | --- |
+| Great Britain's row in the West Bengal mine still has no icons after the 1st | The abroad flag isn't read by the panel. Send a screenshot and the mine's `ABROAD` line. |
+| Bars never appear although `INVEST` lines with `kind=gov` or `kind=investors` show | The record isn't reaching the panel. Send the lines and a screenshot. |
+| `INVEST` lines say `kind=not_counted` for levels in your own states | The owner check failed. Send the lines. |
+| A government retool level completes but no `INVEST` line appears | Retool buildings aren't reaching the hook. Check error.log for `pmr_pi_`. |
+| Bar segments are missing or all the same width | The game's stretch layout isn't taking PMR's shares. Send a screenshot. |
+| The owner tree map shows only Manor Houses and Financial Districts | The ownership reads returned nothing. Send the `CONTRIB` line. |
+| Clicking a notch writes no `FOCUS` line | The slider's script didn't run. Check error.log for `pmr_fd`. |
+| `INVEST_MISS` lines | Expected once for constructions that started before this version. |
+
+## Earlier: retooling what you own abroad, and the Private tab, fourth round (your current save works)
 
 After loading, **open the construction panel's Private tab once.** That names you as the player for the
 new hooks and starts the weekly clock (`PMR;rec=CLOCK`, once). Without it both wait for the 1st of the month.

@@ -54,6 +54,7 @@ Wiring into generate.py main(), after the other writes and before the localizati
 It must run after the building files and pmr_retool_buildings.txt are written: it patches those two outputs in place
 (company ai_value; Re-invest's retool multiplier) and asserts what it expects to find.
 """
+import colorsys
 import os
 import re
 
@@ -72,21 +73,46 @@ REFRESH = f"GetScriptedGui('pmr_pc_refresh_sgui').Execute(GuiScope.SetRoot({COUN
 CAP = 0.5                  # slider at 100% = +50% weight (Pat 04:16Z)
 CAP_STEER = 0.75           # +75% under Steer the Economy
 SPLIT = {'bg_manufacturing': ('bg_light_industry', 'bg_heavy_industry', 'bg_military_industry')}
+# Pat 15:33Z: the Victoria 3 palette instead of the bright one. The colours are the pop types' own
+# (common/pop_types/*.txt, hsv), which the GUI can read as GetPopType('<pop>').GetColor, so the tree charts (whose
+# tiles take a bound colour) and the bars and legends (literal colours, the same values converted here) match.
+POP_HSV = {
+    'academics': (0.94, 0.51, 0.37), 'aristocrats': (0.60, 0.58, 0.46), 'bureaucrats': (0.25, 0.4, 0.5),
+    'capitalists': (0.52, 0.32, 0.49), 'engineers': (0.07, 0.57, 0.77), 'officers': (0.12, 0.51, 0.36),
+    'peasants': (0.58, 0.338, 0.812), 'slaves': (0.11, 0.21, 0.68), 'soldiers': (0.8, 0.20, 0.56),
+}
+
+
+def pop_rgb(pop):
+    return tuple(round(x, 2) for x in colorsys.hsv_to_rgb(*POP_HSV[pop]))
+
+
 # Pat 13:05Z: five priority groups over the vanilla building groups (a building group's children come with it).
 # Pat named farms, plantations and fishing for Agriculture; ranches, whaling and rubber plantations join them, and
-# military industry joins Heavy Industries (defaults, said in the reply). Each entry: key, name, its NGUI chart colour
-# (a vanilla define, so the chart can colour its tiles from the GUI), and the building groups.
+# military industry joins Heavy Industries (defaults, said in the reply). Each entry: key, name, the pop type whose
+# colour it takes, that colour, and the building groups.
 GROUPS = [
-    ('light', 'Light Industries', 'BUILDING_OWNERSHIP_COLOR_PLAYER_POPS', (0.41, 0.67, 0.74),
-     ('bg_light_industry', 'bg_arts')),
-    ('heavy', 'Heavy Industries', 'BUILDING_OWNERSHIP_COLOR_PLAYER_GOVERNMENT', (0.20, 0.40, 0.90),
-     ('bg_heavy_industry', 'bg_military_industry')),
-    ('agriculture', 'Agriculture', 'ALERT_COLOR_GREEN', (0.54, 0.78, 0.33),
+    ('light', 'Light Industries', 'capitalists', pop_rgb('capitalists'), ('bg_light_industry', 'bg_arts')),
+    ('heavy', 'Heavy Industries', 'soldiers', pop_rgb('soldiers'), ('bg_heavy_industry', 'bg_military_industry')),
+    ('agriculture', 'Agriculture', 'bureaucrats', pop_rgb('bureaucrats'),
      ('bg_agriculture', 'bg_ranching', 'bg_plantations', 'bg_fishing', 'bg_whaling', 'bg_rubber')),
-    ('resources', 'Resources', 'BUILDING_OWNERSHIP_COLOR_LOCAL_NON_PLAYER_GOVERNMENT', (0.9, 0.50, 0.2),
-     ('bg_mining', 'bg_logging', 'bg_oil_extraction')),
-    ('infrastructure', 'Infrastructure', 'ALERT_COLOR_YELLOW', (0.97, 0.77, 0.33),
-     ('bg_infrastructure', 'bg_power', 'bg_trade')),
+    ('resources', 'Resources', 'engineers', pop_rgb('engineers'), ('bg_mining', 'bg_logging', 'bg_oil_extraction')),
+    ('infrastructure', 'Infrastructure', 'slaves', pop_rgb('slaves'), ('bg_infrastructure', 'bg_power', 'bg_trade')),
+]
+# Pat 15:33Z: who owns what feeds the pool, a second tree chart. Key, name, pop type for the colour.
+OWNERS = [
+    ('gov', 'Government', 'aristocrats'),
+    ('self', 'Local Shop Owners', 'academics'),
+    ('company', 'Companies', 'peasants'),
+    ('invest', 'Manor Houses and Financial Districts', 'officers'),
+]
+GOLD, PLUM = (0.66, 0.55, 0.34), (0.45, 0.34, 0.47)
+# Pat 15:33Z: a third bar, who built. Key, name, colour.
+WHO = [
+    ('gov', 'Government', pop_rgb('aristocrats')),
+    ('investors', 'Your Investors', GOLD),
+    ('local', 'Local Owners', pop_rgb('academics')),
+    ('foreign', 'Foreign Investors', PLUM),
 ]
 GROUP_OF = {bg: k for k, _n, _d, _c, bgs in GROUPS for bg in bgs}
 NO_GROUP = 'none'          # a scored building group outside the five (Manufacturing itself): an untouched slider
@@ -98,11 +124,11 @@ BASE_AI_VALUE = 1000       # PRODUCTION_BUILDING_BASE_VALUE, when a building has
 
 # key, name, icon, modifiers, the card's first benefit (what PMR's script does, short), how that works (hover),
 # details (hover). Pat 14:28Z: the cards show benefits only, the explanation goes in the hover; construction and
-# investment efficiency belong to Laissez-faire, so the rounding-out benefits added at 13:05Z (construction
-# efficiency and allocation, investment efficiency, farmers) are gone, and Favour Large Corporations works the
-# interventionist way: charters, companies and the state's cut of their profits. 1.14.5 has no modifier for how
-# many monopolies one company may hold (monopolies are company charters; COUNTRY_MONOPOLY_MAX_COUNT is a global
-# define), so the card grants a free charter instead.
+# investment efficiency belong to Laissez-faire. Pat 15:33Z: Favour Large Corporations drops the extra company and
+# takes benefits for the companies themselves (he named output prices and lower wages; 1.14.5 has no company price or
+# wage modifier, so it takes the Company Throughput Bonus and keeps the free charter and the state's cut); Small
+# Businesses gives shopkeepers +25%; Re-invest becomes Focus on Infrastructure (railway and port throughput instead of
+# dividends reinvestment, a gold rail icon; the key stays so saves keep it).
 POLICIES = [
     ('steer', 'Steer the Economy', 'gfx/interface/icons/law_icons/command_economy.dds',
      {},
@@ -112,51 +138,58 @@ POLICIES = [
      'The state sets investment targets and leans on banks and boards to meet them. Investors still choose what to '
      'build, but within the priorities you set.'),
     ('corporations', 'Favour Large Corporations', 'gfx/interface/icons/law_icons/corporate_state.dds',
-     {'country_free_charters_add': 1, 'country_max_companies_add': 1,
+     {'country_free_charters_add': 1, 'country_company_throughput_bonus_add': 0.1,
       'building_company_government_dividends_add': 0.1},
      '#P Higher#! Investment Weight for Company Industries',
      'Investors weigh building types your companies own as if each earned #P @money!10#! more per worker. A monopoly '
      'is a company charter, so the free charter lets one more of your companies hold one without spending authority.',
      'National champions get licences, contracts and charters, and the state takes its cut of their profits.'),
-    ('reinvest', 'Re-invest', 'gfx/interface/icons/law_icons/interventionism.dds',
-     {'country_government_dividends_reinvestment_add': 0.1},
+    ('reinvest', 'Focus on Infrastructure', 'gfx/interface/icons/ai_strategy_icons/unused/infrastructure_expansion.dds',
+     {'building_railway_throughput_add': 0.1, 'building_port_throughput_add': 0.1},
      '#P Up to 100×#! Investment Weight for Retooling',
      'Investors favour retooling a building by its group\'s investment priority: up to #P 100×#! at a full '
      'priority.',
-     'Profits are ploughed back into the works: new machinery and better methods come before new sites, and the '
-     'state\'s own dividends follow them into the pool.'),
+     'Rails, docks and new machinery come before new sites: the state guarantees the loans and the works are '
+     'brought up to date.'),
     ('small', 'Favour Small Businesses', 'gfx/interface/icons/law_icons/cooperative_ownership.dds',
-     {'state_shopkeepers_investment_pool_efficiency_mult': 0.15, 'building_self_investment_chance_add': 0.1},
+     {'state_shopkeepers_investment_pool_efficiency_mult': 0.25, 'building_self_investment_chance_add': 0.1},
      None, None,
      'Shopkeepers get easier credit and lighter paperwork, so more of their savings reach the pool and more new '
      'levels stay with the people who work them.'),
 ]
 POLICY_LAW = 'law_interventionism'
-RI_WEEKS = 26              # re-investment chart: one point per week (Pat 14:28Z), newest on the right
-RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 7    # the line is drawn on a 20-row grid, 6 px a row, 7 px a week
+RI_WEEKS = 26              # re-investment chart: one column per week (Pat 14:28Z), newest on the right
+RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 7    # columns are measured in rows of 6 px, from zero to the highest week
 PLOT_MARGINS = (52, 14)    # v3_plotline's left and right margins, narrowed so two graphs share the row
 POOL_GRAPH_W = 200         # the vanilla investment pool graph beside it (Pat 14:28Z)
-COLUMN_DIM = 0.7           # the group columns under the line: the tree chart's colours, darker so the line reads
-INVEST_BAR_W, INVEST_BAR_H = 498, 18   # the recent investment bars (Pat 14:28Z)
-HOME_COLOR, ABROAD_COLOR = (0.80, 0.66, 0.38), (0.60, 0.44, 0.72)
+INVEST_BAR_W, INVEST_BAR_H = 520, 32   # the recent investment bars, as tall as vanilla's ownership bar (Pat 15:33Z)
+HOME_COLOR, ABROAD_COLOR = GOLD, PLUM
 # Building groups whose types are no investors' business, left out of the bars.
 INVEST_EXCLUDE = ('bg_canals', 'bg_construction', 'bg_subsistence_agriculture', 'bg_subsistence_ranching')
-LINE_COLOR = (0.9, 0.9, 0.9)              # vanilla's trend line colour (v3_plotline_gdp)
 # A plain white texture that 1.14.5 ships (gfx/interface/colors/white.dds, used before, does not exist: the line
 # drew nothing, Pat 13:05Z).
 WHITE = 'gfx/interface/backgrounds/white.dds'
 TRANSPARENT = 'gfx/interface/icons/generic_icons/transparent.dds'
+# Foreign or domestic investment (Pat 15:34Z), on the tariff bar's seven notches: 1 = strongly foreign, 4 = no
+# preference, 7 = strongly domestic. Each notch from the middle adds or takes FD_STEP of ai_value from every
+# investable building type in the player's states (about GBP 1 a worker of vanilla's profit term, as CORP_BONUS).
+FD_NOTCHES = 7
+SINCE = 'Counted since this version of the mod was loaded.'
+FD_STEP = 7500
+FD_ICONS = ('max_subvention', 'high_subvention', 'low_subvention', 'no_tariffs_no_subvention', 'low_tariffs',
+            'high_tariffs', 'max_tariffs')
 CARD_W, CARD_H = 268, 380                 # law and policy cards, the same size (Pat 04:50Z), taller (Pat 13:05Z)
 PCARD_W, PCARD_H = 300, 176               # a policy in the policy window: benefits only (Pat 14:28Z)
 MOD_NAMES = {  # how each modifier reads on a policy card (vanilla's names, modifiers.log)
-    'country_government_dividends_reinvestment_add': 'Government Dividends Reinvestment',
     'country_free_charters_add': 'Free Company Charters',
-    'country_max_companies_add': 'Max Number of Companies',
+    'country_company_throughput_bonus_add': 'Company Throughput Bonus',
     'building_company_government_dividends_add': 'Company Government Dividends',
+    'building_railway_throughput_add': 'Railway Throughput',
+    'building_port_throughput_add': 'Port Throughput',
     'state_shopkeepers_investment_pool_efficiency_mult': 'Shopkeepers\' Investment Efficiency',
     'building_self_investment_chance_add': 'Self-investment Chance',
 }
-WHOLE = ('country_free_charters_add', 'country_max_companies_add')   # counts, not percentages
+WHOLE = ('country_free_charters_add',)   # counts, not percentages
 
 
 def benefit_lines(core, mods):
@@ -288,6 +321,28 @@ def script_values():
         out += (f'pmr_pc_{g} = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{\n'
                 f'\t\t\tOR = {{\n{ors}\t\t\t}}\n\t\t\tNOR = {{\n{excl}\t\t\t}}\n'
                 '\t\t\tprivate_ownership_fraction >= 0.125\n\t\t}\n\t\tadd = pmr_pc_levels\n\t}\n}\n\n')
+    # The owners chart (Pat 15:33Z): levels by who owns them, in the same building groups. The ownership triggers
+    # are comparisons, so each building's shares are read to the nearest eighth of its levels.
+    def eighths(trigger):
+        cuts = [(k + 0.5) / 8 for k in range(8)]
+        out = ''
+        for k, c in enumerate(cuts):
+            out += (f'\t{"else_if" if k else "if"} = {{\n\t\tlimit = {{ {trigger} < {c:g} }}\n'
+                    f'\t\tmultiply = {k / 8:g}\n\t}}\n')
+        return out
+    out += ('# Building scope. Its levels owned by any government, and by the building itself (local owners), to the\n'
+            '# nearest eighth of its levels; the rest belong to ownership buildings (Manor Houses, Financial Districts,\n'
+            '# company headquarters).\n'
+            'pmr_po_gov_levels = {\n\tvalue = this.level\n' + eighths('country_ownership_fraction') + '}\n\n'
+            'pmr_po_self_levels = {\n\tvalue = this.level\n' + eighths('self_ownership_fraction') + '}\n\n'
+            'pmr_po_rest_levels = {\n\tvalue = this.level\n\tsubtract = pmr_po_gov_levels\n'
+            '\tsubtract = pmr_po_self_levels\n\tmin = 0\n}\n\n'
+            '# Country scope. Those levels summed over the buildings of the five priority groups.\n')
+    ors = ''.join(f'\t\t\t\tis_building_group = {bg}\n' for *_r, bgs in GROUPS for bg in bgs)
+    for k in ('gov', 'self', 'rest'):
+        out += (f'pmr_po_{k} = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{\n'
+                f'\t\t\tOR = {{\n{ors}\t\t\t}}\n\t\t\tNOR = {{\n{excl}\t\t\t}}\n\t\t}}\n'
+                f'\t\tadd = pmr_po_{k}_levels\n\t}}\n}}\n\n')
     return out
 
 
@@ -301,9 +356,19 @@ def sguis():
             for s in STEPS)
         out += (f'{v}_sgui = {{\n\tscope = country\n\tsaved_scopes = {{ step }}\n'
                 f'\teffect = {{\n\t\tset_variable = {ON}\n\t\t{steps}\t}}\n}}\n\n')
+    notches = '\t\telse_'.join(
+        f'if = {{\n\t\t\tlimit = {{ scope:step = {n} }}\n\t\t\tset_variable = {{ name = pmr_fd_i value = {n} }}\n'
+        f'\t\t\tset_variable = {{ name = pmr_fd value = {n - (FD_NOTCHES + 1) // 2} }}\n\t\t}}\n'
+        for n in range(1, FD_NOTCHES + 1))
+    out += ('# Foreign or domestic investment (Pat 15:34Z). Country scope; scope:step is the notch clicked, 1 (strongly\n'
+            f'# foreign) .. {FD_NOTCHES} (strongly domestic). pmr_fd is the notch less the middle one, read by the ai_value of\n'
+            '# every investable building type in the country\'s states (pmr_ai_value_<b>).\n'
+            f'pmr_fd_sgui = {{\n\tscope = country\n\tsaved_scopes = {{ step }}\n\teffect = {{\n\t\t{notches}'
+            '\t\tdebug_log = "PMR;rec=FOCUS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'notch=[THIS.Var(\'pmr_fd_i\').GetValue|0];bias=[THIS.Var(\'pmr_fd\').GetValue|0]"\n\t}\n}\n\n')
     out += ('# The contributors chart, recounted whenever the Private tab is opened (and weekly); opening the tab also\n'
             '# starts the weekly clock if it is not running.\n'
-            'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n'
+            'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n\t\tpmr_pi_v2 = yes\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n\t\t}\n'
             '\t\tpmr_pi_start_clock = yes\n\t}\n}\n\n')
     out += ('# Policy cards. is_shown: the country may hold a policy at all (Interventionism); is_valid: this one\n'
@@ -334,16 +399,14 @@ def reinvest_effect():
     """Country scope, weekly (pmr_pi.1, Pat 14:28Z), players only. The game keeps no history of the pool's weekly
     income (the budget's Investment Pool Transfer trend is money drawn out for construction), so PMR samples
     investment_pool_income (a country value; its description string is in the 1.14.5 exe) once a week into
-    pmr_rw_0 (newest) .. pmr_rw_<N-1>. For the trend line (Pat 04:50Z: like the GDP graph; GUI plot lines only take
-    the engine's own trends) each week gets its row on a RI_ROWS grid between the lowest and highest week shown
-    (pmr_rw_b_<i>, 1 = bottom), and each pair of neighbouring weeks the rows the line climbs between them
-    (pmr_rw_lo_<i>, pmr_rw_hi_<i>, joining week i to week i + 1).
-    Under the line, a column per week split by the tree chart's shares that week (Pat 14:28Z): pmr_rs_<g>_<i> is
-    the running total of the shares of groups 0..g (1 for the last group, 0 when nothing was counted), and
-    pmr_rc_<g>_<i> the height of that running total under the line, in rows; the GUI draws the five as bars from
-    the back (the whole column) to the front (the first group alone). The monthly series (pmr_ri_*) of earlier
-    versions is left alone and no longer drawn."""
-    n, top_row, ng = RI_WEEKS, RI_ROWS - 1, len(GROUPS)
+    pmr_rw_0 (newest) .. pmr_rw_<N-1>. Each week is a column from zero (Pat 15:33Z: no line over it): pmr_rw_h_<i>
+    is its height in rows against the highest week shown, and pmr_rw_b_<i> is 1 once the week is recorded. The
+    column is split by the tree chart's shares that week (Pat 14:28Z): pmr_rs_<g>_<i> is the running total of the
+    shares of groups 0..g (1 for the last group, 0 when nothing was counted), and pmr_rc_<g>_<i> the height of that
+    running total, in rows; the GUI draws the five as bars from the back (the whole column) to the front (the first
+    group alone). The monthly series (pmr_ri_*) and the line rows (pmr_rw_lo_*, pmr_rw_hi_*) of earlier versions are
+    left alone and no longer drawn."""
+    n, ng = RI_WEEKS, len(GROUPS)
     shift = ''.join(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i - 1} }}\n'
                     f'\t\tset_variable = {{ name = pmr_rw_{i} value = var:pmr_rw_{i - 1} }}\n'
                     + ''.join(f'\t\tset_variable = {{ name = pmr_rs_{g}_{i} value = var:pmr_rs_{g}_{i - 1} }}\n'
@@ -355,59 +418,64 @@ def reinvest_effect():
                       f'\t\t\tadd = var:pmr_pc_share_{g}\n\t\t}}\n\t}}\n' for g in range(1, ng - 1))
     shares += (f'\tset_variable = {{ name = pmr_rs_{ng - 1}_0 value = 0 }}\n'
                f'\tif = {{\n\t\tlimit = {{ var:pmr_pc_total > 0 }}\n\t\tset_variable = {{ name = pmr_rs_{ng - 1}_0 value = 1 }}\n\t}}\n')
-
-    def fold(op):
-        return ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_rw_{i} }}\n\t\t\t\t{op} = var:pmr_rw_{i}\n\t\t\t}}\n'
-                       for i in range(1, n))
+    fold = ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_rw_{i} }}\n\t\t\t\tmin = var:pmr_rw_{i}\n\t\t\t}}\n'
+                   for i in range(1, n))
     rows = ''.join(
         f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i} }}\n'
-        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_b_{i}\n\t\t\tvalue = {{\n'
-        f'\t\t\t\tvalue = {RI_ROWS // 2}\n'
-        f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ var:pmr_rw_span > 0 }}\n'
-        f'\t\t\t\t\tvalue = var:pmr_rw_{i}\n\t\t\t\t\tsubtract = var:pmr_rw_min\n\t\t\t\t\tdivide = var:pmr_rw_span\n'
-        f'\t\t\t\t\tmultiply = {top_row}\n\t\t\t\t\tround = yes\n\t\t\t\t\tadd = 1\n\t\t\t\t}}\n'
+        f'\t\tset_variable = {{ name = pmr_rw_b_{i} value = 1 }}\n'
+        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_h_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = 0\n'
+        f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ var:pmr_rw_max > 0 }}\n'
+        f'\t\t\t\t\tvalue = var:pmr_rw_{i}\n\t\t\t\t\tdivide = var:pmr_rw_max\n\t\t\t\t\tmultiply = {RI_ROWS}\n\t\t\t\t}}\n'
         f'\t\t\t}}\n\t\t}}\n'
-        + ''.join(f'\t\tset_variable = {{\n\t\t\tname = pmr_rc_{g}_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_b_{i}\n'
-                  f'\t\t\t\tsubtract = 0.5\n\t\t\t\tmultiply = var:pmr_rs_{g}_{i}\n\t\t\t}}\n\t\t}}\n' for g in range(ng))
+        + ''.join(f'\t\tset_variable = {{\n\t\t\tname = pmr_rc_{g}_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_h_{i}\n'
+                  f'\t\t\t\tmultiply = var:pmr_rs_{g}_{i}\n\t\t\t}}\n\t\t}}\n' for g in range(ng))
         + '\t}\n'
         for i in range(n))
-    joins = ''.join(
-        f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i + 1} }}\n'
-        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_lo_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_b_{i}\n'
-        f'\t\t\t\tmax = var:pmr_rw_b_{i + 1}\n\t\t\t}}\n\t\t}}\n'
-        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_hi_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_b_{i}\n'
-        f'\t\t\t\tmin = var:pmr_rw_b_{i + 1}\n\t\t\t}}\n\t\t}}\n\t}}\n'
-        for i in range(n - 1))
     return ('pmr_rw_record = {\n'
             + shift +
             '\tset_variable = {\n\t\tname = pmr_rw_0\n\t\tvalue = {\n\t\t\tvalue = investment_pool_income\n\t\t\tmin = 0\n\t\t}\n\t}\n'
             + shares +
-            '\t# highest and lowest week shown (min = X keeps a value at least X, max = X at most X)\n'
-            '\tset_variable = {\n\t\tname = pmr_rw_max\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_0\n' + fold('min') + '\t\t}\n\t}\n'
-            '\tset_variable = {\n\t\tname = pmr_rw_min\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_0\n' + fold('max') + '\t\t}\n\t}\n'
-            '\tset_variable = {\n\t\tname = pmr_rw_span\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_max\n\t\t\tsubtract = var:pmr_rw_min\n\t\t}\n\t}\n'
-            + rows + joins +
+            '\t# the highest week shown (min = X keeps a value at least X)\n'
+            '\tset_variable = {\n\t\tname = pmr_rw_max\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_0\n' + fold + '\t\t}\n\t}\n'
+            + rows +
             '\tdebug_log = "PMR;rec=REINVEST;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
-            'weekly=[THIS.Var(\'pmr_rw_0\').GetValue|0];min=[THIS.Var(\'pmr_rw_min\').GetValue|0];max=[THIS.Var(\'pmr_rw_max\').GetValue|0];'
-            'row=[THIS.Var(\'pmr_rw_b_0\').GetValue|0];column_first_group=[THIS.Var(\'pmr_rc_0_0\').GetValue|2]"\n'
+            'weekly=[THIS.Var(\'pmr_rw_0\').GetValue|0];max=[THIS.Var(\'pmr_rw_max\').GetValue|0];'
+            'height=[THIS.Var(\'pmr_rw_h_0\').GetValue|1];column_first_group=[THIS.Var(\'pmr_rc_0_0\').GetValue|2]"\n'
             '}\n')
 
 
 def chart_effect():
     """Country scope. Counts privately owned levels per priority group into pmr_pc_<i> (GROUPS order, read by the
-    tree chart by index) and each group's share of them into pmr_pc_share_<i>; run weekly for players (pmr_pi.1) and
-    whenever the Private tab is opened (pmr_pc_refresh_sgui)."""
+    tree chart by index) and each group's share of them into pmr_pc_share_<i>; and the levels of those groups by
+    owner into pmr_po_<i> (OWNERS order) with shares pmr_po_share_<i> (Pat 15:33Z). Companies are told apart by
+    company_owned_levels (company scope, a comparison, read by halving steps over the country's companies; it counts
+    a company's levels wherever they are); Manor Houses and Financial Districts are what is left, as script cannot
+    tell those two apart. Run weekly for players (pmr_pi.1) and whenever the Private tab is opened
+    (pmr_pc_refresh_sgui)."""
     sets = ''.join(f'\tset_variable = {{ name = pmr_pc_{i} value = pmr_pc_{g} }}\n' for i, (g, *_r) in enumerate(GROUPS))
-    total = ''.join(f'\t\t\tadd = var:pmr_pc_{i}\n' for i in range(len(GROUPS)))
-    shares = ''.join(
-        f'\tset_variable = {{\n\t\tname = pmr_pc_share_{i}\n\t\tvalue = {{\n\t\t\tvalue = 0\n'
-        f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_pc_total > 0 }}\n\t\t\t\tvalue = var:pmr_pc_{i}\n'
-        '\t\t\t\tdivide = var:pmr_pc_total\n\t\t\t}\n\t\t}\n\t}\n'
-        for i in range(len(GROUPS)))
+
+    def total_and_shares(prefix, n):
+        tot = ''.join(f'\t\t\tadd = var:{prefix}_{i}\n' for i in range(n))
+        return (f'\tset_variable = {{\n\t\tname = {prefix}_total\n\t\tvalue = {{\n\t\t\tvalue = 0\n{tot}\t\t}}\n\t}}\n'
+                + ''.join(f'\tset_variable = {{\n\t\tname = {prefix}_share_{i}\n\t\tvalue = {{\n\t\t\tvalue = 0\n'
+                          f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{prefix}_total > 0 }}\n\t\t\t\tvalue = var:{prefix}_{i}\n'
+                          f'\t\t\t\tdivide = var:{prefix}_total\n\t\t\t}}\n\t\t}}\n\t}}\n' for i in range(n)))
+    steps = (512, 256, 128, 64, 32, 16, 8, 4, 2, 1)
+    company = ('\tset_variable = { name = pmr_po_2 value = 0 }\n\tevery_company = {\n'
+               '\t\troot = { set_variable = { name = pmr_po_x value = 0 } }\n'
+               + ''.join(f'\t\troot = {{ set_variable = {{ name = pmr_po_t value = {{ value = var:pmr_po_x add = {st} }} }} }}\n'
+                         '\t\tif = {\n\t\t\tlimit = { company_owned_levels >= root.var:pmr_po_t }\n'
+                         '\t\t\troot = { set_variable = { name = pmr_po_x value = var:pmr_po_t } }\n\t\t}\n' for st in steps)
+               + '\t\troot = { change_variable = { name = pmr_po_2 add = var:pmr_po_x } }\n\t}\n')
+    owners = ('\tset_variable = { name = pmr_po_0 value = pmr_po_gov }\n'
+              '\tset_variable = { name = pmr_po_1 value = pmr_po_self }\n'
+              + company +
+              '\tset_variable = {\n\t\tname = pmr_po_3\n\t\tvalue = {\n\t\t\tvalue = pmr_po_rest\n'
+              '\t\t\tsubtract = var:pmr_po_2\n\t\t\tmin = 0\n\t\t}\n\t}\n')
     log = ';'.join(f"{g}=[THIS.Var('pmr_pc_{i}').GetValue|1]" for i, (g, *_r) in enumerate(GROUPS))
-    return ('pmr_pc_record = {\n' + sets +
-            f'\tset_variable = {{\n\t\tname = pmr_pc_total\n\t\tvalue = {{\n\t\t\tvalue = 0\n{total}\t\t}}\n\t}}\n'
-            + shares +
+    log += ';' + ';'.join(f"owner_{k}=[THIS.Var('pmr_po_{i}').GetValue|1]" for i, (k, *_r) in enumerate(OWNERS))
+    return ('pmr_pc_record = {\n' + sets + total_and_shares('pmr_pc', len(GROUPS))
+            + owners + total_and_shares('pmr_po', len(OWNERS)) +
             '\tdebug_log = "PMR;rec=CONTRIB;date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetCountry.GetNameNoFormatting];{log}"\n'
             '}\n')
@@ -494,111 +562,181 @@ def invest_types(game):
     return out
 
 
-def invest_effects(types):
-    """The Recent Investments bars (Pat 14:28Z: foreign vs domestic, and by priority group in construction points).
-    The game lists previous investments only as text, so PMR keeps its own record from now on: when a level starts
-    (on_start_expanding_building) the player's levels in the building and every government's are put on the
-    state by building type (pmr_iv_o_<b>, pmr_iv_g_<b>); when a level completes (PMR's on_building_built and
-    on_building_expanded, before anything else) the change says who built it. The player's levels went up and no
-    government's did: the player's investors built it, and its construction points count. Retool buildings are
-    not counted. levels_owned_by_country counts a country's government and its investors; country_ownership_fraction
-    is every government's share; both are comparisons only, so pmr_pi_read finds them by halving steps."""
+def retool_types(game, out):
+    """(retool type without building_, priority group index, construction points a level, parent without building_)
+    for every retool building generate.py wrote (Pat 15:33Z: retooling counts in the bars, under the parent's
+    group, at the retool building's cost). Empty in the standalone run."""
+    if not out:
+        return []
+    common = os.path.join(out, 'common')
+    text = open(os.path.join(common, 'buildings', 'pmr_retool_buildings.txt'), encoding='utf-8-sig').read()
+    costs = dict(re.findall(r'^pmr_retool_cost_([a-z_0-9]+) = ([0-9.]+)',
+                            open(os.path.join(common, 'script_values', 'pmr_values.txt'), encoding='utf-8-sig').read(),
+                            re.M))
+    btype, parent = building_groups(game)
+    index = {k: i for i, (k, *_r) in enumerate(GROUPS)}
+    res = []
+    for k, _s, _o, _c in top_blocks(text):
+        m = re.fullmatch(r'building_pmr_retool_gov_(.+)', k) or re.fullmatch(r'building_pmr_retool_(.+)_\d+', k)
+        if not m:
+            continue
+        b = m.group(1)
+        g = group_of('building_' + b, btype, parent)
+        if not g or b not in costs:
+            fail('pmr_retool_buildings.txt', f'{k}: no priority group or no pmr_retool_cost_{b}')
+        res.append((k[len('building_'):], index[g], costs[b], b))
+    if not res:
+        fail('pmr_retool_buildings.txt', 'found no retool buildings')
+    return res
+
+
+def invest_effects(types, retools):
+    """The Recent Investments bars (Pat 14:28Z, reworked 15:33Z). The game lists previous investments only as text,
+    so PMR keeps its own record: when a level starts (on_start_expanding_building) the building's levels are put on
+    the state by building type: its level (pmr_iv_l_<b>), the player's levels (pmr_iv_o_<b>), every government's
+    (pmr_iv_g_<b>) and the building's own, its local owners' (pmr_iv_s_<b>). When a level completes (PMR's
+    on_building_built and on_building_expanded, before anything else) the changes say who built it. Counted: every
+    level completed in the player's states, and every level abroad that raised the player's levels (Pat 15:33Z: so
+    government retooling and building count too), retool levels under the group of the building they retool, at
+    their own cost. Who built it: the building's own levels went up, local owners; a government's and the player's,
+    the player's government; the player's alone, the player's investors; otherwise foreign investors (or a foreign
+    government). levels_owned_by_country counts a country's government and its investors; the fractions are any
+    government's and the building's own; all are comparisons only, so pmr_pi_read finds them by halving steps."""
     steps = (128, 64, 32, 16, 8, 4, 2, 1)
     own = ''.join(
         f'\tstate = {{ set_variable = {{ name = pmr_iv_t value = {{ value = var:pmr_iv_x add = {s} }} }} }}\n'
         f'\tif = {{\n\t\tlimit = {{ levels_owned_by_country = {{ target = global_var:pmr_player value >= state.var:pmr_iv_t }} }}\n'
         f'\t\tstate = {{ set_variable = {{ name = pmr_iv_x value = var:pmr_iv_t }} }}\n\t}}\n' for s in steps)
-    gov = ''.join(
-        f'\t\tstate = {{\n\t\t\tset_variable = {{\n\t\t\t\tname = pmr_iv_t\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:pmr_iv_y\n'
-        f'\t\t\t\t\tadd = {s - 0.5:g}\n\t\t\t\t\tdivide = scope:pmr_iv_b.level\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
-        f'\t\tif = {{\n\t\t\tlimit = {{ country_ownership_fraction >= state.var:pmr_iv_t }}\n'
-        f'\t\t\tstate = {{ change_variable = {{ name = pmr_iv_y add = {s} }} }}\n\t\t}}\n' for s in steps)
+
+    def by_fraction(trigger, var):
+        return ''.join(
+            f'\t\tstate = {{\n\t\t\tset_variable = {{\n\t\t\t\tname = pmr_iv_t\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:{var}\n'
+            f'\t\t\t\t\tadd = {s - 0.5:g}\n\t\t\t\t\tdivide = scope:pmr_iv_b.level\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ {trigger} >= state.var:pmr_iv_t }}\n'
+            f'\t\t\tstate = {{ change_variable = {{ name = {var} add = {s} }} }}\n\t\t}}\n' for s in steps)
     read = ('# Building scope. On its state: pmr_iv_x = the player\'s levels in it (government and investors),\n'
-            '# pmr_iv_y = levels owned by any government, both to 255.\n'
+            '# pmr_iv_y = levels owned by any government, pmr_iv_z = levels the building owns itself, all to 255.\n'
             'pmr_pi_read = {\n\tsave_scope_as = pmr_iv_b\n'
-            '\tstate = {\n\t\tset_variable = { name = pmr_iv_x value = 0 }\n\t\tset_variable = { name = pmr_iv_y value = 0 }\n\t}\n'
+            '\tstate = {\n\t\tset_variable = { name = pmr_iv_x value = 0 }\n\t\tset_variable = { name = pmr_iv_y value = 0 }\n'
+            '\t\tset_variable = { name = pmr_iv_z value = 0 }\n\t}\n'
             + own +
-            '\tif = {\n\t\tlimit = {\n\t\t\tlevel > 0\n\t\t\tcountry_ownership_fraction > 0\n\t\t}\n' + gov + '\t}\n}\n\n')
+            '\tif = {\n\t\tlimit = {\n\t\t\tlevel > 0\n\t\t\tcountry_ownership_fraction > 0\n\t\t}\n'
+            + by_fraction('country_ownership_fraction', 'pmr_iv_y') + '\t}\n'
+            '\tif = {\n\t\tlimit = {\n\t\t\tlevel > 0\n\t\t\tself_ownership_fraction > 0\n\t\t}\n'
+            + by_fraction('self_ownership_fraction', 'pmr_iv_z') + '\t}\n}\n\n')
 
     def dispatch(effect, with_gc):
-        out = ''
-        for k, (s, g, c) in enumerate(types):
-            args = f'S = {s} G = {g} C = {c}' if with_gc else f'S = {s}'
-            out += (f'\t\t{"else_if" if k else "if"} = {{\n\t\t\tlimit = {{ is_building_type = building_{s} }}\n'
+        def call(k, s, g, c, t):
+            args = f'S = {s} G = {g} C = {c} T = {t}' if with_gc else f'S = {s}'
+            return (f'\t\t{"else_if" if k else "if"} = {{\n\t\t\tlimit = {{ is_building_type = building_{s} }}\n'
                     f'\t\t\t{effect} = {{ {args} }}\n\t\t}}\n')
+        out = ''.join(call(k, s, g, c, s) for k, (s, g, c) in enumerate(types))
+        if retools:
+            inner = ''.join('\t' + line + '\n' for line in
+                            ''.join(call(k, s, g, c, t) for k, (s, g, c, t) in enumerate(retools)).rstrip('\n').split('\n'))
+            out += ('\t\telse_if = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tis_building_group = bg_pmr_retool\n'
+                    '\t\t\t\t\tis_building_group = bg_pmr_retool_gov\n\t\t\t\t}\n\t\t\t}\n' + inner + '\t\t}\n')
         return out
     where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
              'state=[THIS.GetState.GetNameNoFormatting];building=$S$')
-    nums = ("levels=[THIS.Var('pmr_iv_d').GetValue|0];government_levels=[THIS.Var('pmr_iv_dg').GetValue|0];"
+    nums = ("levels=[THIS.Var('pmr_iv_dl').GetValue|0];player_levels=[THIS.Var('pmr_iv_d').GetValue|0];"
+            "government_levels=[THIS.Var('pmr_iv_dg').GetValue|0];local_levels=[THIS.Var('pmr_iv_ds').GetValue|0];"
             "points=[THIS.Var('pmr_iv_p').GetValue|0]")
+    kinds = [k for k, *_r in WHO]
 
     def log(kind):
         return f'\t\t\tstate = {{ debug_log = "PMR;rec=INVEST;{where};kind={kind};{nums}" }}\n'
     ng = len(GROUPS)
-    init = ''.join(f'\t\t\t\t\tset_variable = {{ name = pmr_iv_pts_{g} value = 0 }}\n' for g in range(ng))
     snap = ('# Building scope, $S$ = its type without building_. Its levels now, until one completes.\n'
             'pmr_pi_snap = {\n\tpmr_pi_read = yes\n\tstate = {\n'
+            '\t\tset_variable = { name = pmr_iv_l_$S$ value = scope:pmr_iv_b.level }\n'
             '\t\tset_variable = { name = pmr_iv_o_$S$ value = var:pmr_iv_x }\n'
-            '\t\tset_variable = { name = pmr_iv_g_$S$ value = var:pmr_iv_y }\n\t}\n}\n\n')
+            '\t\tset_variable = { name = pmr_iv_g_$S$ value = var:pmr_iv_y }\n'
+            '\t\tset_variable = { name = pmr_iv_s_$S$ value = var:pmr_iv_z }\n\t}\n}\n\n')
+    add = ('# Country scope (the player). Adds the state variable $A$ of the level just counted (scope:pmr_iv_s) to $V$.\n'
+           'pmr_pi_add = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = $V$ } }\n\t\tset_variable = { name = $V$ value = 0 }\n\t}\n'
+           '\tchange_variable = { name = $V$ add = scope:pmr_iv_s.var:$A$ }\n}\n\n')
+    reset = ('# Country scope (the player). The record before this version counted only private construction: start\n'
+             '# again once (from the first count, or when the Private tab is opened).\n'
+             'pmr_pi_v2 = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_iv_v2 } }\n'
+             + ''.join(f'\t\tset_variable = {{ name = {v} value = 0 }}\n' for v in
+                       [f'pmr_iv_pts_{g}' for g in range(ng)] + [f'pmr_iv_w_{w}' for w in range(len(WHO))]
+                       + ['pmr_iv_dom', 'pmr_iv_for', 'pmr_iv_tot'])
+             + '\t\tset_variable = pmr_iv_v2\n\t}\n}\n\n')
+    who = ''.join(f'\t\t\t{"else_if" if w else "if"} = {{\n\t\t\t\tlimit = {{ state = {{ var:pmr_iv_w = {w} }} }}\n'
+                  f'\t\t\t\tglobal_var:pmr_player = {{ pmr_pi_add = {{ V = pmr_iv_w_{w} A = pmr_iv_p }} }}\n'
+                  + log(kinds[w]).replace('\t\t\t', '\t\t\t\t', 1) + '\t\t\t}\n' for w in range(len(WHO)))
     done = ('# Building scope, a level of it just completed; $S$ as above, $G$ its priority group (GROUPS order), $C$ the\n'
-            '# construction points of a level.\n'
+            '# construction points of a level, $T$ the building type it counts under (a retool building\'s parent).\n'
             'pmr_pi_done = {\n\tpmr_pi_read = yes\n'
             '\t# a building\'s first level: nothing was there before it\n'
             '\tif = {\n\t\tlimit = { level <= 1 }\n\t\tstate = {\n'
-            '\t\t\tset_variable = { name = pmr_iv_o_$S$ value = 0 }\n\t\t\tset_variable = { name = pmr_iv_g_$S$ value = 0 }\n\t\t}\n\t}\n'
-            '\tif = {\n\t\tlimit = { state = { NOT = { has_variable = pmr_iv_o_$S$ } } }\n'
+            '\t\t\tset_variable = { name = pmr_iv_l_$S$ value = 0 }\n'
+            '\t\t\tset_variable = { name = pmr_iv_o_$S$ value = 0 }\n\t\t\tset_variable = { name = pmr_iv_g_$S$ value = 0 }\n'
+            '\t\t\tset_variable = { name = pmr_iv_s_$S$ value = 0 }\n\t\t}\n\t}\n'
+            '\tif = {\n\t\tlimit = { state = { NOT = { has_variable = pmr_iv_l_$S$ } } }\n'
             f'\t\tstate = {{ debug_log = "PMR;rec=INVEST_MISS;{where}" }}\n\t}}\n'
             '\telse = {\n\t\tstate = {\n'
-            '\t\t\tset_variable = {\n\t\t\t\tname = pmr_iv_d\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_iv_x\n\t\t\t\t\tsubtract = var:pmr_iv_o_$S$\n\t\t\t\t}\n\t\t\t}\n'
-            '\t\t\tset_variable = {\n\t\t\t\tname = pmr_iv_dg\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_iv_y\n\t\t\t\t\tsubtract = var:pmr_iv_g_$S$\n\t\t\t\t}\n\t\t\t}\n'
-            '\t\t\tset_variable = {\n\t\t\t\tname = pmr_iv_p\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_iv_d\n\t\t\t\t\tmultiply = $C$\n\t\t\t\t}\n\t\t\t}\n'
+            + ''.join(f'\t\t\tset_variable = {{\n\t\t\t\tname = {n}\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = {now}\n'
+                      f'\t\t\t\t\tsubtract = var:{was}_$S$\n\t\t\t\t}}\n\t\t\t}}\n'
+                      for n, now, was in (('pmr_iv_dl', 'scope:pmr_iv_b.level', 'pmr_iv_l'), ('pmr_iv_d', 'var:pmr_iv_x', 'pmr_iv_o'),
+                                          ('pmr_iv_dg', 'var:pmr_iv_y', 'pmr_iv_g'), ('pmr_iv_ds', 'var:pmr_iv_z', 'pmr_iv_s')))
+            + '\t\t\tset_variable = {\n\t\t\t\tname = pmr_iv_p\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_iv_dl\n\t\t\t\t\tmultiply = $C$\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\t# who built it (WHO order)\n'
+            f'\t\t\tset_variable = {{ name = pmr_iv_w value = {kinds.index("foreign")} }}\n'
+            f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_iv_ds >= 1 }}\n\t\t\t\tset_variable = {{ name = pmr_iv_w value = {kinds.index("local")} }}\n\t\t\t}}\n'
+            f'\t\t\telse_if = {{\n\t\t\t\tlimit = {{\n\t\t\t\t\tvar:pmr_iv_dg >= 1\n\t\t\t\t\tvar:pmr_iv_d >= 1\n\t\t\t\t}}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_iv_w value = {kinds.index("gov")} }}\n\t\t\t}}\n'
+            f'\t\t\telse_if = {{\n\t\t\t\tlimit = {{\n\t\t\t\t\tvar:pmr_iv_dg < 1\n\t\t\t\t\tvar:pmr_iv_d >= 1\n\t\t\t\t}}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_iv_w value = {kinds.index("investors")} }}\n\t\t\t}}\n'
             '\t\t\tsave_scope_as = pmr_iv_s\n\t\t}\n'
-            '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tstate = {\n\t\t\t\t\tvar:pmr_iv_d >= 1\n\t\t\t\t\tvar:pmr_iv_dg <= 0\n\t\t\t\t}\n\t\t\t}\n'
-            '\t\t\tglobal_var:pmr_player = {\n'
-            '\t\t\t\tif = {\n\t\t\t\t\tlimit = { NOT = { has_variable = pmr_iv_tot } }\n' + init +
-            '\t\t\t\t\tset_variable = { name = pmr_iv_dom value = 0 }\n\t\t\t\t\tset_variable = { name = pmr_iv_for value = 0 }\n\t\t\t\t}\n'
-            '\t\t\t\tchange_variable = { name = pmr_iv_pts_$G$ add = scope:pmr_iv_s.var:pmr_iv_p }\n\t\t\t}\n'
+            '\t\t# counted: a level in the player\'s states, or one abroad that raised the player\'s levels\n'
+            '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tstate = { var:pmr_iv_dl >= 1 }\n'
+            '\t\t\t\tOR = {\n\t\t\t\t\towner = global_var:pmr_player\n\t\t\t\t\tstate = { var:pmr_iv_d >= 1 }\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\tglobal_var:pmr_player = {\n\t\t\t\tpmr_pi_v2 = yes\n'
+            '\t\t\t\tpmr_pi_add = { V = pmr_iv_pts_$G$ A = pmr_iv_p }\n'
+            '\t\t\t\tpmr_pi_add = { V = pmr_iv_bt_$T$ A = pmr_iv_p }\n'
+            '\t\t\t\tpmr_pi_add = { V = pmr_iv_bl_$T$ A = pmr_iv_dl }\n\t\t\t}\n'
             '\t\t\tif = {\n\t\t\t\tlimit = { owner = global_var:pmr_player }\n'
-            '\t\t\t\tglobal_var:pmr_player = { change_variable = { name = pmr_iv_dom add = scope:pmr_iv_s.var:pmr_iv_p } }\n\t\t\t}\n'
-            '\t\t\telse = {\n'
-            '\t\t\t\tglobal_var:pmr_player = { change_variable = { name = pmr_iv_for add = scope:pmr_iv_s.var:pmr_iv_p } }\n\t\t\t}\n'
+            '\t\t\t\tglobal_var:pmr_player = { pmr_pi_add = { V = pmr_iv_dom A = pmr_iv_p } }\n\t\t\t}\n'
+            '\t\t\telse = {\n\t\t\t\tglobal_var:pmr_player = { pmr_pi_add = { V = pmr_iv_for A = pmr_iv_p } }\n\t\t\t}\n'
+            + who +
             '\t\t\tglobal_var:pmr_player = { pmr_pi_shares = yes }\n'
-            + log('private') +
             '\t\t}\n'
-            '\t\telse_if = {\n\t\t\tlimit = { state = { var:pmr_iv_d >= 1 } }\n' + log('government') + '\t\t}\n'
-            '\t\telse = {\n' + log('other') + '\t\t}\n'
+            '\t\telse = {\n' + log('not_counted') + '\t\t}\n'
             '\t}\n'
             '\t# the next level of the same construction starts from here\n'
-            '\tstate = {\n\t\tset_variable = { name = pmr_iv_o_$S$ value = var:pmr_iv_x }\n'
-            '\t\tset_variable = { name = pmr_iv_g_$S$ value = var:pmr_iv_y }\n\t}\n}\n\n')
+            '\tstate = {\n\t\tset_variable = { name = pmr_iv_l_$S$ value = scope:pmr_iv_b.level }\n'
+            '\t\tset_variable = { name = pmr_iv_o_$S$ value = var:pmr_iv_x }\n'
+            '\t\tset_variable = { name = pmr_iv_g_$S$ value = var:pmr_iv_y }\n'
+            '\t\tset_variable = { name = pmr_iv_s_$S$ value = var:pmr_iv_z }\n\t}\n}\n\n')
     tot = ''.join(f'\t\t\tadd = var:pmr_iv_pts_{g}\n' for g in range(ng))
-    gs = ''.join(f'\tset_variable = {{\n\t\tname = pmr_iv_gs_{g}\n\t\tvalue = {{\n\t\t\tvalue = var:pmr_iv_pts_{g}\n'
-                 '\t\t\tdivide = var:pmr_iv_tot\n\t\t}\n\t}\n' for g in range(ng))
-    gc = '\tset_variable = { name = pmr_iv_gc_0 value = var:pmr_iv_gs_0 }\n'
-    gc += ''.join(f'\tset_variable = {{\n\t\tname = pmr_iv_gc_{g}\n\t\tvalue = {{\n\t\t\tvalue = var:pmr_iv_gc_{g - 1}\n'
-                  f'\t\t\tadd = var:pmr_iv_gs_{g}\n\t\t}}\n\t}}\n' for g in range(1, ng - 1))
-    gc += f'\tset_variable = {{ name = pmr_iv_gc_{ng - 1} value = 1 }}\n'
+
+    def share(name, var):
+        return (f'\t\tset_variable = {{\n\t\t\tname = {name}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:{var}\n'
+                '\t\t\t\tdivide = var:pmr_iv_tot\n\t\t\t}\n\t\t}\n')
     shares_fx = ('# Country scope (the player). Each group\'s share of the construction points counted (pmr_iv_gs_<g>), the\n'
-                 '# running totals the bar draws from the back (pmr_iv_gc_<g>), and the domestic and foreign shares.\n'
+                 '# domestic and foreign shares, and each builder\'s (pmr_iv_ws_<w>, WHO order).\n'
                  'pmr_pi_shares = {\n'
                  f'\tset_variable = {{\n\t\tname = pmr_iv_tot\n\t\tvalue = {{\n\t\t\tvalue = 0\n{tot}\t\t}}\n\t}}\n'
                  '\tif = {\n\t\tlimit = { var:pmr_iv_tot > 0 }\n'
-                 + ''.join('\t' + line + '\n' for line in (gs + gc).rstrip('\n').split('\n')) +
-                 '\t\tset_variable = {\n\t\t\tname = pmr_iv_dsh\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_iv_dom\n'
-                 '\t\t\t\tdivide = var:pmr_iv_tot\n\t\t\t}\n\t\t}\n'
-                 '\t\tset_variable = {\n\t\t\tname = pmr_iv_fsh\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_iv_for\n'
-                 '\t\t\t\tdivide = var:pmr_iv_tot\n\t\t\t}\n\t\t}\n\t}\n}\n\n')
-    hooks = ('# Building scope (on_start_expanding_building, every country\'s): note the levels of a counted type.\n'
-             'pmr_pi_start = {\n\tif = {\n\t\tlimit = { has_global_variable = pmr_player }\n'
-             + dispatch('pmr_pi_snap', False).replace('\n\t\t', '\n\t\t') +
+                 + ''.join(share(f'pmr_iv_gs_{g}', f'pmr_iv_pts_{g}') for g in range(ng))
+                 + share('pmr_iv_dsh', 'pmr_iv_dom') + share('pmr_iv_fsh', 'pmr_iv_for')
+                 + ''.join(share(f'pmr_iv_ws_{w}', f'pmr_iv_w_{w}') for w in range(len(WHO)))
+                 + '\t}\n}\n\n')
+    hooks = ('# Building scope (on_start_expanding_building, every country\'s): note the levels of a counted type that\n'
+             '# has levels already (a new building\'s first level needs no note).\n'
+             'pmr_pi_start = {\n\tif = {\n\t\tlimit = {\n\t\t\thas_global_variable = pmr_player\n\t\t\tlevel > 0\n\t\t}\n'
+             + dispatch('pmr_pi_snap', False) +
              '\t}\n}\n\n'
              '# Building scope (PMR\'s on_building_built and on_building_expanded, every country\'s): a level completed\n'
-             '# in a building the player owns levels in.\n'
+             '# in the player\'s states, or in a building the player owns levels in.\n'
              'pmr_pi_on_done = {\n\tif = {\n\t\tlimit = {\n\t\t\thas_global_variable = pmr_player\n'
-             '\t\t\tlevels_owned_by_country = { target = global_var:pmr_player value >= 1 }\n\t\t}\n'
+             '\t\t\tOR = {\n\t\t\t\towner = global_var:pmr_player\n'
+             '\t\t\t\tlevels_owned_by_country = { target = global_var:pmr_player value >= 1 }\n\t\t\t}\n\t\t}\n'
              + dispatch('pmr_pi_done', True) +
              '\t}\n}\n')
-    return read + snap + shares_fx + done + hooks   # an effect is defined before its first use
+    return read + snap + add + reset + shares_fx + done + hooks   # an effect is defined before its first use
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -774,36 +912,20 @@ def bar(ind, x, y, w, h, value, maximum, color, direction='horizontal', visible=
 
 
 def reinvest_chart(ind):
-    """The weekly re-investment as a trend line in vanilla's graph frame (v3_plotline, as the GDP graph; Pat
-    04:50Z, weekly since 14:28Z). GUI plot lines only take the engine's own trends, so the line is drawn from
-    cells: for each week (pmr_rw_<i>, 0 = newest, rightmost) a flat segment on its row (pmr_rw_b_<i>), and at the
-    week's left edge a riser through the rows between it and the week before (pmr_rw_lo_<i> .. pmr_rw_hi_<i>).
-    Under the line each week is a column split by the tree chart's shares (pmr_rc_<g>_<i>, reinvest_effect),
-    drawn first so the line stays on top, in the groups' colours darkened so the white line reads over them."""
+    """The weekly re-investment in vanilla's graph frame (v3_plotline, as the GDP graph; Pat 04:50Z, weekly since
+    14:28Z). GUI plot lines only take the engine's own trends, so each week (pmr_rw_<i>, 0 = newest, rightmost) is a
+    column from zero, split by the tree chart's shares (pmr_rc_<g>_<i>, reinvest_effect) in the groups' colours.
+    Pat 15:33Z: no line over the columns, and "No historical data" until the first week is recorded."""
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     fp = lambda x: f"'(CFixedPoint){x}'"
     w, h = RI_WEEKS * RI_COL_W, RI_ROWS * RI_ROW_H
-    mid = lambda row: h - row * RI_ROW_H + RI_ROW_H // 2   # centre of a row, 1 = bottom
-    r, g, b = LINE_COLOR
     i2, i3 = ind + '\t\t', ind + '\t\t\t'
-
-    def cell(vis, x, y, cw, ch):
-        return (f'{i2}icon = {{\n{i3}visible = "[{vis}]"\n{i3}position = {{ {x} {y} }}\n{i3}size = {{ {cw} {ch} }}\n'
-                f'{i3}texture = "{WHITE}"\n{i3}color = {{ {r} {g} {b} 1 }}\n{i3}alwaystransparent = yes\n{i2}}}\n')
-    columns, cells, hover = '', '', ''
+    columns, hover = '', ''
     for c in range(RI_WEEKS):
         i = RI_WEEKS - 1 - c
         for gi in range(len(GROUPS) - 1, -1, -1):
-            dim = tuple(x * COLUMN_DIM for x in GROUPS[gi][3])
             columns += bar(i2, c * RI_COL_W, 0, RI_COL_W - 1, h, f"FixedPointToFloat({var(f'pmr_rc_{gi}_{i}')})",
-                           RI_ROWS, dim, 'vertical', f"GreaterThan_CFixedPoint({var(f'pmr_rc_{gi}_{i}')}, {fp(0)})")
-        for row in range(1, RI_ROWS + 1):
-            cells += cell(f"EqualTo_CFixedPoint({var(f'pmr_rw_b_{i}')}, {fp(row)})", c * RI_COL_W, mid(row) - 1, RI_COL_W, 3)
-        if c:
-            for row in range(1, RI_ROWS):
-                cells += cell(f"And(LessThanOrEqualTo_CFixedPoint({var(f'pmr_rw_lo_{i}')}, {fp(row)}), "
-                              f"GreaterThan_CFixedPoint({var(f'pmr_rw_hi_{i}')}, {fp(row)}))",
-                              c * RI_COL_W - 1, mid(row + 1) - 1, 3, RI_ROW_H + 2)
+                           RI_ROWS, GROUPS[gi][3], 'vertical', f"GreaterThan_CFixedPoint({var(f'pmr_rc_{gi}_{i}')}, {fp(0)})")
         hover += (f'{i2}widget = {{\n{i3}visible = "[GreaterThan_CFixedPoint({var(f"pmr_rw_b_{i}")}, {fp(0)})]"\n'
                   f'{i3}position = {{ {c * RI_COL_W} 0 }}\n{i3}size = {{ {RI_COL_W} {h} }}\n'
                   f'{i3}tooltip = "PMR_RW_COLUMN_{i}"\n{i3}using = tooltip_above\n{i2}}}\n')
@@ -816,9 +938,9 @@ def reinvest_chart(ind):
             + bo('header', f'{ind}\t\ttext = "PMR_RW_CHART_HEADER"\n')
             + bo('size', f'{ind}\t\tsize = {{ {w} {h} }}\n')
             + bo('singleitem', '') + bo('multiitem', '')
-            + bo('extra_plotlines', columns + cells + hover)
+            + bo('extra_plotlines', columns + hover)
             + bo('maxvalue', f'{ind}\t\traw_text = "@money![{var("pmr_rw_max")}|K]"\n')
-            + bo('minvalue', f'{ind}\t\traw_text = "@money![{var("pmr_rw_min")}|K]"\n')
+            + bo('minvalue', f'{ind}\t\traw_text = "@money!0"\n')
             + bo('startdate', f'{ind}\t\ttext = "PMR_RW_AXIS_START"\n')
             + bo('enddate', f'{ind}\t\ttext = "PMR_RW_AXIS_END"\n')
             + bo('empty_state_visibility', f'{ind}\t\tvisible = "[Not({has})]"\n')
@@ -858,12 +980,13 @@ def charts_row(ind):
             + reinvest_chart(ind + '\t') + pool_chart(ind + '\t') + f'{ind}}}\n')
 
 
-def contributors_chart(ind):
-    """What feeds the pool, as a tree chart (Pat 13:05Z). The game has no list of the pool's sources the GUI could
-    chart (1.14.5 exe: only the GetInvestmentPoolChangeFromInvestmentBreakdown text), so the tiles are the privately
-    owned levels of each priority group (pmr_pc_<i>, chart_effect) and the game's list in money is the tooltip.
-    The tiles come from vanilla's repeated-item datamodel; each tile finds its group by its index in it."""
-    n = len(GROUPS)
+def tree_chart(ind, items, prefix, tooltip, caption, empty):
+    """A tree chart as vanilla's v3_treemapchart draws it, with a legend beside it. The game has no list of the
+    pool's sources the GUI could chart (1.14.5 exe: only the GetInvestmentPoolChangeFromInvestmentBreakdown text),
+    so the tiles are building levels (<prefix>_<i>, chart_effect) and the game's list in money is the tooltip.
+    The tiles come from vanilla's repeated-item datamodel; each tile finds its item by its index in it, and takes
+    its pop type's colour (Pat 15:33Z: the game's palette). items: (name loc key, pop type, colour, row tooltip)."""
+    n = len(items)
     idx = 'PdxGuiWidget.GetIndexInDataModel'
     pidx = 'PdxGuiWidget.AccessParent.GetIndexInDataModel'
 
@@ -872,43 +995,71 @@ def contributors_chart(ind):
         for i in range(len(vals) - 2, -1, -1):
             out = f"{fn}(EqualTo_int32({at}, '(int32){i}'), {vals[i]}, {out})"
         return out
-    color = chain('Select_CVector4f', idx, [f"GetDefine('NGUI','{d}')" for _g, _n, d, _c, _b in GROUPS])
-    label = chain('Select_CString', pidx, [f"Localize('PMR_IPW_GROUP_{g}')" for g, *_r in GROUPS])
-    value = (f"FixedPointToFloat({COUNTRY}.MakeScope.Var(Concatenate('pmr_pc_', ToString_int32({idx}))).GetValue)")
-    has = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_pc_total').GetValue, '(CFixedPoint)0')"
+    color = chain('Select_CVector4f', idx, [f"GetPopType('{pop}').GetColor" for _k, pop, _c, _t in items])
+    label = chain('Select_CString', pidx, [f"Localize('{k}')" for k, *_r in items])
+    value = f"FixedPointToFloat({COUNTRY}.MakeScope.Var(Concatenate('{prefix}_', ToString_int32({idx}))).GetValue)"
+    has = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('{prefix}_total').GetValue, '(CFixedPoint)0')"
     i1, i2, i3, i4, i5 = (ind + '\t' * k for k in range(1, 6))
     rows = ''
-    for i, (g, _n, _d, (r, gg, b), _bgs) in enumerate(GROUPS):
-        rows += (f'{i2}widget = {{\n{i3}size = {{ 260 28 }}\n{i3}tooltip = "PMR_PC_ROW_{i}"\n{i3}using = tooltip_above\n'
+    for i, (k, _pop, (r, gg, b), tt) in enumerate(items):
+        rows += (f'{i2}widget = {{\n{i3}size = {{ 260 26 }}\n{i3}tooltip = "{tt}"\n{i3}using = tooltip_above\n'
                  f'{i3}icon = {{\n{i4}parentanchor = vcenter\n{i4}size = {{ 18 18 }}\n'
                  f'{i4}texture = "gfx/interface/piechart/piechart_legend.dds"\n{i4}color = {{ {r} {gg} {b} 1 }}\n{i3}}}\n'
-                 f'{i3}textbox = {{\n{i4}parentanchor = vcenter\n{i4}position = {{ 26 0 }}\n{i4}size = {{ 150 24 }}\n'
-                 f'{i4}align = left|nobaseline\n{i4}elide = right\n{i4}text = "PMR_IPW_GROUP_{g}"\n{i3}}}\n'
+                 f'{i3}textbox = {{\n{i4}parentanchor = vcenter\n{i4}position = {{ 26 0 }}\n{i4}size = {{ 180 24 }}\n'
+                 f'{i4}align = left|nobaseline\n{i4}elide = right\n{i4}text = "{k}"\n{i3}}}\n'
                  f'{i3}textbox = {{\n{i4}parentanchor = right|vcenter\n{i4}autoresize = yes\n{i4}align = right|nobaseline\n'
-                 f'{i4}raw_text = "#v [{COUNTRY}.MakeScope.Var(\'pmr_pc_share_{i}\').GetValue|0%]#!"\n{i3}}}\n{i2}}}\n')
-    return (f'{ind}widget = {{\n{i1}parentanchor = hcenter\n{i1}size = {{ 540 214 }}\n'
-            f'{i1}tooltip = "PMR_PC_TT"\n{i1}using = tooltip_above\n'
+                 f'{i4}raw_text = "#v [{COUNTRY}.MakeScope.Var(\'{prefix}_share_{i}\').GetValue|0%]#!"\n{i3}}}\n{i2}}}\n')
+    return (f'{ind}widget = {{\n{i1}parentanchor = hcenter\n{i1}size = {{ 540 204 }}\n'
+            f'{i1}tooltip = "{tooltip}"\n{i1}using = tooltip_above\n'
             f'{i1}textbox = {{\n{i2}visible = "[Not({has})]"\n{i2}parentanchor = center\n{i2}autoresize = yes\n'
-            f'{i2}align = hcenter|nobaseline\n{i2}text = "PMR_PC_EMPTY"\n{i1}}}\n'
-            # the tree chart, as vanilla's v3_treemapchart draws it
-            f'{i1}container = {{\n{i2}visible = "[{has}]"\n{i2}position = {{ 40 22 }}\n'
+            f'{i2}align = hcenter|nobaseline\n{i2}text = "{empty}"\n{i1}}}\n'
+            f'{i1}container = {{\n{i2}visible = "[{has}]"\n{i2}position = {{ 40 18 }}\n'
             f'{i2}treemapchart = {{\n{i3}parentanchor = center\n{i3}size = {{ 200 170 }}\n'
             f'{i3}datamodel = "[DataModelRepeatedItem(\'(int32){n}\')]"\n'
             f'{i3}item = {{\n{i4}treemapslice = {{\n'
             f'{i5}texture = "gfx/interface/treemapchart/treemapchart.dds"\n'
             f'{i5}value = "[{value}]"\n{i5}color = "[{color}]"\n'
-            f'{i5}tooltip = "PMR_PC_TT"\n'
+            f'{i5}tooltip = "{tooltip}"\n'
             f'{i5}textbox = {{\n{i5}\tsize = {{ 100% 100% }}\n{i5}\talign = center|nobaseline\n{i5}\tmargin = {{ 4 4 }}\n'
             f'{i5}\tusing = fontsize_small\n{i5}\tmultiline = yes\n{i5}\telide = right\n{i5}\talwaystransparent = yes\n'
             f'{i5}\traw_text = "#bold [{label}]#!"\n{i5}}}\n'
             f'{i4}}}\n{i3}}}\n{i2}}}\n'
             f'{i2}icon = {{\n{i3}texture = "gfx/interface/treemapchart/treemapchart_frame.dds"\n{i3}parentanchor = center\n'
             f'{i3}size = {{ 124% 110% }}\n{i2}}}\n{i1}}}\n'
-            # the legend
-            f'{i1}flowcontainer = {{\n{i2}visible = "[{has}]"\n{i2}position = {{ 270 22 }}\n{i2}direction = vertical\n{i2}spacing = 4\n'
+            f'{i1}flowcontainer = {{\n{i2}visible = "[{has}]"\n{i2}position = {{ 270 18 }}\n{i2}direction = vertical\n{i2}spacing = 4\n'
             f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n{i3}using = fontsize_small\n'
-            f'{i3}text = "PMR_PC_CAPTION"\n{i2}}}\n'
+            f'{i3}text = "{caption}"\n{i2}}}\n'
             + rows + f'{i1}}}\n{ind}}}\n')
+
+
+def contributors_charts(ind):
+    """What feeds the pool: privately owned levels by priority group (Pat 13:05Z), then levels by owner (Pat
+    15:33Z: Government, Local Shop Owners, Manor Houses, Financial Districts, company headquarters)."""
+    groups = [(f'PMR_IPW_GROUP_{g}', pop, rgb, f'PMR_PC_ROW_{i}') for i, (g, _n, pop, rgb, _b) in enumerate(GROUPS)]
+    owners = [(f'PMR_PO_NAME_{k}', pop, pop_rgb(pop), f'PMR_PO_ROW_{i}') for i, (k, _n, pop) in enumerate(OWNERS)]
+    return (tree_chart(ind, groups, 'pmr_pc', 'PMR_PC_TT', 'PMR_PC_CAPTION', 'PMR_PC_EMPTY')
+            + tree_chart(ind, owners, 'pmr_po', 'PMR_PO_TT', 'PMR_PO_CAPTION', 'PMR_PC_EMPTY'))
+
+
+def stacked_bar(ind, segments, w=INVEST_BAR_W, h=INVEST_BAR_H):
+    """A stacked bar as vanilla's building ownership bar draws it (v3_stacked_barchart, building_details_panel.gui):
+    an hbox of segments, each stretched by its share and painted with stacked_barchart_small_item.dds in its colour,
+    each with its own tooltip (Pat 15:33Z: the game's style, bigger, the detail in tooltips). segments: (share as a
+    fixed point, colour, tooltip key)."""
+    i1, i2, i3, i4, i5 = (ind + '\t' * k for k in range(1, 6))
+    segs = ''
+    for share, (r, g, b), tt in segments:
+        segs += (f'{i3}hbox = {{\n{i4}visible = "[GreaterThan_CFixedPoint({share}, \'(CFixedPoint)0\')]"\n'
+                 f'{i4}layoutpolicy_horizontal = expanding\n{i4}layoutpolicy_vertical = expanding\n'
+                 f'{i4}layoutstretchfactor_horizontal = "[FixedPointToInt(Multiply_CFixedPoint({share}, \'(CFixedPoint)1000\'))]"\n'
+                 f'{i4}tooltip = "{tt}"\n{i4}using = tooltip_se\n'
+                 f'{i4}background = {{\n{i5}texture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
+                 f'{i5}color = {{ {r} {g} {b} 1 }}\n{i5}spriteborder = {{ 3 3 }}\n{i5}using = simple_frame_mask\n'
+                 f'{i5}using = progressbar_texture_properties\n{i4}}}\n{i3}}}\n')
+    return (f'{ind}widget = {{\n{i1}size = {{ {w} {h} }}\n{i1}parentanchor = hcenter\n'
+            f'{i1}hbox = {{\n{i2}layoutpolicy_horizontal = expanding\n{i2}layoutpolicy_vertical = expanding\n'
+            f'{i2}hbox = {{\n{i3}layoutpolicy_horizontal = expanding\n{i3}layoutpolicy_vertical = expanding\n'
+            + segs + f'{i2}}}\n{i1}}}\n{ind}}}\n')
 
 
 def legend_item(ind, color, label, value, tooltip, width):
@@ -923,45 +1074,69 @@ def legend_item(ind, color, label, value, tooltip, width):
 
 
 def invest_bars(ind):
-    """Top of Recent Investments (Pat 14:28Z): what the player's investors built since this version, as two
-    stacked bars, foreign vs domestic and by priority group, each by construction points (invest_effects)."""
+    """Top of Recent Investments: what was built since this version, by construction points (invest_effects), as
+    three of vanilla's stacked bars (Pat 15:33Z): at home or abroad, by priority group, and who built it, each with
+    its legend under it. Their captions moved into the tooltips (Pat 15:33Z)."""
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     has = f"GreaterThan_CFixedPoint({var('pmr_iv_tot')}, '(CFixedPoint)0')"
-    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
-    W, H = INVEST_BAR_W, INVEST_BAR_H
-
-    def frame(inner, tooltip):
-        return (f'{i1}widget = {{\n{i2}size = {{ {W} {H} }}\n{i2}parentanchor = hcenter\n'
-                f'{i2}tooltip = "{tooltip}"\n{i2}using = tooltip_above\n'
-                f'{i2}background = {{\n{i3}using = dark_area\n{i2}}}\n' + inner + f'{i1}}}\n')
-
-    def caption(key):
-        return (f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_small\n'
-                f'{i2}text = "{key}"\n{i1}}}\n')
-    home = (bar(i2, 0, 0, W, H, "FixedPointToFloat('(CFixedPoint)1')", 1, ABROAD_COLOR)
-            + bar(i2, 0, 0, W, H, f"FixedPointToFloat({var('pmr_iv_dsh')})", 1, HOME_COLOR))
-    groups = ''.join(bar(i2, 0, 0, W, H, f"FixedPointToFloat({var(f'pmr_iv_gc_{g}')})", 1, GROUPS[g][3])
-                     for g in range(len(GROUPS) - 1, -1, -1))
+    i1, i2 = ind + '\t', ind + '\t\t'
+    W = INVEST_BAR_W
     lw = W // 3
-    home_legend = (f'{i1}flowcontainer = {{\n{i2}spacing = 0\n'
-                   + legend_item(i2, HOME_COLOR, 'PMR_IV_HOME', var('pmr_iv_dsh'), 'PMR_IV_PLACE_TT', lw)
-                   + legend_item(i2, ABROAD_COLOR, 'PMR_IV_ABROAD', var('pmr_iv_fsh'), 'PMR_IV_PLACE_TT', lw)
-                   + f'{i1}}}\n')
-    group_legend = ''
-    for row in (GROUPS[:3], GROUPS[3:]):
-        group_legend += f'{i1}flowcontainer = {{\n{i2}spacing = 0\n'
-        for g, name, _d, color, _b in row:
-            gi = [k for k, *_r in GROUPS].index(g)
-            group_legend += legend_item(i2, color, f'PMR_IPW_GROUP_{g}', var(f'pmr_iv_gs_{gi}'), 'PMR_IV_GROUP_TT', lw)
-        group_legend += f'{i1}}}\n'
+
+    def legend(entries):
+        out = ''
+        for r0 in range(0, len(entries), 3):
+            out += f'{i1}flowcontainer = {{\n{i2}spacing = 0\n'
+            out += ''.join(legend_item(i2, c, k, v, tt, lw) for c, k, v, tt in entries[r0:r0 + 3])
+            out += f'{i1}}}\n'
+        return out
+    place = [(HOME_COLOR, 'PMR_IV_HOME', var('pmr_iv_dsh'), 'PMR_IV_HOME_TT'),
+             (ABROAD_COLOR, 'PMR_IV_ABROAD', var('pmr_iv_fsh'), 'PMR_IV_ABROAD_TT')]
+    groups = [(c, f'PMR_IPW_GROUP_{g}', var(f'pmr_iv_gs_{i}'), f'PMR_IV_GROUP_{g}_TT')
+              for i, (g, _n, _p, c, _b) in enumerate(GROUPS)]
+    who = [(c, f'PMR_IV_WHO_{k}', var(f'pmr_iv_ws_{i}'), f'PMR_IV_WHO_{k}_TT') for i, (k, _n, c) in enumerate(WHO)]
+    body = ''
+    for entries in (place, groups, who):
+        body += stacked_bar(i1, [(v, c, tt) for c, _k, v, tt in entries]) + legend(entries)
     return (f'{ind}flowcontainer = {{\n{i1}parentanchor = hcenter\n{i1}direction = vertical\n{i1}spacing = 4\n'
             f'{i1}margin = {{ 0 8 }}\n'
             f'{i1}textbox = {{\n{i2}visible = "[Not({has})]"\n{i2}autoresize = yes\n{i2}multiline = yes\n'
             f'{i2}max_width = {W}\n{i2}align = nobaseline\n{i2}text = "PMR_IV_EMPTY"\n{i1}}}\n'
             f'{i1}flowcontainer = {{\n{i2}visible = "[{has}]"\n{i2}direction = vertical\n{i2}spacing = 4\n'
-            + ''.join('\t' + line + '\n' for line in (caption('PMR_IV_PLACE_CAPTION') + frame(home, 'PMR_IV_PLACE_TT')
-                                                     + home_legend + caption('PMR_IV_GROUP_CAPTION')
-                                                     + frame(groups, 'PMR_IV_GROUP_TT') + group_legend).rstrip('\n').split('\n'))
+            + ''.join('\t' + line + '\n' for line in body.rstrip('\n').split('\n'))
+            + f'{i1}}}\n{ind}}}\n')
+
+
+def fd_row(ind):
+    """Foreign or domestic investment (Pat 15:34Z: a slider set apart from the priorities, laid out as the tariff
+    bar): vanilla's set_level_bar with seven notches and the tariff bar's icons, Foreign on the left and Domestic on
+    the right, on its own framed row. Each notch runs pmr_fd_sgui with its number (1..7, 4 = no preference)."""
+    cur = f"{COUNTRY}.MakeScope.Var('pmr_fd_i').GetValue"
+    i1, i2, i3, i4 = (ind + '\t' * k for k in range(1, 5))
+    mid = (FD_NOTCHES + 1) // 2
+    items = ''
+    for n in range(1, FD_NOTCHES + 1):
+        sel = f"EqualTo_CFixedPoint({cur}, '(CFixedPoint){n}')"
+        if n == mid:   # never set reads 0: no preference
+            sel = f"Or({sel}, EqualTo_CFixedPoint({cur}, '(CFixedPoint)0'))"
+        run = (f"GetScriptedGui('pmr_fd_sgui').Execute(GuiScope.SetRoot({COUNTRY}.MakeScope)"
+               f".AddScope('step', MakeScopeValue('(CFixedPoint){n}')).End)")
+        items += (f'{i3}set_level_bar_item = {{\n{i4}tooltip = "PMR_FD_NOTCH_{n}"\n'
+                  f'{i4}blockoverride "button_texture" {{\n{i4}\ttexture = "gfx/interface/icons/trade_icons/{FD_ICONS[n - 1]}.dds"\n{i4}}}\n'
+                  f'{i4}blockoverride "click" {{\n{i4}\tonclick = "[{run}]"\n{i4}}}\n'
+                  f'{i4}blockoverride "is_selected_visibility" {{\n{i4}\tvisible = "[{sel}]"\n{i4}}}\n{i3}}}\n')
+    side = lambda key: (f'{i2}textbox = {{\n{i3}parentanchor = vcenter\n{i3}autoresize = yes\n{i3}align = nobaseline\n'
+                        f'{i3}text = "{key}"\n{i2}}}\n')
+    return (f'{ind}widget = {{\n{i1}size = {{ 540 76 }}\n{i1}parentanchor = hcenter\n'
+            f'{i1}background = {{\n{i2}using = entry_bg\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}position = {{ 0 6 }}\n{i2}parentanchor = hcenter\n{i2}autoresize = yes\n'
+            f'{i2}align = hcenter|nobaseline\n{i2}using = fontsize_large\n{i2}text = "PMR_FD_TITLE"\n'
+            f'{i2}tooltip = "PMR_FD_TT"\n{i2}using = tooltip_above\n{i1}}}\n'
+            f'{i1}flowcontainer = {{\n{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -8 }}\n{i2}spacing = 10\n'
+            + side('PMR_FD_FOREIGN')
+            + f'{i2}flowcontainer = {{\n{i3}using = set_level_bar_background\n{i3}parentanchor = vcenter\n'
+            + items + f'{i2}}}\n'
+            + side('PMR_FD_DOMESTIC')
             + f'{i1}}}\n{ind}}}\n')
 
 
@@ -1148,16 +1323,17 @@ def private_tab():
         f'{i1}\tbackground = {{\n{i1}\t\tusing = dark_area\n{i1}\t}}\n{i1}}}\n'
         # 2. the weekly re-investment over time beside the pool (Pat 14:28Z), titled inside their frames like vanilla's
         + charts_row(i1) +
-        # 3. contributors, as a tree chart (Pat 13:05Z)
-        header('PMR_PI_SOURCES_HEADER', i1) + contributors_chart(i1) +
+        # 3. contributors, as tree charts by group (Pat 13:05Z) and by owner (Pat 15:33Z)
+        header('PMR_PI_SOURCES_HEADER', i1) + contributors_charts(i1) +
         # 4. economic law and policy
         header('PMR_PI_POLICY_HEADER', i1) +
         f'{i1}flowcontainer = {{\n{i1}\tparentanchor = hcenter\n{i1}\tmargin_top = 8\n{i1}\tmargin_bottom = 8\n{i1}\tspacing = 8\n'
         + law_card + policy_card(i2) + f'{i1}}}\n'
-        # 5. priorities
+        # 5. priorities: foreign or domestic on its own row (Pat 15:34Z, instead of the explanation), then the groups
         + header('PMR_IPW_HEADER', i1) +
-        f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 6 }}\n'
-        f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = nobaseline\n{i1}\ttext = "PMR_IPW_EXPLAIN"\n{i1}}}\n'
+        f'{i1}widget = {{\n{i1}\tsize = {{ 540 6 }}\n{i1}}}\n'
+        + fd_row(i1) +
+        f'{i1}widget = {{\n{i1}\tsize = {{ 540 6 }}\n{i1}}}\n'
         + ''.join(priority_row(g, i1) for g, *_r in GROUPS) +
         # 6. private construction, then recent investments
         f'{i1}default_header_2texts = {{\n{i1}\tblockoverride "text1" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_HEADER"\n{i1}\t}}\n'
@@ -1252,13 +1428,16 @@ def patch_retool_ai(text, btype, parent):
     return text, n
 
 
-def patch_company_ai(text, owners):
-    """A building file generate.py wrote: each building type a company lists gets ai_value = pmr_ai_value_<b>,
-    whose body is the vanilla ai_value (number, block, or the 1000 default) plus CORP_BONUS while the state's
-    owner holds Favour Large Corporations and has one of those companies. Returns (text, script values)."""
+def patch_ai_value(text, owners, invest):
+    """A building file: each building type a company lists (owners) or the investment bars count (invest) gets
+    ai_value = pmr_ai_value_<b>, whose body is the vanilla ai_value (number, block, or the 1000 default), plus
+    CORP_BONUS while the state's owner holds Favour Large Corporations and has one of those companies, plus the
+    owner's foreign-or-domestic notch (pmr_fd, -3..3) x FD_STEP on an investable type (Pat 15:34Z; ai_value is read
+    in the state's scope, so foreign investors see the same weight in the player's states). Returns (text, script
+    values)."""
     values, edits = [], []
     for k, _s, o, c in top_blocks(text):
-        if k not in owners:
+        if k not in owners and k not in invest:
             continue
         body = text[o + 1:c]
         name = f'pmr_ai_value_{k[len("building_"):]}'
@@ -1267,19 +1446,25 @@ def patch_company_ai(text, owners):
             vo = o + 1 + m.end()
             vc = block_end(text, vo)
             inner = text[vo + 1:vc].rstrip() + '\n'
-            edits.append((o + 1 + m.start(), vc + 1, f'\n{m.group(1)}ai_value = {name}  # PMR: vanilla value + company card'))
+            edits.append((o + 1 + m.start(), vc + 1, f'\n{m.group(1)}ai_value = {name}  # PMR: vanilla value + policy and focus'))
         elif m:
             num = re.match(r'[-0-9.]+', body[m.end():]).group(0)
             inner = f'\tvalue = {num}\n'
             end = o + 1 + m.end() + len(num)
-            edits.append((o + 1 + m.start(), end, f'\n{m.group(1)}ai_value = {name}  # PMR: vanilla {num} + company card'))
+            edits.append((o + 1 + m.start(), end, f'\n{m.group(1)}ai_value = {name}  # PMR: vanilla {num} + policy and focus'))
         else:
             inner = f'\tvalue = {BASE_AI_VALUE}\n'
-            edits.append((c, c, f'\t# PMR: vanilla default {BASE_AI_VALUE} + company card\n\tai_value = {name}\n'))
-        has = ''.join(f'\t\t\t\t\thas_company = company_type:{ct}\n' for ct in owners[k])
-        values.append(f'{name} = {{\n{inner}\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
+            edits.append((c, c, f'\t# PMR: vanilla default {BASE_AI_VALUE} + policy and focus\n\tai_value = {name}\n'))
+        extra = ''
+        if k in owners:
+            has = ''.join(f'\t\t\t\t\thas_company = company_type:{ct}\n' for ct in owners[k])
+            extra += (f'\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
                       f'\t\t\t\thas_modifier = pmr_policy_corporations\n\t\t\t\tOR = {{\n{has}\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
-                      f'\t\tadd = {CORP_BONUS}\n\t}}\n}}\n')
+                      f'\t\tadd = {CORP_BONUS}\n\t}}\n')
+        if k in invest:
+            extra += ('\tif = {\n\t\tlimit = {\n\t\t\towner ?= { has_variable = pmr_fd }\n\t\t}\n'
+                      f'\t\tadd = {{\n\t\t\tvalue = owner.var:pmr_fd\n\t\t\tmultiply = {FD_STEP}\n\t\t}}\n\t}}\n')
+        values.append(f'{name} = {{\n{inner}{extra}}}\n')
     for a, b, ins in sorted(edits, reverse=True):
         text = text[:a] + ins + text[b:]
     return text, values
@@ -1287,7 +1472,7 @@ def patch_company_ai(text, owners):
 
 # ---------------------------------------------------------------------------------------------------------------
 
-def localization():
+def localization(types):
     law = "[GetLawType('law_interventionism').GetName]"
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     loc = [
@@ -1297,7 +1482,7 @@ def localization():
         ' PMR_TAB_PRIVATE_TT:0 "The investment pool, economic policy, investment priorities and private construction"',
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
         ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
-        ' PMR_RW_EMPTY:0 "Recorded every week from the day you open this tab"',
+        ' PMR_RW_EMPTY:0 "No historical data"',
         f' PMR_RW_AXIS_START:0 "{RI_WEEKS - 1} weeks ago"',
         ' PMR_RW_AXIS_END:0 "This week"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
@@ -1311,20 +1496,15 @@ def localization():
         ' PMR_PI_QUEUE_COUNT:0 ""',
         ' PMR_PI_QUEUE_EMPTY:0 "No private construction is queued"',
         ' PMR_PI_RECENT_HEADER:0 "Recent Investments and Privatizations"',
-        ' PMR_IV_EMPTY:0 "What your investors build is counted here from now on, at home and abroad, by construction '
-        'points."',
-        ' PMR_IV_PLACE_CAPTION:0 "Where your investors built"',
-        ' PMR_IV_GROUP_CAPTION:0 "What they built, by construction points"',
+        ' PMR_IV_EMPTY:0 "Construction completed in your states, and what you build abroad, is counted here from now on '
+        'by construction points."',
         ' PMR_IV_HOME:0 "Domestic"',
         ' PMR_IV_ABROAD:0 "Foreign"',
-        f' PMR_IV_PLACE_TT:0 "#header Where Your Investors Built#!\\nConstruction points of the building levels your '
-        f'investors completed since this version of the mod was loaded: #v [{var("pmr_iv_dom")}|0]#! at home, '
-        f'#v [{var("pmr_iv_for")}|0]#! abroad. Retooling and government construction are not counted."',
-        ' PMR_IV_GROUP_TT:0 "#header What Your Investors Built#!\\nConstruction points of the building levels your '
-        'investors completed since this version of the mod was loaded, by investment priority group:\\n'
-        + '\\n'.join(f'{name}: #v [{var(f"pmr_iv_pts_{i}")}|0]#! (#v [{var(f"pmr_iv_gs_{i}")}|0%]#!)'
-                     for i, (_g, name, *_r) in enumerate(GROUPS))
-        + '\\nRetooling and government construction are not counted."',
+        f' PMR_IV_HOME_TT:0 "#header Domestic#!\\nConstruction points completed in your states, by anyone, retooling '
+        f'included: #v [{var("pmr_iv_dom")}|0]#! (#v [{var("pmr_iv_dsh")}|0%]#!).\\n{SINCE}"',
+        f' PMR_IV_ABROAD_TT:0 "#header Foreign#!\\nConstruction points your government and investors completed abroad, '
+        f'retooling included: #v [{var("pmr_iv_for")}|0]#! (#v [{var("pmr_iv_fsh")}|0%]#!).\\n{SINCE}"',
+        ' PMR_IV_NONE:0 ""',
         ' PMR_POLICY_ADD:0 "Add Policy"',
         f' PMR_POLICY_ADD_TT:0 "Choose an economic policy. One can be held at a time, and it lapses if {law} is repealed."',
         f' PMR_POLICY_LOCKED:0 "Requires {law}"',
@@ -1334,12 +1514,52 @@ def localization():
         f' PMR_POLICY_WINDOW_INTRO:0 "Click a policy to adopt it. One at a time, while {law} lasts."',
         ' PMR_POLICY_CURRENT:0 "#v Current Policy#!"',
         ' PMR_IPW_HEADER:0 "Investment Priorities"',
-        ' PMR_IPW_EXPLAIN:0 "Raise how much your investors favour a group over the others: a full priority adds '
-        '#v +[FixedPointToInt(Multiply_CFixedPoint(GetPlayer.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint)100\'))]%#! '
-        '(+75% under Steer the Economy). '
-        'Raising every group by the same amount changes nothing. A group your investors already weigh at the 25% '
-        'minimum cannot drop further, so a boost gains nothing against it."',
+        ' PMR_PO_CAPTION:0 "Building levels by owner"',
+        ' PMR_PO_TT:0 "#header Building Levels by Owner#!\\nWho owns the building levels of the five investment priority '
+        'groups in your states, each building counted to the nearest eighth. Companies are the levels your companies own '
+        'wherever they are; Manor Houses and Financial Districts are the rest, as script cannot tell those two apart. The '
+        'game reports what each owner adds to the pool only as this list:\\n$TOOLTIP_DELIMITER$\\n'
+        '[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
+        ' PMR_FD_TITLE:0 "Foreign or Domestic Investment"',
+        ' PMR_FD_FOREIGN:0 "Foreign"',
+        ' PMR_FD_DOMESTIC:0 "Domestic"',
+        f' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\nTilts where investors build. Each notch from the '
+        f'middle makes every building in your states weigh as if it earned #v @money!{FD_STEP / CORP_BONUS * 10:g}#! more '
+        '(toward Domestic) or less (toward Foreign) a worker. Foreign investors weigh your states the same way. Toward '
+        'Foreign, your investors need investment rights abroad, or the pool waits for something at home worth it."',
     ]
+    mid = (FD_NOTCHES + 1) // 2
+    names = {1: 'Strongly Foreign', 2: 'Foreign', 3: 'Leaning Foreign', 4: 'No Preference', 5: 'Leaning Domestic',
+             6: 'Domestic', 7: 'Strongly Domestic'}
+    for n in range(1, FD_NOTCHES + 1):
+        d = (n - mid) * FD_STEP / CORP_BONUS * 10
+        what = ('the game\'s own weighting' if d == 0 else
+                f'buildings in your states weigh as if they earned {"#P" if d > 0 else "#N"} @money!{abs(d):g}#! '
+                f'{"more" if d > 0 else "less"} a worker')
+        loc.append(f' PMR_FD_NOTCH_{n}:0 "#bold {names[n]}#!: {what}"')
+    for i, (k, name, _p) in enumerate(OWNERS):
+        loc.append(f' PMR_PO_NAME_{k}:0 "{name}"')
+        loc.append(f' PMR_PO_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_po_{i}")}|0]#! building levels, '
+                   f'#v [{var(f"pmr_po_share_{i}")}|0%]#! of them."')
+    who_tt = {
+        'gov': 'Construction points your government completed, at home and abroad, retooling included',
+        'investors': 'Construction points your investors completed, at home and abroad, retooling included',
+        'local': 'Construction points of levels in your states that went to the building\'s own local owners',
+        'foreign': 'Construction points foreign investors or governments completed in your states',
+    }
+    for i, (k, name, _c) in enumerate(WHO):
+        loc.append(f' PMR_IV_WHO_{k}:0 "{name}"')
+        loc.append(f' PMR_IV_WHO_{k}_TT:0 "#header {name}#!\\n{who_tt[k]}: #v [{var(f"pmr_iv_w_{i}")}|0]#! '
+                   f'(#v [{var(f"pmr_iv_ws_{i}")}|0%]#!).\\n{SINCE}"')
+    for gi, (g, name, *_r) in enumerate(GROUPS):
+        lines = ''.join(f"[SelectLocalization(GreaterThan_CFixedPoint({var(f'pmr_iv_bt_{t}')}, '(CFixedPoint)0'), "
+                        f"'PMR_IV_BT_{t}', 'PMR_IV_NONE')]" for t, tg, _c in types if tg == gi)
+        loc.append(f' PMR_IV_GROUP_{g}_TT:0 "#header {name}#!\\nConstruction points completed: '
+                   f'#v [{var(f"pmr_iv_pts_{gi}")}|0]#! (#v [{var(f"pmr_iv_gs_{gi}")}|0%]#!), by building:{lines}\\n'
+                   f'Retooling counts under the building it retools. {SINCE}"')
+    for t, _g, _c in types:
+        loc.append(f' PMR_IV_BT_{t}:0 "\\n$building_{t}$: #v [{var(f"pmr_iv_bt_{t}")}|0]#! points, '
+                   f'#v [{var(f"pmr_iv_bl_{t}")}|0]#! levels"')
     for k, name, _i, mods, core, core_tt, details in POLICIES:
         how = f'{core_tt}\\n' if core_tt else ''
         loc += [f' pmr_policy_{k}:0 "{name}"', f' PMR_POLICY_{k}:0 "{name}"',
@@ -1351,8 +1571,8 @@ def localization():
     for i in range(RI_WEEKS):
         when = 'This week' if i == 0 else ('1 week ago' if i == 1 else f'{i} weeks ago')
         loc.append(f' PMR_RW_COLUMN_{i}:0 "{when}: #v @money![{var(f"pmr_rw_{i}")}|D]#! re-invested\\n'
-                   'The column under the line splits it by the privately owned levels of each priority group that week, '
-                   'as the tree chart below."')
+                   'The column splits it by the privately owned levels of each priority group that week, as the tree '
+                   'chart below."')
     for i, (g, name, _d, _c, bgs) in enumerate(GROUPS):
         v = VAR.format(g)
         covers = ', '.join(f'${bg}$' for bg in bgs)
@@ -1371,14 +1591,14 @@ def write_all(game, write, header_text, out=None):
     out is None, as in the standalone run). Returns loc lines."""
     def vanilla(rel):
         return open(os.path.join(game, rel), encoding='utf-8-sig').read()
+    types = invest_types(game)
     buildings, _groups = patch_scores(vanilla(SOURCE_FILE))
-    write(SOURCE_FILE, buildings)
     values = script_values()
     write('common/scripted_guis/pmr_ipw_sguis.txt', header_text + sguis())
     write('common/static_modifiers/pmr_policy_modifiers.txt', header_text + static_modifiers())
     write('common/on_actions/pmr_pi_on_actions.txt', header_text + on_actions())
     write('common/scripted_effects/pmr_pi_effects.txt', header_text + reinvest_effect() + '\n' + chart_effect() + '\n'
-          + clock_effect() + '\n' + invest_effects(invest_types(game)))
+          + clock_effect() + '\n' + invest_effects(types, retool_types(game, out)))
     write('events/pmr_pi_events.txt', header_text + events())
     write(QUEUE_GUI, patch_queue(vanilla(QUEUE_GUI)), bom=False)
     write(PANEL_GUI, patch_panel(vanilla(PANEL_GUI)), bom=False)
@@ -1389,25 +1609,41 @@ def write_all(game, write, header_text, out=None):
         text, n = patch_retool_ai(open(rpath, encoding='utf-8-sig').read(), btype, parent)
         write('common/buildings/pmr_retool_buildings.txt', text)
         owners = company_owners(game)
-        corp, patched = [], []
-        bdir = os.path.join(out, 'common', 'buildings')
-        for name in sorted(os.listdir(bdir)):
-            if name.startswith('pmr_') or name == os.path.basename(SOURCE_FILE):
-                continue
-            text, vals = patch_company_ai(open(os.path.join(bdir, name), encoding='utf-8-sig').read(), owners)
-            if vals:
+        invest = {f'building_{s}' for s, _g, _c in types}
+        wrapped, patched, done = [], [], set()
+        # generate.py's building files, this feature's copy of SOURCE_FILE, and the vanilla files holding other
+        # investable types (06_urban_center.txt: the art academy and the power plant), shadowed
+        files = [(name, open(os.path.join(out, 'common', 'buildings', name), encoding='utf-8-sig').read())
+                 for name in sorted(os.listdir(os.path.join(out, 'common', 'buildings')))
+                 if not name.startswith('pmr_') and name != os.path.basename(SOURCE_FILE)]
+        files.append((os.path.basename(SOURCE_FILE), buildings))
+        for k, _s, _o, _c in [b for _n, t in files for b in top_blocks(t)]:
+            done.add(k)
+        for name in sorted(os.listdir(os.path.join(game, 'common', 'buildings'))):
+            t = vanilla(f'common/buildings/{name}')
+            if name.endswith('.txt') and any(k in invest and k not in done for k, *_r in top_blocks(t)):
+                files.append((name, t))
+        for name, t in files:
+            text, vals = patch_ai_value(t, owners, invest)
+            if name == os.path.basename(SOURCE_FILE):
+                buildings = text
+            elif vals:
                 write(f'common/buildings/{name}', text)
-                corp += vals
+            if vals:
+                wrapped += vals
                 patched.append(name)
-        if not corp:
-            fail('common/buildings', 'no company building types found in the generated building files')
-        values += ('# State scope. Favour Large Corporations: the vanilla ai_value of each company building type in\n'
-                   f'# {", ".join(patched)}, plus {CORP_BONUS} while the owner holds the card and has a company listing it.\n'
-                   + '\n'.join(corp))
-        print(f'private investment: {n} private retool buildings take Re-invest; {len(corp)} company building types '
-              f'take Favour Large Corporations')
+        missing = sorted(invest - {f'building_{v.split(" = ", 1)[0][len("pmr_ai_value_"):]}' for v in wrapped})
+        if missing:
+            fail('common/buildings', f'investable types without a wrapped ai_value: {missing}')
+        values += ('# State scope. The vanilla ai_value of each company or investable building type in\n'
+                   f'# {", ".join(patched)}, plus {CORP_BONUS} while the owner holds Favour Large Corporations and has a\n'
+                   f'# company listing it, plus the owner\'s foreign-or-domestic notch x {FD_STEP}.\n'
+                   + '\n'.join(wrapped))
+        print(f'private investment: {n} private retool buildings take Re-invest; {len(wrapped)} building types take '
+              f'the company card or the investment focus, in {", ".join(patched)}')
+    write(SOURCE_FILE, buildings)
     write('common/script_values/pmr_ipw_values.txt', header_text + values)
-    return localization()
+    return localization(types)
 
 
 if __name__ == '__main__':
