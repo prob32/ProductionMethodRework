@@ -218,7 +218,15 @@ FD_STEP = 7500
 FD_ICONS = ('max_subvention', 'high_subvention', 'low_subvention', 'no_tariffs_no_subvention', 'low_tariffs',
             'high_tariffs', 'max_tariffs')
 CARD_W, CARD_H = 268, 380                 # law and policy cards, the same size (Pat 04:50Z), taller (Pat 13:05Z)
-PCARD_W, PCARD_H = 300, 176               # a policy in the policy window: benefits only (Pat 14:28Z)
+PCARD_W = 300                             # a policy in the policy window: benefits only (Pat 14:28Z)
+# Each row of policy cards is as tall as its longest card's text (Pat 19:25Z: the Laissez-faire cards ran out of
+# their fixed 176 px and the status line sat on the effects). A GUI box cannot size itself to wrapped text and
+# keep two cards level, so the height is worked out here from the text: 1.14.5's body font averages 6.9 px a
+# character and 22 px a line (measured on Pat's 19:25Z screenshot), lines wrap at the card's text width.
+PCARD_CHAR_W, PCARD_LINE_H = 6.9, 22
+PCARD_TOP, PCARD_FOOT = 10 + 48 + 6, 6 + 20 + 10    # margin, icon row, spacing / spacing, status line, margin
+PCARD_LOC = {'institution_health_system': 'Health System', 'institution_schools': 'Education',
+             'investment_banks': 'Investment Banks'}    # vanilla names, for the estimate only
 MOD_NAMES = {  # how each modifier reads on a policy card (vanilla's names, modifiers.log)
     'country_free_charters_add': 'Free Company Charters',
     'country_company_throughput_bonus_add': 'Company Throughput Bonus',
@@ -248,6 +256,28 @@ def benefit_lines(core, mods):
         num = f'{v:+d}' if m in WHOLE else f'{v * 100:+.1f}%'.replace('.0%', '%')
         out.append(f'#{c} {num}#! {MOD_NAMES[m]}')
     return '\\n'.join(out)
+
+
+def text_lines(text, width):
+    """How many lines a policy card's text takes at width px: each \\n starts a line, words wrap."""
+    text = re.sub(r'#[A-Za-z]+ |#!', '', text)
+    text = re.sub(r'\$(\w+)\$', lambda m: PCARD_LOC.get(m.group(1), m.group(1)), text)
+    n = 0
+    for para in text.split('\\n'):
+        line, n = '', n + 1
+        for word in para.split():
+            if line and len(line) + 1 + len(word) > width / PCARD_CHAR_W:
+                line, n = word, n + 1
+            else:
+                line = f'{line} {word}' if line else word
+    return n
+
+
+def policy_card_h(keys):
+    """The height of a row of policy cards: room for the longest card's benefits and its status line."""
+    by_key = {k: (core, mods) for k, _n, _i, mods, core, *_x in POLICIES}
+    lines = max(text_lines(benefit_lines(*by_key[k]), PCARD_W - 24) for k in keys)
+    return PCARD_TOP + lines * PCARD_LINE_H + PCARD_FOOT
 
 
 def fail(where, msg):
@@ -710,6 +740,7 @@ def invest_effects(types, retools):
             inner = ''.join('\t' + line + '\n' for line in
                             ''.join(call(k, s, g, c, t) for k, (s, g, c, t) in enumerate(retools)).rstrip('\n').split('\n'))
             out += ('\t\telse_if = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tis_building_group = bg_pmr_retool\n'
+                    '\t\t\t\t\tis_building_group = bg_pmr_retool_abroad\n'
                     '\t\t\t\t\tis_building_group = bg_pmr_retool_gov\n\t\t\t\t}\n\t\t\t}\n' + inner + '\t\t}\n')
         return out
     where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
@@ -856,9 +887,9 @@ def patch_panel(text):
     # The policy window, beside the panel where other panels put their map-mode button (block_windows.gui: the
     # window root allows children outside it; map_modes_button_position is { 607 102 }).
     text = once(text, '\t\t#TOP\n\t\tblockoverride "fixed_top"\n',
-                '\t\t# PMR: the economic policy window\n\t\tblockoverride "map_modes_button" {\n'
-                '\t\t\tpmr_policy_window = {}\n\t\t}\n\n'
-                '\t\t#TOP\n\t\tblockoverride "fixed_top"\n', where)
+                '\t\t# PMR: the economic policy windows, one per law\n\t\tblockoverride "map_modes_button" {\n'
+                + ''.join(f'\t\t\tpmr_policy_window_{law} = {{}}\n' for law in policy_laws()) +
+                '\t\t}\n\n\t\t#TOP\n\t\tblockoverride "fixed_top"\n', where)
 
     # The Private tab's contents, after the domestic tab's flowcontainer.
     text = once(text, '\t\t\t# FOREIGN QUEUE TAB CONTENTS\n',
@@ -1303,9 +1334,17 @@ def policy_card(ind):
     return card(ind, inner)
 
 
-def policy_content(k, icon, ind, w):
-    """A policy's face: its icon, name and benefits only (Pat 14:28Z); click-through so its card takes the click."""
+def policy_content(k, icon, ind, w, foot):
+    """A policy's face: its icon, name and benefits only (Pat 14:28Z), then its status line (foot: the textbox's
+    visible condition and text, or None); click-through so its card takes the click. The status line is the last
+    line of the card's own flow, so it can never sit on the benefits (Pat 19:25Z)."""
     i1, i2 = ind + '\t', ind + '\t\t'
+    status = ''
+    if foot:
+        shown, text = foot
+        status = (f'{i1}textbox = {{\n' + (f'{i2}visible = "[{shown}]"\n' if shown else '') +
+                  f'{i2}size = {{ {w - 24} 20 }}\n{i2}align = right|nobaseline\n{i2}using = fontsize_small\n'
+                  f'{i2}alwaystransparent = yes\n{i2}text = "{text}"\n{i1}}}\n')
     return (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}margin = {{ 12 10 }}\n{i1}spacing = 6\n'
             f'{i1}alwaystransparent = yes\n'
             f'{i1}flowcontainer = {{\n{i2}spacing = 8\n{i2}alwaystransparent = yes\n'
@@ -1314,59 +1353,63 @@ def policy_content(k, icon, ind, w):
             f'{i2}\tmultiline = yes\n{i2}\talign = nobaseline\n{i2}\tusing = fontsize_large\n{i2}\talwaystransparent = yes\n'
             f'{i2}\ttext = "PMR_POLICY_{k}"\n{i2}}}\n{i1}}}\n'
             f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}multiline = yes\n{i2}max_width = {w - 24}\n{i2}align = nobaseline\n'
-            f'{i2}alwaystransparent = yes\n{i2}text = "PMR_POLICY_{k}_BENEFITS"\n{i1}}}\n{ind}}}\n')
+            f'{i2}alwaystransparent = yes\n{i2}text = "PMR_POLICY_{k}_BENEFITS"\n{i1}}}\n' + status + f'{ind}}}\n')
 
 
-def policy_choice(k, i, icon, ind):
+def policy_choice(k, i, icon, ind, h):
     """One policy in the policy window (Pat 14:28Z): a blue card, as vanilla's law options, that adopts the
-    policy when clicked; the explanation is its tooltip. The policy held shows as a selected card."""
+    policy when clicked; the explanation is its tooltip. The policy held shows as a selected card. h is its row's
+    height (policy_card_h), so both cards of a row stay level."""
     scope = f'GuiScope.SetRoot({COUNTRY}.MakeScope).End'
     sg = f"GetScriptedGui('pmr_policy_{k}_sgui')"
     held = f"EqualTo_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint){i}')"
     i1, i2 = ind + '\t', ind + '\t\t'
     # a card that needs a technology says so while the country lacks it (its law is held, or the row is hidden)
-    req = (f'{i2}textbox = {{\n{i2}\tvisible = "[Not({sg}.IsValid({scope}))]"\n{i2}\tparentanchor = bottom|right\n'
-           f'{i2}\tposition = {{ -12 -8 }}\n{i2}\tautoresize = yes\n{i2}\talign = right|nobaseline\n'
-           f'{i2}\tusing = fontsize_small\n{i2}\talwaystransparent = yes\n{i2}\ttext = "PMR_POLICY_{k}_REQ"\n{i2}}}\n'
-           if k in POLICY_TECH else '')
-    return (f'{ind}widget = {{\n{i1}size = {{ {PCARD_W} {PCARD_H} }}\n'
+    req = (f'Not({sg}.IsValid({scope}))', f'PMR_POLICY_{k}_REQ') if k in POLICY_TECH else None
+    return (f'{ind}widget = {{\n{i1}size = {{ {PCARD_W} {h} }}\n'
             f'{i1}button = {{\n{i2}visible = "[Not({held})]"\n{i2}using = default_button\n'
-            f'{i2}size = {{ {PCARD_W} {PCARD_H} }}\n'
+            f'{i2}size = {{ {PCARD_W} {h} }}\n'
             f'{i2}enabled = "[{sg}.IsValid({scope})]"\n'
             f'{i2}onclick = "[{sg}.Execute({scope})]"\n'
             f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n'
             f'{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
-            + policy_content(k, icon, i2, PCARD_W) + req + f'{i1}}}\n'
+            + policy_content(k, icon, i2, PCARD_W, req) + f'{i1}}}\n'
             f'{i1}widget = {{\n{i2}visible = "[{held}]"\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
             f'{i2}background = {{\n{i2}\tusing = entry_bg\n{i2}}}\n'
             f'{i2}background = {{\n{i2}\tusing = highlighted_selected_square_selection\n{i2}}}\n'
-            + policy_content(k, icon, i2, PCARD_W) +
-            f'{i2}textbox = {{\n{i2}\tparentanchor = bottom|right\n{i2}\tposition = {{ -12 -8 }}\n{i2}\tautoresize = yes\n'
-            f'{i2}\talign = right|nobaseline\n{i2}\tusing = fontsize_small\n{i2}\ttext = "PMR_POLICY_CURRENT"\n{i2}}}\n'
+            + policy_content(k, icon, i2, PCARD_W, (None, 'PMR_POLICY_CURRENT')) +
             f'{i1}}}\n{ind}}}\n')
 
 
-def policy_window():
-    """The economic policy window (Pat 13:05Z, slimmed 14:28Z so it fits the screen): every policy as a card, two
-    by two, beside the construction panel while its Private tab is open. Vanilla's popup background, header and
-    frame (block_windows.gui default_popup)."""
-    i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
-    # Each law's policies, two to a row; only the rows of the law the country has show (Pat 16:06Z).
+def policy_laws():
+    """Each law's policies in POLICIES order, as (key, index, icon)."""
     by_law = {}
     for i, (k, _n, icon, *_x) in enumerate(POLICIES, 1):
         by_law.setdefault(POLICY_LAWS[k], []).append((k, i, icon))
-    most = max(len(v) for v in by_law.values())
-    w, h = 2 * PCARD_W + 10 + 40, 84 + 34 + (most + 1) // 2 * (PCARD_H + 10) + 24
-    rows = ''
-    for law, items in by_law.items():
-        shown = f"GetScriptedGui('pmr_policy_{items[0][0]}_sgui').IsShown(GuiScope.SetRoot({COUNTRY}.MakeScope).End)"
-        for r in range(0, len(items), 2):
-            rows += f'{i2}flowcontainer = {{\n{i3}visible = "[{shown}]"\n{i3}spacing = 10\n'
-            for k, i, icon in items[r:r + 2]:
-                rows += policy_choice(k, i, icon, i3)
-            rows += f'{i2}}}\n'
-    return (f'\ttype pmr_policy_window = widget {{\n'
-            f'{i1}visible = "[And(InformationPanel.IsTabSelected(\'{TAB}\'), GetVariableSystem.Exists(\'{PICK}\'))]"\n'
+    return by_law
+
+
+def policy_window(law, items):
+    """The economic policy window (Pat 13:05Z, slimmed 14:28Z so it fits the screen): one per economic system law,
+    showing that law's policies as cards, two to a row, beside the construction panel while its Private tab is
+    open (only the held law's window shows, Pat 16:06Z). Each window is as tall as its own rows (Pat 19:25Z: the
+    Laissez-faire window had an empty half). Vanilla's popup background, header and frame (block_windows.gui
+    default_popup)."""
+    i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
+    shown = f"GetScriptedGui('pmr_policy_{items[0][0]}_sgui').IsShown(GuiScope.SetRoot({COUNTRY}.MakeScope).End)"
+    rows, body = '', 0
+    for r in range(0, len(items), 2):
+        row = items[r:r + 2]
+        h = policy_card_h([k for k, _i, _c in row])
+        body += h + 10
+        rows += f'{i2}flowcontainer = {{\n{i3}spacing = 10\n'
+        for k, i, icon in row:
+            rows += policy_choice(k, i, icon, i3, h)
+        rows += f'{i2}}}\n'
+    w, h = 2 * PCARD_W + 10 + 40, 84 + 34 + body + 14
+    return (f'\ttype pmr_policy_window_{law} = widget {{\n'
+            f'{i1}visible = "[And(And(InformationPanel.IsTabSelected(\'{TAB}\'), GetVariableSystem.Exists(\'{PICK}\')), '
+            f'{shown})]"\n'
             f'{i1}position = {{ 607 102 }}\n{i1}size = {{ {w} {h} }}\n{i1}using = clickthrough_blocker\n'
             f'{i1}background = {{\n{i2}texture = "gfx/interface/backgrounds/popup_bg.dds"\n{i2}spriteType = Corneredstretched\n'
             f'{i2}spriteborder = {{ 90 90 }}\n{i2}texture_density = 2\n'
@@ -1381,7 +1424,6 @@ def policy_window():
             f'{i1}close_button_large = {{\n{i2}parentanchor = right\n{i2}position = {{ -14 18 }}\n'
             f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n{i1}}}\n'
             f'{i1}flowcontainer = {{\n{i2}position = {{ 20 84 }}\n{i2}direction = vertical\n{i2}spacing = 10\n'
-            f'{i2}ignoreinvisible = yes\n'
             f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}multiline = yes\n{i3}max_width = {w - 40}\n'
             f'{i3}align = nobaseline\n{i3}text = "PMR_POLICY_WINDOW_INTRO"\n{i2}}}\n'
             + rows + f'{i1}}}\n\t}}\n')
@@ -1410,7 +1452,7 @@ def private_tab():
     return (
         '@pmr_w = 554\n\n'
         'types pmr_private_investment {\n'
-        + policy_window() + '\n'
+        + ''.join(policy_window(lw, items) + '\n' for lw, items in policy_laws().items()) +
         '\ttype pmr_private_tab = flowcontainer {\n'
         '\t\tusing = default_list_position\n\t\tdirection = vertical\n\t\tminimumsize = { 540 -1 }\n\t\tmargin_bottom = 10\n\n'
         # 1. the pool: the budget panel's own Investment Pool line (Pat 13:05Z), then the next private construction
