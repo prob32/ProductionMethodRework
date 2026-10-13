@@ -31,7 +31,9 @@ What it does, building by building (see pmr/README.md for the design):
    recipe. Share method n unlocks only while lock method ``pm_pmr_key_<b>_<i>_<n>`` (goods-less, in
    ``pmg_pmr_key_<b>_<i>``) or the switching lock ``pm_pmr_key_<b>_<i>_any`` is active, so the AI
    never has a second share method to pick. The tick moves the lock to ``_any``, then the share,
-   then the lock to the new step, so the running share method is never left locked out.
+   then the lock to the new step, so the running share method is never left locked out. ``_any`` is
+   the first method of its lock group, so a share and lock that are both unavailable settle at once
+   (a new building can inherit them from two different buildings; with ``_any`` last that froze the game).
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
    building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, built
    by investors who own part of the building, and one government one, ``building_pmr_retool_gov_<b>``, queued by the government.
@@ -887,6 +889,12 @@ def main():
         # tick can change the share without first locking out the one that runs. Lock n in turn
         # unlocks only while share n runs, so each lock group offers the AI two methods (lock n and
         # _any), not SHARE_STEPS + 2.
+        # _any comes FIRST in each lock group (LOCK_ANY_FIRST): when the game finds a share and its lock
+        # both unavailable, it replaces each with the first available method of its group, judged against
+        # the other's old method. With _any last, share n and lock m swap places on every pass and never
+        # settle: on 16 August 1838 a new Hanoverian rye farm, given one existing farm's share and
+        # another's lock, switched methods without end and the game froze. With _any first the lock
+        # becomes _any and the share the old lock's step, both available, and the next tick relocks.
         elec_tiers = []
         for i, r in enumerate(recipes, 1):
             if isinstance(r, ElectricRecipe):
@@ -929,7 +937,7 @@ def main():
                 loc += [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
                         f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"']
             blend_pms.append(f'{any_key} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n')
-            keys.append(any_key)
+            keys.insert(0, any_key)   # first: see LOCK_ANY_FIRST above
             loc.append(f' {any_key}:0 "${r.key}$ share lock (switching)"')
             # No is_hidden_when_unavailable: with it, a share group lists only its one unlocked method,
             # and the building panel, which shows a PMR building's groups of exactly one method (the
@@ -963,7 +971,7 @@ def main():
                     loc += [f' pm_pmr_x_{b}_{o.j}_{n}:0 "${o.key}$ ({n}% of the {what})"',
                             f' pm_pmr_xk_{b}_{o.j}_{n}:0 "${o.key}$ share lock ({n}%)"']
                 blend_pms.append(f'{any_key} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n')
-                keys.append(any_key)
+                keys.insert(0, any_key)   # first: see LOCK_ANY_FIRST
                 loc.append(f' {any_key}:0 "${o.key}$ share lock (switching)"')
                 for grp, lst, label in ((f'pmg_pmr_x_{b}_{o.j}', shares, 'share'),
                                         (f'pmg_pmr_xk_{b}_{o.j}', keys, 'share lock')):
