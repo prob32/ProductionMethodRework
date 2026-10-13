@@ -7,7 +7,7 @@ testing; it rewrites the mod folder in place.
     python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"
 
 With ``--release`` it writes the build players get, to pmr/release/ProductionMethodRework: no "PMR test:"
-decisions, no GENERATION_REPORT.json, and no PMR log lines but TRIP (the loop breaker) and LOADED. The default
+decisions, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED. The default
 build keeps them for testing.
 
 What it does, building by building (see pmr/README.md for the design):

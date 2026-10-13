@@ -13,7 +13,7 @@ workforce are the mix of the recipes its levels run.
 - `GENERATION_REPORT.json`, written into the generated mod folder, lists every building treated, every building
   skipped and why, and every recipe whose modifiers moved into share methods.
 - `--release` writes the build players get (the Workshop upload) to `pmr/release/ProductionMethodRework`: no
-  "PMR test:" decisions, no `GENERATION_REPORT.json` or `RUNSHEET.md`, and no `PMR;rec=` log lines but `TRIP` and
+  "PMR test:" decisions, no `GENERATION_REPORT.json` or `RUNSHEET.md`, and no `PMR;rec=` log lines but `TRIP`, `AUTO_TRIP` and
   `LOADED`. Both builds carry `.metadata/thumbnail.png` (from `pmr/thumbnail.png`). Bump `MOD_VERSION` before each
   upload.
 
