@@ -1753,7 +1753,10 @@ def write_all(game, write, header_text, out=None):
     def vanilla(rel):
         return open(os.path.join(game, rel), encoding='utf-8-sig').read()
     types = invest_types(game)
-    buildings, _groups = patch_scores(vanilla(SOURCE_FILE))
+    # generate.py's copy of SOURCE_FILE when it wrote one (ports and railways retool), else vanilla's
+    mine = os.path.join(out, SOURCE_FILE) if out else None
+    buildings, _groups = patch_scores(open(mine, encoding='utf-8-sig').read() if mine and os.path.exists(mine)
+                                      else vanilla(SOURCE_FILE))
     values = script_values()
     write('common/scripted_guis/pmr_ipw_sguis.txt', header_text + sguis())
     write('common/static_modifiers/pmr_policy_modifiers.txt', header_text + static_modifiers())

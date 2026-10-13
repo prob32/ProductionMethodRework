@@ -1,4 +1,4 @@
-# PMR run sheet: Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,38 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: two Laissez-faire policies, and Recent Investments as tree maps (your current save works)
+## Latest: ports and railways retool; administration, universities and trade centres pick their best method (start a new game)
+
+From your 17:00 message. Start a **new game**: ports and railways gain PMR's recipe slots, and buildings in an older
+save would lack them.
+
+- **Ports and railways retool** like factories: a recipe bar on the building panel and the Buildings tab row, the
+  upgrade button, and investors' retool sites. Ports go Anchorage, Basic, Industrial, Modern Port; railways Early,
+  Steam, Electric, Diesel Trains, Electric waiting for the state's own electricity as other electric recipes do.
+  The Transport principle's better railway recipes (power blocs) are gone: with them a railway would have had to
+  retool backwards whenever its bloc dropped the principle.
+- **Always the best method, no retooling, no selectors**: government administrations, universities, trade centres,
+  and railways' passenger carriages (always the best carriages, so railways always carry passengers too). They
+  switch on the 1st, when you research something, when built, and at once if anything else changes them. Each
+  switch in your states writes `PMR;rec=AUTO;...;building=...;method=...`.
+- **Clergy or bureaucrats by law**: administrations and universities staff clergy under State Religion, Millet
+  System, People of the Book and Freedom of Conscience, and bureaucrats or academics under Total Separation and
+  State Atheism. Hereditary or professional bureaucrats already followed the bureaucracy law.
+
+What to do: start a new game, unpause for a month, then look at a railway, a port, a government administration and
+a university. With the selectors gone, an administration's inputs show its method: none on Simple Organization,
+paper from Horizontal Drawer Cabinets on. Research Centralization and check an administration after the next 1st.
+
+| What you see | What it means |
+| --- | --- |
+| A port or railway shows vanilla's method icons instead of the recipe bar | The building file didn't load. Check error.log for `11_private_infrastructure` and send the lines. |
+| An administration, university or trade centre still shows its method selectors | The panel patch missed. Send a screenshot. |
+| After researching Centralization, an administration of yours still uses no paper after the next 1st, and no `AUTO` line names it | The switch never ran. Check error.log for `pmr_auto` and send what you find. |
+| `AUTO` lines for the same building every month, alternating methods | The game and PMR disagree on what can run. Send the lines. |
+| Under State Religion or Freedom of Conscience your administrations employ no clergy | The law gate didn't load. Check error.log for `07_government` and send the lines. |
+| A railway whose inputs show neither wood nor steel | No carriages are running: the switch failed. Send a screenshot of the railway and any `AUTO` lines. |
+
+## Earlier: two Laissez-faire policies, and Recent Investments as tree maps (your current save works)
 
 From your 16:06 and 16:12 messages.
 

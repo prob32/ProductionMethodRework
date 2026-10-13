@@ -207,10 +207,36 @@ MOD_VERSION = '0.1.0'
 SUPPORTED_VERSION = '1.14.*'
 
 # Building files whose buildings make goods from goods. Government, military, urban, monuments,
-# canals, infrastructure, subsistence, companies and the construction sector are out of scope:
-# their first group is not a goods recipe, or retooling them through construction is circular.
+# canals, subsistence, companies and the construction sector are out of scope: their first group is
+# not a goods recipe, or retooling them through construction is circular.
 BUILDING_FILES = ['01_industry.txt', '02_agro.txt', '03_mines.txt', '04_plantations.txt',
-                  '09_misc_resource.txt']
+                  '09_misc_resource.txt', '11_private_infrastructure.txt']
+# Pat, 2026-10-13 17:00Z: ports and railways retool like the rest. Only these buildings of a file listed
+# here are candidates; the file's others (trade centres, Financial Districts, Manor Houses) stay vanilla.
+BUILDING_ONLY = {'11_private_infrastructure.txt': ('building_port', 'building_railway')}
+# Power bloc principle variants of a recipe, which vanilla swaps in with replacement_if_valid, leave the
+# recipe group (and the replacement lines go): a building would otherwise have to retool backwards the
+# day its bloc dropped the principle.
+DROP_RECIPES = ('pm_steam_trains_principle_transport_3', 'pm_electric_trains_principle_transport_3',
+                'pm_diesel_trains_principle_transport_3')
+# Pat, 2026-10-13 17:00Z: these groups always run their best method, with no retooling and no selectors.
+# Best is the newest method the state can activate (vanilla lists them oldest first), a principle variant
+# before the method it replaces; PMR switches to it monthly, on research, when the building is built
+# and whenever a method changes. Where laws allow only one (bureaucrat professionalism, and religious
+# or secular staff once AUTO_SECULAR applies), that one.
+AUTO_BEST = {
+    'building_government_administration': ('pmg_base_building_government_administration',
+                                           'pmg_government_administration_bureaucrat_professionalism',
+                                           'pmg_government_administration_religious_administration'),
+    'building_university': ('pmg_base_building_university', 'pmg_university_academia'),
+    'building_trade_center': ('pmg_base_building_trade_center', 'pmg_trade_quantity_trade_center'),
+    'building_railway': ('pmg_passenger_trains',),   # "always produce transport": carriages always on
+}
+# Clergy or bureaucrats by law (Pat 17:00Z). Vanilla bars the religious method under the laws its
+# disallowing_laws list (Total Separation, State Atheism) and the secular one only under State Religion,
+# so both run under the laws between. PMR lets the secular method run only under the laws that bar the
+# religious one: State Religion, Millet System, People of the Book and Freedom of Conscience staff clergy.
+AUTO_SECULAR = {'pm_secular_bureaucrats': 'pm_religious_bureaucrats', 'pm_secular_academia': 'pm_religious_academia'}
 
 GENERIC_ICON = 'gfx/interface/icons/generic_icons/mixed_icon_base.dds'
 RETOOL_BACKGROUND = 'gfx/interface/icons/building_icons/backgrounds/building_panel_bg_monuments.dds'
@@ -496,6 +522,21 @@ def main():
     for s in p_srcs:
         for k, n in s.objects().items():
             pms[k] = (n, s)
+    # Principle variants out of their recipe groups, and the replacements that named them.
+    dropped = set()
+    for g, (gsrc, gpm) in group_src.items():
+        for n in (gpm.value if gpm else []):
+            if n.key is None and n.value in DROP_RECIPES:
+                gsrc.cuts.append(line_span(gsrc.text, n))
+                dropped.add(n.value)
+        groups[g] = [p for p in groups[g] if p not in DROP_RECIPES]
+    for p, (n, psrc) in pms.items():
+        r = pdx.get(n.value, 'replacement_if_valid')
+        if r is not None and r.value in DROP_RECIPES:
+            psrc.cuts.append(line_span(psrc.text, r))
+            dropped.add(r.value)
+    if dropped != set(DROP_RECIPES):
+        raise SystemExit(f'DROP_RECIPES not all found in a group and a replacement: {sorted(set(DROP_RECIPES) - dropped)}')
 
     # Which buildings use which groups, across every building file (not just the in-scope ones),
     # so a group or method shared with an out-of-scope building is never stripped.
@@ -518,7 +559,13 @@ def main():
             pg = pdx.get(bn.value, 'production_method_groups')
             if not pg or not pdx.items(pg):
                 continue
+            if s.name in BUILDING_ONLY and bk not in BUILDING_ONLY[s.name]:
+                continue
             candidates.append((bk, bn, s, pdx.items(pg)[0], pg))
+    for name, only in BUILDING_ONLY.items():
+        missing = set(only) - {c[0] for c in candidates if c[2].name == name}
+        if missing:
+            raise SystemExit(f'{name}: BUILDING_ONLY lists {sorted(missing)}, not found with method groups')
     recipe_groups = {c[3] for c in candidates}
 
     for bk, bn, s, g0, pg in candidates:
@@ -658,6 +705,46 @@ def main():
                                       for o in opts]}
                          for bk, conv in options.items() for g, gi, mode, none, opts, std in conv]
 
+    # ---- groups kept on their best method (AUTO_BEST) -----------------------------------------------
+    # auto[bk] = [(group, its methods best first)]
+    all_buildings = {bk: bn for s in all_b_srcs for bk, bn in s.objects().items()}
+    auto = {}
+    for bk, gl in AUTO_BEST.items():
+        pg = pdx.get(all_buildings[bk].value, 'production_method_groups') if bk in all_buildings else None
+        for g in gl:
+            if not pg or g not in pdx.items(pg) or g not in groups or g in converted:
+                raise SystemExit(f'AUTO_BEST: {bk} has no group {g} PMR leaves vanilla; update AUTO_BEST')
+            order = list(reversed(groups[g]))
+            for p in list(order):   # a principle variant before the method it replaces
+                r = pdx.get(pms[p][0].value, 'replacement_if_valid')
+                if r is not None and r.value in order and order.index(r.value) > order.index(p):
+                    order.remove(r.value)
+                    order.insert(order.index(p), r.value)
+            # every method gated by laws: the laws allow exactly one (bureaucrat professionalism; religious or
+            # secular staff with AUTO_SECULAR), so the one that can run is asked, never the one running
+            by_law = all(pdx.get(pms[p][0].value, 'unlocking_laws') or pdx.get(pms[p][0].value, 'disallowing_laws')
+                         for p in order)
+            auto.setdefault(bk, []).append((g, order, by_law))
+    report['auto_best'] = [{'building': bk, 'group': g, 'best_first': order, 'by_law': by_law}
+                           for bk, gl in auto.items() for g, order, by_law in gl]
+    # low_pop_method (vanilla's AI picks it in thinly peopled states) would fight the recipe the tick keeps
+    # and the method AUTO_BEST keeps: pm_anchorage, the limited trade quantity.
+    for p in dict.fromkeys([r.key for t in treated for r in t[3] if r.key in pms]
+                           + [p for gl in auto.values() for g, order, _l in gl for p in order]):
+        n, psrc = pms[p]
+        lp = pdx.get(n.value, 'low_pop_method')
+        if lp is not None:
+            psrc.cuts.append(line_span(psrc.text, lp))
+    for sec, rel in AUTO_SECULAR.items():
+        n, psrc = pms[sec]
+        dl, rl = pdx.get(n.value, 'disallowing_laws'), pdx.get(pms[rel][0].value, 'disallowing_laws')
+        if dl is None or rl is None or pdx.get(n.value, 'unlocking_laws') is not None:
+            raise SystemExit(f'AUTO_SECULAR: {sec} or {rel} no longer gated by disallowing_laws alone; update AUTO_SECULAR')
+        s0, e0 = line_span(psrc.text, dl)
+        psrc.cuts.append((s0, e0))
+        psrc.inserts.append((s0, f'\t# PMR: only where {rel} is barred (vanilla: disallowing_laws = {{ '
+                                 + ' '.join(pdx.items(dl)) + ' })\n\tunlocking_laws = { ' + ' '.join(pdx.items(rl)) + ' }\n'))
+
     if os.path.isdir(args.out):
         for sub in ('common', 'events', 'localization', '.metadata', 'gfx', 'gui'):
             shutil.rmtree(os.path.join(args.out, sub), ignore_errors=True)
@@ -684,11 +771,12 @@ def main():
     for s in {id(t[2]): t[2] for t in treated}.values():
         write(f'common/buildings/{s.name}', s.render())
     for s in p_srcs:
-        if s.cuts:
+        if s.cuts or s.inserts:
             write(f'common/production_methods/{s.name}', s.render())
-    # Vanilla recipe groups that gain an electric recipe, whole, with only its line inserted.
+    # Vanilla recipe groups that gain an electric recipe or lose a principle variant (DROP_RECIPES), whole,
+    # with only those lines changed.
     for s in g_srcs:
-        if s.inserts:
+        if s.inserts or s.cuts:
             write(f'common/production_method_groups/{s.name}', s.render())
     write('common/production_methods/pmr_electric_production_methods.txt', header + ELECTRIC_DOC
           + '\n'.join(er.method() for er in elec_pms))
@@ -723,8 +811,10 @@ def main():
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
         r0 = recipes[0]
-        # The fixed labour method's icon: the building's main output good, drawn gold.
-        good = max(r0.outputs.items(), key=lambda kv: kv[1])[0] if r0.outputs else None
+        # The fixed labour method's icon: the building's main output good, drawn gold (from the first recipe
+        # that makes goods: a port's anchorage makes none).
+        r_out = next((r for r in recipes if r.outputs), r0)
+        good = max(r_out.outputs.items(), key=lambda kv: kv[1])[0] if r_out.outputs else None
         icon_tex = r0.texture
         src = os.path.join(gfx_root, goods_tex[good]) if good in goods_tex else None
         if src and os.path.isfile(src):
@@ -948,7 +1038,7 @@ def main():
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(option_goods(options)) + '\n'.join(tick_effects)
-          + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
+          + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-')))
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
@@ -978,9 +1068,11 @@ def main():
                     f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
                     '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
                     for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_))
+    # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
+    also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
         recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(),
-        opt_ui), bom=False)
+        opt_ui, also), bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     # The Buildings tab: the building type row's grid (the first of three) becomes the country recipe
@@ -988,7 +1080,7 @@ def main():
     # details panel's condensed_building_information, recipe row and button included.
     write('gui/production_methods.gui', patch_type_row_buttons(patch_type_grids(
         vanilla_gui('production_methods.gui'), dispatch, 'production_methods.gui', 3,
-        replace={0: lambda bk, gind, vis: type_bar(bk, recipe_tex[bk])(bk, gind, vis)}), dispatch), bom=False)
+        replace={0: lambda bk, gind, vis: type_bar(bk, recipe_tex[bk])(bk, gind, vis)}, also=also), dispatch), bom=False)
     # Building browser rows: the labour icon with the recipe bar beside it in the production method
     # column (220 wide), and the government upgrade button left of nationalize.
     browser_bars = ''.join(
@@ -998,11 +1090,11 @@ def main():
         + stacked_bar(short(bk), recipe_tex[bk], ('100%', '100%'), 18, '\t\t\t\t\t') + '\t\t\t\t}\n'
         for bk in dispatch)
     write('gui/building_browser_panel.gui', patch_browser_actions(patch_grid_instance(
-        patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1),
+        patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
-        extra=browser_bars), dispatch), bom=False)
+        extra=browser_bars, also=also), dispatch), bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
-                                                            'goods_state_panel.gui', 1), bom=False)
+                                                            'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_gov:0 "Government Retooling"']
     if not args.release:    # the "PMR test:" decisions are for testing only: every player would see them
@@ -2242,6 +2334,43 @@ def dispatch_effects(buildings):
     return ''.join(o)
 
 
+def auto_best_effects(auto):
+    """AUTO_BEST: per building type, pmr_auto_<b> (state scope) activates each listed group's best method
+    the state can activate, unless it already runs. activate_production_method runs on_production_method_changed
+    inside itself, so pmr_auto_busy on the state keeps that from running these again."""
+    o = ['# ===== best methods (AUTO_BEST; Pat, 2026-10-13 17:00Z: no retooling, always the best method)\n\n']
+    for bk, gl in auto.items():
+        o.append(f'# State scope: {bk} on its best methods, newest first.\npmr_auto_{short(bk)} = {{\n')
+        for g, order, by_law in gl:
+            o.append(f'\t# {g}' + (', set by laws' if by_law else '') + '\n')
+            for j, p in enumerate(order):
+                spec = f'building_type = {bk} production_method = {p}'
+                # A technology ladder asks "running or can run", as pmr_best_<b> does, so a running method is
+                # never stepped down from; a group the laws decide asks only which one the laws allow.
+                can = f'can_activate_production_method = {{ {spec} }}'
+                o.append(f'\t{"if" if j == 0 else "else_if"} = {{\n'
+                         + (f'\t\tlimit = {{ {can} }}\n' if by_law else
+                            f'\t\tlimit = {{ OR = {{ is_production_method_active = {{ {spec} }} {can} }} }}\n')
+                         + f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ is_production_method_active = {{ {spec} }} }} }}\n'
+                         f'\t\t\tactivate_production_method = {{ {spec} }}\n'
+                         '\t\t\tif = { limit = { owner = { is_player = yes } } debug_log = "PMR;rec=AUTO;'
+                         'date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetState.GetNameNoFormatting];'
+                         f'building={bk};method={p}" }}\n\t\t}}\n\t}}\n')
+        o.append('}\n\n')
+    o.append('# State scope (monthly, on research, at game start): every such building of the state.\n'
+             'pmr_auto_best = {\n\tset_variable = pmr_auto_busy\n')
+    for bk in auto:
+        o.append(f'\tif = {{ limit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }} pmr_auto_{short(bk)} = yes }}\n')
+    o.append('\tremove_variable = pmr_auto_busy\n}\n\n'
+             '# Building scope (on_production_method_changed, on_building_built): the building, if it is such a type.\n'
+             'pmr_auto_building = {\n')
+    for j, bk in enumerate(auto):
+        o.append(f'\t{"if" if j == 0 else "else_if"} = {{\n\t\tlimit = {{ is_building_type = {bk} level >= 1 }}\n'
+                 f'\t\tstate = {{ set_variable = pmr_auto_busy pmr_auto_{short(bk)} = yes remove_variable = pmr_auto_busy }}\n\t}}\n')
+    o.append('}\n')
+    return ''.join(o)
+
+
 # ---------------------------------------------------------------------------------------------
 # Log-only probes (PROBE_TREAT, PROBE_PRICE). State scope, from the monthly state pulse.
 
@@ -2593,13 +2722,14 @@ def patch_option_bars(text, opt_ui):
             + '\t\t\t\t}\n\t\t\t}\n' + text[at:])
 
 
-def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extra='', labour_icon=True):
+def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extra='', labour_icon=True, also=()):
     """The one use of vanilla's condensed_building_information_pms in a GUI file, at indent ind: on a
     PMR building type it is hidden and the fixed labour icon stands in its place. The grid inside is
     a fixedgridbox, which keeps a column for every production method group even when the item is
     hidden: with a share and a lock group per recipe, an iron mine's 13 groups made the details
     panel's row 936 px wide and pushed the panel's contents off its left edge (seen in 1.14.5).
-    Hiding the grid's items is therefore not enough; the whole grid goes."""
+    Hiding the grid's items is therefore not enough; the whole grid goes. The building types in also
+    (AUTO_BEST) lose the grid too, with nothing in its place."""
     inst = f'{ind}condensed_building_information_pms = {{\n'
     if text.count(inst) != 1:
         raise SystemExit(f'{name}: expected one condensed_building_information_pms at this indent, found '
@@ -2616,20 +2746,21 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extr
               f'{ind}\twidget = {{\n{ind}\t\tsize = {{ {cell} {cell} }}\n{ind}\t\tparentanchor = vcenter\n'
               f'{ind}\t\ttooltip = "PMR_LABOUR_ICON_TOOLTIP"\n'
               f'{ind}\t\tusing = tooltip_ne\n{icons}{ind}\t}}\n{extra}{ind}}}')
-    hide = text[:at] + f'{ind}\t# PMR: no grid on PMR building types\n{ind}\tvisible = "[Not({any_type(buildings)})]"\n'
+    hide = (text[:at] + f'{ind}\t# PMR: no grid on PMR building types\n'
+            f'{ind}\tvisible = "[Not({any_type(list(buildings) + list(also))})]"\n')
     if not labour_icon:
         return hide + text[at:]
     return hide + text[at:end] + labour + text[end:]
 
 
-def patch_building_panel(recipe_tex, text, opt_ui=None):
+def patch_building_panel(recipe_tex, text, opt_ui=None, also=()):
     buildings = list(recipe_tex)
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
     # 1. The production method row: no grid on a PMR building type, and nothing in its place (Pat,
     # 2026-10-13: no goods icon; the recipe row below takes the room).
     text = patch_grid_instance(text, buildings, '\t\t\t\t\t', 'building_details_panel.gui', outer=(208, 70), cell=70,
-                               labour_icon=False)
+                               labour_icon=False, also=also)
     inst = '\t\t\t\t\tcondensed_building_information_pms = {\n'
     ind = '\t\t\t\t\t'
     # A flowcontainer still makes room for hidden children unless told not to (vanilla sets this
@@ -2850,7 +2981,7 @@ def patch_type_row_buttons(text, buildings):
                         f'{ind}### nationalize\n{ind}building_type_nationalize_button = {{\n')
 
 
-def patch_type_grids(text, buildings, name, expected, replace=None):
+def patch_type_grids(text, buildings, name, expected, replace=None, also=()):
     """A vanilla GUI file's per-building-type production method grids (the building browser's,
     which switch every building of a type at once): for PMR building types the whole grid is
     hidden and one static fixed-labour icon takes its place. Asserted per file.
@@ -2864,8 +2995,9 @@ def patch_type_grids(text, buildings, name, expected, replace=None):
     def is_bt(bk):
         return f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
 
-    any_expr = is_bt(buildings[-1])
-    for bk in reversed(buildings[:-1]):
+    hidden = list(buildings) + list(also)   # also: AUTO_BEST types, no selectors and nothing in their place
+    any_expr = is_bt(hidden[-1])
+    for bk in reversed(hidden[:-1]):
         any_expr = f'Or({is_bt(bk)}, {any_expr})'
     for m in pattern.finditer(text):
         grid = text.rfind('fixedgridbox = {', 0, m.start())
@@ -2897,9 +3029,11 @@ def patch_type_grids(text, buildings, name, expected, replace=None):
     return ''.join(out) + text[pos:]
 
 
-def patch_building_grids(text, buildings, name, expected):
+def patch_building_grids(text, buildings, name, expected, also=()):
     """A vanilla GUI file's per-building production method lists (Building context): on PMR building
-    types only single-method groups (the fixed labour slot) show. Asserted per file."""
+    types only single-method groups (the fixed labour slot) show, and so on the AUTO_BEST types in also,
+    which have none. Asserted per file."""
+    buildings = list(buildings) + list(also)
     anchor = 'datamodel = "[Building.AccessProductionMethodGroups]"'
     n = text.count(anchor)
     if n != expected:
@@ -3016,7 +3150,10 @@ pmr_on_game_started = {
 		# No country is a player's yet here (no player state logs INIT), so every country gets its
 		# Buildings tab totals now; after this only players' are kept up to date.
 		every_country = {
-			every_scope_state = { pmr_state_tick = yes }
+			every_scope_state = {
+				pmr_state_tick = yes
+				pmr_auto_best = yes   # AUTO_BEST: government administration, universities, trade centres, carriages
+			}
 			pmr_c_sum_every = yes
 			# A day later the players exist: their totals then add buildings abroad (pmr.1).
 			trigger_event = { id = pmr.1 days = 1 }
@@ -3033,6 +3170,11 @@ pmr_on_production_method_changed = {
 			limit = { state = { NOT = { has_variable = pmr_in_tick } } }
 			pmr_tick_building = yes
 		}
+		# AUTO_BEST: a change away from the best method is undone at once (not the ones it makes itself)
+		if = {
+			limit = { state = { NOT = { has_variable = pmr_auto_busy } } }
+			pmr_auto_building = yes
+		}
 	}
 }
 
@@ -3044,6 +3186,7 @@ pmr_on_building_built = {
 		# investors built (pmr_pi_effects.txt; retool buildings are not counted).
 		pmr_pi_on_done = yes
 		pmr_built_building = yes
+		pmr_auto_building = yes   # AUTO_BEST: a new building starts on the best methods
 		# Last: the parent's tick can remove this retool building once its level is counted.
 		pmr_tick_parent_of_retool = yes
 	}
@@ -3074,7 +3217,10 @@ pmr_on_acquired_technology = {
 		}
 		if = {
 			limit = { NOT = { has_global_variable = pmr_ticks_paused } }
-			every_scope_state = { pmr_state_research = yes }
+			every_scope_state = {
+				pmr_state_research = yes
+				pmr_auto_best = yes
+			}
 			# the player's levels abroad run on the player's technology
 			if = {
 				limit = { is_player = yes }
@@ -3096,6 +3242,7 @@ pmr_on_monthly_pulse_state = {
 		set_variable = pmr_month
 		pmr_state_tick = yes
 		remove_variable = pmr_month
+		pmr_auto_best = yes
 		pmr_probe_state = yes
 	}
 }
