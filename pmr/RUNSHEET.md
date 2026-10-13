@@ -1,4 +1,4 @@
-# PMR run sheet: the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,39 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the Private tab, fifth round, and your government's row abroad (your current save works)
+## Latest: two Laissez-faire policies, and Recent Investments as tree maps (your current save works)
+
+From your 16:06 and 16:12 messages.
+
+- **Recent Investments.** The three bars are now tree maps in the style of the market panel's Exports and
+  Imports: Domestic and Foreign beside Built By, Priority Groups under them. Tan is domestic and your own
+  investors, plum is foreign. Hover a tile for the chart's numbers, or a legend row for its own (a group's row
+  lists its building types). They stay hidden until a level completes, as before.
+- **Policies under Laissez-faire.** With Laissez-faire, Add Policy opens a window holding only **Bulls & Bears**
+  and **Market Titans**; under Interventionism it shows the four from before. Switching law drops the policy on
+  the 1st, as before.
+  - Bulls & Bears needs Investment Banks; until then its card is greyed and reads "Requires Investment Banks".
+    It gives +25% Capitalists' investment efficiency, +15% private construction allocation (90% with
+    Laissez-faire), +2.5% market access price impact, -2 Trade Unions approval and +10% Trade Unions attraction.
+    Investors weigh each building in your states by half again of its earnings per worker, and Market Liberal
+    leaders are 25% more likely to appear (the ideology's own leader weights, × 1.25).
+  - Market Titans gives +1 company, +4 free charters, +20% Company Throughput Bonus and +20% Company Construction
+    Bonus. Investors weigh building types your companies own by half again. Industrialists lose 2 approval for
+    each of Health System and Education you have (shown as "Market Titans: Health System" and "Market Titans:
+    Education"; they appear on the 1st or when you adopt it). Executives' bonuses are not doubled: 1.14.5 has no
+    modifier or script link for them.
+- Adopting a policy writes `PMR;rec=POLICY;...;policy=bulls` or `policy=titans`.
+
+| What you see | What it means |
+| --- | --- |
+| The charts never appear, though `INVEST` lines with `kind=gov` or `kind=investors` show | The tree map isn't reading PMR's numbers. Send a screenshot. |
+| Every tile is the same colour or grey | The tiles aren't finding their place in the list. Send a screenshot. |
+| Under Laissez-faire the policy window is empty | The law check on the rows failed. Send a screenshot and any `pmr_policy` lines in error.log. |
+| Bulls & Bears can be clicked without Investment Banks | The technology check isn't read. Send the `POLICY` line. |
+| Market Titans held, Health System or Education in place, and no Market Titans line in Industrialists' approval after the 1st | The monthly upkeep didn't run. Check error.log for `pmr_titans`. |
+| error.log mentions `01_character_ideologies` or `ideology_market_liberal` | The Market Liberal patch broke. Send the lines. |
+
+## Earlier: the Private tab, fifth round, and your government's row abroad (your current save works)
 
 From your 15:33 and 15:34 messages. Open the Private tab once after loading, as before.
 
