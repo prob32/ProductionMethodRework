@@ -6,26 +6,29 @@ testing; it rewrites the mod folder in place.
 
     python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"
 
-What it does, building by building (see pmr/ProductionMethodRework/README.md for the design):
+What it does, building by building (see pmr/README.md for the design):
 
 1. Labour is fixed. The building gets one extra production method group,
    ``pmg_pmr_labour_<b>``, holding one method, ``pm_pmr_labour_<b>``, whose ``level_scaled``
    employment is copied from the default (first) recipe. The recipe methods lose their
-   ``building_employment_*`` lines and carry goods only.
-2. Recipes stay ordinary vanilla production methods, ``_add`` values in ``workforce_scaled``,
-   untouched apart from the employment lines.
-3. For every ordered pair of recipes (old, new) a static modifier ``pmr_lag_<b>_<i>_<j>`` holds
-   ``goods_input_<g>_mult`` / ``goods_output_<g>_mult`` = old/new - 1. Script applies it with
-   ``multiplier = 1 - p``.
-4. A hidden pseudo-building ``building_pmr_retool_<b>`` costs RETOOL_SHARE / N of the building's
-   construction cost per level. A switch queues N x level of it, split between the government
-   and private construction queues by the building's government-owned fraction.
-5. p = (retool.level / N + level - L_start) / level, clamped to 0..1, recomputed whenever the
-   recipe changes, whenever a retool level completes, and on the monthly state pulse.
-6. Recipes switch on research: when a newer recipe becomes available the building activates it,
-   which starts retooling. The building panel hides the recipe and automation selectors, shows the
-   fixed labour method as a gold drawing of the main output good, and adds a bar showing the old
-   and new recipe's shares.
+   ``building_employment_*`` lines.
+2. Recipes stay vanilla production methods but carry no goods: they mark the recipe the building
+   runs (the retool target) and gate it by technology. Everything they scaled by workforce (goods,
+   pollution, ...) moves into share methods.
+3. Per recipe i, a share group ``pmg_pmr_share_<b>_<i>`` holds SHARE_STEPS + 1 methods
+   ``pm_pmr_share_<b>_<i>_<n>`` carrying recipe i's workforce-scaled modifiers x n / SHARE_STEPS.
+   The state tracks how many levels run each recipe; the tick activates, in each share group, the
+   method for that recipe's share of the levels. So the building's goods are the level-weighted mix
+   of its recipes, in its own production figures, scaled by employment and throughput like any
+   recipe. Share method n unlocks only while lock method ``pm_pmr_key_<b>_<i>_<n>`` (goods-less, in
+   ``pmg_pmr_key_<b>_<i>``) is active, so the AI never has a second share method to pick.
+4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
+   building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, one
+   level at a time each, built by investors who own part of the building, and one government one,
+   ``building_pmr_retool_gov_<b>``, queued by the government, each side capped by its ownership share.
+5. Recipes switch on research: when a newer recipe becomes available the building activates it,
+   which starts retooling. The building panel hides every selector, shows the fixed labour method
+   as a gold drawing of the main output good, and adds a bar of each recipe's share of the levels.
 
 Vanilla files the mod changes are written whole under their vanilla names (file shadowing), with
 only the employment lines and the extra group inserted; every other byte is the installed game's.
@@ -49,7 +52,9 @@ N = 1                      # retool levels per real building level (Pat, 2026-10
 RETOOL_SHARE = 0.5         # retooling one level costs this share of the building's construction cost
 GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from the ownership trigger
 RETOOL_AI_VALUE = 1000000  # AI weight of a retool building while it has room; vanilla's default is 1000
-OCCUPANCY_STEP = 0.05      # resolution of the occupancy that scales goods only old recipes have
+SHARE_STEPS = 20           # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (5%)
+RETOOL_SLOTS = 4           # private retool levels one building can have under construction at once
+COMPANY_RETOOL = False     # list each private retool slot beside its building type in company files
 # Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
 # building (Pat, 2026-10-12): tier 1 red, 2 yellow, 3 blue, 4 purple; 5 green for the two farms with five.
 TIER_COLORS = [('Red', (0.80, 0.22, 0.20)), ('Yellow', (0.93, 0.78, 0.22)), ('Blue', (0.25, 0.50, 0.88)),
@@ -65,7 +70,7 @@ SUPPORTED_VERSION = '1.14.*'
 BUILDING_FILES = ['01_industry.txt', '02_agro.txt', '03_mines.txt', '04_plantations.txt',
                   '09_misc_resource.txt']
 
-LAG_ICON = 'gfx/interface/icons/timed_modifier_icons/modifier_gear_negative.dds'
+GENERIC_ICON = 'gfx/interface/icons/generic_icons/mixed_icon_base.dds'
 RETOOL_BACKGROUND = 'gfx/interface/icons/building_icons/backgrounds/building_panel_bg_monuments.dds'
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -127,11 +132,24 @@ def line_span(text, node):
     return s, e
 
 
+BLEND_SECTIONS = ('building_modifiers', 'state_modifiers', 'country_modifiers')
+
+
 class Recipe:
     def __init__(self, key, node, src):
         self.key, self.node, self.src = key, node, src
         self.inputs, self.outputs, self.employment = {}, {}, {}
-        self.texture = (pdx.get(node.value, 'texture').value if pdx.get(node.value, 'texture') else None)
+        self.texture = (pdx.get(node.value, 'texture').value if pdx.get(node.value, 'texture') else GENERIC_ICON)
+        # Everything the recipe scales by workforce (goods, pollution, ...), by section. PMR moves it
+        # into the share methods, scaled by the recipe's share of the levels.
+        self.blend = {}
+        for sec in BLEND_SECTIONS:
+            sn = pdx.get(node.value, sec)
+            for block in (pdx.get_all(sn.value, 'workforce_scaled') if sn else []):
+                for n in block.value:
+                    if n.key:
+                        d = self.blend.setdefault(sec, {})
+                        d[n.key] = d.get(n.key, 0) + num(n.value, f'{key}.{sec}.{n.key}')
         bm = pdx.get(node.value, 'building_modifiers')
         if bm:
             for block in pdx.get_all(bm.value, 'workforce_scaled'):
@@ -148,6 +166,13 @@ class Recipe:
                 for n in block.value:
                     if n.key and n.key.startswith('building_employment_'):
                         self.employment[n.key] = self.employment.get(n.key, 0) + num(n.value, f'{key}.{n.key}')
+
+    def strip_blend(self):
+        """Cut the workforce-scaled blocks; the share methods carry them instead."""
+        for sec in BLEND_SECTIONS:
+            sn = pdx.get(self.node.value, sec)
+            for block in (pdx.get_all(sn.value, 'workforce_scaled') if sn else []):
+                self.src.cuts.append(line_span(self.src.text, block))
 
     def strip_employment(self):
         bm = pdx.get(self.node.value, 'building_modifiers')
@@ -210,7 +235,7 @@ def main():
         for p in lst:
             pm_groups.setdefault(p, set()).add(g)
 
-    report = {'treated': [], 'skipped': [], 'carried_by_add': [], 'icon_fallback': []}
+    report = {'treated': [], 'skipped': [], 'blended': [], 'icon_fallback': []}
     treated = []          # (building_key, building_node, building_src, [Recipe])
     candidates = []
     for s in b_srcs:
@@ -245,12 +270,16 @@ def main():
             continue
         treated.append((bk, bn, s, recipes, g0, pg))
 
-    # ---- edit vanilla: strip recipe employment, add the labour group ----------------------------
+    # ---- edit vanilla: strip recipe employment and goods, add the labour and share groups -------
+    # The vanilla recipe methods keep only what is not scaled by workforce: they mark the recipe
+    # the building runs (the retool target) and gate it by technology. Their goods and other
+    # workforce-scaled modifiers move into the share methods.
     stripped = set()
     for bk, bn, s, recipes, g0, pg in treated:
         for r in recipes:
             if r.key not in stripped:
                 r.strip_employment()
+                r.strip_blend()
                 stripped.add(r.key)
         # First in the list, so the building panel's grid shows it in the first slot and the hidden
         # recipe and automation slots after it leave no gap.
@@ -258,6 +287,11 @@ def main():
         rest = s.text[brace:s.text.find('\n', brace)]
         tail = '' if not rest.strip() else '\n\t\t'   # the list continues on the brace's line
         s.inserts.append((brace, f'\n\t\tpmg_pmr_labour_{short(bk)}  # PMR: fixed labour{tail}'))
+        # Last in the list: one share group and one lock group per recipe.
+        s.inserts.append((pg.end - 1, ''.join(
+            f'\tpmg_pmr_share_{short(bk)}_{i}  # PMR: share of levels on {r.key}\n\t'
+            f'\tpmg_pmr_key_{short(bk)}_{i}  # PMR: lock for that share\n\t'
+            for i, r in enumerate(recipes, 1))))
 
     if os.path.isdir(args.out):
         for sub in ('common', 'localization', '.metadata', 'gfx', 'gui'):
@@ -282,7 +316,8 @@ def main():
             write(f'common/production_methods/{s.name}', s.render())
 
     # ---- new script ------------------------------------------------------------------------------
-    labour_pms, labour_groups, retools, costs, lags, loc = [], [], [], [], [], []
+    labour_pms, labour_groups, retools, costs, loc = [], [], [], [], []
+    blend_pms, blend_groups = [], []
     triggers = []
     tick_effects, dispatch = [], []
     cost_values = {}
@@ -349,81 +384,79 @@ def main():
         triggers.append(retool_triggers(b, bk))
         costs.append(retool_values(b))
 
+        for rbx in priv_slots(b):
+            loc += [f' {rbx}:0 "Retooling: ${bk}$"',
+                    f' {rbx}_desc:0 "Privately funded construction that switches one level of ${bk}$ to its newest recipe. Investors from countries that own part of the building fund the privately owned share, up to {RETOOL_SLOTS} levels at a time."']
         loc += [f' pmg_pmr_labour_{b}:0 "Workforce"',
                 f' pm_pmr_labour_{b}:0 "Fixed Workforce"',
-                f' building_pmr_retool_{b}:0 "Retooling: ${bk}$"',
-                f' building_pmr_retool_{b}_desc:0 "Privately funded construction that switches existing ${bk}$ to a new recipe. Investors from countries that own part of it fund the privately owned share; each completed level moves the old recipe\'s output closer to the new one."',
                 f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
                 f' building_pmr_retool_gov_{b}_desc:0 "Government construction that switches the government-owned share of ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."']
 
-        # lag modifiers for every ordered pair
-        pair_names, add_names = {}, {}
-        for i, old in enumerate(recipes, 1):
-            for j, new in enumerate(recipes, 1):
-                if i == j:
-                    continue
-                lines, adds = [], []
-                for kind, o, n in (('input', old.inputs, new.inputs), ('output', old.outputs, new.outputs)):
-                    for g in sorted(set(o) | set(n)):
-                        ov, nv = o.get(g, 0), n.get(g, 0)
-                        if nv == 0:
-                            # A _mult on the new recipe's figure cannot bring back a good it does not
-                            # have (coal on Atmospheric levels of an iron mine retooling to Diesel).
-                            # Those goods come back as a flat _add per level still on the old recipe.
-                            if ov != 0:
-                                adds.append(f'\tgoods_{kind}_{g}_add = {fmt(ov)}  # per level on {old.key}')
-                                report['carried_by_add'].append(
-                                    {'building': bk, 'old': old.key, 'new': new.key, 'good': g, 'kind': kind,
-                                     'per_level': ov})
-                            continue
-                        v = ov / nv - 1
-                        if abs(v) > 1e-9:
-                            lines.append(f'\tgoods_{kind}_{g}_mult = {fmt(v)}  # {fmt(ov)}/{fmt(nv)} - 1')
-                if lines:
-                    name = f'pmr_lag_{b}_{i}_{j}'
-                    pair_names[(i, j)] = name
-                    lags.append(f'# {bk}: {old.key} -> {new.key}\n{name} = {{\n\ticon = "{LAG_ICON}"\n' + '\n'.join(lines) + '\n}\n')
-                    loc.append(f' {name}:0 "Retooling: ${old.key}$ to ${new.key}$"')
-                    loc.append(f' {name}_desc:0 "This building still runs partly on its old recipe. The effect fades as retooling construction completes."')
-                if adds:
-                    name = f'pmr_old_{b}_{i}_{j}'
-                    add_names[(i, j)] = name
-                    lags.append(f'# {bk}: goods {old.key} has and {new.key} does not, per level still on {old.key}.\n'
-                                f'# Applied with multiplier = those levels x the building\'s occupancy.\n'
-                                f'{name} = {{\n\ticon = "{LAG_ICON}"\n' + '\n'.join(adds) + '\n}\n')
-                    loc.append(f' {name}:0 "Not yet retooled: ${old.key}$"')
-                    loc.append(f' {name}_desc:0 "Goods that levels still on ${old.key}$ use or make and ${new.key}$ does not. The effect fades as retooling construction completes."')
+        # Blended recipe: per recipe i, a share group of SHARE_STEPS + 1 methods carrying recipe i's
+        # workforce-scaled modifiers x n / SHARE_STEPS, so the building's goods are the level-weighted
+        # mix of its recipes, scaled by workforce and throughput like any recipe. Share method n
+        # unlocks only while lock method n of the same recipe is active (unlocking_production_methods,
+        # which vanilla uses the same way for pm_elastics). Only one share method per group is ever
+        # available, so the AI cannot move a share; the locks carry nothing, and vanilla's AI keeps
+        # the current method when a change gains nothing (PRODUCTION_METHOD_STICKINESS_*).
+        for i, r in enumerate(recipes, 1):
+            default_n = SHARE_STEPS if i == 1 else 0
+            shares, keys = [], []
+            for n in range(SHARE_STEPS + 1):
+                f = n / SHARE_STEPS
+                body = ''.join(
+                    f'\t{sec} = {{\n\t\tworkforce_scaled = {{\n'
+                    + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in mods.items())
+                    + '\t\t}\n\t}\n'
+                    for sec, mods in r.blend.items() if n > 0)
+                dflt = '\tis_default = yes\n' if n == default_n else ''
+                blend_pms.append(
+                    f'pm_pmr_share_{b}_{i}_{n} = {{\n\ttexture = "{r.texture}"\n{dflt}'
+                    f'\tunlocking_production_methods = {{ pm_pmr_key_{b}_{i}_{n} }}\n{body}}}\n')
+                blend_pms.append(f'pm_pmr_key_{b}_{i}_{n} = {{\n\ttexture = "{GENERIC_ICON}"\n{dflt}}}\n')
+                shares.append(f'pm_pmr_share_{b}_{i}_{n}')
+                keys.append(f'pm_pmr_key_{b}_{i}_{n}')
+                pct = round(100 * f)
+                loc += [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
+                        f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"']
+            for g, lst, what in ((f'pmg_pmr_share_{b}_{i}', shares, 'share of levels'),
+                                 (f'pmg_pmr_key_{b}_{i}', keys, 'share lock')):
+                blend_groups.append(f'{g} = {{\n\ttexture = "{GENERIC_ICON}"\n\tis_hidden_when_unavailable = yes\n'
+                                    '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in lst) + '\t}\n}\n')
+                loc.append(f' {g}:0 "${r.key}$ {what}"')
+            report['blended'].append({'building': bk, 'recipe': r.key, 'tier': i, 'blend': r.blend})
 
-        tick_effects.append(tick_effect(bk, b, recipes, pair_names, add_names))
+        tick_effects.append(tick_effect(bk, b, recipes))
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
                                   'icon_good': good,
                                   'labour_from': r0.key, 'employment': r0.employment,
-                                  'retool_cost': retool_cost, 'lag_modifiers': len(pair_names),
-                                  'old_goods_modifiers': len(add_names)})
+                                  'retool_cost': retool_cost})
 
     # ---- companies: a company that owns a building type may own its private retooling ----------
     # When the investment pool builds a building type a company lists in building_types, the company
     # can be chosen as owner (OWNER_COMPANY_EXPANSION_CHANCE_MULTIPLIER, x OWNER_COMPANY_OWN_STATE_MULT
-    # in its headquarters state). Listing each treated type's private retool building beside it lets a
-    # company retool the building types it owns. Not added to extension_building_types: that list is
-    # what industry charters offer, and a retool building is no charter. Vanilla files are rewritten
-    # with only these lines inserted, like the building files above.
-    retool_of = {t[0]: f'building_pmr_retool_{short(t[0])}' for t in treated}
+    # in its headquarters state). With COMPANY_RETOOL each treated type's private retool slots are
+    # listed beside it, rewriting the vanilla company files with only those lines inserted. Off since
+    # 2026-10-12: the company panels show every listed type's icon, and Pat chose no Retooling icons.
+    # A company-owned building retools either way: its headquarters owns levels the way a Financial
+    # District does, so levels_owned_by_country counts them for the company's country.
     report['company_types'] = []
-    for csrc in load_dir(game, 'company_types'):
-        for ck, cn in csrc.objects().items():
-            bt = pdx.get(cn.value, 'building_types')
-            if not bt or not bt.is_block:
-                continue
-            listed = pdx.items(bt)
-            new = [(x, retool_of[x]) for x in listed if x in retool_of and retool_of[x] not in listed]
-            if not new:
-                continue
-            csrc.inserts.append((bt.end - 1, ''.join(f'\t{rbx}  # PMR: retooling of {x}\n\t' for x, rbx in new)))
-            report['company_types'].append({'company': ck, 'file': csrc.name, 'added': [rbx for _, rbx in new]})
-        if csrc.inserts:
-            write(f'common/company_types/{csrc.name}', csrc.render())
+    if COMPANY_RETOOL:
+        retool_of = {t[0]: priv_slots(short(t[0])) for t in treated}
+        for csrc in load_dir(game, 'company_types'):
+            for ck, cn in csrc.objects().items():
+                bt = pdx.get(cn.value, 'building_types')
+                if not bt or not bt.is_block:
+                    continue
+                listed = pdx.items(bt)
+                new = [(x, rbx) for x in listed if x in retool_of for rbx in retool_of[x] if rbx not in listed]
+                if not new:
+                    continue
+                csrc.inserts.append((bt.end - 1, ''.join(f'\t{rbx}  # PMR: retooling of {x}\n\t' for x, rbx in new)))
+                report['company_types'].append({'company': ck, 'file': csrc.name, 'added': [rbx for _, rbx in new]})
+            if csrc.inserts:
+                write(f'common/company_types/{csrc.name}', csrc.render())
 
     write('common/production_methods/pmr_labour_production_methods.txt', header + '\n'.join(labour_pms))
     write('common/production_method_groups/pmr_labour_groups.txt', header + '\n'.join(labour_groups))
@@ -445,31 +478,11 @@ def main():
     write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers))
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
-    write('common/static_modifiers/pmr_lag_modifiers.txt', header + '\n'.join(lags))
-    # 1.14.5 only knows a goods_<input|output>_<good>_mult once modifier_type_definitions defines it
-    # ("Unknown modifier type ... potential dynamic modifier type definition missing"); vanilla
-    # defines a handful. Define the rest the lags use, in vanilla's own format.
-    defined = set()
-    for msrc in load_dir(game, 'modifier_type_definitions'):
-        defined |= set(msrc.objects())
-    used = sorted(set(re.findall(r'\b(goods_(?:input|output)_[a-z_]+_(?:mult|add))\b', '\n'.join(lags))))
-    missing = [k for k in used if k not in defined]
-    goods_names = set(goods_tex)
-    mtypes, mloc = [], []
-    for k in missing:
-        kind = 'input' if k.startswith('goods_input_') else 'output'
-        suffix = k.rsplit('_', 1)[1]
-        g = k[len(f'goods_{kind}_'):-len('_' + suffix)]
-        if g not in goods_names:
-            raise SystemExit(f'{k}: {g} is not a good')
-        mtypes.append(f'{k} = {{\n\tdecimals = 1\n\tcolor = {"bad" if kind == "input" else "good"}\n'
-                      + ('\tpercent = yes\n' if suffix == 'mult' else '')
-                      + '\tgame_data = {\n\t\tai_value = 0\n\t}\n}\n')
-        mloc += [f' {k}:0 "Building @{g}! ${g}$ {kind}"',
-                 f' {k}_desc:0 "A bonus or penalty to the amount of @{g}! {"consumed" if kind == "input" else "produced"} by buildings"']
-    write('common/modifier_type_definitions/pmr_modifier_types.txt', header + '\n'.join(mtypes))
-    report['modifier_types_defined'] = missing
-    loc += mloc
+    write('common/production_methods/pmr_blend_production_methods.txt', header +
+          '# Share methods: pm_pmr_share_<b>_<recipe>_<n> carries the recipe\'s workforce-scaled\n'
+          f'# modifiers x n / {SHARE_STEPS}. Each unlocks only while pm_pmr_key_<b>_<recipe>_<n> is active.\n\n'
+          + '\n'.join(blend_pms))
+    write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
@@ -505,7 +518,7 @@ def main():
                           'game': args.version_label}
     write('GENERATION_REPORT.json', json.dumps(report, indent=1) + '\n', bom=False)
     print(f"treated {len(report['treated'])} buildings, skipped {len(report['skipped'])}, "
-          f"{len(report['carried_by_add'])} goods carried by old-recipe _add modifiers, "
+          f"{len(report['blended'])} recipes blended by share ({len(blend_pms)} methods), "
           f"{len(report['company_types'])} company types may own retooling")
 
 
@@ -516,7 +529,7 @@ def main():
 # Building"). Everything PMR remembers about a building lives on its state instead, under the
 # building type's short name: a state has at most one building of each type, so pmr_p_steel_mill on
 # a state is that state's steel mill's p. The tick runs in state scope and reaches the building with
-# b:<building_type> only to add or remove its lag modifier and to read its ownership.
+# b:<building_type> only to read its level and ownership and to activate its methods.
 
 def log(rec, bk, b, k, extra=''):
     def v(name, f):
@@ -532,34 +545,47 @@ def log(rec, bk, b, k, extra=''):
 
 
 # ---------------------------------------------------------------------------------------------
-# Retooling construction. Two pseudo-buildings per building type: building_pmr_retool_<b> is
-# built only by private investors, for the privately owned share of the levels being retooled;
-# building_pmr_retool_gov_<b> only by the government, for its share. Nothing queues either: the
-# investment pool and the government choose. Each one's room is capped through can_build_private
-# and can_build_government, the way vanilla caps trade centers under the canton system: the level
-# after queued constructions, plus the levels being added (scope:num_levels), may not pass the cap
-# the tick stores on the state.
+# Retooling construction. Per building type, RETOOL_SLOTS private pseudo-buildings,
+# building_pmr_retool_<b>_<n>, built only by private investors for the privately owned share of the
+# levels being retooled, and one government one, building_pmr_retool_gov_<b>, for its share. Nothing
+# queues them: the investment pool and the government choose. 1.14.5's investment pool never queued a
+# second level on a retool building that had one, so each private slot holds one level at a time and
+# is removed once that level is counted; the tick opens as many empty slots as the private share has
+# room for. The government building is capped through can_build_government, the way vanilla caps
+# trade centers under the canton system: the level after queued constructions, plus the levels being
+# added (scope:num_levels), may not pass the cap the tick stores on the state.
 
-RETOOL_TRIGGERS_DOC = """# State scope. True while this funder may add scope:num_levels more retool levels in the state.
-# The caps are pmr_cap_priv_<b> / pmr_cap_gov_<b>, recomputed by pmr_split_retool_<b> every tick.
-# pmr_retool_investor_<b> (state scope): true when scope:investor_country's investors own part of the
-# building, so an investment agreement alone does not let a foreign pool retool it.
+RETOOL_TRIGGERS_DOC = """# State scope. pmr_retool_room_gov_<b>: true while the government may add scope:num_levels more
+# retool levels in the state, against pmr_cap_gov_<b>, recomputed by pmr_split_retool_<b> every tick.
+# pmr_retool_slot_free_<b>_<n>: true while private slot n has nothing built or queued.
+# pmr_retool_investor_<b>: true when scope:investor_country's investors own part of the building, so
+# an investment agreement alone does not let a foreign pool retool it.
 
 """
 
 
+def priv_slots(b):
+    """The private retool building types of one building type. Each holds one level at a time."""
+    return [f'building_pmr_retool_{b}_{j}' for j in range(1, RETOOL_SLOTS + 1)]
+
+
 def retool_buildings(b, bk, icon):
     out = []
-    for side, group, rb in (('priv', 'bg_pmr_retool', f'building_pmr_retool_{b}'),
-                            ('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}')):
+    sides = [('priv', 'bg_pmr_retool', rbx, j) for j, rbx in enumerate(priv_slots(b), 1)]
+    sides.append(('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}', 0))
+    for side, group, rb, j in sides:
         if side == 'priv':
+            flag = f'pmr_retool_open_priv_{b}_{j}'
             who = ('\t# Private investors only, for the privately owned share. Every building vanilla lets private\n'
                    '\t# investors build says ownership_type = self.\n'
                    '\townership_type = self\n'
                    f'\tcan_build_government = {{ always = no }}\n'
-                   '\t# Room left, and only investors from a country whose investors own part of the building.\n'
-                   f'\tcan_build_private = {{\n\t\tpmr_retool_room_priv_{b} = yes\n\t\tpmr_retool_investor_{b} = yes\n\t}}\n')
+                   '\t# This slot open, empty, and only investors from a country whose investors own part of\n'
+                   '\t# the building.\n'
+                   f'\tcan_build_private = {{\n\t\thas_variable = {flag}\n\t\tpmr_retool_slot_free_{b}_{j} = yes\n'
+                   f'\t\tpmr_retool_investor_{b} = yes\n\t}}\n')
         else:
+            flag = f'pmr_retool_open_gov_{b}'
             who = ('\t# The government only, for the government-owned share.\n'
                    f'\tcan_build_government = {{ pmr_retool_room_gov_{b} = yes }}\n'
                    '\tcan_build_private = { always = no }\n')
@@ -575,7 +601,7 @@ def retool_buildings(b, bk, icon):
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             + who +
             '\t# Very attractive while there is room, so investors (or an AI government) pick it first.\n'
-            f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_{side}_{b} }}\n'
+            f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ has_variable = {flag} }}\n'
             f'\t\t\tvalue = {RETOOL_AI_VALUE}\n\t\t}}\n\t}}\n'
             f'\trequired_construction = pmr_retool_cost_{b}\n'
             f'\tproduction_method_groups = {{\n\t\tpmg_dummy\n\t}}\n'
@@ -584,19 +610,23 @@ def retool_buildings(b, bk, icon):
 
 
 def retool_triggers(b, bk):
-    out = []
-    for side, rb in (('priv', f'building_pmr_retool_{b}'), ('gov', f'building_pmr_retool_gov_{b}')):
-        cap = f'pmr_cap_{side}_{b}'
-        out.append(
-            f'pmr_retool_room_{side}_{b} = {{\n'
-            f'\thas_variable = {cap}\n'
-            '\t# b: finds the retool building even while all of it is still queued (seen in 1.14.5).\n'
-            '\ttrigger_if = {\n'
-            f'\t\tlimit = {{ exists = b:{rb} }}\n'
-            f'\t\tb:{rb} = {{ level_after_queued_constructions <= pmr_room_value_{side}_{b} }}\n'
-            '\t}\n'
-            f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
-            '}\n')
+    rbg = f'building_pmr_retool_gov_{b}'
+    cap = f'pmr_cap_gov_{b}'
+    out = [
+        f'pmr_retool_room_gov_{b} = {{\n'
+        f'\thas_variable = {cap}\n'
+        '\t# b: finds the retool building even while all of it is still queued (seen in 1.14.5).\n'
+        '\ttrigger_if = {\n'
+        f'\t\tlimit = {{ exists = b:{rbg} }}\n'
+        f'\t\tb:{rbg} = {{ level_after_queued_constructions <= pmr_room_value_gov_{b} }}\n'
+        '\t}\n'
+        f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
+        '}\n']
+    # A private slot holds one level at a time: free while it has nothing built or queued.
+    for j, rbx in enumerate(priv_slots(b), 1):
+        out.append(f'pmr_retool_slot_free_{b}_{j} = {{\n'
+                   f'\ttrigger_if = {{\n\t\tlimit = {{ exists = b:{rbx} }}\n'
+                   f'\t\tb:{rbx} = {{ level_after_queued_constructions < 1 }}\n\t}}\n}}\n')
     # levels_owned_by_country counts "a country or investors in that country" (triggers.log), so for
     # the state's own country it includes the government's levels: its investors need more than those.
     # Vanilla compares the same trigger against c:RUS for the Manchurian railway.
@@ -615,14 +645,14 @@ def retool_triggers(b, bk):
 
 
 def retool_values(b):
-    """Building scope: the most retool levels this funder's building may have after queued constructions,
-    before the scope:num_levels being added."""
-    return ''.join(f'pmr_room_value_{side}_{b} = {{\n\tvalue = state.var:pmr_cap_{side}_{b}\n'
-                   '\tsubtract = scope:num_levels\n}\n' for side in ('priv', 'gov'))
+    """Building scope: the most government retool levels the building may have after queued
+    constructions, before the scope:num_levels being added."""
+    return (f'pmr_room_value_gov_{b} = {{\n\tvalue = state.var:pmr_cap_gov_{b}\n'
+            '\tsubtract = scope:num_levels\n}\n')
 
 
 
-def tick_effect(bk, b, recipes, pairs, adds):
+def tick_effect(bk, b, recipes):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -630,12 +660,10 @@ def tick_effect(bk, b, recipes, pairs, adds):
     target (pmr_to_<b>); every level on another recipe still needs retooling. Each completed retool
     level moves one level, oldest recipe first, onto the target. A newer recipe arriving mid-retool
     only changes the target: levels already moved keep their recipe until retooled again.
-    The lag is one modifier per recipe still running, scaled by that recipe's share of the levels,
-    so the building's goods are the level-weighted mix of its recipes. Goods the target recipe has
-    none of cannot be scaled back from it; they come from a second modifier per old recipe (adds),
-    a flat amount per level still on it, times the building's occupancy."""
+    Each recipe's share of the levels picks the method active in that recipe's share group, so the
+    building's goods are the level-weighted mix of its recipes in its own production figures."""
     k = len(recipes)
-    rb = f'building_pmr_retool_{b}'
+    slots = list(enumerate(priv_slots(b), 1))
     rbg = f'building_pmr_retool_gov_{b}'
     v = lambda name: f'{name}_{b}'           # noqa: E731  state variable for this building type
     lv = lambda i: v(f'pmr_lv_{i}')          # noqa: E731
@@ -668,32 +696,45 @@ def tick_effect(bk, b, recipes, pairs, adds):
              + on_index('pmr_to', lambda i: f'set_variable = {{ name = {lv(i)} value = var:{v("pmr_level")} }}')
              + '}\n\n')
 
-    # lag modifiers live on the building
-    o.append(f'pmr_clear_lag_{b} = {{\n\tb:{bk} = {{\n')
-    for name in list(pairs.values()) + list(adds.values()):
-        o.append(f'\t\tif = {{ limit = {{ has_modifier = {name} }} remove_modifier = {name} }}\n')
-    o.append('\t}\n}\n\n')
+    # The blend: each recipe's share of the levels, in steps of 1 / SHARE_STEPS, picks the active
+    # method of that recipe's share group. Recipes other than the target are rounded to the nearest
+    # step, oldest first and never past the whole; the target takes what is left, so the shares
+    # always add up to exactly SHARE_STEPS steps. A share method unlocks only while its lock method
+    # is active, so the lock goes first. If the game applies the lock after the share was refused,
+    # the lock's change fires on_production_method_changed, whose tick activates the share again.
+    def pm(kind, i, n):
+        return f'pm_pmr_{kind}_{b}_{i}_{n}'
 
-    o.append(f'pmr_apply_lag_{b} = {{\n\tpmr_clear_lag_{b} = yes\n')
-    for (i, j), name in pairs.items():
-        o.append(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_to")} = {j} var:{v(f"pmr_sh_{i}")} > 0 }}\n'
-                 f'\t\tb:{bk} = {{ add_modifier = {{ name = {name} multiplier = prev.var:{v(f"pmr_sh_{i}")} }} }}\n\t}}\n')
-    if adds:
-        # A static modifier is not scaled by the workforce the way a recipe's goods are, so the
-        # flat per-level amounts are scaled here: levels on the old recipe x occupancy, read from
-        # the building-scope occupancy trigger in steps of OCCUPANCY_STEP.
-        steps = round(1 / OCCUPANCY_STEP)
-        o.append(f'\t{setv("pmr_occ", 0)}\n')
-        for n in range(steps, 0, -1):
-            frac = n * OCCUPANCY_STEP
-            kw = 'if' if n == steps else 'else_if'
-            o.append(f'\t{kw} = {{ limit = {{ b:{bk} = {{ occupancy >= {fmt(frac - OCCUPANCY_STEP / 2)} }} }} '
-                     f'{setv("pmr_occ", fmt(frac))} }}\n')
-        for (i, j), name in adds.items():
-            o.append(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_to")} = {j} var:{lv(i)} > 0 var:{v("pmr_occ")} > 0 }}\n'
-                     f'\t\t{setv("pmr_oldm", "var:" + lv(i))}\n'
-                     f'\t\t{chg("pmr_oldm", "multiply", "var:" + v("pmr_occ"))}\n'
-                     f'\t\tb:{bk} = {{ add_modifier = {{ name = {name} multiplier = prev.var:{v("pmr_oldm")} }} }}\n\t}}\n')
+    def pm_active(kind, i, n):
+        return f'is_production_method_active = {{ building_type = {bk} production_method = {pm(kind, i, n)} }}'
+
+    o.append(f'pmr_blend_{b} = {{\n\t{setv("pmr_ncum", 0)}\n')
+    for i in range(1, k + 1):
+        o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:{v("pmr_to")} = {i} }} }}\n'
+                 f'\t\t{setv(f"pmr_n_{i}", "var:" + v(f"pmr_sh_{i}"))}\n'
+                 f'\t\t{chg(f"pmr_n_{i}", "multiply", SHARE_STEPS)}\n'
+                 f'\t\tround_variable = {{ name = {v(f"pmr_n_{i}")} nearest = 1 }}\n'
+                 f'\t\t{setv("pmr_nrest", SHARE_STEPS)}\n'
+                 f'\t\t{chg("pmr_nrest", "subtract", "var:" + v("pmr_ncum"))}\n'
+                 f'\t\tif = {{ limit = {{ var:{v(f"pmr_n_{i}")} > var:{v("pmr_nrest")} }} {setv(f"pmr_n_{i}", "var:" + v("pmr_nrest"))} }}\n'
+                 f'\t\t{chg("pmr_ncum", "add", "var:" + v(f"pmr_n_{i}"))}\n\t}}\n')
+    o.append(on_index('pmr_to', lambda i: f'{setv(f"pmr_n_{i}", SHARE_STEPS)} {chg(f"pmr_n_{i}", "subtract", "var:" + v("pmr_ncum"))}'))
+    for i in range(1, k + 1):
+        for n in range(SHARE_STEPS + 1):
+            kw = 'if' if n == 0 else 'else_if'
+            o.append(f'\t{kw} = {{\n\t\tlimit = {{ var:{v(f"pmr_n_{i}")} = {n} NOT = {{ {pm_active("share", i, n)} }} }}\n'
+                     f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, n)} }} }} '
+                     f'activate_production_method = {{ building_type = {bk} production_method = {pm("key", i, n)} }} }}\n'
+                     f'\t\tactivate_production_method = {{ building_type = {bk} production_method = {pm("share", i, n)} }}\n\t}}\n')
+    o.append('}\n\n')
+
+    # For the log: the share step each recipe's group actually runs, -1 if none reads.
+    o.append(f'pmr_read_blend_{b} = {{\n')
+    for i in range(1, k + 1):
+        o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n')
+        for n in range(SHARE_STEPS + 1):
+            kw = 'if' if n == 0 else 'else_if'
+            o.append(f'\t{kw} = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}\n')
     o.append('}\n\n')
 
     # The levels the state tracks always add up to the building's level. New levels arrive on the
@@ -732,32 +773,39 @@ def tick_effect(bk, b, recipes, pairs, adds):
                 f'\tif = {{\n\t\tlimit = {{ OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
                 f'\t\t{setv("pmr_retool_built_" + side, f"b:{rbx}.level")}\n'
                 f'\t\t{setv("pmr_retool_q_" + side, f"b:{rbx}.level_after_queued_constructions")}\n'
-                '\t}\n'
-                f'\t{setv("pmr_pending_" + side, "var:" + v("pmr_retool_q_" + side))}\n'
-                f'\t{chg("pmr_pending_" + side, "subtract", "var:" + v("pmr_retool_built_" + side))}\n')
+                '\t}\n')
+
+    def totals():
+        """Private totals over the slots, pending per side, and both sides together."""
+        return (f'\t{setv("pmr_retool_built_priv", 0)}\n\t{setv("pmr_retool_q_priv", 0)}\n'
+                + ''.join(f'\t{chg("pmr_retool_built_priv", "add", "var:" + v(f"pmr_retool_built_priv{j}"))}\n'
+                          f'\t{chg("pmr_retool_q_priv", "add", "var:" + v(f"pmr_retool_q_priv{j}"))}\n' for j, _ in slots)
+                + ''.join(f'\t{setv("pmr_pending_" + side, "var:" + v("pmr_retool_q_" + side))}\n'
+                          f'\t{chg("pmr_pending_" + side, "subtract", "var:" + v("pmr_retool_built_" + side))}\n'
+                          for side in ('priv', 'gov'))
+                + f'\t{setv("pmr_retool_built", "var:" + v("pmr_retool_built_priv"))}\n'
+                f'\t{chg("pmr_retool_built", "add", "var:" + v("pmr_retool_built_gov"))}\n'
+                f'\t{setv("pmr_pending", "var:" + v("pmr_pending_priv"))}\n'
+                f'\t{chg("pmr_pending", "add", "var:" + v("pmr_pending_gov"))}\n')
     o.append(f'pmr_read_retool_{b} = {{\n'
              '\t# A retool still entirely under construction may not count for has_building.\n'
-             + read_side(rb, 'priv') + read_side(rbg, 'gov') +
-             f'\t{setv("pmr_retool_built", "var:" + v("pmr_retool_built_priv"))}\n'
-             f'\t{chg("pmr_retool_built", "add", "var:" + v("pmr_retool_built_gov"))}\n'
-             f'\t{setv("pmr_pending", "var:" + v("pmr_pending_priv"))}\n'
-             f'\t{chg("pmr_pending", "add", "var:" + v("pmr_pending_gov"))}\n'
+             + ''.join(read_side(rbx, f'priv{j}') for j, rbx in slots) + read_side(rbg, 'gov') + totals() +
              '}\n\n')
 
     # A retool building whose levels are all counted and with nothing queued on it is removed, so
     # the next retool level is a new construction. 1.14.5's investment pool never queued a second
     # level on a retool building that already had one: in a year of Pat's test log, every private
-    # retool level queued was the first of its building. The pool does not expand a building with
-    # employment under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD, and a retool building employs
+    # retool level queued was the first of its building, likely because the pool does not expand a
+    # building under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD and a retool building employs
     # nobody. Never removed while anything is queued on it (that leaves a NULL_STATE construction).
     def release(rbx, side):
-        return (f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_retool_built_" + side)} > 0 var:{v("pmr_pending_" + side)} <= 0 '
+        return (f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_retool_built_" + side)} > 0 '
+                f'var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} '
                 f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
                 f'\t\tremove_building = {rbx}\n'
                 f'\t\t{chg("pmr_seen", "subtract", "var:" + v("pmr_retool_built_" + side))}\n'
                 f'\t\t{setv("pmr_retool_built_" + side, 0)}\n'
-                f'\t\t{setv("pmr_retool_q_" + side, 0)}\n'
-                f'\t\t{setv("pmr_pending_" + side, 0)}\n\t}}\n')
+                f'\t\t{setv("pmr_retool_q_" + side, 0)}\n\t}}\n')
 
     # Completed retool levels not yet counted move levels onto the target, oldest recipe first.
     # The retool buildings keep their levels between retools while anything is queued on them,
@@ -776,12 +824,10 @@ def tick_effect(bk, b, recipes, pairs, adds):
                        f'\t\t{chg("pmr_conv", "subtract", "var:" + v("pmr_amt"))}\n'
                        f'\t\t{chg("pmr_gain", "add", "var:" + v("pmr_amt"))}\n\t}}\n' for i in range(1, k + 1))
              + on_index('pmr_to', lambda i: f'change_variable = {{ name = {lv(i)} add = var:{v("pmr_gain")} }}')
-             + ''.join(release(rbx, side) for rbx, side in ((rb, 'priv'), (rbg, 'gov')))
-             + f'\t{setv("pmr_retool_built", "var:" + v("pmr_retool_built_priv"))}\n'
-             f'\t{chg("pmr_retool_built", "add", "var:" + v("pmr_retool_built_gov"))}\n'
-             + '}\n\n')
+             + ''.join(release(rbx, f'priv{j}') for j, rbx in slots) + release(rbg, 'gov')
+             + totals() + '}\n\n')
 
-    # Shares for the bar and the lag, the levels still to retool, and p (share on the target).
+    # Shares for the bar and the blend, the levels still to retool, and p (share on the target).
     o.append(f'pmr_mix_{b} = {{\n'
              + on_index('pmr_to', lambda i: setv("pmr_lv_to", "var:" + lv(i)))
              + f'\t{setv("pmr_need", "var:" + v("pmr_level"))}\n'
@@ -823,30 +869,32 @@ def tick_effect(bk, b, recipes, pairs, adds):
              f'\t{chg("pmr_room_priv", "subtract", "var:" + v("pmr_room_gov"))}\n'
              f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
              f'\t{chg("pmr_cap_gov", "add", "var:" + v("pmr_room_gov"))}\n'
-             f'\t{setv("pmr_cap_priv", "var:" + v("pmr_retool_q_priv"))}\n'
-             f'\t{chg("pmr_cap_priv", "add", "var:" + v("pmr_room_priv"))}\n'
              f'\tset_variable = pmr_retool_gate_{b}\n'
-             + ''.join(f'\tif = {{ limit = {{ var:{v("pmr_room_" + side)} > 0 }} set_variable = pmr_retool_open_{side}_{b} }}\n'
-                       f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_{side}_{b} }} remove_variable = pmr_retool_open_{side}_{b} }}\n'
-                       for side in ('priv', 'gov')) +
+             f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} > 0 }} set_variable = pmr_retool_open_gov_{b} }}\n'
+             f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_gov_{b} }} remove_variable = pmr_retool_open_gov_{b} }}\n'
+             '\t# Private: open as many empty slots as the private share has room for.\n'
+             f'\t{setv("pmr_slots_left", "var:" + v("pmr_room_priv"))}\n'
+             + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 var:{v(f"pmr_retool_q_priv{j}")} <= 0 }}\n'
+                       f'\t\tset_variable = pmr_retool_open_priv_{b}_{j}\n\t\t{chg("pmr_slots_left", "subtract", 1)}\n\t}}\n'
+                       f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_priv_{b}_{j} }} remove_variable = pmr_retool_open_priv_{b}_{j} }}\n'
+                       for j, _ in slots) +
              '}\n\n')
 
     # Nothing left to retool. A retool building with levels still queued is never removed: that
     # leaves a construction with no building (seen as NULL_STATE in the queue). It is closed
     # instead, and removed by a later tick once its queue has emptied.
+    flags = [f'pmr_retool_open_priv_{b}_{j}' for j, _ in slots] + [f'pmr_retool_open_gov_{b}']
     o.append(f'pmr_close_retool_{b} = {{\n'
-             + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_retool_open_{side}_{b} }} remove_variable = pmr_retool_open_{side}_{b} }}\n'
-                       for side in ('priv', 'gov')) +
-             f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_pending")} > 0 }}\n'
-             f'\t\t{setv("pmr_cap_priv", "var:" + v("pmr_retool_q_priv"))}\n'
-             f'\t\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
-             f'\t\t{setv("pmr_room_priv", 0)}\n\t\t{setv("pmr_room_gov", 0)}\n\t}}\n'
-             '\telse = {\n'
-             f'\t\tif = {{ limit = {{ OR = {{ has_building = {rb} exists = b:{rb} }} }} remove_building = {rb} }}\n'
-             f'\t\tif = {{ limit = {{ OR = {{ has_building = {rbg} exists = b:{rbg} }} }} remove_building = {rbg} }}\n'
+             + ''.join(f'\tif = {{ limit = {{ has_variable = {fl} }} remove_variable = {fl} }}\n' for fl in flags)
+             + f'\t{setv("pmr_room_priv", 0)}\n\t{setv("pmr_room_gov", 0)}\n'
+             f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
+             + ''.join(f'\tif = {{ limit = {{ var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} '
+                       f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }} remove_building = {rbx} }}\n'
+                       for rbx, side in [(rbx, f'priv{j}') for j, rbx in slots] + [(rbg, 'gov')])
+             + f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_pending")} <= 0 }}\n'
              f'\t\t{setv("pmr_seen", 0)}\n'
              + ''.join(f'\t\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
-                       for n in (f'pmr_retool_gate_{b}', v('pmr_cap_priv'), v('pmr_cap_gov'), v('pmr_gov_levels'))) +
+                       for n in (f'pmr_retool_gate_{b}', v('pmr_cap_gov'), v('pmr_gov_levels'))) +
              '\t}\n}\n\n')
 
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first
@@ -868,22 +916,25 @@ def tick_effect(bk, b, recipes, pairs, adds):
 
     def f(name, d=0):
         return f"[THIS.Var('{v(name)}').GetValue|{d}]"
-    best = f";best={f('pmr_best_now')}"
-    split = (f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}"
+    # blend: each recipe's share of the levels in steps of 1/SHARE_STEPS, as the tick set it;
+    # active: the step each recipe's share group runs as the game reports it, -1 if none
+    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, k + 1))
+           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, k + 1)))
+    best = f";best={f('pmr_best_now')}" + mix
+    split = mix + (f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}"
              f";share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}"
              f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
              f";room_gov={f('pmr_room_gov')};room_priv={f('pmr_room_priv')}")
-    done = f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
+    done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
 
     o.append(f'pmr_tick_{b} = {{\n'
              f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
              f'\tpmr_best_{b} = yes\n'
              '\t# First sight (game start, a new building, or a save from before the level mix): every\n'
-             '\t# level runs the recipe the building runs now, with no lag. Retool levels already built\n'
+             '\t# level runs the recipe the building runs now. Retool levels already built\n'
              '\t# count for nothing.\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_mix_{b} }} }}\n'
              f'\t\tset_variable = pmr_mix_{b}\n'
-             f'\t\tpmr_clear_lag_{b} = yes\n'
              f'\t\tif = {{ limit = {{ has_variable = {v("pmr_retooling")} }} remove_variable = {v("pmr_retooling")} }}\n'
              f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
              f'\t\tpmr_running_{b} = yes\n'
@@ -934,21 +985,21 @@ def tick_effect(bk, b, recipes, pairs, adds):
     o.append(f'\tpmr_sync_levels_{b} = yes\n'
              f'\tpmr_progress_{b} = yes\n'
              f'\tpmr_mix_{b} = yes\n'
+             f'\tpmr_blend_{b} = yes\n'
+             f'\tpmr_read_blend_{b} = yes\n'
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
              f'\t\tset_variable = {v("pmr_retooling")}\n'
              f'\t\tpmr_split_retool_{b} = yes\n'
-             f'\t\tpmr_apply_lag_{b} = yes\n'
              f'\t\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("SWITCH", bk, b, k, extra=split)} }}\n'
              f'\t\telse = {{ {log("TICK", bk, b, k, extra=split)} }}\n'
              '\t}\n'
              '\telse = {\n'
-             f'\t\tpmr_clear_lag_{b} = yes\n'
              f'\t\tpmr_close_retool_{b} = yes\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = {v("pmr_retooling")} }}\n'
              f'\t\t\tremove_variable = {v("pmr_retooling")}\n'
              f'\t\t\t{log("DONE", bk, b, k, extra=done)}\n'
              '\t\t}\n'
-             f'\t\telse_if = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("CANCEL", bk, b, k)} }}\n'
+             f'\t\telse_if = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("CANCEL", bk, b, k, extra=mix)} }}\n'
              '\t}\n'
              f'\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} remove_variable = {v("pmr_switched")} }}\n'
              '}\n\n')
@@ -986,8 +1037,8 @@ def dispatch_effects(buildings):
     for i, bk in enumerate(buildings):
         b = short(bk)
         kw = 'if' if i == 0 else 'else_if'
-        o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ is_building_type = building_pmr_retool_{b} '
-                 f'is_building_type = building_pmr_retool_gov_{b} }} }}\n'
+        types = priv_slots(b) + [f'building_pmr_retool_gov_{b}']
+        o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in types) + ' } }\n'
                  f'\t\tstate = {{ if = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }} }}\n\t}}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state.\n'
@@ -1238,7 +1289,7 @@ def panel_loc(recipe_keys):
             f' PMR_BAR_PCT_{b}:0 "#bold {var("pmr_p", "%0")}#!"',
             f' PMR_BAR_TOOLTIP_{b}:0 "#bold Levels by recipe#!{tiers}'
             f'\\n\\nLevels still to retool to [Building.GetCustom(\'pmr_new_recipe\')]: #bold {var("pmr_need", "0")}#!'
-            f'\\n\\nPrivate investors: #bold {var("pmr_pending_priv", "0")}#! queued, room for #bold {var("pmr_room_priv", "0")}#! more. Only investors who own part of this building fund these, from the investment pool.'
+            f'\\n\\nPrivate investors: #bold {var("pmr_pending_priv", "0")}#! queued, room for #bold {var("pmr_room_priv", "0")}#! more. Only investors who own part of this building fund these, from the investment pool, up to {RETOOL_SLOTS} levels at a time.'
             f'\\nGovernment: #bold {var("pmr_pending_gov", "0")}#! queued, room for #bold {var("pmr_room_gov", "0")}#! more. Queue these yourself: build #bold $building_pmr_retool_gov_{b}$#! in this state."',
         ]
     return loc
@@ -1254,7 +1305,7 @@ on_building_expanded = { on_actions = { pmr_on_building_expanded } }
 on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }
 on_acquired_technology = { on_actions = { pmr_on_acquired_technology } }
 
-# No root. Adopt every building's starting recipe so day-one recipes carry no lag.
+# No root. Adopt every building's starting recipe, all levels on it.
 pmr_on_game_started = {
 	effect = {
 		debug_log = "PMR;rec=LOADED;date=[TimeKeeper.GetCurrentDate.GetString];hook=on_game_started"
@@ -1299,7 +1350,7 @@ pmr_on_acquired_technology = {
 	}
 }
 
-# Root = state. Backstop: recompute p and re-apply the lag once a month even if no event fired.
+# Root = state. Backstop: recompute the shares and re-apply the blend once a month even if no event fired.
 pmr_on_monthly_pulse_state = {
 	effect = {
 		pmr_state_tick = yes

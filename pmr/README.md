@@ -10,7 +10,7 @@ production methods, and a recipe switch takes effect gradually as retooling cons
 - `tools/pmr/generate.py` writes the whole mod from the installed game's own script. Re-run it after
   every beta update: `python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"`.
 - `GENERATION_REPORT.json`, written into the generated mod folder, lists every building treated, every building
-  skipped and why, every good carried by a flat per-level modifier, and every company given a retool building type.
+  skipped and why, and every recipe whose modifiers moved into share methods.
 
 The mod output is not committed. It is generated locally from the installed game's script and copied
 into the mod folder; only the generator, the design notes and the run sheet live in the repo. Target:
@@ -21,10 +21,10 @@ the 1.14.x open beta, `supported_version = 1.14.*`.
 | Design point | Where it lives |
 | --- | --- |
 | 1. Labour is fixed | Each treated building gets `pmg_pmr_labour_<b>` with one method, `pm_pmr_labour_<b>`, holding the default recipe's `level_scaled` employment. The recipe methods lose their `building_employment_*` lines. Steel: shopkeepers 500, laborers 3500, machinists 750, engineers 250, from Blister. |
-| 2. Recipes are ordinary methods | The vanilla recipe methods, unchanged apart from employment: `goods_input_<g>_add` / `goods_output_<g>_add` in `workforce_scaled`. Vanilla files are shadowed whole under their own names, so every other byte is the game's. |
-| 3. Gradual switch | The state keeps how many of the building's levels run each recipe (`pmr_lv_<i>_<b>`, i = the recipe's place in vanilla's group, oldest first). The recipe the building runs is the target; every level on another recipe is still to retool. `common/static_modifiers/pmr_lag_modifiers.txt` has one modifier per ordered recipe pair, values old/new − 1. For each recipe i still running on some levels, the building carries the i → target modifier with `multiplier` = i's share of the levels, so its goods are the level-weighted mix of its recipes. Steel Blister → Bessemer is `goods_input_iron_mult = -0.33333`, `goods_output_steel_mult = -0.27778`, no coal entry. A good the target has none of cannot be scaled back from it (coal on Atmospheric levels of an iron mine retooling to Diesel). It goes in a second modifier per pair, `pmr_old_<b>_<i>_<target>`, holding the old recipe's per-level `goods_*_add`, applied with `multiplier` = levels on i × the building's occupancy (a 5% ladder on the `occupancy` trigger), since a static modifier is not workforce-scaled the way a recipe's goods are. |
-| 4. p is driven by construction | Two pseudo-buildings per building type, each costing 50% of the building's construction cost ÷ N per level, with N = 1 (steel: 800 × 0.5 = 400). `building_pmr_retool_<b>` is built only by private investors, for the privately owned share of the levels still to retool; `building_pmr_retool_gov_<b>` only by the government, for its share. Nothing queues them: the investment pool picks the private one (AI value 1,000,000 while it has room) and the player, or an AI government, builds the government one. `can_build_private` / `can_build_government` cap each at its share, the way vanilla caps trade centers under the canton system. `can_build_private` also requires the investing country's investors to own part of the building (`levels_owned_by_country`; for the state's own country, more than the government's levels), so an investment agreement alone does not let a foreign pool retool it. Every tick re-splits the levels nobody has queued by current ownership, so a privatisation mid-retool hands the rest to investors. A retool building is never removed while it has levels queued: removing it leaves a construction with no building, shown as NULL_STATE in the queue. It is closed instead and removed once its queue empties. Once its levels are counted and nothing is queued on it, it is removed even mid-retool, so the next level is a new construction: on 1.14.5 the investment pool never queued a second level on a retool building that had one in a year of testing (most likely because it does not expand a building under 80% employment, `PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD`, and a retool building employs nobody). Every company type that lists a treated building type in `building_types` also lists its private retool building, so a company can be chosen as owner of retooling the way it is of new levels (`OWNER_COMPANY_EXPANSION_CHANCE_MULTIPLIER`). The company files are vanilla's, shadowed whole with only those lines added. |
-| 5. Each completed retool level moves one building level | `pmr_progress_<b>`: retool levels completed since the last tick (both buildings' `level` less `pmr_seen_<b>`, ÷ N) move that many levels onto the target, oldest recipe first. New building levels arrive on the target; lost levels go from the oldest recipe first. p is the target's share. When every level is on the target the lag goes, and the retool buildings once nothing is queued on them. |
+| 2. Recipes mark the target | The vanilla recipe methods keep their technology gates and anything not scaled by workforce, and lose employment and every `workforce_scaled` block (goods, pollution and the rest). They say which recipe the building runs, which is the retool target. Vanilla files are shadowed whole under their own names, so every other byte is the game's. |
+| 3. Gradual switch, blended | The state keeps how many of the building's levels run each recipe (`pmr_lv_<i>_<b>`, i = the recipe's place in vanilla's group, oldest first). Per recipe, the building has a share group `pmg_pmr_share_<b>_<i>` of 21 methods, `pm_pmr_share_<b>_<i>_<n>`, each carrying that recipe's `workforce_scaled` modifiers × n/20. Every tick activates, in each share group, the method for that recipe's share of the levels, rounded to 5%, the target taking what is left so the shares sum to 100%. The building's goods are therefore the level-weighted mix of its recipes in its own production figures, scaled by employment and throughput like any recipe, and its profit and the investment AI's view of it follow. An iron mine with 15 of 20 levels on Atmospheric and 5 on Condensing runs Atmospheric 75% and Condensing 25%, coal included. Share method n unlocks only while lock method `pm_pmr_key_<b>_<i>_<n>` (no modifiers, in `pmg_pmr_key_<b>_<i>`) is active, as vanilla gates `pm_elastics`, so the AI never has a second share method to pick; the tick activates the lock, then the share. |
+| 4. p is driven by construction | Pseudo-buildings cost 50% of the building's construction cost ÷ N per level, with N = 1 (steel: 800 × 0.5 = 400). Four private slots, `building_pmr_retool_<b>_1` … `_4`, are built only by private investors for the privately owned share of the levels still to retool, one level each at a time; `building_pmr_retool_gov_<b>` only by the government, for its share. Nothing queues them: the investment pool picks the private slots (AI value 1,000,000 while open) and the player, or an AI government, builds the government one. Each tick opens as many empty private slots as the private share has room for; `can_build_private` requires the slot to be open and empty, and the investing country's investors to own part of the building (`levels_owned_by_country`; for the state's own country, more than the government's levels), so an investment agreement alone does not let a foreign pool retool it. `can_build_government` caps the government building at its share, the way vanilla caps trade centers under the canton system. Every tick re-splits the levels nobody has queued by current ownership. On 1.14.5 the investment pool never queued a second level on a retool building that had one in a year of testing (most likely `PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD`: a retool building employs nobody), so a slot is removed once its level is counted and nothing is queued on it, and the next level is a new construction. A retool building is never removed while it has levels queued: that leaves a construction with no building, shown as NULL_STATE in the queue. |
+| 5. Each completed retool level moves one building level | `pmr_progress_<b>`: retool levels completed since the last tick (every slot's and the government building's `level`, less `pmr_seen_<b>`, ÷ N) move that many levels onto the target, oldest recipe first, and the shares follow. New building levels arrive on the target; lost levels go from the oldest recipe first. p is the target's share. When every level is on the target, the target's share method is at 100% and the others at 0%. |
 
 | The building panel | A shadowed `gui/building_details_panel.gui` (vanilla's, with two patches the generator asserts). On a PMR building the production method row shows only the fixed labour slot, drawn as the building's main output good in gold (`tools/pmr/icons.py`, written to `gfx/.../production_method_icons/pmr_labour_<b>.dds`). Beside it a recipe bar, sized to sit between that slot and the employment and cash-reserve bars: one segment per recipe, oldest on the left, as wide as that recipe's share of the levels and coloured by its tier, the same on every building (`TIER_COLORS`: 1 red, 2 yellow, 3 blue, 4 purple, 5 green). The segments are vanilla white progress bars tinted per tier, filled to the running total of the shares (`pmr_cum_<i>_<b>`) and stacked newest first. Its tooltip lists every recipe's share; the title reads the building custom localization `pmr_new_recipe`. |
 | Recipes switch on research | With the selector gone, each tick finds the newest recipe the building can run (the last in the vanilla group that `can_activate_production_method` allows) and, when that rises, activates it, which starts retooling like any switch. A newly constructed building starts on the newest recipe at no cost. |
@@ -34,7 +34,8 @@ p is recomputed on these hooks, all appended to vanilla on_actions the documente
 switches at once), `on_building_built` and `on_building_expanded` (a building's first level and each
 later one; together every completed retool level moves p at once), and `on_monthly_pulse_state`
 (backstop). A save that predates the mod
-adopts each building's current recipe with no lag on its first tick.
+adopts each building's current recipe, every level on it, on its first tick. A save made with an
+earlier build of PMR is not supported: its lag modifiers and retool buildings no longer exist.
 
 ## Scope
 
@@ -45,21 +46,22 @@ each), and the government, military, urban, infrastructure, monument, canal, sub
 and construction-sector buildings, whose first group is not a goods recipe or whose retooling would
 be paid for by itself.
 
-## Goods modifier types
+## Why share methods and not modifiers
 
-1.14.5 only accepts a `goods_input_<good>_mult` or `goods_output_<good>_mult` modifier once
-`modifier_type_definitions` defines it; vanilla defines a handful. The generator writes the rest the
-lag modifiers use into `common/modifier_type_definitions/pmr_modifier_types.txt`, in vanilla's
-format, and lists them in `GENERATION_REPORT.json`. Without them the lag modifier is empty and a
-recipe switch takes effect at once.
+An earlier build scaled the target recipe's goods back with `goods_*_mult` static modifiers and
+added goods only an old recipe has with `goods_*_add` ones. On 1.14.5 the economy reads a building
+static modifier's `_mult` but ignores its goods `_add`: an iron mine retooling from Atmospheric to
+Diesel lost its coal although the modifier showed. A production method's `workforce_scaled` goods
+are what the economy, the building's profit and the investment AI all read, so the blend is made of
+production methods.
 
 ## Where PMR keeps its numbers
 
 Buildings cannot hold script variables on 1.14.5 (`This scope doesn't support variables. Scope:
 Building`), so every number PMR keeps for a building lives on its state, named by building type:
 `pmr_p_steel_mill` on a state is that state's steel mill's p. A state has at most one building of
-each type. The tick runs in state scope and touches the building through `b:<type>` only to add
-or remove the lag modifier and to read its ownership.
+each type. The tick runs in state scope; it reads the building's level and ownership through `b:<type>` and
+switches its methods with state-scope `activate_production_method`.
 
 ## Choices made where the design was silent
 
@@ -72,23 +74,24 @@ or remove the lag modifier and to read its ownership.
   costs nothing and ends retooling.
 - **The newest recipe is taken directly.** Research that unlocks two recipes at once (or a country
   that already has both) moves straight to the newer one; the levels never pass through the middle.
-- **Goods only an old recipe has are carried flat.** When the new recipe has none of a good the old
-  one used (iron mine coal when moving to Diesel, glassworks wood when moving to crystal glass),
-  `old/new − 1` divides by zero, so the good comes from `pmr_old_` modifiers instead: the old per-level
-  amount × levels still on that recipe × occupancy, refreshed each tick. Throughput bonuses on the
-  building may not apply to it the way they do to a recipe's own goods. `GENERATION_REPORT.json`
-  lists every one under `carried_by_add`.
-- **Companies own retooling only through `building_types`.** A company that owns a building type
-  through an industry charter (`extension_building_types`) is not given its retool building, since
-  that list is what charters offer. Company panels show the retool icons beside the building types.
+- **The blend is in 5% steps** (`SHARE_STEPS = 20`). A building of 20 levels or fewer whose level
+  count divides 20 is exact; otherwise each recipe's share is rounded, oldest recipes first, and the
+  target takes the remainder.
+- **Companies do not list the retool buildings.** Listing them let the pool make a company the owner
+  of retooling, but every company panel then showed the Retooling icons, and Pat chose to drop it
+  (2026-10-12; `COMPANY_RETOOL` in the generator). A company-owned building still retools: its
+  headquarters owns levels the way a Financial District does, so its country's investors pass the
+  ownership check.
 - **Newest means last in the vanilla list.** Vanilla orders recipe groups oldest first; the generator
   does not check that every group is a strict progression.
 - **Only research and new construction switch recipes.** Automation and any other multi-method group
   on a PMR building are hidden too and stay on whatever they run, in the building panel, the
   Buildings tab and the market panel's building lists.
-- **Pollution has no lag.** It is a state modifier, not a building one.
-- **Other `_mult`s on the same good combine with the lag additively**, exactly as the design notes
-  for recipes: a +25% steel bonus during Blister → Bessemer gives 90 × (1 + 0.25 − 0.278 × (1 − p)).
+- **Pollution and every other workforce-scaled modifier blend too.** They move into the share
+  methods with the goods. Modifiers a recipe applies per level or flat stay on the recipe method and
+  follow the target.
+- **Other `_mult`s on the same good apply to the blend as they would to a recipe**, since the share
+  methods' goods are ordinary production method goods.
 - **The government share is read in 5% steps** through `country_ownership_fraction`, a ladder of
   constant comparisons. Its level count (`gov_levels`, used in the investor check) is exact up to 19
   levels and can be one off above that.
@@ -110,11 +113,11 @@ Everything below is read from the installed game's script and the generated docs
 `Documents\Paradox Interactive\Victoria 3\docs\`. None of it
 has run yet; the run sheet says how each shows up when it fails.
 
-1. `add_modifier` in building scope with per-good `goods_input_<g>_mult` / `goods_output_<g>_mult`
-   moves that building's numbers. Documented for building scope; Ironroad's research found the engine
-   reads building-scope goods modifiers, but never this exact pair.
-2. `start_building_construction` and `start_privately_funded_building_construction` accept a modded
-   building gated by a `potential` trigger, and calling one N × L times queues N × L levels.
+1. `activate_production_method` in state scope applies a share method whose lock method was
+   activated just before it, in the same effect, or, failing that, on the tick that the lock's own
+   `on_production_method_changed` triggers. The log's `active=` field shows which.
+2. The AI leaves the lock groups alone: their methods carry nothing, and vanilla's production method
+   AI keeps the current method when a change gains nothing (`PRODUCTION_METHOD_STICKINESS_*`).
 3. `on_production_method_changed`, `on_building_built` and `on_building_expanded` fire with the building as root.
 4. `level_after_queued_constructions` and `country_ownership_fraction` behave as documented.
 5. `[THIS.GetBuilding.GetState...]` and `[THIS.Var('x').GetValue]` resolve inside `debug_log` text in
