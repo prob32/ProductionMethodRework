@@ -21,7 +21,9 @@ What it does, building by building (see pmr/README.md for the design):
    method for that recipe's share of the levels. So the building's goods are the level-weighted mix
    of its recipes, in its own production figures, scaled by employment and throughput like any
    recipe. Share method n unlocks only while lock method ``pm_pmr_key_<b>_<i>_<n>`` (goods-less, in
-   ``pmg_pmr_key_<b>_<i>``) is active, so the AI never has a second share method to pick.
+   ``pmg_pmr_key_<b>_<i>``) or the switching lock ``pm_pmr_key_<b>_<i>_any`` is active, so the AI
+   never has a second share method to pick. The tick moves the lock to ``_any``, then the share,
+   then the lock to the new step, so the running share method is never left locked out.
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
    building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, one
    level at a time each, built by investors who own part of the building, and one government one,
@@ -399,9 +401,15 @@ def main():
         # which vanilla uses the same way for pm_elastics). Only one share method per group is ever
         # available, so the AI cannot move a share; the locks carry nothing, and vanilla's AI keeps
         # the current method when a change gains nothing (PRODUCTION_METHOD_STICKINESS_*).
+        # Every share method also unlocks under the switching lock _any (unlocking_production_methods
+        # is any-of, as vanilla's pm_sewing_machines / pm_electric_sewing_machines lists show), so the
+        # tick can change the share without first locking out the one that runs. Locking it out first
+        # left the building with the new share's goods counted twice (seen in 1.14.5, every input of a
+        # switched building about 2x its blend; cause inferred).
         for i, r in enumerate(recipes, 1):
             default_n = SHARE_STEPS if i == 1 else 0
             shares, keys = [], []
+            any_key = f'pm_pmr_key_{b}_{i}_any'
             for n in range(SHARE_STEPS + 1):
                 f = n / SHARE_STEPS
                 body = ''.join(
@@ -412,13 +420,16 @@ def main():
                 dflt = '\tis_default = yes\n' if n == default_n else ''
                 blend_pms.append(
                     f'pm_pmr_share_{b}_{i}_{n} = {{\n\ttexture = "{r.texture}"\n{dflt}'
-                    f'\tunlocking_production_methods = {{ pm_pmr_key_{b}_{i}_{n} }}\n{body}}}\n')
+                    f'\tunlocking_production_methods = {{ pm_pmr_key_{b}_{i}_{n} {any_key} }}\n{body}}}\n')
                 blend_pms.append(f'pm_pmr_key_{b}_{i}_{n} = {{\n\ttexture = "{GENERIC_ICON}"\n{dflt}}}\n')
                 shares.append(f'pm_pmr_share_{b}_{i}_{n}')
                 keys.append(f'pm_pmr_key_{b}_{i}_{n}')
                 pct = round(100 * f)
                 loc += [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
                         f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"']
+            blend_pms.append(f'{any_key} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n')
+            keys.append(any_key)
+            loc.append(f' {any_key}:0 "${r.key}$ share lock (switching)"')
             # No is_hidden_when_unavailable: with it, a share group lists only its one unlocked method,
             # and the building panel, which shows a PMR building's groups of exactly one method (the
             # fixed labour slot), drew every share group's icon in the row (seen in 1.14.5).
@@ -483,7 +494,8 @@ def main():
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/production_methods/pmr_blend_production_methods.txt', header +
           '# Share methods: pm_pmr_share_<b>_<recipe>_<n> carries the recipe\'s workforce-scaled\n'
-          f'# modifiers x n / {SHARE_STEPS}. Each unlocks only while pm_pmr_key_<b>_<recipe>_<n> is active.\n\n'
+          f'# modifiers x n / {SHARE_STEPS}. Each unlocks while pm_pmr_key_<b>_<recipe>_<n>\n'
+          '# or the switching lock pm_pmr_key_<b>_<recipe>_any is active.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
@@ -703,9 +715,11 @@ def tick_effect(bk, b, recipes):
     # The blend: each recipe's share of the levels, in steps of 1 / SHARE_STEPS, picks the active
     # method of that recipe's share group. Recipes other than the target are rounded to the nearest
     # step, oldest first and never past the whole; the target takes what is left, so the shares
-    # always add up to exactly SHARE_STEPS steps. A share method unlocks only while its lock method
-    # is active, so the lock goes first. If the game applies the lock after the share was refused,
-    # the lock's change fires on_production_method_changed, whose tick activates the share again.
+    # always add up to exactly SHARE_STEPS steps. A share method unlocks while its own lock or the
+    # switching lock _any is active. To change share, the lock moves to _any (the running share stays
+    # unlocked), then the share moves (the new one is unlocked), then the lock moves to the new step:
+    # no step ever locks out the running share method, so the game never has to replace it itself.
+    # A lock left off its step for any reason is put back on the next tick.
     def pm(kind, i, n):
         return f'pm_pmr_{kind}_{b}_{i}_{n}'
 
@@ -723,13 +737,17 @@ def tick_effect(bk, b, recipes):
                  f'\t\tif = {{ limit = {{ var:{v(f"pmr_n_{i}")} > var:{v("pmr_nrest")} }} {setv(f"pmr_n_{i}", "var:" + v("pmr_nrest"))} }}\n'
                  f'\t\t{chg("pmr_ncum", "add", "var:" + v(f"pmr_n_{i}"))}\n\t}}\n')
     o.append(on_index('pmr_to', lambda i: f'{setv(f"pmr_n_{i}", SHARE_STEPS)} {chg(f"pmr_n_{i}", "subtract", "var:" + v("pmr_ncum"))}'))
+    def act(kind, i, n):
+        return f'activate_production_method = {{ building_type = {bk} production_method = {pm(kind, i, n)} }}'
+
     for i in range(1, k + 1):
         for n in range(SHARE_STEPS + 1):
             kw = 'if' if n == 0 else 'else_if'
-            o.append(f'\t{kw} = {{\n\t\tlimit = {{ var:{v(f"pmr_n_{i}")} = {n} NOT = {{ {pm_active("share", i, n)} }} }}\n'
-                     f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, n)} }} }} '
-                     f'activate_production_method = {{ building_type = {bk} production_method = {pm("key", i, n)} }} }}\n'
-                     f'\t\tactivate_production_method = {{ building_type = {bk} production_method = {pm("share", i, n)} }}\n\t}}\n')
+            o.append(f'\t{kw} = {{\n\t\tlimit = {{ var:{v(f"pmr_n_{i}")} = {n} }}\n'
+                     f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ {pm_active("share", i, n)} }} }}\n'
+                     f'\t\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, "any")} }} }} {act("key", i, "any")} }}\n'
+                     f'\t\t\t{act("share", i, n)}\n\t\t}}\n'
+                     f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, n)} }} }} {act("key", i, n)} }}\n\t}}\n')
     o.append('}\n\n')
 
     # For the log: the share step each recipe's group actually runs, -1 if none reads.

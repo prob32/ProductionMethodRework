@@ -10,12 +10,39 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-**Start a new game.** Saves made with the earlier build carry its modifiers and retool buildings,
-which this build no longer defines. Leave `fastresearch` off for the full run: it lets every country
-research instantly and fills every construction queue with retooling. For a quick look at the blend
+**Your current save works with this build** if it was started on the blended build (the one with
+four retool slots): this build only adds methods. Saves from before that still need a new game: they
+carry modifiers and retool buildings the blended build no longer defines. Leave `fastresearch` off
+for the full run: it lets every country research instantly and fills every construction queue with
+retooling. For a quick look at the blend
 alone, step 4 below grants one technology to you only.
 
 ## What changed in this build
+
+- **Goods counted once.** A building whose shares the tick had changed listed its inputs and outputs
+  about twice over: Sicily's 11-level sulfur mine at 25/10/25/40 showed tools 255, coal 101 and oil 42
+  where its blend comes to about 130, 50 and 21, and its oil tooltip showed two share lines although
+  only **Diesel Pump** uses oil. Buildings still on their starting share were right. The tick now switches a share
+  through a switching lock, so the running share is never locked out mid-change. The cause is inferred:
+  the game replaced the locked-out share itself, and the tick then applied the same share again.
+
+### The doubling check, first
+
+1. Load your save (or start a new game) and open the Sicily sulfur mine, or any building with two
+   recipes in its bar.
+2. Hover each input. Each recipe appears **once**, as **Recipe (… of levels)**, and the figure is
+   that line times the throughput. Sicily's tools, coal and oil should be about half what they were
+   at the same employment.
+3. Let a retool level land on that building, then hover again. Still once.
+
+| You see | It means |
+| --- | --- |
+| Right after loading, each recipe once and the figures halved, and still once after a level lands | Fixed. |
+| Right after loading, each recipe once, but a recipe is listed twice again after a level lands | Loading cleared it, and the switching lock did not stop it. The doubling comes from the switch itself. Send me that building's `PMR;rec=` lines for that day and the tooltip. |
+| Right after loading, a recipe is still listed twice | The doubling is saved with the building, not made at runtime, so loading does not clear it. A new game is the test of this build; send me the tooltip either way. |
+| A tier's `active` reads `-1`, or `active` and `blend` differ on two lines in a row for one building | The switching lock left a share group without a method. Send me the lines. |
+
+### Earlier in this build
 
 - **Old recipes' goods are now in the building's own production figures.** Each recipe has a hidden
   share method carrying its goods (and pollution) times its share of the building's levels, in 5%
@@ -59,8 +86,9 @@ landing usually brings two or three lines for that building on the same day.
 | `rec=LOADED` but no `rec=INIT` lines | `pmr_state_tick` is not reaching buildings. Take **PMR test: recompute retooling now** and look again. | — |
 | `error.log` names any `pmr_` script, method or group | Part of the script did not load. Send me the lines. | A failure of the design. |
 | A mill's input and output tooltips show no **(… of levels)** line at all, and its figures are zero | The share methods are not applying: the defaults did not take on load. Send me a screenshot of the tooltip and the mill's `rec=INIT` line. | A failure of retooling. |
-| `active` stays behind `blend` across two lines for the same building, and the tooltip shows the old percentages | The share method was refused because its lock was not applied first, and the lock's own method change did not bring a second tick. Take **PMR test: recompute retooling now**; if `active` then catches up, the blend works one tick late. | A failure of the level mix. |
+| `active` stays behind `blend` across two lines for the same building, and the tooltip shows the old percentages | The share method was refused although the switching lock was active, and the lock's own method change did not bring a second tick. Take **PMR test: recompute retooling now**; if `active` then catches up, the blend works one tick late. | A failure of the level mix. |
 | `active` shows `-1` for a tier | None of that tier's share methods is running. The game dropped the method when its lock changed. Send me the line. | — |
+| An input tooltip lists the same **Recipe (… of levels)** line twice, or a building's inputs are about twice its blend | A share's goods are counted twice. See the doubling check above. | A failure of the level mix. |
 | The same building writes dozens of `rec=TICK` lines on one day | The method changes are retriggering each other. Send me a few of the lines. | — |
 | The figures move but the tooltip's percentages and `blend` disagree | The rounding or the tier order is off. Send me the line and the tooltip. | — |
 | The bar is grey, white or one colour although the tooltip shows two recipes above 0% | The bar failed, not the model. Send a screenshot with the tooltip open. | A failure of retooling. |
