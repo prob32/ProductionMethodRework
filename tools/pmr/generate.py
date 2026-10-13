@@ -306,6 +306,13 @@ class Recipe:
                 for n in block.value:
                     if n.key and n.key.startswith('building_employment_'):
                         self.employment[n.key] = self.employment.get(n.key, 0) + num(n.value, f'{key}.{n.key}')
+        # Abroad (pmr_best_<b>): the technologies the recipe needs, and whether anything else gates it
+        # (laws, principles), in which case only the host's can_activate_production_method decides.
+        ut = pdx.get(node.value, 'unlocking_technologies')
+        self.unlock_techs = pdx.items(ut) if ut else []
+        self.gated_otherwise = any(n.key and n.key != 'unlocking_technologies'
+                                   and (n.key.startswith('unlocking_') or n.key.startswith('disallowing_'))
+                                   for n in node.value)
 
     def strip_blend(self):
         """Cut the workforce-scaled blocks; the share methods carry them instead."""
@@ -1014,7 +1021,7 @@ def log(rec, bk, b, k, extra=''):
         return f"[THIS.Var('{name}_{b}').GetValue|{f}]"
     levels = '/'.join(v(f'pmr_lv_{i}', 0) for i in range(1, k + 1))
     # Player-owned states only: debug.log rotates at about 2.5 MB and the world's lines overflow it.
-    return (f'if = {{ limit = {{ owner = {{ is_player = yes }} }} '
+    return (f'if = {{ limit = {{ OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }} }} '
             f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk};'
@@ -1610,6 +1617,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\tset_variable = {{ name = {v("pmr_gov_levels")} value = b:{bk}.level }}\n'
              f'\t{chg("pmr_gov_levels", "multiply", "var:" + v("pmr_gov_frac"))}\n'
              f'\tround_variable = {{ name = {v("pmr_gov_levels")} nearest = 1 }}\n'
+             '\t# Abroad (pmr_abroad_<b>) no script can queue a construction for a foreign government, so the\n'
+             '\t# player\'s investors retool every level there, the governments\' levels included.\n'
+             f'\tif = {{ limit = {{ has_variable = pmr_abroad_{b} }} {setv("pmr_gov_frac", 0)} {setv("pmr_gov_levels", 0)} }}\n'
              '}\n\n')
 
     # Which recipes the government's own levels run (pmr_lvg_<i>), so it retools only those. Pat,
@@ -1860,21 +1870,39 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
 
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first. A recipe
     # that needs electricity counts only while the state produces it (pmr_elec, read by the tick).
-    o.append(f'pmr_best_{b} = {{\n\t{setv("pmr_best_now", 0)}\n')
-    for i in range(k, 0, -1):
-        r = recipes[i - 1]
-        kw = 'if' if i == k else 'else_if'
-        can = f'can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}'
-        if getattr(r, 'techs', None):
-            # the electric recipe: its newest recipe's and its automation's technologies, all of them
-            can = (f'AND = {{ {can} owner = {{ '
-                   + ' '.join(f'has_technology_researched = {t}' for t in r.techs) + ' } }')
-        if i in elec_tiers:
-            can = f'AND = {{ {can} var:pmr_elec = 1 }}'
-        o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{\n\t\t\t{active(r)}\n'
-                 f'\t\t\t{can}\n'
-                 f'\t\t}} }}\n\t\t{setv("pmr_best_now", i)}\n\t}}\n')
-    o.append('}\n\n')
+    # Abroad (Pat, 2026-10-13 14:33Z): where the player's government or investors own levels in a
+    # state another country owns (pmr_abroad_<b>, set by the tick), a recipe also counts once the
+    # player has its technologies, as the levels the player owns there run on the player's know-how.
+    # The host's own reach (pmr_hbest_now, the same without that) says whether the recipe's marker can
+    # be activated there; a recipe gated by anything besides technology stays the host's call.
+    def abroad(r):
+        techs = getattr(r, 'techs', None) or getattr(r, 'unlock_techs', [])
+        if not techs or getattr(r, 'gated_otherwise', False):
+            return None
+        return (f'AND = {{ has_variable = pmr_abroad_{b} global_var:pmr_player ?= {{ '
+                + ' '.join(f'has_technology_researched = {t}' for t in techs) + ' } }')
+
+    def best_effect(name, var, with_abroad):
+        out = [f'{name} = {{\n\t{setv(var, 0)}\n']
+        for i in range(k, 0, -1):
+            r = recipes[i - 1]
+            kw = 'if' if i == k else 'else_if'
+            can = f'can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}'
+            if getattr(r, 'techs', None):
+                # the electric recipe: its newest recipe's and its automation's technologies, all of them
+                can = (f'AND = {{ {can} owner = {{ '
+                       + ' '.join(f'has_technology_researched = {t}' for t in r.techs) + ' } }')
+            if with_abroad and abroad(r):
+                can = f'OR = {{ {can} {abroad(r)} }}'
+            if i in elec_tiers:
+                can = f'AND = {{ {can} var:pmr_elec = 1 }}'
+            out.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{\n\t\t\t{active(r)}\n'
+                       f'\t\t\t{can}\n'
+                       f'\t\t}} }}\n\t\t{setv(var, i)}\n\t}}\n')
+        out.append('}\n\n')
+        return ''.join(out)
+    o.append(best_effect(f"pmr_best_{b}", "pmr_best_now", True))
+    o.append(best_effect(f"pmr_hbest_{b}", "pmr_hbest_now", False))
 
     o.append(f'pmr_activate_{b} = {{\n')
     for i, r in enumerate(recipes, 1):
@@ -1917,7 +1945,15 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                 f'set_variable = pmr_xnew_{b} }}\n' if opts else '')
              + f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
              '\tif = { limit = { NOT = { has_variable = pmr_elec_read } } pmr_read_elec = yes }\n'
+             '\t# Abroad: the player (global_var:pmr_player) owns levels here, in a state another country owns.\n'
+             f'\tif = {{\n\t\tlimit = {{ has_global_variable = pmr_player NOT = {{ owner = global_var:pmr_player }} '
+             f'b:{bk} = {{ levels_owned_by_country = {{ target = global_var:pmr_player value >= 1 }} }} }}\n'
+             f'\t\tset_variable = pmr_abroad_{b}\n'
+             '\t\tset_variable = { name = pmr_abroad_any days = 62 }\n\t}\n'
+             f'\telse_if = {{ limit = {{ has_variable = pmr_abroad_{b} }} remove_variable = pmr_abroad_{b} }}\n'
              f'\tpmr_best_{b} = yes\n'
+             f'\tif = {{ limit = {{ has_variable = pmr_abroad_{b} }} pmr_hbest_{b} = yes }}\n'
+             f'\telse = {{ {setv("pmr_hbest_now", "var:" + v("pmr_best_now"))} }}\n'
              '\t# First sight (game start, a new building, or a save from before the level mix): every\n'
              '\t# level runs the recipe the building runs now. Retool levels already built\n'
              '\t# count for nothing.\n'
@@ -1936,8 +1972,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'NOT = {{ var:{v("pmr_to")} = var:{v("pmr_best_now")} }} }}\n'
              f'\t\t\t{setv("pmr_to", "var:" + v("pmr_best_now"))}\n'
              f'\t\t\tpmr_reset_levels_{b} = yes\n'
-             f'\t\t\t{setv("pmr_adopting", 0)}\n'
-             f'\t\t\tpmr_activate_{b} = yes\n'
+             '\t\t\t# abroad on the player\'s technology the host cannot run the marker: nothing to wait for\n'
+             f'\t\t\tif = {{\n\t\t\t\tlimit = {{ NOT = {{ var:{v("pmr_best_now")} > var:{v("pmr_hbest_now")} }} }}\n'
+             f'\t\t\t\t{setv("pmr_adopting", 0)}\n'
+             f'\t\t\t\tpmr_activate_{b} = yes\n\t\t\t}}\n'
              f'\t\t\tpmr_mix_{b} = yes\n'
              f'\t\t\t{log("ADOPT", bk, b, k)}\n\t\t}}\n'
              f'\t\tpmr_mix_{b} = yes\n'
@@ -1949,7 +1987,13 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_best_now")} > var:{v("pmr_best")} }}\n'
              f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
              f'\t\t{log("RESEARCH", bk, b, k, extra=best)}\n'
-             f'\t\tpmr_activate_{b} = yes\n\t}}\n'
+             '\t\t# Abroad, beyond what the host can run: the marker cannot follow, so the target moves\n'
+             '\t\t# here and retooling opens as after a switch.\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_best_now")} > var:{v("pmr_hbest_now")} }}\n'
+             f'\t\t\t{setv("pmr_to", "var:" + v("pmr_best_now"))}\n'
+             f'\t\t\tset_variable = {v("pmr_switched")}\n'
+             f'\t\t\t{log("ABROAD", bk, b, k, extra=best + ";host_best=" + f("pmr_hbest_now"))}\n\t\t}}\n'
+             f'\t\telse = {{ pmr_activate_{b} = yes }}\n\t}}\n'
              f'\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
              f'\tpmr_running_{b} = yes\n')
 
@@ -1966,8 +2010,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
 
     o.append('\t# A switch: the building now runs a recipe other than the target. The levels keep the\n'
              '\t# recipes they run; every level not on the new target is now to retool.\n'
+             '\t# Abroad, the host\'s marker below the player\'s target is no switch (it cannot follow).\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_adopting")} }} var:{v("pmr_run")} > 0 '
-             f'NOT = {{ var:{v("pmr_run")} = var:{v("pmr_to")} }} }}\n'
+             f'NOT = {{ var:{v("pmr_run")} = var:{v("pmr_to")} }} '
+             f'NOT = {{ AND = {{ has_variable = pmr_abroad_{b} var:{v("pmr_run")} < var:{v("pmr_to")} }} }} }}\n'
              f'\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
              f'\t\tset_variable = {v("pmr_switched")}\n\t}}\n')
 
@@ -2148,6 +2194,16 @@ def dispatch_effects(buildings):
                  f'\t\telse = {{\n\t\t\tpmr_best_{b} = yes\n'
                  f'\t\t\tif = {{ limit = {{ var:pmr_best_now_{b} > var:pmr_best_{b} }} pmr_tick_{b} = yes }}\n'
                  '\t\t}\n\t}\n')
+    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
+             '# State scope, another country\'s state where the player owns levels (pmr_abroad_any), when the\n'
+             '# player researches: the same, for the buildings the player owns levels in.\n'
+             'pmr_state_research_abroad = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
+    for bk in buildings:
+        b = short(bk)
+        o.append(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} has_variable = pmr_mix_{b} {live(bk)} }}\n'
+                 f'\t\tpmr_best_{b} = yes\n'
+                 f'\t\tif = {{ limit = {{ var:pmr_best_now_{b} > var:pmr_best_{b} }} pmr_tick_{b} = yes }}\n'
+                 '\t}\n')
     o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
              '# Country scope: the country\'s totals for every PMR building type (Buildings tab rows).\n'
              'pmr_c_sum_every = {\n\tset_variable = pmr_c_abroad\n')
@@ -2945,6 +3001,9 @@ pmr_on_production_method_changed = {
 # new PMR building is seen without waiting for the month.
 pmr_on_building_built = {
 	effect = {
+		# First, while the building is sure to exist: the Private tab's record of what the player's
+		# investors built (pmr_pi_effects.txt; retool buildings are not counted).
+		pmr_pi_on_done = yes
 		pmr_built_building = yes
 		# Last: the parent's tick can remove this retool building once its level is counted.
 		pmr_tick_parent_of_retool = yes
@@ -2955,6 +3014,9 @@ pmr_on_building_built = {
 # building's first level, so without this every later retool level waited for the month to turn.
 pmr_on_building_expanded = {
 	effect = {
+		# First, while the building is sure to exist: the Private tab's record of what the player's
+		# investors built (pmr_pi_effects.txt; retool buildings are not counted).
+		pmr_pi_on_done = yes
 		pmr_built_building = yes
 		# Last: the parent's tick can remove this retool building once its level is counted.
 		pmr_tick_parent_of_retool = yes
@@ -2966,9 +3028,22 @@ pmr_on_building_expanded = {
 pmr_on_acquired_technology = {
 	effect = {
 		if = { limit = { exists = capital } capital = { TECH_CRUMB } }
+		# The player, for buildings abroad the player owns levels in (pmr_abroad_<b>).
+		if = {
+			limit = { is_player = yes }
+			set_global_variable = { name = pmr_player value = ROOT }
+		}
 		if = {
 			limit = { NOT = { has_global_variable = pmr_ticks_paused } }
 			every_scope_state = { pmr_state_research = yes }
+			# the player's levels abroad run on the player's technology
+			if = {
+				limit = { is_player = yes }
+				every_state = {
+					limit = { has_variable = pmr_abroad_any NOT = { owner = ROOT } }
+					pmr_state_research_abroad = yes
+				}
+			}
 			pmr_c_sum_all = yes
 		}
 	}
@@ -3004,6 +3079,10 @@ pmr.1 = {
 	type = country_event
 	hidden = yes
 	immediate = {
+		if = {
+			limit = { is_player = yes }
+			set_global_variable = { name = pmr_player value = ROOT }
+		}
 		pmr_c_sum_all = yes
 	}
 }

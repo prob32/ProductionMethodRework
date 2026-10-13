@@ -1,4 +1,4 @@
-# PMR run sheet: faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,69 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: faster monthly ticks, and a timing test (your current save works)
+## Latest: retooling what you own abroad, and the Private tab, fourth round (your current save works)
+
+After loading, **open the construction panel's Private tab once.** That names you as the player for the
+new hooks and starts the weekly clock (`PMR;rec=CLOCK`, once). Without it both wait for the 1st of the month.
+
+### Retooling what you own abroad (your 14:33 and 14:36 messages)
+
+Levels your government or your investors own in another country's state, such as the West Bengal coal mine
+(Financial Districts 2 levels, Great Britain 1 level), now retool to the best recipe **your** technology
+allows, even where the host's technology is behind. Script can't queue a construction for your government
+in a foreign state, so your investors retool every level you own there, your government's included. The
+upgrade button stays greyed out abroad, as before.
+
+1. Open the Private tab, then run to the 1st of the month (or research anything).
+2. Look for `PMR;rec=RESEARCH` and then `PMR;rec=ABROAD` for `state=West Bengal;building=building_coal_mine`.
+   The ABROAD line's `best=` is your best recipe and `host_best=` the host's; `to=` should now equal `best=`.
+3. Over the following months, "Retooling: Coal Mines" should appear in West Bengal's construction, queued by
+   your investors. The investment pool picks it among everything else it could build, so it can take a while.
+
+| What you see | What it means |
+| --- | --- |
+| No `ABROAD` line for West Bengal by the 2nd | PMR doesn't see you owning levels there. Send the West Bengal `TICK` or `INIT` lines and any `pmr_` line in error.log. |
+| `ABROAD` with `best=` equal to `host_best=` | Not abroad-limited: the host can already run your best recipe, so retooling follows the normal path. |
+| `ABROAD` appears, but no retool construction for a year | The pool never picks it. Tell me; the retool weight abroad can be raised. |
+| Retool levels finish, but the mine keeps the old recipe | The switch is being blocked abroad. Send the `TICK` lines for the mine after the retool completes. |
+
+### The Private tab, fourth round (your 14:28 message)
+
+- **Weekly re-investment.** The line records every 7 days (`PMR;rec=REINVEST` and `PMR;rec=CONTRIB` once a
+  week, starting the day after you open the tab). It starts empty and fills in from the right; the old
+  monthly points are not carried over. The x-axis reads "25 weeks ago" to "This week".
+- **Columns under the line.** Each week's column reaches up to the line and is split by that week's tree chart
+  shares, in the tree chart's colours, darkened so the white line stays readable.
+- **The pool graph** from the budget's Investment Pool tooltip sits to the right of the line.
+- **Two bars at the top of Recent Investments.** Domestic vs foreign, and by priority group, both by
+  construction points of the levels your investors complete from now on. Retooling and government construction
+  are not counted. Until the first level completes, a line of text stands in their place.
+- **Policies.** The window is smaller and fits the screen. Each policy is a blue card showing its benefits;
+  click one to adopt it. The card you hold is highlighted and marked "Current Policy". Hover any card for
+  the explanation.
+- **New policy benefits.** Construction and investment efficiency now belong to Laissez-faire. Favour Large
+  Corporations: +1 free company charter, +1 maximum companies, +10% company government dividends, plus its
+  higher investment weight for company industries. 1.14.5 has no modifier for how many monopolies one company
+  may hold, so the free charter stands in. Steer the Economy keeps only the +75% priority cap. Re-invest keeps
+  +10% government dividends reinvestment. Favour Small Businesses loses the farmers bonus.
+
+Each completed level in a building where you own levels writes one line:
+`PMR;rec=INVEST;...;building=<type>;kind=private|government|other;levels=<your levels added>;government_levels=<government levels added>;points=<construction points>`.
+Only `kind=private` adds to the bars.
+
+| What you see | What it means |
+| --- | --- |
+| No `CLOCK` line after opening the Private tab | The tab's script didn't run. Check error.log for `pmr_pc_refresh_sgui`. |
+| `CLOCK` but no `REINVEST` line a day later | The weekly event didn't fire. Check error.log for `pmr_pi`. |
+| The line draws but there are no columns under it | The coloured bars aren't drawing. Send a screenshot. |
+| Columns hang down from the top of the frame | Vertical bars fill top-down in 1.14.5. Tell me; it's a one-line fix. |
+| Private constructions complete in your states but no `INVEST` lines appear | The completion hook isn't running. Check error.log for `pmr_pi_`. |
+| `INVEST` says `kind=other` for a level your investors built | The new level's owner isn't set yet when the hook runs, so the bars can't count it. Send the line. |
+| `INVEST_MISS` lines | Expected for constructions that started before this version: there was no "before" count to compare with. They should stop as old constructions finish. |
+| The policy window still runs off the screen | Tell me your resolution and UI scale. |
+| Clicking a card does nothing | Check for a `PMR;rec=POLICY` line. If there is none, check error.log for `pmr_policy_`. |
+
+## Earlier: faster monthly ticks, and a timing test (your current save works)
 
 The performance changes you approved at 13:12. None of them changes what the mod does; they cut
 checks that ran for every building in the world but fed only the log, or that ran more often than
@@ -49,11 +111,11 @@ to weigh.
 | --- | --- |
 | `TICK`, `OPT` or `CSUM` lines keep appearing after `TICKS_PAUSED` | The pause didn't take, so the paused time is not a measurement. Tell me. |
 | No `TICKS_PAUSED` line after taking the decision | The decision didn't run; check error.log for `pmr_test`. |
-| `REINVEST` and `CONTRIB` lines carry on while paused | Expected: the Private tab's monthly records are not part of the tick. |
+| `REINVEST` and `CONTRIB` lines carry on while paused | Expected: the Private tab's weekly records are not part of the tick. |
 | A trade-off reads unavailable right after its technology | Expected until the 1st of the month (side effect above). |
 | Shares or bars move differently from before | Not expected; these changes should move nothing. Send the building and the `OPT` line. |
 
-## Also new: the Private tab, third round (still to check; your current save works)
+## Earlier: the Private tab, third round (still to check; your current save works)
 
 What changed after your 13:05 look:
 

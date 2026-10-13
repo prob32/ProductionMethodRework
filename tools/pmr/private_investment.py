@@ -1,17 +1,20 @@
 """The construction panel's Private tab: investment pool, economic policy and investment priorities.
 
-Pat, 2026-10-13 03:52Z and 04:03Z, revised 04:50Z and 13:05Z. The construction panel gets a Private tab beside the
+Pat, 2026-10-13 03:52Z and 04:03Z, revised 04:50Z, 13:05Z and 14:28Z. The construction panel gets a Private tab beside the
 government one, and the funding-type filter goes. The Government tab keeps the construction sector and the government
 queue and loses the investment pool. The Private tab, top to bottom:
   1. the budget panel's Investment Pool line (Pat 13:05Z), and the next private construction
   2. the weekly re-investment as a trend line in vanilla's graph frame (Pat 04:13Z: the weekly inflow, not the pool
-     amount; the game keeps no history of it, so PMR samples investment_pool_income monthly into country variables)
+     amount; the game keeps no history of it, so PMR samples investment_pool_income weekly into country variables),
+     with a column under the line split by the tree chart's shares; beside it the budget's own pool graph (14:28Z)
   3. what feeds the pool, as a tree chart by priority group (Pat 13:05Z). The game gives its per-building amounts
      only as text (1.14.5 exe: no datamodel, no script value), so the chart shows the privately owned building levels
      of each group, and the game's own list in money is its tooltip
   4. the economic system law as a card, and to its right a policy card, chosen under Interventionism only
   5. investment priorities, one row per priority group (Pat 13:05Z: five groups over the vanilla building groups)
-  6. the private construction queue with the vanilla location filter, then recent investments and privatizations
+  6. the private construction queue with the vanilla location filter, then recent investments and privatizations,
+     topped by two bars of what the player's investors built: domestic vs foreign, and by priority group, both in
+     construction points (14:28Z; PMR records them from now on, invest_effects)
 
 Priorities (Pat 04:16Z). Each priority group's slider runs 0..100% of a cap: the cap is +50% weight, or +75% while
 Steer the Economy is held. The pool weighs each building group by the `investment_scores` of the ownership buildings
@@ -31,11 +34,13 @@ group's scripted GUI with the step as a saved value scope (MakeScopeValue, as va
 
 Policies (Pat: only under Interventionism). One at a time, as a static modifier; a monthly country pulse drops it when
 the law is no longer Interventionism. The policy card's plus opens a window beside the panel with every policy as a
-card (Pat 13:05Z, who also asked for a few fitting benefits to round them out: the modifiers in POLICIES).
+blue card that is clicked to adopt it, showing its benefits only, the explanation on hover (Pat 13:05Z and 14:28Z;
+Pat also asked for a few fitting benefits to round them out: the modifiers in POLICIES).
   - Steer the Economy (Pat 04:16Z): the sliders' cap goes from +50% to +75%.
   - Favour Large Corporations (Pat 04:15Z): the pool weighs building types your companies list higher. There is no
     modifier or per-country define for company weighting, so each company building type in PMR's building files gets
-    ai_value = pmr_ai_value_<b>: its vanilla ai_value plus CORP_BONUS while the card is held.
+    ai_value = pmr_ai_value_<b>: its vanilla ai_value plus CORP_BONUS while the card is held. Its other benefits
+    work the interventionist way (Pat 14:28Z): a free charter, one more company, the state's cut of company profits.
   - Re-invest (Pat 04:15Z): private retooling of a building is weighted by its group's slider, x(1 + 0.99 x slider%),
     so x100 at a full slider. Retool weight is mostly ai_value (no profit terms), so this multiplies
     pmr_retool_buildings.txt's private ai_value.
@@ -91,62 +96,74 @@ REINVEST_PER_POINT = 0.99  # Re-invest: retool ai_value x (1 + this x slider%): 
 CORP_BONUS = 75000         # Favour Large Corporations: ai_value added, = GBP 10/worker of vanilla's profit term
 BASE_AI_VALUE = 1000       # PRODUCTION_BUILDING_BASE_VALUE, when a building has no ai_value
 
-# key, name, icon, modifiers, the card's first benefit (what PMR's script does), details. The modifiers beyond
-# Favour Small Businesses' two are the rounding-out benefits Pat invited at 13:05Z.
+# key, name, icon, modifiers, the card's first benefit (what PMR's script does, short), how that works (hover),
+# details (hover). Pat 14:28Z: the cards show benefits only, the explanation goes in the hover; construction and
+# investment efficiency belong to Laissez-faire, so the rounding-out benefits added at 13:05Z (construction
+# efficiency and allocation, investment efficiency, farmers) are gone, and Favour Large Corporations works the
+# interventionist way: charters, companies and the state's cut of their profits. 1.14.5 has no modifier for how
+# many monopolies one company may hold (monopolies are company charters; COUNTRY_MONOPOLY_MAX_COUNT is a global
+# define), so the card grants a free charter instead.
 POLICIES = [
     ('steer', 'Steer the Economy', 'gfx/interface/icons/law_icons/command_economy.dds',
-     {'country_private_construction_allocation_mult': 0.1,
-      'building_group_bg_infrastructure_construction_efficiency_add': 0.1},
-     f'Investment priorities reach #P +{CAP_STEER * 100:.0f}%#! instead of #v +{CAP * 100:.0f}%#!',
+     {},
+     f'#P +{CAP_STEER * 100:.0f}%#! Investment Priority Cap',
+     f'Each investment priority can add up to #P +{CAP_STEER * 100:.0f}%#! to its group instead of '
+     f'#v +{CAP * 100:.0f}%#!.',
      'The state sets investment targets and leans on banks and boards to meet them. Investors still choose what to '
-     'build, but within the priorities you set, and public works get private capital behind them.'),
-    ('corporations', 'Favour Large Corporations', 'gfx/interface/icons/law_icons/laissez_faire.dds',
-     {'state_capitalists_investment_pool_efficiency_mult': 0.1,
-      'country_company_construction_efficiency_bonus_add': 0.1},
-     'Investors weigh building types your companies own much higher, as if each earned #P @money!10#! more per worker',
-     'Licences, contracts and cheap credit flow to the great firms. Their expansions jump the queue, and those who '
-     'run them put more of their profits back into the pool.'),
+     'build, but within the priorities you set.'),
+    ('corporations', 'Favour Large Corporations', 'gfx/interface/icons/law_icons/corporate_state.dds',
+     {'country_free_charters_add': 1, 'country_max_companies_add': 1,
+      'building_company_government_dividends_add': 0.1},
+     '#P Higher#! Investment Weight for Company Industries',
+     'Investors weigh building types your companies own as if each earned #P @money!10#! more per worker. A monopoly '
+     'is a company charter, so the free charter lets one more of your companies hold one without spending authority.',
+     'National champions get licences, contracts and charters, and the state takes its cut of their profits.'),
     ('reinvest', 'Re-invest', 'gfx/interface/icons/law_icons/interventionism.dds',
-     {'country_government_dividends_reinvestment_add': 0.1,
-      'building_group_bg_light_industry_construction_efficiency_add': 0.1,
-      'building_group_bg_heavy_industry_construction_efficiency_add': 0.1},
-     'Investors favour retooling a building by its group\'s investment priority: up to #P 100×#! at a full slider',
+     {'country_government_dividends_reinvestment_add': 0.1},
+     '#P Up to 100×#! Investment Weight for Retooling',
+     'Investors favour retooling a building by its group\'s investment priority: up to #P 100×#! at a full '
+     'priority.',
      'Profits are ploughed back into the works: new machinery and better methods come before new sites, and the '
      'state\'s own dividends follow them into the pool.'),
     ('small', 'Favour Small Businesses', 'gfx/interface/icons/law_icons/cooperative_ownership.dds',
-     {'state_shopkeepers_investment_pool_efficiency_mult': 0.15, 'building_self_investment_chance_add': 0.1,
-      'state_farmers_investment_pool_efficiency_mult': 0.1},
-     None,
-     'Shopkeepers and family farms get easier credit and lighter paperwork, so more of their savings reach the pool '
-     'and more new levels stay with the people who work them.'),
+     {'state_shopkeepers_investment_pool_efficiency_mult': 0.15, 'building_self_investment_chance_add': 0.1},
+     None, None,
+     'Shopkeepers get easier credit and lighter paperwork, so more of their savings reach the pool and more new '
+     'levels stay with the people who work them.'),
 ]
 POLICY_LAW = 'law_interventionism'
-RI_MONTHS = 24             # re-investment chart: one point per month, newest on the right
-RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 19   # the line is drawn on a 20-row grid, 6 px a row, 19 px a month
+RI_WEEKS = 26              # re-investment chart: one point per week (Pat 14:28Z), newest on the right
+RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 7    # the line is drawn on a 20-row grid, 6 px a row, 7 px a week
+PLOT_MARGINS = (52, 14)    # v3_plotline's left and right margins, narrowed so two graphs share the row
+POOL_GRAPH_W = 200         # the vanilla investment pool graph beside it (Pat 14:28Z)
+COLUMN_DIM = 0.7           # the group columns under the line: the tree chart's colours, darker so the line reads
+INVEST_BAR_W, INVEST_BAR_H = 498, 18   # the recent investment bars (Pat 14:28Z)
+HOME_COLOR, ABROAD_COLOR = (0.80, 0.66, 0.38), (0.60, 0.44, 0.72)
+# Building groups whose types are no investors' business, left out of the bars.
+INVEST_EXCLUDE = ('bg_canals', 'bg_construction', 'bg_subsistence_agriculture', 'bg_subsistence_ranching')
 LINE_COLOR = (0.9, 0.9, 0.9)              # vanilla's trend line colour (v3_plotline_gdp)
 # A plain white texture that 1.14.5 ships (gfx/interface/colors/white.dds, used before, does not exist: the line
 # drew nothing, Pat 13:05Z).
 WHITE = 'gfx/interface/backgrounds/white.dds'
+TRANSPARENT = 'gfx/interface/icons/generic_icons/transparent.dds'
 CARD_W, CARD_H = 268, 380                 # law and policy cards, the same size (Pat 04:50Z), taller (Pat 13:05Z)
-PCARD_W, PCARD_H = 300, 360               # a policy in the policy window
-MOD_NAMES = {  # how each modifier reads on a policy card
-    'country_private_construction_allocation_mult': 'Private Construction Allocation',
+PCARD_W, PCARD_H = 300, 176               # a policy in the policy window: benefits only (Pat 14:28Z)
+MOD_NAMES = {  # how each modifier reads on a policy card (vanilla's names, modifiers.log)
     'country_government_dividends_reinvestment_add': 'Government Dividends Reinvestment',
-    'country_company_construction_efficiency_bonus_add': 'Company Construction Bonus',
-    'building_group_bg_infrastructure_construction_efficiency_add': 'Infrastructure Construction Efficiency',
-    'building_group_bg_light_industry_construction_efficiency_add': 'Light Industry Construction Efficiency',
-    'building_group_bg_heavy_industry_construction_efficiency_add': 'Heavy Industry Construction Efficiency',
-    'state_capitalists_investment_pool_efficiency_mult': 'Capitalists\' investment efficiency',
-    'state_shopkeepers_investment_pool_efficiency_mult': 'Shopkeepers\' investment efficiency',
-    'state_farmers_investment_pool_efficiency_mult': 'Farmers\' investment efficiency',
-    'building_self_investment_chance_add': 'Self-investment chance',
+    'country_free_charters_add': 'Free Company Charters',
+    'country_max_companies_add': 'Max Number of Companies',
+    'building_company_government_dividends_add': 'Company Government Dividends',
+    'state_shopkeepers_investment_pool_efficiency_mult': 'Shopkeepers\' Investment Efficiency',
+    'building_self_investment_chance_add': 'Self-investment Chance',
 }
+WHOLE = ('country_free_charters_add', 'country_max_companies_add')   # counts, not percentages
 
 
 def benefit_lines(core, mods):
     """A policy's benefits, one per line: what PMR's script does, then each modifier."""
     out = [core] if core else []
-    out += [f'#P {v * 100:+.0f}%#! {MOD_NAMES[m]}' for m, v in mods.items()]
+    out += [f'#P {v:+d}#! {MOD_NAMES[m]}' if m in WHOLE else f'#P {v * 100:+.0f}%#! {MOD_NAMES[m]}'
+            for m, v in mods.items()]
     return '\\n'.join(out)
 
 
@@ -284,8 +301,11 @@ def sguis():
             for s in STEPS)
         out += (f'{v}_sgui = {{\n\tscope = country\n\tsaved_scopes = {{ step }}\n'
                 f'\teffect = {{\n\t\tset_variable = {ON}\n\t\t{steps}\t}}\n}}\n\n')
-    out += ('# The contributors chart, recounted whenever the Private tab is opened (and monthly).\n'
-            'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n\t}\n}\n\n')
+    out += ('# The contributors chart, recounted whenever the Private tab is opened (and weekly); opening the tab also\n'
+            '# starts the weekly clock if it is not running.\n'
+            'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n'
+            '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n\t\t}\n'
+            '\t\tpmr_pi_start_clock = yes\n\t}\n}\n\n')
     out += ('# Policy cards. is_shown: the country may hold a policy at all (Interventionism); is_valid: this one\n'
             '# is not already held.\n\n'
             f'pmr_policy_available_sgui = {{\n\tscope = country\n\tis_shown = {{ has_law_or_variant = law_type:{POLICY_LAW} }}\n'
@@ -311,55 +331,72 @@ def static_modifiers():
 
 
 def reinvest_effect():
-    """Country scope, monthly, players only. The game keeps no history of the pool's weekly income (the budget's
-    Investment Pool Transfer trend is money drawn out for construction), so PMR samples investment_pool_income
-    (a country value; its description string is in the 1.14.5 exe) once a month into pmr_ri_0 (newest) ..
-    pmr_ri_<N-1>. For the trend line (Pat 04:50Z: like the GDP graph; GUI plot lines only take the engine's own
-    trends) each month gets its row on a RI_ROWS grid between the lowest and highest month shown (pmr_ri_b_<i>,
-    1 = bottom), and each pair of neighbouring months the rows the line climbs between them (pmr_ri_lo_<i>,
-    pmr_ri_hi_<i>, joining month i to month i + 1)."""
-    n, top_row = RI_MONTHS, RI_ROWS - 1
-    shift = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_ri_{i - 1} }}\n'
-                    f'\t\t\tset_variable = {{ name = pmr_ri_{i} value = var:pmr_ri_{i - 1} }}\n\t\t}}\n'
+    """Country scope, weekly (pmr_pi.1, Pat 14:28Z), players only. The game keeps no history of the pool's weekly
+    income (the budget's Investment Pool Transfer trend is money drawn out for construction), so PMR samples
+    investment_pool_income (a country value; its description string is in the 1.14.5 exe) once a week into
+    pmr_rw_0 (newest) .. pmr_rw_<N-1>. For the trend line (Pat 04:50Z: like the GDP graph; GUI plot lines only take
+    the engine's own trends) each week gets its row on a RI_ROWS grid between the lowest and highest week shown
+    (pmr_rw_b_<i>, 1 = bottom), and each pair of neighbouring weeks the rows the line climbs between them
+    (pmr_rw_lo_<i>, pmr_rw_hi_<i>, joining week i to week i + 1).
+    Under the line, a column per week split by the tree chart's shares that week (Pat 14:28Z): pmr_rs_<g>_<i> is
+    the running total of the shares of groups 0..g (1 for the last group, 0 when nothing was counted), and
+    pmr_rc_<g>_<i> the height of that running total under the line, in rows; the GUI draws the five as bars from
+    the back (the whole column) to the front (the first group alone). The monthly series (pmr_ri_*) of earlier
+    versions is left alone and no longer drawn."""
+    n, top_row, ng = RI_WEEKS, RI_ROWS - 1, len(GROUPS)
+    shift = ''.join(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i - 1} }}\n'
+                    f'\t\tset_variable = {{ name = pmr_rw_{i} value = var:pmr_rw_{i - 1} }}\n'
+                    + ''.join(f'\t\tset_variable = {{ name = pmr_rs_{g}_{i} value = var:pmr_rs_{g}_{i - 1} }}\n'
+                              for g in range(ng))
+                    + '\t}\n'
                     for i in range(n - 1, 0, -1))
+    shares = '\tset_variable = { name = pmr_rs_0_0 value = var:pmr_pc_share_0 }\n'
+    shares += ''.join(f'\tset_variable = {{\n\t\tname = pmr_rs_{g}_0\n\t\tvalue = {{\n\t\t\tvalue = var:pmr_rs_{g - 1}_0\n'
+                      f'\t\t\tadd = var:pmr_pc_share_{g}\n\t\t}}\n\t}}\n' for g in range(1, ng - 1))
+    shares += (f'\tset_variable = {{ name = pmr_rs_{ng - 1}_0 value = 0 }}\n'
+               f'\tif = {{\n\t\tlimit = {{ var:pmr_pc_total > 0 }}\n\t\tset_variable = {{ name = pmr_rs_{ng - 1}_0 value = 1 }}\n\t}}\n')
 
     def fold(op):
-        return ''.join(f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ has_variable = pmr_ri_{i} }}\n\t\t\t\t\t{op} = var:pmr_ri_{i}\n\t\t\t\t}}\n'
+        return ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_rw_{i} }}\n\t\t\t\t{op} = var:pmr_rw_{i}\n\t\t\t}}\n'
                        for i in range(1, n))
     rows = ''.join(
-        f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_ri_{i} }}\n'
-        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_b_{i}\n\t\t\t\tvalue = {{\n'
-        f'\t\t\t\t\tvalue = {RI_ROWS // 2}\n'
-        f'\t\t\t\t\tif = {{\n\t\t\t\t\t\tlimit = {{ var:pmr_ri_span > 0 }}\n'
-        f'\t\t\t\t\t\tvalue = var:pmr_ri_{i}\n\t\t\t\t\t\tsubtract = var:pmr_ri_min\n\t\t\t\t\t\tdivide = var:pmr_ri_span\n'
-        f'\t\t\t\t\t\tmultiply = {top_row}\n\t\t\t\t\t\tround = yes\n\t\t\t\t\t\tadd = 1\n\t\t\t\t\t}}\n'
-        f'\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
+        f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i} }}\n'
+        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_b_{i}\n\t\t\tvalue = {{\n'
+        f'\t\t\t\tvalue = {RI_ROWS // 2}\n'
+        f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ var:pmr_rw_span > 0 }}\n'
+        f'\t\t\t\t\tvalue = var:pmr_rw_{i}\n\t\t\t\t\tsubtract = var:pmr_rw_min\n\t\t\t\t\tdivide = var:pmr_rw_span\n'
+        f'\t\t\t\t\tmultiply = {top_row}\n\t\t\t\t\tround = yes\n\t\t\t\t\tadd = 1\n\t\t\t\t}}\n'
+        f'\t\t\t}}\n\t\t}}\n'
+        + ''.join(f'\t\tset_variable = {{\n\t\t\tname = pmr_rc_{g}_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_b_{i}\n'
+                  f'\t\t\t\tsubtract = 0.5\n\t\t\t\tmultiply = var:pmr_rs_{g}_{i}\n\t\t\t}}\n\t\t}}\n' for g in range(ng))
+        + '\t}\n'
         for i in range(n))
     joins = ''.join(
-        f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_ri_{i + 1} }}\n'
-        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_lo_{i}\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:pmr_ri_b_{i}\n'
-        f'\t\t\t\t\tmax = var:pmr_ri_b_{i + 1}\n\t\t\t\t}}\n\t\t\t}}\n'
-        f'\t\t\tset_variable = {{\n\t\t\t\tname = pmr_ri_hi_{i}\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:pmr_ri_b_{i}\n'
-        f'\t\t\t\t\tmin = var:pmr_ri_b_{i + 1}\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
+        f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i + 1} }}\n'
+        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_lo_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_b_{i}\n'
+        f'\t\t\t\tmax = var:pmr_rw_b_{i + 1}\n\t\t\t}}\n\t\t}}\n'
+        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_hi_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_b_{i}\n'
+        f'\t\t\t\tmin = var:pmr_rw_b_{i + 1}\n\t\t\t}}\n\t\t}}\n\t}}\n'
         for i in range(n - 1))
-    return ('pmr_ri_record = {\n'
+    return ('pmr_rw_record = {\n'
             + shift +
-            '\t\tset_variable = {\n\t\t\tname = pmr_ri_0\n\t\t\tvalue = {\n\t\t\t\tvalue = investment_pool_income\n\t\t\t\tmin = 0\n\t\t\t}\n\t\t}\n'
-            '\t\t# highest and lowest month shown (min = X keeps a value at least X, max = X at most X)\n'
-            '\t\tset_variable = {\n\t\t\tname = pmr_ri_max\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ri_0\n' + fold('min') + '\t\t\t}\n\t\t}\n'
-            '\t\tset_variable = {\n\t\t\tname = pmr_ri_min\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ri_0\n' + fold('max') + '\t\t\t}\n\t\t}\n'
-            '\t\tset_variable = {\n\t\t\tname = pmr_ri_span\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ri_max\n\t\t\t\tsubtract = var:pmr_ri_min\n\t\t\t}\n\t\t}\n'
+            '\tset_variable = {\n\t\tname = pmr_rw_0\n\t\tvalue = {\n\t\t\tvalue = investment_pool_income\n\t\t\tmin = 0\n\t\t}\n\t}\n'
+            + shares +
+            '\t# highest and lowest week shown (min = X keeps a value at least X, max = X at most X)\n'
+            '\tset_variable = {\n\t\tname = pmr_rw_max\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_0\n' + fold('min') + '\t\t}\n\t}\n'
+            '\tset_variable = {\n\t\tname = pmr_rw_min\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_0\n' + fold('max') + '\t\t}\n\t}\n'
+            '\tset_variable = {\n\t\tname = pmr_rw_span\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_max\n\t\t\tsubtract = var:pmr_rw_min\n\t\t}\n\t}\n'
             + rows + joins +
-            '\t\tdebug_log = "PMR;rec=REINVEST;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
-            'weekly=[THIS.Var(\'pmr_ri_0\').GetValue|0];min=[THIS.Var(\'pmr_ri_min\').GetValue|0];max=[THIS.Var(\'pmr_ri_max\').GetValue|0];'
-            'row=[THIS.Var(\'pmr_ri_b_0\').GetValue|0]"\n'
+            '\tdebug_log = "PMR;rec=REINVEST;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'weekly=[THIS.Var(\'pmr_rw_0\').GetValue|0];min=[THIS.Var(\'pmr_rw_min\').GetValue|0];max=[THIS.Var(\'pmr_rw_max\').GetValue|0];'
+            'row=[THIS.Var(\'pmr_rw_b_0\').GetValue|0];column_first_group=[THIS.Var(\'pmr_rc_0_0\').GetValue|2]"\n'
             '}\n')
 
 
 def chart_effect():
     """Country scope. Counts privately owned levels per priority group into pmr_pc_<i> (GROUPS order, read by the
-    tree chart by index) and each group's share of them into pmr_pc_share_<i>; run monthly for players and whenever
-    the Private tab is opened (pmr_pc_refresh_sgui)."""
+    tree chart by index) and each group's share of them into pmr_pc_share_<i>; run weekly for players (pmr_pi.1) and
+    whenever the Private tab is opened (pmr_pc_refresh_sgui)."""
     sets = ''.join(f'\tset_variable = {{ name = pmr_pc_{i} value = pmr_pc_{g} }}\n' for i, (g, *_r) in enumerate(GROUPS))
     total = ''.join(f'\t\t\tadd = var:pmr_pc_{i}\n' for i in range(len(GROUPS)))
     shares = ''.join(
@@ -380,16 +417,188 @@ def on_actions():
     drop = ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_modifier = pmr_policy_{k} }}\n'
                    f'\t\t\t\tremove_modifier = pmr_policy_{k}\n\t\t\t}}\n' for k, *_r in POLICIES)
     return ('# Appended to vanilla on_actions the documented way, like pmr_on_actions.txt.\n'
-            'on_monthly_pulse_country = { on_actions = { pmr_pi_monthly_country } }\n\n'
-            '# A policy card lasts only while the country keeps Interventionism.\n'
+            'on_monthly_pulse_country = { on_actions = { pmr_pi_monthly_country } }\n'
+            'on_start_expanding_building = { on_actions = { pmr_pi_on_start } }\n\n'
+            '# A policy card lasts only while the country keeps Interventionism. The player\'s weekly clock is restarted\n'
+            '# here if its chain broke (pmr_pi_start_clock).\n'
             'pmr_pi_monthly_country = {\n\teffect = {\n\t\tif = {\n'
             f'\t\t\tlimit = {{\n\t\t\t\thas_variable = pmr_policy\n\t\t\t\tNOT = {{ has_law_or_variant = law_type:{POLICY_LAW} }}\n\t\t\t}}\n'
             + drop +
             '\t\t\tremove_variable = pmr_policy\n'
             '\t\t\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];policy=dropped"\n'
             '\t\t}\n'
-            '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n\t\t\tpmr_ri_record = yes\n\t\t\tpmr_pc_record = yes\n\t\t}\n'
+            '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
+            '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
+            '\t\t\tpmr_pi_start_clock = yes\n\t\t}\n'
+            '\t}\n}\n\n'
+            '# Root = building, a level of it starting construction (the Recent Investments bars).\n'
+            'pmr_pi_on_start = {\n\teffect = {\n\t\tpmr_pi_start = yes\n\t}\n}\n')
+
+
+def clock_effect():
+    return ('# Country scope. Starts the weekly clock (pmr_pi.1) unless it is running: from the monthly pulse and\n'
+            '# whenever the Private tab is opened. pmr_pi_clock outlives a week by two days, so a live clock is never\n'
+            '# started twice.\n'
+            'pmr_pi_start_clock = {\n\tif = {\n\t\tlimit = {\n\t\t\tis_player = yes\n\t\t\tNOT = { has_variable = pmr_pi_clock }\n\t\t}\n'
+            '\t\tset_variable = { name = pmr_pi_clock days = 9 }\n'
+            '\t\ttrigger_event = { id = pmr_pi.1 days = 1 }\n'
+            '\t\tdebug_log = "PMR;rec=CLOCK;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting]"\n'
             '\t}\n}\n')
+
+
+def events():
+    return ('namespace = pmr_pi\n\n'
+            '# Country, every 7 days while it is a player\'s: the Private tab\'s weekly chart (Pat 14:28Z). 1.14.5 runs\n'
+            '# no weekly on_action for script, so the event re-arms itself; pmr_pi_start_clock restarts a broken chain.\n'
+            'pmr_pi.1 = {\n\ttype = country_event\n\thidden = yes\n\timmediate = {\n\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
+            '\t\t\tset_variable = { name = pmr_pi_clock days = 9 }\n'
+            '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
+            '\t\t\tpmr_pc_record = yes\n\t\t\tpmr_rw_record = yes\n'
+            '\t\t\ttrigger_event = { id = pmr_pi.1 days = 7 }\n\t\t}\n\t}\n}\n')
+
+
+def invest_types(game):
+    """(type without building_, priority group index, construction points a level) for every building type the
+    investment bars count: the five groups' buildable types with a construction cost; canals, the construction
+    sector and subsistence buildings are no investors' business."""
+    btype, parent = building_groups(game)
+    costs = dict((k, float(v)) for k, v in re.findall(
+        r'^\s*(construction_cost_[a-z_]+)\s*=\s*([0-9.]+)',
+        open(os.path.join(game, 'common', 'script_values', 'building_values.txt'), encoding='utf-8-sig').read(), re.M))
+    index = {k: i for i, (k, *_r) in enumerate(GROUPS)}
+    out = []
+    bdir = os.path.join(game, 'common', 'buildings')
+    for name in sorted(os.listdir(bdir)):
+        if not name.endswith('.txt'):
+            continue
+        t = open(os.path.join(bdir, name), encoding='utf-8-sig').read()
+        for k, _s, o, c in top_blocks(t):
+            g = group_of(k, btype, parent)
+            if not g or btype.get(k) in INVEST_EXCLUDE:
+                continue
+            body = t[o:c]
+            if re.search(r'\n\s*(buildable\s*=\s*no|unique\s*=\s*yes)', body):
+                continue
+            rc = re.search(r'\n\s*required_construction\s*=\s*([a-z_0-9.]+)', body)
+            if not rc:
+                continue
+            cost = costs.get(rc.group(1))
+            if cost is None:
+                try:
+                    cost = float(rc.group(1))
+                except ValueError:
+                    fail(f'common/buildings/{name}', f'{k} costs {rc.group(1)}, not a number or a building_values value')
+            out.append((k[len('building_'):], index[g], f'{cost:g}'))
+    if len(out) < 40:
+        fail('common/buildings', f'expected about 50 investable building types, found {len(out)}')
+    return out
+
+
+def invest_effects(types):
+    """The Recent Investments bars (Pat 14:28Z: foreign vs domestic, and by priority group in construction points).
+    The game lists previous investments only as text, so PMR keeps its own record from now on: when a level starts
+    (on_start_expanding_building) the player's levels in the building and every government's are put on the
+    state by building type (pmr_iv_o_<b>, pmr_iv_g_<b>); when a level completes (PMR's on_building_built and
+    on_building_expanded, before anything else) the change says who built it. The player's levels went up and no
+    government's did: the player's investors built it, and its construction points count. Retool buildings are
+    not counted. levels_owned_by_country counts a country's government and its investors; country_ownership_fraction
+    is every government's share; both are comparisons only, so pmr_pi_read finds them by halving steps."""
+    steps = (128, 64, 32, 16, 8, 4, 2, 1)
+    own = ''.join(
+        f'\tstate = {{ set_variable = {{ name = pmr_iv_t value = {{ value = var:pmr_iv_x add = {s} }} }} }}\n'
+        f'\tif = {{\n\t\tlimit = {{ levels_owned_by_country = {{ target = global_var:pmr_player value >= state.var:pmr_iv_t }} }}\n'
+        f'\t\tstate = {{ set_variable = {{ name = pmr_iv_x value = var:pmr_iv_t }} }}\n\t}}\n' for s in steps)
+    gov = ''.join(
+        f'\t\tstate = {{\n\t\t\tset_variable = {{\n\t\t\t\tname = pmr_iv_t\n\t\t\t\tvalue = {{\n\t\t\t\t\tvalue = var:pmr_iv_y\n'
+        f'\t\t\t\t\tadd = {s - 0.5:g}\n\t\t\t\t\tdivide = scope:pmr_iv_b.level\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
+        f'\t\tif = {{\n\t\t\tlimit = {{ country_ownership_fraction >= state.var:pmr_iv_t }}\n'
+        f'\t\t\tstate = {{ change_variable = {{ name = pmr_iv_y add = {s} }} }}\n\t\t}}\n' for s in steps)
+    read = ('# Building scope. On its state: pmr_iv_x = the player\'s levels in it (government and investors),\n'
+            '# pmr_iv_y = levels owned by any government, both to 255.\n'
+            'pmr_pi_read = {\n\tsave_scope_as = pmr_iv_b\n'
+            '\tstate = {\n\t\tset_variable = { name = pmr_iv_x value = 0 }\n\t\tset_variable = { name = pmr_iv_y value = 0 }\n\t}\n'
+            + own +
+            '\tif = {\n\t\tlimit = {\n\t\t\tlevel > 0\n\t\t\tcountry_ownership_fraction > 0\n\t\t}\n' + gov + '\t}\n}\n\n')
+
+    def dispatch(effect, with_gc):
+        out = ''
+        for k, (s, g, c) in enumerate(types):
+            args = f'S = {s} G = {g} C = {c}' if with_gc else f'S = {s}'
+            out += (f'\t\t{"else_if" if k else "if"} = {{\n\t\t\tlimit = {{ is_building_type = building_{s} }}\n'
+                    f'\t\t\t{effect} = {{ {args} }}\n\t\t}}\n')
+        return out
+    where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+             'state=[THIS.GetState.GetNameNoFormatting];building=$S$')
+    nums = ("levels=[THIS.Var('pmr_iv_d').GetValue|0];government_levels=[THIS.Var('pmr_iv_dg').GetValue|0];"
+            "points=[THIS.Var('pmr_iv_p').GetValue|0]")
+
+    def log(kind):
+        return f'\t\t\tstate = {{ debug_log = "PMR;rec=INVEST;{where};kind={kind};{nums}" }}\n'
+    ng = len(GROUPS)
+    init = ''.join(f'\t\t\t\t\tset_variable = {{ name = pmr_iv_pts_{g} value = 0 }}\n' for g in range(ng))
+    snap = ('# Building scope, $S$ = its type without building_. Its levels now, until one completes.\n'
+            'pmr_pi_snap = {\n\tpmr_pi_read = yes\n\tstate = {\n'
+            '\t\tset_variable = { name = pmr_iv_o_$S$ value = var:pmr_iv_x }\n'
+            '\t\tset_variable = { name = pmr_iv_g_$S$ value = var:pmr_iv_y }\n\t}\n}\n\n')
+    done = ('# Building scope, a level of it just completed; $S$ as above, $G$ its priority group (GROUPS order), $C$ the\n'
+            '# construction points of a level.\n'
+            'pmr_pi_done = {\n\tpmr_pi_read = yes\n'
+            '\t# a building\'s first level: nothing was there before it\n'
+            '\tif = {\n\t\tlimit = { level <= 1 }\n\t\tstate = {\n'
+            '\t\t\tset_variable = { name = pmr_iv_o_$S$ value = 0 }\n\t\t\tset_variable = { name = pmr_iv_g_$S$ value = 0 }\n\t\t}\n\t}\n'
+            '\tif = {\n\t\tlimit = { state = { NOT = { has_variable = pmr_iv_o_$S$ } } }\n'
+            f'\t\tstate = {{ debug_log = "PMR;rec=INVEST_MISS;{where}" }}\n\t}}\n'
+            '\telse = {\n\t\tstate = {\n'
+            '\t\t\tset_variable = {\n\t\t\t\tname = pmr_iv_d\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_iv_x\n\t\t\t\t\tsubtract = var:pmr_iv_o_$S$\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\tset_variable = {\n\t\t\t\tname = pmr_iv_dg\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_iv_y\n\t\t\t\t\tsubtract = var:pmr_iv_g_$S$\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\tset_variable = {\n\t\t\t\tname = pmr_iv_p\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_iv_d\n\t\t\t\t\tmultiply = $C$\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\tsave_scope_as = pmr_iv_s\n\t\t}\n'
+            '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tstate = {\n\t\t\t\t\tvar:pmr_iv_d >= 1\n\t\t\t\t\tvar:pmr_iv_dg <= 0\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\tglobal_var:pmr_player = {\n'
+            '\t\t\t\tif = {\n\t\t\t\t\tlimit = { NOT = { has_variable = pmr_iv_tot } }\n' + init +
+            '\t\t\t\t\tset_variable = { name = pmr_iv_dom value = 0 }\n\t\t\t\t\tset_variable = { name = pmr_iv_for value = 0 }\n\t\t\t\t}\n'
+            '\t\t\t\tchange_variable = { name = pmr_iv_pts_$G$ add = scope:pmr_iv_s.var:pmr_iv_p }\n\t\t\t}\n'
+            '\t\t\tif = {\n\t\t\t\tlimit = { owner = global_var:pmr_player }\n'
+            '\t\t\t\tglobal_var:pmr_player = { change_variable = { name = pmr_iv_dom add = scope:pmr_iv_s.var:pmr_iv_p } }\n\t\t\t}\n'
+            '\t\t\telse = {\n'
+            '\t\t\t\tglobal_var:pmr_player = { change_variable = { name = pmr_iv_for add = scope:pmr_iv_s.var:pmr_iv_p } }\n\t\t\t}\n'
+            '\t\t\tglobal_var:pmr_player = { pmr_pi_shares = yes }\n'
+            + log('private') +
+            '\t\t}\n'
+            '\t\telse_if = {\n\t\t\tlimit = { state = { var:pmr_iv_d >= 1 } }\n' + log('government') + '\t\t}\n'
+            '\t\telse = {\n' + log('other') + '\t\t}\n'
+            '\t}\n'
+            '\t# the next level of the same construction starts from here\n'
+            '\tstate = {\n\t\tset_variable = { name = pmr_iv_o_$S$ value = var:pmr_iv_x }\n'
+            '\t\tset_variable = { name = pmr_iv_g_$S$ value = var:pmr_iv_y }\n\t}\n}\n\n')
+    tot = ''.join(f'\t\t\tadd = var:pmr_iv_pts_{g}\n' for g in range(ng))
+    gs = ''.join(f'\tset_variable = {{\n\t\tname = pmr_iv_gs_{g}\n\t\tvalue = {{\n\t\t\tvalue = var:pmr_iv_pts_{g}\n'
+                 '\t\t\tdivide = var:pmr_iv_tot\n\t\t}\n\t}\n' for g in range(ng))
+    gc = '\tset_variable = { name = pmr_iv_gc_0 value = var:pmr_iv_gs_0 }\n'
+    gc += ''.join(f'\tset_variable = {{\n\t\tname = pmr_iv_gc_{g}\n\t\tvalue = {{\n\t\t\tvalue = var:pmr_iv_gc_{g - 1}\n'
+                  f'\t\t\tadd = var:pmr_iv_gs_{g}\n\t\t}}\n\t}}\n' for g in range(1, ng - 1))
+    gc += f'\tset_variable = {{ name = pmr_iv_gc_{ng - 1} value = 1 }}\n'
+    shares_fx = ('# Country scope (the player). Each group\'s share of the construction points counted (pmr_iv_gs_<g>), the\n'
+                 '# running totals the bar draws from the back (pmr_iv_gc_<g>), and the domestic and foreign shares.\n'
+                 'pmr_pi_shares = {\n'
+                 f'\tset_variable = {{\n\t\tname = pmr_iv_tot\n\t\tvalue = {{\n\t\t\tvalue = 0\n{tot}\t\t}}\n\t}}\n'
+                 '\tif = {\n\t\tlimit = { var:pmr_iv_tot > 0 }\n'
+                 + ''.join('\t' + line + '\n' for line in (gs + gc).rstrip('\n').split('\n')) +
+                 '\t\tset_variable = {\n\t\t\tname = pmr_iv_dsh\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_iv_dom\n'
+                 '\t\t\t\tdivide = var:pmr_iv_tot\n\t\t\t}\n\t\t}\n'
+                 '\t\tset_variable = {\n\t\t\tname = pmr_iv_fsh\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_iv_for\n'
+                 '\t\t\t\tdivide = var:pmr_iv_tot\n\t\t\t}\n\t\t}\n\t}\n}\n\n')
+    hooks = ('# Building scope (on_start_expanding_building, every country\'s): note the levels of a counted type.\n'
+             'pmr_pi_start = {\n\tif = {\n\t\tlimit = { has_global_variable = pmr_player }\n'
+             + dispatch('pmr_pi_snap', False).replace('\n\t\t', '\n\t\t') +
+             '\t}\n}\n\n'
+             '# Building scope (PMR\'s on_building_built and on_building_expanded, every country\'s): a level completed\n'
+             '# in a building the player owns levels in.\n'
+             'pmr_pi_on_done = {\n\tif = {\n\t\tlimit = {\n\t\t\thas_global_variable = pmr_player\n'
+             '\t\t\tlevels_owned_by_country = { target = global_var:pmr_player value >= 1 }\n\t\t}\n'
+             + dispatch('pmr_pi_done', True) +
+             '\t}\n}\n')
+    return read + snap + shares_fx + done + hooks   # an effect is defined before its first use
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -554,14 +763,26 @@ def priority_row(g, ind):
     return out + f'{ind}}}\n'
 
 
+def bar(ind, x, y, w, h, value, maximum, color, direction='horizontal', visible=None):
+    """A flat progressbar in one colour (vanilla's white_progressbar_vertical colours its bar the same way)."""
+    r, g, b = color
+    vis = f'{ind}\tvisible = "[{visible}]"\n' if visible else ''
+    return (f'{ind}progressbar = {{\n{vis}{ind}\tposition = {{ {x} {y} }}\n{ind}\tsize = {{ {w} {h} }}\n'
+            f'{ind}\tdirection = {direction}\n{ind}\tmin = 0\n{ind}\tmax = {maximum}\n{ind}\tvalue = "[{value}]"\n'
+            f'{ind}\tprogresstexture = "{WHITE}"\n{ind}\tnoprogresstexture = "{TRANSPARENT}"\n'
+            f'{ind}\tcolor = {{ {r:.2f} {g:.2f} {b:.2f} 1 }}\n{ind}\talwaystransparent = yes\n{ind}}}\n')
+
+
 def reinvest_chart(ind):
     """The weekly re-investment as a trend line in vanilla's graph frame (v3_plotline, as the GDP graph; Pat
-    04:50Z). GUI plot lines only take the engine's own trends, so the line is drawn from cells: for each month
-    (pmr_ri_<i>, 0 = newest, rightmost) a flat segment on its row (pmr_ri_b_<i>), and at the month's left edge
-    a riser through the rows between it and the month before (pmr_ri_lo_<i> .. pmr_ri_hi_<i>)."""
+    04:50Z, weekly since 14:28Z). GUI plot lines only take the engine's own trends, so the line is drawn from
+    cells: for each week (pmr_rw_<i>, 0 = newest, rightmost) a flat segment on its row (pmr_rw_b_<i>), and at the
+    week's left edge a riser through the rows between it and the week before (pmr_rw_lo_<i> .. pmr_rw_hi_<i>).
+    Under the line each week is a column split by the tree chart's shares (pmr_rc_<g>_<i>, reinvest_effect),
+    drawn first so the line stays on top, in the groups' colours darkened so the white line reads over them."""
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     fp = lambda x: f"'(CFixedPoint){x}'"
-    w, h = RI_MONTHS * RI_COL_W, RI_ROWS * RI_ROW_H
+    w, h = RI_WEEKS * RI_COL_W, RI_ROWS * RI_ROW_H
     mid = lambda row: h - row * RI_ROW_H + RI_ROW_H // 2   # centre of a row, 1 = bottom
     r, g, b = LINE_COLOR
     i2, i3 = ind + '\t\t', ind + '\t\t\t'
@@ -569,34 +790,72 @@ def reinvest_chart(ind):
     def cell(vis, x, y, cw, ch):
         return (f'{i2}icon = {{\n{i3}visible = "[{vis}]"\n{i3}position = {{ {x} {y} }}\n{i3}size = {{ {cw} {ch} }}\n'
                 f'{i3}texture = "{WHITE}"\n{i3}color = {{ {r} {g} {b} 1 }}\n{i3}alwaystransparent = yes\n{i2}}}\n')
-    cells, hover = '', ''
-    for c in range(RI_MONTHS):
-        i = RI_MONTHS - 1 - c
+    columns, cells, hover = '', '', ''
+    for c in range(RI_WEEKS):
+        i = RI_WEEKS - 1 - c
+        for gi in range(len(GROUPS) - 1, -1, -1):
+            dim = tuple(x * COLUMN_DIM for x in GROUPS[gi][3])
+            columns += bar(i2, c * RI_COL_W, 0, RI_COL_W - 1, h, f"FixedPointToFloat({var(f'pmr_rc_{gi}_{i}')})",
+                           RI_ROWS, dim, 'vertical', f"GreaterThan_CFixedPoint({var(f'pmr_rc_{gi}_{i}')}, {fp(0)})")
         for row in range(1, RI_ROWS + 1):
-            cells += cell(f"EqualTo_CFixedPoint({var(f'pmr_ri_b_{i}')}, {fp(row)})", c * RI_COL_W, mid(row) - 1, RI_COL_W, 3)
+            cells += cell(f"EqualTo_CFixedPoint({var(f'pmr_rw_b_{i}')}, {fp(row)})", c * RI_COL_W, mid(row) - 1, RI_COL_W, 3)
         if c:
             for row in range(1, RI_ROWS):
-                cells += cell(f"And(LessThanOrEqualTo_CFixedPoint({var(f'pmr_ri_lo_{i}')}, {fp(row)}), "
-                              f"GreaterThan_CFixedPoint({var(f'pmr_ri_hi_{i}')}, {fp(row)}))",
+                cells += cell(f"And(LessThanOrEqualTo_CFixedPoint({var(f'pmr_rw_lo_{i}')}, {fp(row)}), "
+                              f"GreaterThan_CFixedPoint({var(f'pmr_rw_hi_{i}')}, {fp(row)}))",
                               c * RI_COL_W - 1, mid(row + 1) - 1, 3, RI_ROW_H + 2)
-        hover += (f'{i2}widget = {{\n{i3}visible = "[GreaterThan_CFixedPoint({var(f"pmr_ri_b_{i}")}, {fp(0)})]"\n'
+        hover += (f'{i2}widget = {{\n{i3}visible = "[GreaterThan_CFixedPoint({var(f"pmr_rw_b_{i}")}, {fp(0)})]"\n'
                   f'{i3}position = {{ {c * RI_COL_W} 0 }}\n{i3}size = {{ {RI_COL_W} {h} }}\n'
-                  f'{i3}tooltip = "PMR_RI_COLUMN_{i}"\n{i3}using = tooltip_above\n{i2}}}\n')
-    has = f"GreaterThan_CFixedPoint({var('pmr_ri_b_0')}, {fp(0)})"
+                  f'{i3}tooltip = "PMR_RW_COLUMN_{i}"\n{i3}using = tooltip_above\n{i2}}}\n')
+    has = f"GreaterThan_CFixedPoint({var('pmr_rw_b_0')}, {fp(0)})"
     bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
-    return (f'{ind}v3_plotline = {{\n{ind}\tparentanchor = hcenter\n'
-            + bo('header', f'{ind}\t\ttext = "PMR_RI_CHART_HEADER"\n')
+    left, right = PLOT_MARGINS
+    return (f'{ind}v3_plotline = {{\n'
+            + bo('margins', f'{ind}\t\tmargin_bottom = 40\n{ind}\t\tmargin_left = {left}\n{ind}\t\tmargin_right = {right}\n')
+            + bo('text_max_width', f'{ind}\t\tmax_width = {w + left + right - 10}\n')
+            + bo('header', f'{ind}\t\ttext = "PMR_RW_CHART_HEADER"\n')
             + bo('size', f'{ind}\t\tsize = {{ {w} {h} }}\n')
             + bo('singleitem', '') + bo('multiitem', '')
-            + bo('extra_plotlines', cells + hover)
-            + bo('maxvalue', f'{ind}\t\traw_text = "@money![{var("pmr_ri_max")}|K]"\n')
-            + bo('minvalue', f'{ind}\t\traw_text = "@money![{var("pmr_ri_min")}|K]"\n')
-            + bo('startdate', f'{ind}\t\ttext = "PMR_RI_AXIS_START"\n')
-            + bo('enddate', f'{ind}\t\ttext = "PMR_RI_AXIS_END"\n')
+            + bo('extra_plotlines', columns + cells + hover)
+            + bo('maxvalue', f'{ind}\t\traw_text = "@money![{var("pmr_rw_max")}|K]"\n')
+            + bo('minvalue', f'{ind}\t\traw_text = "@money![{var("pmr_rw_min")}|K]"\n')
+            + bo('startdate', f'{ind}\t\ttext = "PMR_RW_AXIS_START"\n')
+            + bo('enddate', f'{ind}\t\ttext = "PMR_RW_AXIS_END"\n')
             + bo('empty_state_visibility', f'{ind}\t\tvisible = "[Not({has})]"\n')
             + bo('everything_that_is_not_empty_state_visibility', f'{ind}\t\tvisible = "[{has}]"\n')
-            + bo('empty_state_text', f'{ind}\t\ttext = "PMR_RI_EMPTY"\n')
+            + bo('empty_state_text', f'{ind}\t\ttext = "PMR_RW_EMPTY"\n')
             + f'{ind}}}\n')
+
+
+def pool_chart(ind):
+    """The budget's own investment pool graph (Pat 14:28Z, beside the re-investment line): vanilla's
+    GraphTooltip_InvestmentPool plot, the engine's weekly trend of the pool, narrowed to share the row."""
+    t = f'{COUNTRY}.GetInvestmentFundTrend'
+    left, right = PLOT_MARGINS
+    bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
+    return (f'{ind}v3_plotline = {{\n'
+            + bo('margins', f'{ind}\t\tmargin_bottom = 40\n{ind}\t\tmargin_left = {left}\n{ind}\t\tmargin_right = {right}\n')
+            + bo('text_max_width', f'{ind}\t\tmax_width = {POOL_GRAPH_W + left + right - 10}\n')
+            + bo('header', f'{ind}\t\ttext = "[concept_investment_pool]"\n')
+            + bo('line_color', f'{ind}\t\tcolor = {{ .9 .9 .9 1.0 }}\n')
+            + bo('size', f'{ind}\t\tsize = {{ {POOL_GRAPH_W} {RI_ROWS * RI_ROW_H} }}\n')
+            + bo('line_plotpoints', f'{ind}\t\tvisible = "[Not(IsEmpty({t}))]"\n'
+                 f'{ind}\t\tplotpoints = "[GetTrendPlotPointsNormalized({t}, GetMinPadded({t}), GetMaxPadded({t}))]"\n')
+            + bo('maxvalue', f'{ind}\t\ttext = "[GetMax({t})|D]"\n')
+            + bo('minvalue', f'{ind}\t\ttext = "[GetMin({t})|D]"\n')
+            + bo('startdate', f'{ind}\t\ttext = "[GetOldestDate({t})]"\n')
+            + bo('enddate', f'{ind}\t\ttext = "[GetLatestDate({t})]"\n')
+            + bo('multiitem', '')
+            + bo('empty_state_visibility', f'{ind}\t\tvisible = "[IsEmpty({t})]"\n')
+            + bo('everything_that_is_not_empty_state_visibility', f'{ind}\t\tvisible = "[Not(IsEmpty({t}))]"\n')
+            + bo('empty_state_text', f'{ind}\t\ttext = "GRAPH_NOT_INITIALIZED"\n')
+            + f'{ind}}}\n')
+
+
+def charts_row(ind):
+    """Pat 14:28Z: the space split down the middle, the re-investment line on the left and the pool on the right."""
+    return (f'{ind}flowcontainer = {{\n{ind}\tparentanchor = hcenter\n{ind}\tspacing = 8\n'
+            + reinvest_chart(ind + '\t') + pool_chart(ind + '\t') + f'{ind}}}\n')
 
 
 def contributors_chart(ind):
@@ -652,6 +911,60 @@ def contributors_chart(ind):
             + rows + f'{i1}}}\n{ind}}}\n')
 
 
+def legend_item(ind, color, label, value, tooltip, width):
+    r, g, b = color
+    i1, i2 = ind + '\t', ind + '\t\t'
+    return (f'{ind}widget = {{\n{i1}size = {{ {width} 22 }}\n{i1}tooltip = "{tooltip}"\n{i1}using = tooltip_above\n'
+            f'{i1}icon = {{\n{i2}parentanchor = vcenter\n{i2}size = {{ 14 14 }}\n'
+            f'{i2}texture = "gfx/interface/piechart/piechart_legend.dds"\n{i2}color = {{ {r} {g} {b} 1 }}\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}parentanchor = vcenter\n{i2}position = {{ 20 0 }}\n{i2}size = {{ {width - 20} 22 }}\n'
+            f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}using = fontsize_small\n'
+            f'{i2}raw_text = "[Localize(\'{label}\')] #v [{value}|0%]#!"\n{i1}}}\n{ind}}}\n')
+
+
+def invest_bars(ind):
+    """Top of Recent Investments (Pat 14:28Z): what the player's investors built since this version, as two
+    stacked bars, foreign vs domestic and by priority group, each by construction points (invest_effects)."""
+    var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
+    has = f"GreaterThan_CFixedPoint({var('pmr_iv_tot')}, '(CFixedPoint)0')"
+    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
+    W, H = INVEST_BAR_W, INVEST_BAR_H
+
+    def frame(inner, tooltip):
+        return (f'{i1}widget = {{\n{i2}size = {{ {W} {H} }}\n{i2}parentanchor = hcenter\n'
+                f'{i2}tooltip = "{tooltip}"\n{i2}using = tooltip_above\n'
+                f'{i2}background = {{\n{i3}using = dark_area\n{i2}}}\n' + inner + f'{i1}}}\n')
+
+    def caption(key):
+        return (f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_small\n'
+                f'{i2}text = "{key}"\n{i1}}}\n')
+    home = (bar(i2, 0, 0, W, H, "FixedPointToFloat('(CFixedPoint)1')", 1, ABROAD_COLOR)
+            + bar(i2, 0, 0, W, H, f"FixedPointToFloat({var('pmr_iv_dsh')})", 1, HOME_COLOR))
+    groups = ''.join(bar(i2, 0, 0, W, H, f"FixedPointToFloat({var(f'pmr_iv_gc_{g}')})", 1, GROUPS[g][3])
+                     for g in range(len(GROUPS) - 1, -1, -1))
+    lw = W // 3
+    home_legend = (f'{i1}flowcontainer = {{\n{i2}spacing = 0\n'
+                   + legend_item(i2, HOME_COLOR, 'PMR_IV_HOME', var('pmr_iv_dsh'), 'PMR_IV_PLACE_TT', lw)
+                   + legend_item(i2, ABROAD_COLOR, 'PMR_IV_ABROAD', var('pmr_iv_fsh'), 'PMR_IV_PLACE_TT', lw)
+                   + f'{i1}}}\n')
+    group_legend = ''
+    for row in (GROUPS[:3], GROUPS[3:]):
+        group_legend += f'{i1}flowcontainer = {{\n{i2}spacing = 0\n'
+        for g, name, _d, color, _b in row:
+            gi = [k for k, *_r in GROUPS].index(g)
+            group_legend += legend_item(i2, color, f'PMR_IPW_GROUP_{g}', var(f'pmr_iv_gs_{gi}'), 'PMR_IV_GROUP_TT', lw)
+        group_legend += f'{i1}}}\n'
+    return (f'{ind}flowcontainer = {{\n{i1}parentanchor = hcenter\n{i1}direction = vertical\n{i1}spacing = 4\n'
+            f'{i1}margin = {{ 0 8 }}\n'
+            f'{i1}textbox = {{\n{i2}visible = "[Not({has})]"\n{i2}autoresize = yes\n{i2}multiline = yes\n'
+            f'{i2}max_width = {W}\n{i2}align = nobaseline\n{i2}text = "PMR_IV_EMPTY"\n{i1}}}\n'
+            f'{i1}flowcontainer = {{\n{i2}visible = "[{has}]"\n{i2}direction = vertical\n{i2}spacing = 4\n'
+            + ''.join('\t' + line + '\n' for line in (caption('PMR_IV_PLACE_CAPTION') + frame(home, 'PMR_IV_PLACE_TT')
+                                                     + home_legend + caption('PMR_IV_GROUP_CAPTION')
+                                                     + frame(groups, 'PMR_IV_GROUP_TT') + group_legend).rstrip('\n').split('\n'))
+            + f'{i1}}}\n{ind}}}\n')
+
+
 def card(ind, inner, extra='', w=CARD_W, h=CARD_H):
     """A fixed card, so the law and policy cards match (Pat 04:50Z), now tall enough for the law's effects
     (Pat 13:05Z); a longer law scrolls inside it."""
@@ -704,8 +1017,8 @@ def policy_card(ind):
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
     inner = ''
     for i, (k, _n, icon, *_r) in enumerate(POLICIES, 1):
-        inner += card_column(i1, card_title(icon, f'PMR_POLICY_{k}', i2) + card_text(f'PMR_POLICY_{k}_BENEFITS', i2),
-                             held(i))
+        inner += card_column(i1, f'{i2}tooltip = "PMR_POLICY_{k}_TT"\n' + card_title(icon, f'PMR_POLICY_{k}', i2)
+                             + card_text(f'PMR_POLICY_{k}_BENEFITS', i2), held(i))
     inner += (f'{i1}button = {{\n{i2}visible = "[{held_any}]"\n{i2}using = default_button\n'
               f'{i2}size = {{ 160 32 }}\n{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -12 }}\n'
               f'{i2}text = "PMR_POLICY_CHANGE"\n{i2}enabled = "[{avail}]"\n' + open_window(i2) +
@@ -723,34 +1036,50 @@ def policy_card(ind):
     return card(ind, inner)
 
 
+def policy_content(k, icon, ind, w):
+    """A policy's face: its icon, name and benefits only (Pat 14:28Z); click-through so its card takes the click."""
+    i1, i2 = ind + '\t', ind + '\t\t'
+    return (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}margin = {{ 12 10 }}\n{i1}spacing = 6\n'
+            f'{i1}alwaystransparent = yes\n'
+            f'{i1}flowcontainer = {{\n{i2}spacing = 8\n{i2}alwaystransparent = yes\n'
+            f'{i2}icon = {{\n{i2}\tsize = {{ 48 48 }}\n{i2}\ttexture = "{icon}"\n{i2}\talwaystransparent = yes\n{i2}}}\n'
+            f'{i2}textbox = {{\n{i2}\tparentanchor = vcenter\n{i2}\tautoresize = yes\n{i2}\tmax_width = {w - 84}\n'
+            f'{i2}\tmultiline = yes\n{i2}\talign = nobaseline\n{i2}\tusing = fontsize_large\n{i2}\talwaystransparent = yes\n'
+            f'{i2}\ttext = "PMR_POLICY_{k}"\n{i2}}}\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}multiline = yes\n{i2}max_width = {w - 24}\n{i2}align = nobaseline\n'
+            f'{i2}alwaystransparent = yes\n{i2}text = "PMR_POLICY_{k}_BENEFITS"\n{i1}}}\n{ind}}}\n')
+
+
 def policy_choice(k, i, icon, ind):
-    """One policy in the policy window: its name, benefits and details, and Adopt (Pat 13:05Z)."""
+    """One policy in the policy window (Pat 14:28Z): a blue card, as vanilla's law options, that adopts the
+    policy when clicked; the explanation is its tooltip. The policy held shows as a selected card."""
     scope = f'GuiScope.SetRoot({COUNTRY}.MakeScope).End'
     sg = f"GetScriptedGui('pmr_policy_{k}_sgui')"
     held = f"EqualTo_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint){i}')"
     i1, i2 = ind + '\t', ind + '\t\t'
-    w = PCARD_W - 20
-    inner = card_column(i1, card_title(icon, f'PMR_POLICY_{k}', i2, max_width=w - 60)
-                        + card_text('PMR_POLICY_BENEFITS_HEADER', i2, max_width=w)
-                        + card_text(f'PMR_POLICY_{k}_BENEFITS', i2, max_width=w)
-                        + card_text(f'PMR_POLICY_{k}_DETAILS', i2, max_width=w, small=True))
-    inner += (f'{i1}button = {{\n{i2}visible = "[Not({held})]"\n{i2}using = default_button_action\n{i2}size = {{ 200 34 }}\n'
-              f'{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -12 }}\n{i2}text = "PMR_POLICY_ADOPT"\n'
-              f'{i2}enabled = "[{sg}.IsValid({scope})]"\n'
-              f'{i2}onclick = "[{sg}.Execute({scope})]"\n'
-              f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n'
-              f'{i2}tooltip = "PMR_POLICY_ADOPT_TT"\n{i2}using = tooltip_above\n{i1}}}\n'
-              f'{i1}textbox = {{\n{i2}visible = "[{held}]"\n{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -18 }}\n'
-              f'{i2}autoresize = yes\n{i2}align = hcenter|nobaseline\n{i2}using = fontsize_large\n'
-              f'{i2}text = "PMR_POLICY_CURRENT"\n{i1}}}\n')
-    return card(ind, inner, w=PCARD_W, h=PCARD_H)
+    return (f'{ind}widget = {{\n{i1}size = {{ {PCARD_W} {PCARD_H} }}\n'
+            f'{i1}button = {{\n{i2}visible = "[Not({held})]"\n{i2}using = default_button\n'
+            f'{i2}size = {{ {PCARD_W} {PCARD_H} }}\n'
+            f'{i2}enabled = "[{sg}.IsValid({scope})]"\n'
+            f'{i2}onclick = "[{sg}.Execute({scope})]"\n'
+            f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n'
+            f'{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
+            + policy_content(k, icon, i2, PCARD_W) + f'{i1}}}\n'
+            f'{i1}widget = {{\n{i2}visible = "[{held}]"\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
+            f'{i2}background = {{\n{i2}\tusing = entry_bg\n{i2}}}\n'
+            f'{i2}background = {{\n{i2}\tusing = highlighted_selected_square_selection\n{i2}}}\n'
+            + policy_content(k, icon, i2, PCARD_W) +
+            f'{i2}textbox = {{\n{i2}\tparentanchor = bottom|right\n{i2}\tposition = {{ -12 -8 }}\n{i2}\tautoresize = yes\n'
+            f'{i2}\talign = right|nobaseline\n{i2}\tusing = fontsize_small\n{i2}\ttext = "PMR_POLICY_CURRENT"\n{i2}}}\n'
+            f'{i1}}}\n{ind}}}\n')
 
 
 def policy_window():
-    """The economic policy window (Pat 13:05Z): every policy as a card, two by two, beside the construction panel
-    while its Private tab is open. Vanilla's popup background, header and frame (block_windows.gui default_popup)."""
-    i1, i2, i3, i4 = '\t\t', '\t\t\t', '\t\t\t\t', '\t\t\t\t\t'
-    w, h = 2 * PCARD_W + 10 + 40, 82 + 40 + 2 * PCARD_H + 10 + 24
+    """The economic policy window (Pat 13:05Z, slimmed 14:28Z so it fits the screen): every policy as a card, two
+    by two, beside the construction panel while its Private tab is open. Vanilla's popup background, header and
+    frame (block_windows.gui default_popup)."""
+    i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
+    w, h = 2 * PCARD_W + 10 + 40, 84 + 34 + 2 * PCARD_H + 10 + 24
     rows = ''
     for r in range(0, len(POLICIES), 2):
         rows += f'{i2}flowcontainer = {{\n{i3}spacing = 10\n'
@@ -817,8 +1146,8 @@ def private_tab():
         f'{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 10 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = hcenter|nobaseline\n{i1}\ttext = "NEXT_PRIVATE_CONSTRUCTION"\n'
         f'{i1}\tbackground = {{\n{i1}\t\tusing = dark_area\n{i1}\t}}\n{i1}}}\n'
-        # 2. the weekly re-investment over time, titled inside its graph frame like vanilla's
-        + reinvest_chart(i1) +
+        # 2. the weekly re-investment over time beside the pool (Pat 14:28Z), titled inside their frames like vanilla's
+        + charts_row(i1) +
         # 3. contributors, as a tree chart (Pat 13:05Z)
         header('PMR_PI_SOURCES_HEADER', i1) + contributors_chart(i1) +
         # 4. economic law and policy
@@ -839,7 +1168,7 @@ def private_tab():
         f'{i1}\tparentanchor = hcenter\n{i1}\tdatamodel = "[{queue}]"\n{i1}\titem = {{\n{i1}\t\tconstruction_queue_item = {{}}\n{i1}\t}}\n{i1}}}\n'
         f'{i1}empty_state = {{\n{i1}\tblockoverride "visible" {{\n{i1}\t\tvisible = "[IsDataModelEmpty({queue})]"\n{i1}\t}}\n'
         f'{i1}\tblockoverride "text" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_EMPTY"\n{i1}\t}}\n{i1}}}\n'
-        + header('PMR_PI_RECENT_HEADER', i1) +
+        + header('PMR_PI_RECENT_HEADER', i1) + invest_bars(i1) +
         f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 14 8 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = nobaseline\n'
         f'{i1}\traw_text = "[{COUNTRY}.GetPreviousAutonomousInvestmentsDesc]"\n{i1}}}\n'
@@ -960,20 +1289,21 @@ def patch_company_ai(text, owners):
 
 def localization():
     law = "[GetLawType('law_interventionism').GetName]"
+    var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     loc = [
         ' PMR_TAB_GOVERNMENT:0 "Government"',
         ' PMR_TAB_GOVERNMENT_TT:0 "The construction sector and the government construction queue"',
         ' PMR_TAB_PRIVATE:0 "Private"',
         ' PMR_TAB_PRIVATE_TT:0 "The investment pool, economic policy, investment priorities and private construction"',
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
-        ' PMR_RI_CHART_HEADER:0 "Weekly Re-investment"',
-        ' PMR_RI_EMPTY:0 "Recorded on the 1st of each month"',
-        f' PMR_RI_AXIS_START:0 "{RI_MONTHS - 1} months ago"',
-        ' PMR_RI_AXIS_END:0 "This month"',
+        ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
+        ' PMR_RW_EMPTY:0 "Recorded every week from the day you open this tab"',
+        f' PMR_RW_AXIS_START:0 "{RI_WEEKS - 1} weeks ago"',
+        ' PMR_RW_AXIS_END:0 "This week"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
         ' PMR_PI_SOURCES_HEADER:0 "Buildings Adding to the Pool"',
         ' PMR_PC_CAPTION:0 "Privately owned building levels"',
-        ' PMR_PC_EMPTY:0 "Counted when you open this tab and on the 1st of each month"',
+        ' PMR_PC_EMPTY:0 "Counted when you open this tab and every week"',
         ' PMR_PC_TT:0 "#header Buildings Adding to the Pool#!\\nThe chart shows the privately owned building levels in each '
         'investment priority group, the capital whose profits feed the pool. The game reports what each building type adds '
         'only as this list:\\n$TOOLTIP_DELIMITER$\\n[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
@@ -981,17 +1311,27 @@ def localization():
         ' PMR_PI_QUEUE_COUNT:0 ""',
         ' PMR_PI_QUEUE_EMPTY:0 "No private construction is queued"',
         ' PMR_PI_RECENT_HEADER:0 "Recent Investments and Privatizations"',
+        ' PMR_IV_EMPTY:0 "What your investors build is counted here from now on, at home and abroad, by construction '
+        'points."',
+        ' PMR_IV_PLACE_CAPTION:0 "Where your investors built"',
+        ' PMR_IV_GROUP_CAPTION:0 "What they built, by construction points"',
+        ' PMR_IV_HOME:0 "Domestic"',
+        ' PMR_IV_ABROAD:0 "Foreign"',
+        f' PMR_IV_PLACE_TT:0 "#header Where Your Investors Built#!\\nConstruction points of the building levels your '
+        f'investors completed since this version of the mod was loaded: #v [{var("pmr_iv_dom")}|0]#! at home, '
+        f'#v [{var("pmr_iv_for")}|0]#! abroad. Retooling and government construction are not counted."',
+        ' PMR_IV_GROUP_TT:0 "#header What Your Investors Built#!\\nConstruction points of the building levels your '
+        'investors completed since this version of the mod was loaded, by investment priority group:\\n'
+        + '\\n'.join(f'{name}: #v [{var(f"pmr_iv_pts_{i}")}|0]#! (#v [{var(f"pmr_iv_gs_{i}")}|0%]#!)'
+                     for i, (_g, name, *_r) in enumerate(GROUPS))
+        + '\\nRetooling and government construction are not counted."',
         ' PMR_POLICY_ADD:0 "Add Policy"',
         f' PMR_POLICY_ADD_TT:0 "Choose an economic policy. One can be held at a time, and it lapses if {law} is repealed."',
         f' PMR_POLICY_LOCKED:0 "Requires {law}"',
         ' PMR_POLICY_CHANGE:0 "Change Policy"',
         ' PMR_POLICY_CHANGE_TT:0 "See every policy and swap this one for another. Only one can be held at a time."',
         ' PMR_POLICY_WINDOW_TITLE:0 "Economic Policies"',
-        f' PMR_POLICY_WINDOW_INTRO:0 "Policies need {law}. One can be held at a time: adopting another replaces it, and '
-        'a policy lapses if the law is repealed."',
-        ' PMR_POLICY_BENEFITS_HEADER:0 "#bold Benefits#!"',
-        ' PMR_POLICY_ADOPT:0 "Adopt Policy"',
-        f' PMR_POLICY_ADOPT_TT:0 "Adopt this policy in place of the one you hold. Needs {law}."',
+        f' PMR_POLICY_WINDOW_INTRO:0 "Click a policy to adopt it. One at a time, while {law} lasts."',
         ' PMR_POLICY_CURRENT:0 "#v Current Policy#!"',
         ' PMR_IPW_HEADER:0 "Investment Priorities"',
         ' PMR_IPW_EXPLAIN:0 "Raise how much your investors favour a group over the others: a full priority adds '
@@ -1000,16 +1340,19 @@ def localization():
         'Raising every group by the same amount changes nothing. A group your investors already weigh at the 25% '
         'minimum cannot drop further, so a boost gains nothing against it."',
     ]
-    for k, name, _i, mods, core, details in POLICIES:
+    for k, name, _i, mods, core, core_tt, details in POLICIES:
+        how = f'{core_tt}\\n' if core_tt else ''
         loc += [f' pmr_policy_{k}:0 "{name}"', f' PMR_POLICY_{k}:0 "{name}"',
                 f' PMR_POLICY_{k}_BENEFITS:0 "{benefit_lines(core, mods)}"',
-                f' PMR_POLICY_{k}_DETAILS:0 "#italic {details}#!"']
+                f' PMR_POLICY_{k}_TT:0 "#header {name}#!\\n{how}$TOOLTIP_DELIMITER$\\n#italic {details}#!"']
     for s in STEPS:
         loc.append(f' PMR_IPW_NOTCH_{s}:0 "' + ('No priority' if s == 0 else
                    f'{s}% of the cap: #P +[FixedPointToInt(Multiply_CFixedPoint({COUNTRY}.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint){s}\'))]%#!') + '"')
-    for i in range(RI_MONTHS):
-        when = 'This month' if i == 0 else ('1 month ago' if i == 1 else f'{i} months ago')
-        loc.append(f' PMR_RI_COLUMN_{i}:0 "{when}: #v @money![{COUNTRY}.MakeScope.Var(\'pmr_ri_{i}\').GetValue|D]#! a week"')
+    for i in range(RI_WEEKS):
+        when = 'This week' if i == 0 else ('1 week ago' if i == 1 else f'{i} weeks ago')
+        loc.append(f' PMR_RW_COLUMN_{i}:0 "{when}: #v @money![{var(f"pmr_rw_{i}")}|D]#! re-invested\\n'
+                   'The column under the line splits it by the privately owned levels of each priority group that week, '
+                   'as the tree chart below."')
     for i, (g, name, _d, _c, bgs) in enumerate(GROUPS):
         v = VAR.format(g)
         covers = ', '.join(f'${bg}$' for bg in bgs)
@@ -1017,8 +1360,8 @@ def localization():
         loc.append(f' PMR_IPW_ROW_{g}:0 "#header {name}#!\\nCovers {covers}.\\nYour investors weigh these at '
                    f'#v ×[{COUNTRY}.MakeScope.ScriptValue(\'{v}\')|2]#! their usual weight. Only the differences between '
                    'priorities matter: the highest priority\'s group stays at ×1.00."')
-        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{COUNTRY}.MakeScope.Var(\'pmr_pc_{i}\').GetValue|0]#! privately '
-                   f'owned building levels, #v [{COUNTRY}.MakeScope.Var(\'pmr_pc_share_{i}\').GetValue|0%]#! of the five groups. '
+        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! privately '
+                   f'owned building levels, #v [{var(f"pmr_pc_share_{i}")}|0%]#! of the five groups. '
                    f'Covers {covers}."')
     return loc
 
@@ -1034,7 +1377,9 @@ def write_all(game, write, header_text, out=None):
     write('common/scripted_guis/pmr_ipw_sguis.txt', header_text + sguis())
     write('common/static_modifiers/pmr_policy_modifiers.txt', header_text + static_modifiers())
     write('common/on_actions/pmr_pi_on_actions.txt', header_text + on_actions())
-    write('common/scripted_effects/pmr_pi_effects.txt', header_text + reinvest_effect() + '\n' + chart_effect())
+    write('common/scripted_effects/pmr_pi_effects.txt', header_text + reinvest_effect() + '\n' + chart_effect() + '\n'
+          + clock_effect() + '\n' + invest_effects(invest_types(game)))
+    write('events/pmr_pi_events.txt', header_text + events())
     write(QUEUE_GUI, patch_queue(vanilla(QUEUE_GUI)), bom=False)
     write(PANEL_GUI, patch_panel(vanilla(PANEL_GUI)), bom=False)
     write(OWN_GUI, '# GENERATED by tools/pmr/private_investment.py\n' + private_tab(), bom=False)
