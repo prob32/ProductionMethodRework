@@ -227,14 +227,20 @@ MOD_NAME = 'ProductionMethodRework'
 MOD_VERSION = '0.1.0'
 SUPPORTED_VERSION = '1.14.*'
 
-# Building files whose buildings make goods from goods. Government, military, urban, monuments,
-# canals, subsistence, companies and the construction sector are out of scope: their first group is
-# not a goods recipe, or retooling them through construction is circular.
-BUILDING_FILES = ['01_industry.txt', '02_agro.txt', '03_mines.txt', '04_plantations.txt',
+# Building files whose buildings make goods from goods. Government, military, monuments, canals,
+# subsistence, companies and the construction sector are out of scope: their first group is not a goods
+# recipe, or retooling them through construction is circular. Urban Centers run their best (AUTO_BEST).
+BUILDING_FILES = ['01_industry.txt', '02_agro.txt', '03_mines.txt', '04_plantations.txt', '06_urban_center.txt',
                   '09_misc_resource.txt', '11_private_infrastructure.txt']
 # Pat, 2026-10-13 17:00Z: ports and railways retool like the rest. Only these buildings of a file listed
 # here are candidates; the file's others (trade centres, Financial Districts, Manor Houses) stay vanilla.
-BUILDING_ONLY = {'11_private_infrastructure.txt': ('building_port', 'building_railway')}
+# Pat, 21:39Z: Arts Academies retool too (the Urban Center runs its best methods instead, AUTO_BEST; the
+# power plant stays vanilla).
+BUILDING_ONLY = {'11_private_infrastructure.txt': ('building_port', 'building_railway'),
+                 '06_urban_center.txt': ('building_art_academy',)}
+# Buildings whose recipes carry no workforce because vanilla puts it in another group, which stays on the
+# building (kept on its best method by AUTO_BEST). The share methods then blend only the recipes' goods.
+WORKFORCE_ELSEWHERE = {'building_art_academy': 'pmg_ownership_building_art_academy'}
 # Power bloc principle variants of a recipe, which vanilla swaps in with replacement_if_valid, leave the
 # recipe group (and the replacement lines go): a building would otherwise have to retool backwards the
 # day its bloc dropped the principle.
@@ -250,7 +256,8 @@ PRINCIPLE_THROUGHPUT = 0.25
 # Best is the newest method the state can activate (vanilla lists them oldest first), a principle variant
 # before the method it replaces; PMR switches to it monthly, on research, when the building is built
 # and whenever a method changes. Where laws allow only one (bureaucrat professionalism, and religious
-# or secular staff once AUTO_SECULAR applies), that one.
+# or secular staff once AUTO_SECULAR applies), that one. A method that uses electricity (Arcades, Electric
+# Streetlights) counts only while the state produces it, as for retooling; without it the next one runs.
 AUTO_BEST = {
     'building_government_administration': ('pmg_base_building_government_administration',
                                            'pmg_government_administration_bureaucrat_professionalism',
@@ -258,6 +265,12 @@ AUTO_BEST = {
     'building_university': ('pmg_base_building_university', 'pmg_university_academia'),
     'building_trade_center': ('pmg_base_building_trade_center', 'pmg_trade_quantity_trade_center'),
     'building_railway': ('pmg_passenger_trains',),   # "always produce transport": carriages always on
+    # Pat, 2026-10-13 21:51Z: Urban Centers "automatically retool to max level". The game grows them with
+    # urbanisation and they own themselves, so nobody would fund a retool site; clergy goes by law as vanilla's.
+    'building_urban_center': ('pmg_amenities', 'pmg_street_lighting', 'pmg_public_transport', 'pmg_urban_clergy'),
+    # Pat 21:39Z: Arts Academies retool their art (a PMR building); patronage, which carries their workforce
+    # (WORKFORCE_ELSEWHERE), and the Freedom of Movement principle variant run their best.
+    'building_art_academy': ('pmg_ownership_building_art_academy', 'pmg_principle_freedom_of_movement_3'),
 }
 # Clergy or bureaucrats by law (Pat 17:00Z). Vanilla bars the religious method under the laws its
 # disallowing_laws list (Total Separation, State Atheism) and the secular one only under State Religion,
@@ -623,7 +636,10 @@ def main():
             report['skipped'].append({'building': bk, 'reason': why})
             continue
         recipes = [Recipe(p, *pms[p]) for p in lst]
-        if not recipes[0].employment:
+        if bk in WORKFORCE_ELSEWHERE:
+            if WORKFORCE_ELSEWHERE[bk] not in pdx.items(pg) or any(r.employment for r in recipes):
+                raise SystemExit(f'{bk}: WORKFORCE_ELSEWHERE no longer matches vanilla; update it')
+        elif not recipes[0].employment:
             report['skipped'].append({'building': bk, 'reason': f'default recipe {lst[0]} carries no employment'})
             continue
         treated.append((bk, bn, s, recipes, g0, pg))
@@ -764,9 +780,10 @@ def main():
                          for p in order)
             techs = {p: pdx.items(pdx.get(pms[p][0].value, 'unlocking_technologies'))
                      if pdx.get(pms[p][0].value, 'unlocking_technologies') else [] for p in order}
-            auto.setdefault(bk, []).append((g, order, by_law, techs))
+            elec = {p for p in order if Recipe(p, *pms[p]).needs(ELECTRICITY)}
+            auto.setdefault(bk, []).append((g, order, by_law, techs, elec))
     report['auto_best'] = [{'building': bk, 'group': g, 'best_first': order, 'by_law': by_law}
-                           for bk, gl in auto.items() for g, order, by_law, _t in gl]
+                           for bk, gl in auto.items() for g, order, by_law, *_t in gl]
     # low_pop_method (vanilla's AI picks it in thinly peopled states) would fight the recipe the tick keeps
     # and the method AUTO_BEST keeps: pm_anchorage, the limited trade quantity.
     for p in dict.fromkeys([r.key for t in treated for r in t[3] if r.key in pms]
@@ -2636,6 +2653,8 @@ def dispatch_effects(buildings):
     return ''.join(o)
 
 
+# State scope: the state produces electricity (as pmr_read_elec reads it, without the variable).
+ELEC_MADE = 'exists = sg:electricity sg:electricity = { state_goods_production > 0 }'
 AUTO_TRIP = 3   # AUTO_BEST switches one building may make from method changes in a day before it waits for the next
 
 
@@ -2652,7 +2671,7 @@ def auto_best_effects(auto):
     o = ['# ===== best methods (AUTO_BEST; Pat, 2026-10-13 17:00Z: no retooling, always the best method)\n\n']
     for bk, gl in auto.items():
         o.append(f'# State scope: {bk} on its best methods, newest first.\npmr_auto_{short(bk)} = {{\n')
-        for g, order, by_law, techs in gl:
+        for g, order, by_law, techs, elec in gl:
             o.append(f'\t# {g}' + (', set by laws' if by_law else '') + '\n')
             for j, p in enumerate(order):
                 spec = f'building_type = {bk} production_method = {p}'
@@ -2662,9 +2681,11 @@ def auto_best_effects(auto):
                 if techs[p]:
                     can = (f'AND = {{ {can} owner = {{ '
                            + ' '.join(f'has_technology_researched = {x}' for x in techs[p]) + ' } }')
+                # electricity only while the state makes it, running or not: else the next method takes over
+                pre = f'{ELEC_MADE} ' if p in elec else ''
                 o.append(f'\t{"if" if j == 0 else "else_if"} = {{\n'
-                         + (f'\t\tlimit = {{ {can} }}\n' if by_law else
-                            f'\t\tlimit = {{ OR = {{ is_production_method_active = {{ {spec} }} {can} }} }}\n')
+                         + (f'\t\tlimit = {{ {pre}{can} }}\n' if by_law else
+                            f'\t\tlimit = {{ {pre}OR = {{ is_production_method_active = {{ {spec} }} {can} }} }}\n')
                          + f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ is_production_method_active = {{ {spec} }} }} }}\n'
                          f'\t\t\tactivate_production_method = {{ {spec} }}\n'
                          f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} {flush_log("AUTO", bk, ";method=" + p)} }}\n'
