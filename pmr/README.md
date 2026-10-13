@@ -45,17 +45,27 @@ later one; together every completed retool level moves p at once), `on_monthly_p
 adopts each building's current recipe, every level on it, on its first tick. A save made with an
 earlier build of PMR is not supported: its lag modifiers and retool buildings no longer exist.
 
-Two log-only probes for the next batch also run from `on_monthly_pulse_state`, in player-owned states
-(`pmr_probe_effects.txt`, `pmr_probe_values.txt`). `TREAT` counts each plantation's workforce by
-acceptance band, for plantation treatment by acceptance. `PRICE` reads the local hardwood and wood
-prices through the `state_goods_pricier` / `state_goods_cheaper` ladder, for the market blend of the
-trade-off groups. They change nothing in game; the run sheet says what each null means. The blending itself (6) logs `OPT` monthly per building type in player-owned states.
+Two log-only probes (`PROBE_TREAT`, `PROBE_PRICE` in `generate.py`) can run from `on_monthly_pulse_state`, in
+player-owned states (`pmr_probe_effects.txt`, `pmr_probe_values.txt`). `TREAT` counts each plantation's workforce by
+acceptance band; `PRICE` reads the local hardwood and wood prices through the `state_goods_pricier` /
+`state_goods_cheaper` ladder. Both answered their questions and are off since the 2026-10-13 performance round. The blending itself (6) logs `OPT` monthly per building type in player-owned states.
 
 A loop breaker guards every building type's tick (`TICK_TRIP`): past 25 outermost runs in one state
 on one day, that building waits for the next day and PMR logs `TRIP`. It went in after a game froze
 during the daily update of 16 June 1836. `TECH`, `RETOOL_LEVEL`, `RELEASE` and `RELEASED` lines mark
 the rarer actions in every country and are padded past 4 KB (`flush_log`), so they reach debug.log
 even when the game hangs right after them.
+
+**Performance (Pat approved 2026-10-13 13:12Z; review in `/mnt/project-files/pmr/perf/README.md`).** Log-only
+diagnostics (pool, unemployment, home investors, the second blend read) run only in the player's states. The ownership
+and earnings ladders are bisected, and earnings are read only while a building needs retooling. Electricity is read
+once per state per tick (`pmr_elec_read`) and each good's price once per state per day (`pmr_pxd_<good>`). Research
+ticks only buildings whose best recipe changed or that have no blend yet (`pmr_state_research`), so a trade-off
+research unlocks shows as unavailable until the month turns. The state flag `pmr_in_tick` makes
+`on_production_method_changed` skip the tick's own activations. The Buildings tab caches the player's buildings abroad
+(`pmr_cf_*`) between the monthly and research sums. The test decision "PMR test: pause or resume the monthly ticks"
+sets the global `pmr_ticks_paused`, which stops the monthly state and country ticks and the research tick, so a year can
+be timed with and without PMR's script in one save.
 
 ## Scope
 

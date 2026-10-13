@@ -1,4 +1,4 @@
-# PMR run sheet: the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,50 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the Private tab, third round (your current save works)
+## Latest: faster monthly ticks, and a timing test (your current save works)
+
+The performance changes you approved at 13:12. None of them changes what the mod does; they cut
+checks that ran for every building in the world but fed only the log, or that ran more often than
+needed:
+
+- The investment-pool, unemployment and home-investor checks, and the second blend read, now run only
+  in your own states (they only ever fed your log lines).
+- The ownership and earnings ladders are bisected (about 5 checks instead of 20, and about 4 instead
+  of 12); earnings are read only while a building has something to retool.
+- Electricity is read once per state instead of once per building, and each good's price once per
+  state per day instead of once per farm type.
+- Research no longer re-runs the full tick on every building the country owns: it ticks only the
+  buildings whose best recipe changed, and any it hasn't seen yet. **Side effect:** a trade-off that
+  research just unlocked shows as unavailable on the building panel until the 1st of the month. The
+  shares only move monthly anyway.
+- Method changes the tick makes itself no longer walk the 41-type dispatch before being ignored.
+- The Buildings tab's count of your buildings abroad is cached between the monthly sums.
+- The TREAT and PRICE probes are off (they answered their questions), so those log lines stop.
+- New decision **PMR test: pause or resume the monthly ticks**, for timing.
+
+**Timing test (one save, about ten minutes):**
+
+1. Load a save from the 1840s or later and unpause at speed 5.
+2. Time one in-game year with a stopwatch.
+3. Take **PMR test: pause or resume the monthly ticks** (it logs `PMR;rec=TEST;arm=TICKS_PAUSED`),
+   then time the next year at the same speed.
+4. Take the decision again to resume (`PMR;rec=TEST;arm=TICKS_RESUMED`). Shares hold still while
+   paused and move again from the next 1st of the month.
+
+Tell me both times. A much faster paused year means PMR's script is the cost, and the next round of
+script savings is worth doing. Little change means the cost is the data the engine carries (the
+35,728 hidden methods and the retool building types), and the levers that shrink that are the ones
+to weigh.
+
+| What you see | What it means |
+| --- | --- |
+| `TICK`, `OPT` or `CSUM` lines keep appearing after `TICKS_PAUSED` | The pause didn't take, so the paused time is not a measurement. Tell me. |
+| No `TICKS_PAUSED` line after taking the decision | The decision didn't run; check error.log for `pmr_test`. |
+| `REINVEST` and `CONTRIB` lines carry on while paused | Expected: the Private tab's monthly records are not part of the tick. |
+| A trade-off reads unavailable right after its technology | Expected until the 1st of the month (side effect above). |
+| Shares or bars move differently from before | Not expected; these changes should move nothing. Send the building and the `OPT` line. |
+
+## Also new: the Private tab, third round (still to check; your current save works)
 
 What changed after your 13:05 look:
 

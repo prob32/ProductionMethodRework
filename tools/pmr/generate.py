@@ -175,16 +175,17 @@ TRADE_DEAD_BAND = 0.05
 OPTION_COLORS = [('Sand', (0.74, 0.66, 0.48)), ('Dusk blue', (0.42, 0.52, 0.66)),
                  ('Mauve', (0.60, 0.46, 0.56)), ('Umber', (0.52, 0.41, 0.31))]
 OPTION_NONE_COLOR = (0.36, 0.36, 0.36)
-# Log-only probes for the next batch (Pat approved both 2026-10-13). They change nothing in game; each
+# Log-only probes (Pat approved both 2026-10-13), both answered by 2026-10-13 (TREAT w = wv+wh+ws; PRICE
+# reads fractions), so off since the performance review. They change nothing in game; each
 # writes one line a month per player-owned state where it applies.
 # TREAT: each plantation's workforce by acceptance band, for plantation treatment by acceptance
 # (pmr/treatment-by-acceptance.md). Acceptance below TREAT_BANDS[0] (levels 1-2) is the violent band,
 # below TREAT_BANDS[1] (level 3) the harsh band, the rest standard (Pat's levels).
-PROBE_TREAT = True
+PROBE_TREAT = False
 TREAT_BANDS = (40, 60)
 # PRICE: the local price of PRICE_PROBE_GOODS, read through the state_goods_pricier/cheaper ladder the
 # market blend of the trade-off groups will use (pmr/second-groups.md), where PRICE_PROBE_BUILDING stands.
-PROBE_PRICE = True
+PROBE_PRICE = False
 PRICE_PROBE_BUILDING = 'building_logging_camp'
 PRICE_PROBE_GOODS = ('hardwood', 'wood')
 PRICE_STEP = 5             # ladder resolution, % of base price; the game clamps prices to +-75%
@@ -1095,7 +1096,11 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     market = [x for x in opts if x.mode == 'market']
     if market:
         goods = sorted({g for x in market for g in x.goods})
-        o.append(f'pmr_xvalue_{b} = {{\n' + ''.join(f'\tpmr_price_{g} = yes\n' for g in goods))
+        # A good's price is read once a day per state (pmr_pxd_<good>), not once per building type that
+        # values it: grain, sugar and fruit each feed five or six farm types.
+        o.append(f'pmr_xvalue_{b} = {{\n' + ''.join(
+            f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
+            f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods))
         for x in market:
             o.append(f'\tset_variable = {{ name = {xv("pmr_xv", x.j)} value = 0 }}\n')
             for g, amt in x.goods.items():
@@ -1455,6 +1460,20 @@ def retool_values(b):
 
 
 
+def highest(ns, cond, leaf, ind='\t'):
+    """Bisection over a monotone ladder: leaf(x) for the largest x of ns (ascending) whose cond(x) holds,
+    cond holding for every x below one that holds; leaf(None) if none does. About log2(len(ns)) checks
+    where an if / else_if ladder from the top checks every rung when the answer is low (performance
+    review, 2026-10-13: most buildings have no government share and low earnings)."""
+    def find(lo, hi, ind):
+        if lo > hi:
+            return f'{ind}{leaf(ns[lo - 1] if lo > 0 else None)}\n'
+        mid = (lo + hi) // 2
+        return (f'{ind}if = {{ limit = {{ {cond(ns[mid])} }}\n' + find(mid + 1, hi, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid - 1, ind + '\t') + f'{ind}}}\n')
+    return find(0, len(ns) - 1, ind)
+
+
 def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     """Every effect for one building type. All run in STATE scope.
 
@@ -1583,12 +1602,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
 
     # government-owned share of the building, read through the building-scope ownership trigger
     steps = round(1 / GOV_FRACTION_STEP)
-    o.append(f'pmr_read_gov_{b} = {{\n\t{setv("pmr_gov_frac", 0)}\n')
-    for n in range(steps, 0, -1):
-        frac = n * GOV_FRACTION_STEP
-        kw = 'if' if n == steps else 'else_if'
-        o.append(f'\t{kw} = {{ limit = {{ b:{bk} = {{ country_ownership_fraction >= {fmt(frac - GOV_FRACTION_STEP / 2)} }} }} '
-                 f'{setv("pmr_gov_frac", fmt(frac))} }}\n')
+    o.append(f'pmr_read_gov_{b} = {{\n'
+             + highest(list(range(1, steps + 1)),
+                       lambda n: f'b:{bk} = {{ country_ownership_fraction >= {fmt(n * GOV_FRACTION_STEP - GOV_FRACTION_STEP / 2)} }}',
+                       lambda n: setv("pmr_gov_frac", fmt(n * GOV_FRACTION_STEP) if n else 0)))
     o.append('\t# Government-owned levels, which the state owner\'s count in levels_owned_by_country includes.\n'
              f'\tset_variable = {{ name = {v("pmr_gov_levels")} value = b:{bk}.level }}\n'
              f'\t{chg("pmr_gov_levels", "multiply", "var:" + v("pmr_gov_frac"))}\n'
@@ -1780,10 +1797,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                 + on_index('pmr_to', lambda i: f'if = {{ limit = {{ var:pmr_elec = 0 }} {setv("pmr_room", 0)} {setv("pmr_elec_wait", 1)} }}'
                            if i in elec_tiers else f'{setv("pmr_elec_wait", 0)}')
                 if elec_tiers else '') +
-             '\t# Diagnostic: may the home investment pool fund this building\'s private retooling?\n'
-             '\towner = { save_temporary_scope_as = investor_country }\n'
-             f'\tif = {{ limit = {{ pmr_retool_investor_{b} = yes }} {setv("pmr_inv_home", 1)} }}\n'
-             f'\telse = {{ {setv("pmr_inv_home", 0)} }}\n'
+             '\t# Diagnostic for the log: may the home investment pool fund this building\'s private retooling?\n'
+             '\tif = {\n\t\tlimit = { owner = { is_player = yes } }\n'
+             '\t\towner = { save_temporary_scope_as = investor_country }\n'
+             f'\t\tif = {{ limit = {{ pmr_retool_investor_{b} = yes }} {setv("pmr_inv_home", 1)} }}\n'
+             f'\t\telse = {{ {setv("pmr_inv_home", 0)} }}\n\t}}\n'
              f'\t{setv("pmr_room_gov", "var:" + v("pmr_retool_gov"))}\n'
              f'\t{chg("pmr_room_gov", "subtract", "var:" + v("pmr_pending_gov"))}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} < 0 }} {setv("pmr_room_gov", 0)} }}\n'
@@ -1832,9 +1850,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
 
     # The building's earnings per employee (ladder lower bound, 0 below the lowest step) and the
     # retool buildings' AI weight from it: RETOOL_AI_BASE + RETOOL_AI_PER_EARNING x earnings + RETOOL_AI_TOPUP.
-    o.append(f'pmr_read_earnings_{b} = {{\n\t{setv("pmr_earn", 0)}\n'
-             + ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ b:{bk} = {{ earnings >= {x} }} }} {setv("pmr_earn", x)} }}\n'
-                       for j, x in enumerate(RETOOL_EARNINGS_LADDER))
+    o.append(f'pmr_read_earnings_{b} = {{\n'
+             + highest(sorted(RETOOL_EARNINGS_LADDER), lambda x: f'b:{bk} = {{ earnings >= {x} }}',
+                       lambda x: setv("pmr_earn", x or 0))
              + f'\t{setv("pmr_ai_w", "var:" + v("pmr_earn"))}\n'
              f'\t{chg("pmr_ai_w", "multiply", RETOOL_AI_PER_EARNING)}\n'
              f'\t{chg("pmr_ai_w", "add", RETOOL_AI_BASE + RETOOL_AI_TOPUP)}\n'
@@ -1898,8 +1916,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                 f'\tif = {{ limit = {{ has_variable = pmr_new_build_{b} NOT = {{ has_variable = pmr_xinit_{b} }} }} '
                 f'set_variable = pmr_xnew_{b} }}\n' if opts else '')
              + f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
-             '\tpmr_read_elec = yes\n'
-             f'\tpmr_read_earnings_{b} = yes\n'
+             '\tif = { limit = { NOT = { has_variable = pmr_elec_read } } pmr_read_elec = yes }\n'
              f'\tpmr_best_{b} = yes\n'
              '\t# First sight (game start, a new building, or a save from before the level mix): every\n'
              '\t# level runs the recipe the building runs now. Retool levels already built\n'
@@ -1960,10 +1977,12 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\tpmr_progress_{b} = yes\n'
              f'\tpmr_mix_{b} = yes\n'
              f'\tpmr_blend_{b} = yes\n'
-             f'\tpmr_read_blend_{b} = yes\n'
+             '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
+             f'\tif = {{ limit = {{ owner = {{ is_player = yes }} }} pmr_read_blend_{b} = yes }}\n'
              + (f'\tpmr_opts_{b} = yes\n' if opts else '') +
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
              f'\t\tset_variable = {v("pmr_retooling")}\n'
+             f'\t\tpmr_read_earnings_{b} = yes\n'
              f'\t\tpmr_split_retool_{b} = yes\n'
              f'\t\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("SWITCH", bk, b, k, extra=split)} }}\n'
              f'\t\telse = {{ {log("TICK", bk, b, k, extra=split)} }}\n'
@@ -1985,8 +2004,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     # states, 2026-10-13), so a player's bar counts those buildings too, whole, as their own bars do.
     # Only a player's: it scans every state in the world. The upgrade button's room stays domestic.
     live = f'has_variable = pmr_mix_{b} has_building = {bk} b:{bk} = {{ level >= 1 }}'
+    cnames = ['level', 'need'] + [f'lv_{i}' for i in range(1, k + 1)]
     adds = ''.join(f'\t\t\tchange_variable = {{ name = pmr_c_{n}_{b} add = scope:pmr_st.var:pmr_{n}_{b} }}\n'
-                   for n in ['level', 'need'] + [f'lv_{i}' for i in range(1, k + 1)])
+                   for n in cnames)
     o.append(f'pmr_c_sum_{b} = {{\n'
              '\tsave_temporary_scope_as = pmr_ctry\n'
              + ''.join(f'\tset_variable = {{ name = pmr_c_{n}_{b} value = 0 }}\n'
@@ -1998,12 +2018,19 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} has_variable = pmr_room_gov_{b} }}\n'
              f'\t\t\towner = {{ change_variable = {{ name = pmr_c_room_gov_{b} add = scope:pmr_st.var:pmr_room_gov_{b} }} }}\n'
              '\t\t}\n\t}\n'
+             # Buildings abroad: a scan of every state in the world, so it runs with the country-wide sums
+             # (pmr_c_abroad, set by pmr_c_sum_every: monthly, on research) and is cached in pmr_cf_*;
+             # the sum after a single building's tick adds the cache (performance review, 2026-10-13).
              '\tif = {\n\t\tlimit = { is_player = yes }\n'
-             f'\t\tevery_state = {{\n\t\t\tlimit = {{\n\t\t\t\tNOT = {{ owner = scope:pmr_ctry }}\n\t\t\t\t{live}\n'
-             f'\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:pmr_ctry value >= 1 }} }}\n\t\t\t}}\n'
-             '\t\t\tsave_temporary_scope_as = pmr_st\n\t\t\tscope:pmr_ctry = {\n'
-             + adds.replace('\t\t\t', '\t\t\t\t')
-             + '\t\t\t}\n\t\t}\n\t}\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ has_variable = pmr_c_abroad NOT = {{ has_variable = pmr_cf_level_{b} }} }} }}\n'
+             + ''.join(f'\t\t\tset_variable = {{ name = pmr_cf_{n}_{b} value = 0 }}\n' for n in cnames)
+             + f'\t\t\tevery_state = {{\n\t\t\t\tlimit = {{\n\t\t\t\t\tNOT = {{ owner = scope:pmr_ctry }}\n\t\t\t\t\t{live}\n'
+             f'\t\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:pmr_ctry value >= 1 }} }}\n\t\t\t\t}}\n'
+             '\t\t\t\tsave_temporary_scope_as = pmr_st\n\t\t\t\tscope:pmr_ctry = {\n'
+             + adds.replace('\t\t\t', '\t\t\t\t\t').replace('name = pmr_c_', 'name = pmr_cf_')
+             + '\t\t\t\t}\n\t\t\t}\n\t\t}\n'
+             + ''.join(f'\t\tchange_variable = {{ name = pmr_c_{n}_{b} add = var:pmr_cf_{n}_{b} }}\n' for n in cnames)
+             + '\t}\n'
              + ''.join(f'\tset_variable = {{ name = pmr_c_sh_{i}_{b} value = 0 }}\n' for i in range(1, k + 1))
              + f'\tif = {{\n\t\tlimit = {{ var:pmr_c_level_{b} > 0 }}\n'
              + ''.join(f'\t\tset_variable = {{ name = pmr_c_sh_{i}_{b} value = var:pmr_c_lv_{i}_{b} }}\n'
@@ -2027,7 +2054,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t\t\t{flush_log("TRIP", bk, f";runs={TICK_TRIP + 1}")}\n\t\t}}\n'
              f'\t\telse = {{\n'
              f'\t\t\tset_variable = {{ name = pmr_busy_{b} value = yes days = 1 }}\n'
+             '\t\t\tset_variable = { name = pmr_in_tick value = yes days = 1 }\n'
              f'\t\t\tpmr_tick_body_{b} = yes\n'
+             '\t\t\tremove_variable = pmr_in_tick\n'
              f'\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_bulk }} owner = {{ is_player = yes }} }} owner = {{ pmr_c_sum_{b} = yes }} }}\n'
              f'\t\t\tremove_variable = pmr_busy_{b}\n\t\t}}\n\t}}\n}}\n\n')
 
@@ -2057,12 +2086,15 @@ pmr_read_elec = {
 		set_variable = { name = pmr_elec value = 1 }
 	}
 	else = { set_variable = { name = pmr_elec value = 0 } }
-	set_variable = { name = pmr_pool value = 0 }
-''' + ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ owner = {{ investment_pool >= {x} }} }} set_variable = {{ name = pmr_pool value = {x} }} }}\n'
+	# pool and unemployment are read only for the log, so only in the player's states
+	if = {
+		limit = { owner = { is_player = yes } }
+		set_variable = { name = pmr_pool value = 0 }
+''' + ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ owner = {{ investment_pool >= {x} }} }} set_variable = {{ name = pmr_pool value = {x} }} }}\n'
               for j, x in enumerate((100000, 10000, 1000, 100))) + \
-        '\tset_variable = { name = pmr_unemp value = 0 }\n' + \
-        ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ state_unemployment_rate > {fmt(x / 100)} }} set_variable = {{ name = pmr_unemp value = {x} }} }}\n'
-                for j, x in enumerate((20, 10, 5, 2, 1))) + '}\n\n'
+        '\t\tset_variable = { name = pmr_unemp value = 0 }\n' + \
+        ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ state_unemployment_rate > {fmt(x / 100)} }} set_variable = {{ name = pmr_unemp value = {x} }} }}\n'
+                for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n'
 
 
 def dispatch_effects(buildings):
@@ -2099,15 +2131,29 @@ def dispatch_effects(buildings):
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'
              '# research, at game start), so the country totals wait for pmr_c_sum_all once the states are done.\n'
-             'pmr_state_tick = {\n\tset_variable = pmr_bulk\n')
+             'pmr_state_tick = {\n\tset_variable = pmr_bulk\n'
+             '\t# electricity once for every building of the state (pmr_tick_body_<b> skips its own read)\n'
+             '\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
     for bk in buildings:
         o.append(f'\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{short(bk)} = yes }}\n')
-    o.append('\tremove_variable = pmr_bulk\n}\n\n'
+    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
+             '# State scope (on_acquired_technology): tick only the buildings whose best recipe the research\n'
+             '# changed, and any not seen yet. The rest wait for the month; until then a newly unlocked\n'
+             '# trade-off shows as unavailable on the panel, whose shares move only monthly anyway.\n'
+             'pmr_state_research = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
+    for bk in buildings:
+        b = short(bk)
+        o.append(f'\tif = {{\n\t\tlimit = {{ {live(bk)} }}\n'
+                 f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_mix_{b} }} }} pmr_tick_{b} = yes }}\n'
+                 f'\t\telse = {{\n\t\t\tpmr_best_{b} = yes\n'
+                 f'\t\t\tif = {{ limit = {{ var:pmr_best_now_{b} > var:pmr_best_{b} }} pmr_tick_{b} = yes }}\n'
+                 '\t\t}\n\t}\n')
+    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
              '# Country scope: the country\'s totals for every PMR building type (Buildings tab rows).\n'
-             'pmr_c_sum_every = {\n')
+             'pmr_c_sum_every = {\n\tset_variable = pmr_c_abroad\n')
     for bk in buildings:
         o.append(f'\tpmr_c_sum_{short(bk)} = yes\n')
-    o.append('}\n\n'
+    o.append('\tremove_variable = pmr_c_abroad\n}\n\n'
              '# The same for a player\'s country only (monthly, on research).\n'
              'pmr_c_sum_all = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
              '\t\tpmr_c_sum_every = yes\n'
@@ -2156,6 +2202,10 @@ def probe_values(treat):
         b = short(bk)
         for measure, field in (('w', 'workforce'), ('n', 'total_size')):
             for band, cond in bands:
+                # Each value is a pass over every pop of the state: without the probe, only the three
+                # pmr_xtreat_<j>_<b> reads (w, wv, wh).
+                if not PROBE_TREAT and (measure == 'n' or band == 's'):
+                    continue
                 o.append(f'pmr_tr_{measure}{band}_{b} = {{\n\tvalue = 0\n\tevery_scope_pop = {{\n'
                          f'\t\tlimit = {{ pop_employment_building = {bk}{cond} }}\n'
                          f'\t\tadd = {field}\n\t}}\n}}\n')
@@ -2168,6 +2218,8 @@ def probe_effects(treat, pms, goods_cost):
     where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
              'state=[THIS.GetState.GetNameNoFormatting]')
     o = ['# Log-only probes for the next batch: nothing here changes the game.\n\n']
+    if not PROBE_TREAT:
+        treat = []      # pmr_probe_treat would read script values not written without the probe
     tvars = ['pmr_tr_level', 'pmr_tr_cur', 'pmr_tr_vb', 'pmr_tr_hb'] + [
         f'pmr_tr_{m}{band}' for m in 'wn' for band in ('', 'v', 'h', 's')]
     o.append('# TREAT: one line per treated plantation. cur = the treatment it runs (2 violent, 1 exploitative,\n'
@@ -2878,9 +2930,14 @@ pmr_on_game_started = {
 }
 
 # Root = building whose production method changed. The switch is seen the moment it happens.
+# A change a PMR tick makes itself (pmr_in_tick on the state) would only meet that tick's own guard,
+# so it skips the dispatch over every PMR building type.
 pmr_on_production_method_changed = {
 	effect = {
-		pmr_tick_building = yes
+		if = {
+			limit = { state = { NOT = { has_variable = pmr_in_tick } } }
+			pmr_tick_building = yes
+		}
 	}
 }
 
@@ -2909,14 +2966,18 @@ pmr_on_building_expanded = {
 pmr_on_acquired_technology = {
 	effect = {
 		if = { limit = { exists = capital } capital = { TECH_CRUMB } }
-		every_scope_state = { pmr_state_tick = yes }
-		pmr_c_sum_all = yes
+		if = {
+			limit = { NOT = { has_global_variable = pmr_ticks_paused } }
+			every_scope_state = { pmr_state_research = yes }
+			pmr_c_sum_all = yes
+		}
 	}
 }
 
 # Root = state. Backstop: recompute the shares and re-apply the blend once a month even if no event fired.
 # pmr_month marks the monthly tick: the trade-off shares step and the treatment shares are recounted.
 pmr_on_monthly_pulse_state = {
+	trigger = { NOT = { has_global_variable = pmr_ticks_paused } }
 	effect = {
 		set_variable = pmr_month
 		pmr_state_tick = yes
@@ -2928,6 +2989,7 @@ pmr_on_monthly_pulse_state = {
 # Root = country. The player's totals for the Buildings tab rows, once the month's state ticks are in
 # (whichever pulse runs first, a change made only by the monthly tick shows within a month).
 pmr_on_monthly_pulse_country = {
+	trigger = { NOT = { has_global_variable = pmr_ticks_paused } }
 	effect = {
 		pmr_c_sum_all = yes
 	}
@@ -2983,6 +3045,27 @@ pmr_test_open_hearth_decision = {
 			debug_log = "PMR;rec=TEST;arm=OPEN_HEARTH;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting]"
 		}
 		every_scope_state = { pmr_state_tick = yes }
+	}
+	ai_chance = { value = 0 }
+}
+
+# Performance test (2026-10-13): stops the monthly and research ticks worldwide, or starts them again,
+# so a year can be timed in the same save with and without them. Methods, buildings and the per-building
+# hooks (construction, method changes) stay, so what remains is the cost of the data itself. Shares
+# freeze while paused and move again from the next month after resuming.
+pmr_test_pause_ticks_decision = {
+	is_shown = { always = yes }
+	possible = { always = yes }
+	when_taken = {
+		if = {
+			limit = { has_global_variable = pmr_ticks_paused }
+			remove_global_variable = pmr_ticks_paused
+			capital = { debug_log = "PMR;rec=TEST;arm=TICKS_RESUMED;date=[TimeKeeper.GetCurrentDate.GetString]" }
+		}
+		else = {
+			set_global_variable = pmr_ticks_paused
+			capital = { debug_log = "PMR;rec=TEST;arm=TICKS_PAUSED;date=[TimeKeeper.GetCurrentDate.GetString]" }
+		}
 	}
 	ai_chance = { value = 0 }
 }
@@ -3055,6 +3138,8 @@ DECISION_LOC = [
     ' pmr_test_open_hearth_decision:0 "PMR test: grant Open Hearth"',
     ' pmr_test_open_hearth_decision_desc:0 "Researches the Open Hearth Process, which switches every Steel Mills to it, including mills still part way through retooling to Bessemer."',
     ' pmr_test_tick_decision:0 "PMR test: recompute retooling now"',
+    ' pmr_test_pause_ticks_decision:0 "PMR test: pause or resume the monthly ticks"',
+    ' pmr_test_pause_ticks_decision_desc:0 "Stops PMR\'s monthly and research ticks for every country, or starts them again, so the game\'s speed can be timed with and without them in the same save. Shares hold still while paused."',
     ' pmr_test_tick_decision_desc:0 "Runs the monthly PMR tick on every state you own immediately, instead of waiting for the month to turn, and logs how many building levels sit in each construction queue."',
 ]
 
