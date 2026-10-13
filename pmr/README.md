@@ -16,6 +16,11 @@ workforce are the mix of the recipes its levels run.
   "PMR test:" decisions, no `GENERATION_REPORT.json` or `RUNSHEET.md`, and no `PMR;rec=` log lines but `TRIP`, `AUTO_TRIP` and
   `LOADED`. Both builds carry `.metadata/thumbnail.png` (from `pmr/thumbnail.png`). Bump `MOD_VERSION` before each
   upload.
+- `--trace-from 1838.8.15` is a diagnostic build for a repeatable freeze: from that game date on, every PMR
+  on_action, event and effect they call writes a flushed `PMR;rec=T;at=<name>:in` line as it starts and an
+  `:out` line as it ends, and each building type's tick, automatic method, building removal and government
+  retool construction writes one as it starts. The last `T` line before the freeze names what was running;
+  an `:out` line last means PMR had finished and the engine froze. Never combined with `--release`.
 
 The mod output is not committed. It is generated locally from the installed game's script and copied
 into the mod folder; only the generator, the design notes and the run sheet live in the repo. Target:

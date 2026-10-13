@@ -503,7 +503,11 @@ def main():
                     help='the build players get: no test decisions, no generation report, no log lines but '
                          + ' and '.join(RELEASE_LOGS))
     ap.add_argument('--version-label', default='', help='game build label written into the README header')
+    ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
+                    help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
+    if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
+        raise SystemExit('--trace-from takes a game date like 1838.8.15 and never goes into a release build')
     args.out = args.out or (RELEASE_OUT if args.release else DEFAULT_OUT)
     game = args.game
 
@@ -760,6 +764,8 @@ def main():
     def write(rel, text, bom=True):
         if args.release and rel.endswith('.txt'):
             text = unlogged.sub('', text)
+        if args.trace_from and rel.endswith('.txt'):
+            text = add_trace(rel, text, args.trace_from)
         path = os.path.join(args.out, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if bom and not text.startswith('\ufeff'):
@@ -1152,6 +1158,98 @@ def flush_log(rec, bk, extra=''):
     return (f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
             f'building={bk}{extra};pad={"." * FLUSH_PAD}"')
+
+
+# --trace-from DATE (a diagnostic build, never a release; 2026-10-13: Pat's game froze on 16 August 1838
+# twice from the same save). From DATE on, every PMR on_action and event writes a flushed T line as it
+# starts and ends, and so does every effect they call; every building type's tick, automatic method,
+# building removal and government retool construction writes one as it starts. The last T line before
+# a hang names what was running; an :out line last means PMR had finished and the engine hung.
+TRACE_FIELDS = {
+    'building': ('building=[THIS.GetBuilding.GetNameNoFormatting];state=[THIS.GetBuilding.GetState.GetNameNoFormatting];'
+                 'country=[THIS.GetBuilding.GetState.GetOwner.GetNameNoFormatting]'),
+    'country': 'country=[THIS.GetCountry.GetNameNoFormatting]',
+    'state': 'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting]',
+}
+# on_action or event -> its root's scope
+TRACE_ROOTS = {
+    'pmr_on_production_method_changed': 'building', 'pmr_on_building_built': 'building',
+    'pmr_on_building_expanded': 'building', 'pmr_pi_on_start': 'building',
+    'pmr_on_acquired_technology': 'country', 'pmr_on_monthly_pulse_country': 'country',
+    'pmr_pi_monthly_country': 'country', 'pmr.1': 'country', 'pmr_pi.1': 'country',
+    'pmr_on_monthly_pulse_state': 'state',
+}
+# effects those call -> the scope they run in. A building may be gone after pmr_tick_parent_of_retool
+# (it can remove its own root), so :out lines read nothing from scope.
+TRACE_CALLS = {
+    'pmr_tick_building': 'building', 'pmr_auto_building': 'building', 'pmr_pi_on_done': 'building',
+    'pmr_built_building': 'building', 'pmr_tick_parent_of_retool': 'building', 'pmr_pi_start': 'building',
+    'pmr_state_tick': 'state', 'pmr_state_research': 'state', 'pmr_auto_best': 'state',
+    'pmr_probe_state': 'state', 'pmr_state_research_abroad': 'state',
+    'pmr_c_sum_all': 'country', 'pmr_c_sum_every': 'country', 'pmr_policy_upkeep': 'country',
+    'pmr_pi_start_clock': 'country', 'pmr_pc_record': 'country', 'pmr_rw_record': 'country',
+}
+
+
+def trace_line(since, at, fields=''):
+    # pmr_trace_flush's long line pushes this one to disk (see FLUSH_PAD) without a pad in every line
+    return (f'if = {{ limit = {{ game_date >= {since} }} debug_log = "PMR;rec=T;at={at};'
+            f'date=[TimeKeeper.GetCurrentDate.GetString]{";" + fields if fields else ""}" pmr_trace_flush = yes }}')
+
+
+def block_end(text, i):
+    """Index of the brace closing the block that opens at text[i] == '{' (skips strings and comments)."""
+    depth, j, in_str = 0, i, False
+    while j < len(text):
+        c = text[j]
+        if in_str:
+            in_str = c != '"'
+        elif c == '#':
+            j = text.find('\n', j)
+            if j < 0:
+                break
+        elif c == '"':
+            in_str = True
+        elif c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    raise SystemExit(f'--trace-from: unbalanced block at {i}')
+
+
+def add_trace(rel, text, since):
+    """The --trace-from lines for one generated file (see TRACE_FIELDS)."""
+    if rel.startswith(('common/on_actions/', 'events/')):
+        calls = re.compile(r'(?<![\w:.])(' + '|'.join(TRACE_CALLS) + r') = yes')
+        text = calls.sub(lambda m: (trace_line(since, m.group(1) + ':in', TRACE_FIELDS[TRACE_CALLS[m.group(1)]])
+                                    + f' {m.group(1)} = yes ' + trace_line(since, m.group(1) + ':out')), text)
+        for name, scope in TRACE_ROOTS.items():
+            m = re.search(r'^' + re.escape(name) + r' = \{', text, re.M)
+            if not m:
+                continue
+            body = re.compile(r'^\t(effect|immediate) = \{', re.M).search(text, m.end(), block_end(text, m.end() - 1))
+            if not body:
+                raise SystemExit(f'--trace-from: {name} has no effect or immediate block')
+            close = block_end(text, body.end() - 1)
+            close = text.rfind('\n', 0, close) + 1
+            text = (text[:body.end()] + '\n\t\t' + trace_line(since, name + ':in', TRACE_FIELDS[scope])
+                    + text[body.end():close] + '\t\t' + trace_line(since, name + ':out') + '\n' + text[close:])
+    elif rel.startswith('common/scripted_effects/'):
+        state = TRACE_FIELDS['state']
+        ticks = [n for n in re.findall(r'^(pmr_(?:tick|auto)_\w+) = \{', text, re.M)
+                 if n not in TRACE_CALLS and not n.startswith(('pmr_tick_body_', 'pmr_auto_best'))]
+        if ticks:
+            text = re.sub(r'(?<![\w:.])(' + '|'.join(ticks) + r') = yes',
+                          lambda m: trace_line(since, m.group(1), state) + f' {m.group(1)} = yes', text)
+        text = re.sub(r'(?<![\w:.])(remove_building|start_building_construction) = (\w+)',
+                      lambda m: trace_line(since, f'{m.group(1)}:{m.group(2)}', state) + f' {m.group(0)}', text)
+        if rel.endswith('/pmr_effects.txt'):    # defined before its first use
+            text = (f'pmr_trace_flush = {{\n\tdebug_log = "PMR;rec=PAD;pad={"." * FLUSH_PAD}"\n}}\n\n'
+                    + text.lstrip('\ufeff'))
+    return text
 
 
 # ---------------------------------------------------------------------------------------------
