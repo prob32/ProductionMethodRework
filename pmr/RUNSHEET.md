@@ -1,4 +1,4 @@
-# PMR run sheet: Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the target follows your best recipe, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -9,6 +9,30 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
+
+## Latest: a building targets the newest recipe you have (your current save works)
+
+From your 22:07 and 22:09 messages. A building used to keep the recipe it ran when PMR first saw it (game start, or
+the coal mine your government built in West Bengal) as its target until the next recipe was researched, so new levels
+arrived on Picks and Shovels and the upgrade button had nothing to queue. Now, at every 1st of the month, a building
+whose target is behind the newest recipe its owner can run moves its target there. Expect a wave of retooling in the
+first months of any game, yours and the AI's: every building behind its owner's technology now has levels to retool.
+This build also carries the power plant change (item 4 of the next section). The release build writes no PMR log
+lines, so every check here is something you see. Wait for the next 1st of the month after loading.
+
+1. Open the West Bengal coal mine. **Expect** the line above the bar to read "0% on Atmospheric Engine Pump" (or
+   your newest mine recipe), the bar still all Picks and Shovels, and the upgrade button lit with a tooltip of 2.
+   **Null:** the line still reads Picks and Shovels: the monthly tick never moved the target; check error.log for `pmr_` and tell
+   me. Name moved but the tooltip says 0: PMR doesn't read those two levels as your government's; send the Owners list.
+2. Click it. **Expect** 2 levels of "Retooling (Government): Coal Mines" in West Bengal in your government queue.
+   **Null:** the tooltip says 2 but nothing is queued or the button is grey: the game won't let your government
+   expand there (the open question from the section below).
+3. At home, open any building of yours on an older recipe than you have researched (a mine on Picks and Shovels in
+   Britain). **Expect** "0% on" the newest recipe above the bar, the upgrade button lit for government levels, and in time
+   "Retooling" sites from investors for the private ones. **Null:** the name doesn't move: same as 1.
+4. Expand a building that is behind (any of the above). **Expect** the new level to arrive on the newest recipe: a
+   new slice on the right of the bar. **Null:** the bar's old recipe grows by a level: new levels still take the old
+   target; tell me which building.
 
 ## Latest: Arts Academies and power plants retool, Urban Centers run their best methods (your current save should work)
 

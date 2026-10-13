@@ -2417,9 +2417,12 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t\t{log("INIT", bk, b, k, extra=best)}\n\t}}\n'
              f'\tif = {{ limit = {{ has_variable = {v("pmr_new_build")} }} remove_variable = {v("pmr_new_build")} }}\n')
 
-    o.append('\t# Research: a newer recipe became available since the last tick. Switch to it; the switch\n'
-             '\t# below then opens retooling like any other.\n'
-             f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_best_now")} > var:{v("pmr_best")} }}\n'
+    o.append('\t# Research: a newer recipe became available since the last tick, or the target is below the newest\n'
+             '\t# recipe the owner can run (Pat, 2026-10-13 22:09Z: levels are built with the most advanced technology;\n'
+             '\t# a building used to keep its game-start recipe as the target until the next recipe was researched, so\n'
+             '\t# new levels arrived on it and the government had nothing to retool). Switch to it; the switch below\n'
+             '\t# then opens retooling like any other.\n'
+             f'\tif = {{\n\t\tlimit = {{ OR = {{ var:{v("pmr_best_now")} > var:{v("pmr_best")} var:{v("pmr_best_now")} > var:{v("pmr_to")} }} }}\n'
              f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
              f'\t\t{log("RESEARCH", bk, b, k, extra=best)}\n'
              '\t\t# Abroad, beyond what the host can run: the marker cannot follow, so the target moves\n'
