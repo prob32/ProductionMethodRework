@@ -10,6 +10,19 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
+## Latest: retool clutter and the bar tooltip (your current save carries on)
+
+- **Finished retool buildings go at once.** A private retool building is removed the moment its level
+  is counted, as a government one already was, so the state's Buildings tab shows only the
+  construction sites still building. The crews are gone: investors never stacked levels on them, and
+  they kept the finished sites around. Ones already finished in your save go at their state's next
+  monthly tick.
+- **Shorter recipe bar tooltip**, without the colour names, on the building panel and the Buildings
+  tab row.
+
+Null: a "Retooling: …" card still showing at level 1 after its state's monthly tick means the removal
+did not run; tell me the state and building.
+
 ## First: the 16 June 1836 freeze
 
 Your last game froze during the daily update of 16 June 1836, with nothing clicked. debug.log held
