@@ -112,6 +112,12 @@ PROBE_PRICE = True
 PRICE_PROBE_BUILDING = 'building_logging_camp'
 PRICE_PROBE_GOODS = ('hardwood', 'wood')
 PRICE_STEP = 5             # ladder resolution, % of base price; the game clamps prices to +-75%
+# Pat, 2026-10-13: the investment pool's building-type roll multiplies each candidate's score by
+# (1 + F*u1) / (1 + F*u2), F = PRODUCTION_BUILDING_RANDOM_FACTOR (10) x this (vanilla 2), so 1/21 to 21.
+# At 1 it is 1/11 to 11. A defines override, so it applies to every building, not only PMR's (Pat
+# accepted that). The 80% employment gate (PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD) stays vanilla.
+# See /mnt/project-files/pmr/investment-ai.md.
+INVESTMENT_RANDOM_FACTOR_MULT = 1.0
 GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
@@ -697,6 +703,11 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects() + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + COUNT_QUEUES)
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS)
+    # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
+    write('common/defines/zz_pmr_ai.txt', header +
+          '# Investment pool randomness (Pat, 2026-10-13): the building-type roll goes from 1/21..21 to\n'
+          '# 1/11..11. Vanilla: common/defines/00_ai.txt, PRODUCTION_BUILDING_AUTONOMOUS_INVESTMENT_RANDOM_FACTOR_MULT = 2.0.\n'
+          f'NAI = {{\n\tPRODUCTION_BUILDING_AUTONOMOUS_INVESTMENT_RANDOM_FACTOR_MULT = {INVESTMENT_RANDOM_FACTOR_MULT:.1f}\n}}\n')
     treat = treatment_buildings(all_b_srcs, groups, pms)
     goods_cost = {}
     for gs in load_dir(game, 'goods'):

@@ -24,6 +24,9 @@ full run.
   building moves to it only when its owner has both technologies (Vulcanization and Conveyors for
   tools) and its state produces electricity. Textile mills, furniture, tooling, motor, arms and
   artillery each get one.
+- **Investment randomness** (your call in the investment thread): the investment pool's random roll
+  on each building type now spans 1/11 to 11 instead of 1/21 to 21, for every building, through
+  `common/defines/zz_pmr_ai.txt`. The 80% employment gate is unchanged.
 - **Government upgrade button:** the government retools only its own levels that don't run the new
   recipe yet. Levels it builds new arrive on the new recipe and never count. (Your Sicily sulfur mine:
   2 new government levels on Atmospheric Engine Pump, 5 private levels on Picks and Shovels. The
@@ -50,6 +53,9 @@ full run.
 
 ## Checks
 
+0. **Defines on load.** Before anything else, search `logs\error.log` for `zz_pmr_ai` and
+   `RANDOM_FACTOR_MULT`. There should be no lines. A define that fails to merge is silent in game,
+   and script can't read it back, so this is the only check that the 1/11 roll took effect.
 1. **Government button.** In a new game, research a newer recipe for a building the government
    partly owns and let the government build a new level of it. The new level runs the new recipe;
    its `TICK` line shows `gov_lv=` with that level on the new recipe and `room_gov=` without it. If the
@@ -76,6 +82,7 @@ full run.
 | `crew=0` on a building with a finished level for 90 days | Nobody was hired: the game ignores a crew that doesn't scale with level, or no laborers would take the job. That building drops back to one level at a time. Open it from the state's building list and send its Workforce tab. |
 | `crew=2`, `room_priv` above 1 and `slots=` never above 1 for two years | Employment was not what stopped investors stacking levels. Send me the lines. |
 | `crew=2` and `slots=` 2 or more on one building | Stacking works. |
+| An `error.log` line naming `zz_pmr_ai` or the define | The randomness change did not load, and the roll is still vanilla's 1/21 to 21. Send the line. |
 | Steel Tools still lists oil or electricity | The game loaded the old build. Check the date of `common/production_methods/pmr_electric_production_methods.txt` in the mod folder, then send the Modifiers tab. |
 | A building runs a "+ Assembly Lines" or "+ Automatic Power Looms" recipe whose owner lacks either technology, or in a state with no power plant | The gate failed. Send that building's `TICK` line. |
 | `crew=2`, `room_priv` above 1, `slots=` stuck at 1 and `unemp=0` | The state is short of workers. The investment pool scores buildings x0.25 there once they employ anyone, so a strong rival may be winning the picks. Send the lines; compare with a state where `unemp` is 5 or more. |
