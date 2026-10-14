@@ -323,7 +323,8 @@ RETOOL_BACKGROUND = 'gfx/interface/icons/building_icons/backgrounds/building_pan
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_OUT = os.path.join(ROOT, 'pmr', MOD_NAME)
 RELEASE_OUT = os.path.join(ROOT, 'pmr', 'release', MOD_NAME)
-THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the Workshop preview, 1024 x 1024 (.metadata/thumbnail.png)
+THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the preview, 1024 x 1024: the launcher reads .metadata/,
+# the Workshop upload the mod's root folder (Steam showed a blank preview without the root copy, fixed 2026-10-14)
 # Dev-only probes, each laid out like a mod (pmr/test_probes/<probe>/common/...), copied as they are into test
 # builds only. Pat 2026-10-14 03:42Z: one live and one test mod, so probes ride in the test build rather than in
 # add-on mods. None at present: works_probe (the Hudson's Bay executive trait) passed 03:51Z and was retired
@@ -1294,6 +1295,7 @@ def main():
     report['settings'] = {'N': N, 'retool_share': RETOOL_SHARE, 'gov_fraction_step': GOV_FRACTION_STEP,
                           'game': args.version_label}
     shutil.copyfile(THUMBNAIL, os.path.join(args.out, '.metadata', 'thumbnail.png'))
+    shutil.copyfile(THUMBNAIL, os.path.join(args.out, 'thumbnail.png'))
     if not args.release:
         write('GENERATION_REPORT.json', json.dumps(report, indent=1) + '\n', bom=False)
     print(f"treated {len(report['treated'])} buildings, skipped {len(report['skipped'])}, "
