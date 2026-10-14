@@ -70,8 +70,7 @@ LINES = [
      ('basic_entrepreneur', 'experienced_entrepreneur', 'expert_entrepreneur')),
 ]
 EXCLUSIVE = {'eq': 'pp', 'pp': 'eq'}
-TIER_COST = (1, 2, 3)               # points per tier
-QUEUE = 3                           # queued nodes at most
+TIER_COST = (1, 2, 3)               # points per tier (Pat 12:37Z: no queue, a click spends points already earned)
 COLUMN_ICONS = {'eq': 'gfx/interface/icons/timed_modifier_icons/modifier_gear_positive.dds',
                 'pp': 'gfx/interface/icons/pops_icons/engineers.dds',
                 'sc': 'gfx/interface/icons/generic_icons/upgrade_arrow.dds'}
@@ -307,8 +306,7 @@ def log_line(rec, extra=''):
             "level=[THIS.Var('pmr_cc_level').GetValue|0];pts=[THIS.Var('pmr_cc_pts').GetValue|0];"
             "funds=[THIS.Var('pmr_cc_funds').GetValue|0];cost=[THIS.Var('pmr_cc_cost').GetValue|0];"
             "rate=[THIS.Var('pmr_cc_rate').GetValue|1];eq=[THIS.Var('pmr_cc_eq').GetValue|0];"
-            "pp=[THIS.Var('pmr_cc_pp').GetValue|0];sc=[THIS.Var('pmr_cc_sc').GetValue|0];"
-            "q=[THIS.Var('pmr_cc_q1').GetValue|0]/[THIS.Var('pmr_cc_q2').GetValue|0]/[THIS.Var('pmr_cc_q3').GetValue|0]\"")
+            "pp=[THIS.Var('pmr_cc_pp').GetValue|0];sc=[THIS.Var('pmr_cc_sc').GetValue|0]\"")
 
 
 def player_log(rec, extra=''):
@@ -317,21 +315,19 @@ def player_log(rec, extra=''):
 
 NUMBERS = ('x', 'l', 'a', 'p', 'e')     # per company and tier, from calibrate() (tiers_for)
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mo',
-             'pmr_cc_prosp', 'pmr_cc_size', 'pmr_cc_qlen']
+             'pmr_cc_prosp', 'pmr_cc_size']
             + [f'pmr_cc_{k}' for _c, k, *_r in LINES]
-            + [f'pmr_cc_qn_{k}' for _c, k, *_r in LINES]
             + [f'pmr_cc_pick_{k}' for _c, k, *_r in LINES]
             + [f'pmr_cc_st_{k}_{t}' for _c, k, *_r in LINES for t in (1, 2, 3)]
-            + [f'pmr_cc_{n}{t}' for n in NUMBERS for t in (1, 2, 3)]
-            + [f'pmr_cc_q{i}' for i in range(1, QUEUE + 1)])
+            + [f'pmr_cc_{n}{t}' for n in NUMBERS for t in (1, 2, 3)])
 
 
 def effects(cal):
     o = []
     o.append('# Company Culture (company_culture.py). Company scope unless said otherwise. Variables on the company:\n'
              '# pmr_cc_on (calibration version), pmr_cc_funds, pmr_cc_level, pmr_cc_pts (unspent), pmr_cc_cost (funds for\n'
-             '# the next point), pmr_cc_rate (funds last month), pmr_cc_eq / pp / sc (tier bought, 0-3), pmr_cc_q1..q3 (queued\n'
-             '# lines: 1 Equipment, 2 People, 3 Scale), pmr_cc_x/l/a/p/e1..3 (this company\'s numbers, from calibrate()).\n'
+             '# the next point), pmr_cc_rate (funds last month), pmr_cc_eq / pp / sc (tier bought, 0-3),\n'
+             '# pmr_cc_x/l/a/p/e1..3 (this company\'s numbers, from calibrate()).\n'
              '# Everything the tab shows is mirrored onto the executive (pmr_cc_mirror), which also holds pmr_cc_of, the\n'
              '# company its traits were set for.\n\n')
     # Init: the company's own numbers, by company type.
@@ -393,39 +389,14 @@ def effects(cal):
              '\tchange_variable = { name = pmr_cc_$L$ add = 1 }\n'
              '\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n'
              f'\t{player_log("CC_BUY", "line=$L$;")}\n}}\n\n')
-    # Queue.
-    shift = ('\tif = { limit = { has_variable = pmr_cc_q2 } set_variable = { name = pmr_cc_q1 value = var:pmr_cc_q2 } }\n'
-             '\telse = { remove_variable = pmr_cc_q1 }\n'
-             '\tif = { limit = { has_variable = pmr_cc_q3 } set_variable = { name = pmr_cc_q2 value = var:pmr_cc_q3 } }\n'
-             '\telse_if = { limit = { has_variable = pmr_cc_q2 } remove_variable = pmr_cc_q2 }\n'
-             '\tif = { limit = { has_variable = pmr_cc_q3 } remove_variable = pmr_cc_q3 }\n')
-    o.append('# Drop the head of the queue.\npmr_cc_shift = {\n' + shift + '}\n\n')
-    step = ''
-    for code, k, *_r in LINES:
-        step += (f'\t\t{"if" if code == 1 else "else_if"} = {{\n\t\t\tlimit = {{ var:pmr_cc_q1 = {code} }}\n'
-                 f'\t\t\tif = {{\n\t\t\t\tlimit = {{ NOT = {{ pmr_cc_open_{k} = yes }} }}\n\t\t\t\tpmr_cc_shift = yes\n\t\t\t}}\n'
-                 f'\t\t\telse_if = {{\n\t\t\t\tlimit = {{ pmr_cc_afford = {{ L = {k} }} }}\n'
-                 f'\t\t\t\tpmr_cc_buy = {{ L = {k} }}\n\t\t\t\tpmr_cc_shift = yes\n\t\t\t}}\n\t\t}}\n')
-    o.append('# Buy queued nodes while the points last; a queued line that can no longer grow is dropped.\n'
-             'pmr_cc_queue_step = {\n\tif = {\n\t\tlimit = { has_variable = pmr_cc_q1 }\n' + step + '\t}\n}\n\n'
-             'pmr_cc_run_queue = {\n' + '\tpmr_cc_queue_step = yes\n' * (QUEUE + 1) + '}\n\n')
-    o.append('# Add line $L$ (its code $C$) to the end of the queue.\n'
-             'pmr_cc_enqueue = {\n'
-             '\tif = { limit = { NOT = { has_variable = pmr_cc_q1 } } set_variable = { name = pmr_cc_q1 value = $C$ } }\n'
-             '\telse_if = { limit = { NOT = { has_variable = pmr_cc_q2 } } set_variable = { name = pmr_cc_q2 value = $C$ } }\n'
-             '\telse_if = { limit = { NOT = { has_variable = pmr_cc_q3 } } set_variable = { name = pmr_cc_q3 value = $C$ } }\n'
-             f'\t{player_log("CC_QUEUE", "line=$L$;")}\n}}\n\n')
     # A click (scope:line from the GUI).
     click = ''
     for code, k, *_r in LINES:
-        click += (f'\t{"if" if code == 1 else "else_if"} = {{\n\t\tlimit = {{ scope:line = {code} }}\n'
-                  f'\t\tif = {{\n\t\t\tlimit = {{\n\t\t\t\tNOT = {{ has_variable = pmr_cc_q1 }}\n'
-                  f'\t\t\t\tpmr_cc_open_{k} = yes\n\t\t\t\tpmr_cc_afford = {{ L = {k} }}\n\t\t\t}}\n'
-                  f'\t\t\tpmr_cc_buy = {{ L = {k} }}\n\t\t}}\n'
-                  f'\t\telse_if = {{\n\t\t\tlimit = {{ pmr_cc_open_{k} = yes NOT = {{ has_variable = pmr_cc_q{QUEUE} }} }}\n'
-                  f'\t\t\tpmr_cc_enqueue = {{ L = {k} C = {code} }}\n\t\t}}\n\t}}\n')
-    o.append('# The player clicked a node of line scope:line (1 Equipment, 2 People, 3 Scale): buy it now when nothing\n'
-             '# is queued and the points are there, else queue it.\n'
+        click += (f'\t{"if" if code == 1 else "else_if"} = {{\n'
+                  f'\t\tlimit = {{\n\t\t\tscope:line = {code}\n\t\t\tpmr_cc_open_{k} = yes\n\t\t\tpmr_cc_afford = {{ L = {k} }}\n\t\t}}\n'
+                  f'\t\tpmr_cc_buy = {{ L = {k} }}\n\t}}\n')
+    o.append('# The player clicked the next node of line scope:line (1 Equipment, 2 People, 3 Scale): it is bought with\n'
+             '# points already earned, or nothing happens (Pat 12:37Z: no queue).\n'
              'pmr_cc_click = {\n\tsave_scope_as = pmr_cc_co\n' + click + '\tpmr_cc_mirror = yes\n}\n\n')
     # AI.
     ai_line = ('\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tpmr_cc_open_$L$ = yes\n\t\t\t\tpmr_cc_afford = { L = $L$ }\n'
@@ -483,37 +454,24 @@ def effects(cal):
     states = ''
     for code, k, *_r in LINES:
         other = EXCLUSIVE.get(k)
-        states += (f'\tset_variable = {{ name = pmr_cc_qn_{k} value = 0 }}\n'
-                   + ''.join(f'\tif = {{ limit = {{ var:pmr_cc_q{i} ?= {code} }} change_variable = {{ name = pmr_cc_qn_{k} add = 1 }} }}\n'
-                             for i in range(1, QUEUE + 1))
-                   + f'\tset_variable = {{ name = pmr_cc_r_{k} value = var:pmr_cc_{k} }}\n'
-                   f'\tchange_variable = {{ name = pmr_cc_r_{k} add = var:pmr_cc_qn_{k} }}\n')
-    for code, k, *_r in LINES:
-        other = EXCLUSIVE.get(k)
-        excl = (f'OR = {{ var:pmr_cc_{other} > 0 var:pmr_cc_qn_{other} > 0 }}' if other else 'always = no')
+        excl = f'var:pmr_cc_{other} > 0' if other else 'always = no'
         states += f'\tset_variable = {{ name = pmr_cc_pick_{k} value = 0 }}\n'
         for t in (1, 2, 3):
             st = f'pmr_cc_st_{k}_{t}'
             states += (f'\tif = {{ limit = {{ var:pmr_cc_{k} >= {t} }} set_variable = {{ name = {st} value = 4 }} }}\n'
                        f'\telse_if = {{ limit = {{ {excl} }} set_variable = {{ name = {st} value = 5 }} }}\n'
-                       f'\telse_if = {{ limit = {{ var:pmr_cc_r_{k} >= {t} }} set_variable = {{ name = {st} value = 3 }} }}\n'
-                       f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_r_{k} = {t - 1} }}\n'
-                       f'\t\tif = {{ limit = {{ var:pmr_cc_qlen = 0 var:pmr_cc_pts >= {TIER_COST[t - 1]} }} '
+                       f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_{k} = {t - 1} }}\n'
+                       f'\t\tif = {{ limit = {{ var:pmr_cc_pts >= {TIER_COST[t - 1]} }} '
                        f'set_variable = {{ name = {st} value = 1 }} set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n'
-                       f'\t\telse_if = {{ limit = {{ var:pmr_cc_qlen < {QUEUE} }} '
-                       f'set_variable = {{ name = {st} value = 2 }} set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n'
-                       f'\t\telse = {{ set_variable = {{ name = {st} value = 6 }} }}\n\t}}\n'
+                       f'\t\telse = {{ set_variable = {{ name = {st} value = 2 }} }}\n\t}}\n'
                        f'\telse = {{ set_variable = {{ name = {st} value = 0 }} }}\n')
     copies = ''.join(f'\t\tif = {{ limit = {{ scope:pmr_cc_co = {{ has_variable = {v} }} }} '
                      f'set_variable = {{ name = {v} value = scope:pmr_cc_co.var:{v} }} }}\n'
                      f'\t\telse_if = {{ limit = {{ has_variable = {v} }} remove_variable = {v} }}\n' for v in MIRRORED)
     o.append('# The tab\'s numbers, mirrored onto the executive (the panel reads Company.GetExecutive.MakeScope). Node states\n'
-             '# pmr_cc_st_<line>_<tier>: 0 not yet, 1 buy now, 2 can queue, 3 queued, 4 bought, 5 ruled out by the other\n'
-             '# column, 6 next but the queue is full. pmr_cc_pick_<line>: the line\'s next node can be clicked.\n'
+             '# pmr_cc_st_<line>_<tier>: 0 a later tier, 1 next and affordable (a click buys it), 2 next but not enough\n'
+             '# points yet, 4 bought, 5 ruled out by the other column. pmr_cc_pick_<line>: the line\'s next node can be bought.\n'
              'pmr_cc_mirror = {\n\tsave_scope_as = pmr_cc_co\n'
-             '\tset_variable = { name = pmr_cc_qlen value = 0 }\n'
-             + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_cc_q{i} }} change_variable = {{ name = pmr_cc_qlen add = 1 }} }}\n'
-                       for i in range(1, QUEUE + 1))
              + states +
              '\tset_variable = { name = pmr_cc_pct value = var:pmr_cc_funds }\n'
              '\tchange_variable = { name = pmr_cc_pct multiply = 100 }\n'
@@ -531,12 +489,11 @@ def effects(cal):
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
              '\tpmr_cc_earn = yes\n'
              '\tif = {\n\t\tlimit = { owner = { is_player = no } }\n\t\tpmr_cc_ai_buy = yes\n\t}\n'
-             '\telse = {\n\t\tpmr_cc_run_queue = yes\n\t}\n'
              '\tsave_scope_as = pmr_cc_co\n'
              '\tif = {\n\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\tpmr_cc_apply = yes\n\t}\n'
              '\tpmr_cc_mirror = yes\n'
              f'\t{player_log("CC")}\n}}\n\n')
-    o.append('# The tab was opened (or a company was founded): bring it up to date without earning.\n'
+    o.append('# The tab was opened, a company was founded or the game started: bring it up to date without earning.\n'
              'pmr_cc_refresh = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
              '\tif = {\n\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\tpmr_cc_apply = yes\n\t}\n'
@@ -550,12 +507,10 @@ def effects(cal):
 def triggers():
     o = ['# Company Culture (company_culture.py). Company scope.\n\n'
          '# pmr_cc_open_<line>: the line has a tier left to buy and, for Equipment and People, the other column is\n'
-         '# untouched and not queued (Pat 04:00Z: the first tier bought locks the company to its column).\n']
+         '# untouched (Pat 04:00Z: the first tier bought locks the company to its column).\n']
     for code, k, *_r in LINES:
         other = EXCLUSIVE.get(k)
-        oc = {'eq': 1, 'pp': 2}.get(other)
-        excl = (f'\tvar:pmr_cc_{other} = 0\n'
-                + ''.join(f'\tNOT = {{ var:pmr_cc_q{i} ?= {oc} }}\n' for i in range(1, QUEUE + 1))) if other else ''
+        excl = f'\tvar:pmr_cc_{other} = 0\n' if other else ''
         o.append(f'pmr_cc_open_{k} = {{\n\tvar:pmr_cc_{k} < 3\n{excl}}}\n\n')
     o.append('# The points for line $L$\'s next tier (1, 2, 3).\n'
              'pmr_cc_afford = {\n\tOR = {\n'
@@ -572,25 +527,31 @@ def sguis():
             'pmr_cc_pick_sgui = {\n\tscope = character\n\tsaved_scopes = { line }\n'
             '\tis_valid = {\n\t\towner ?= { is_player = yes }\n\t\tOR = {\n' + picks + '\t\t}\n\t}\n'
             '\teffect = {\n\t\tpmr_cc_with_company = { EFFECT = pmr_cc_click }\n\t}\n}\n\n'
-            'pmr_cc_clear_sgui = {\n\tscope = character\n'
-            '\tis_valid = {\n\t\towner ?= { is_player = yes }\n\t\thas_variable = pmr_cc_q1\n\t}\n'
-            '\teffect = {\n\t\tpmr_cc_with_company = { EFFECT = pmr_cc_clear }\n\t}\n}\n\n'
-            '# Opening the tab brings the company up to date (a company founded this month, a new executive).\n'
+            '# Opening the tab, or its Show button while the executive has no numbers yet (a new executive this month,\n'
+            '# a save from before Company Culture), brings the company up to date.\n'
             'pmr_cc_refresh_sgui = {\n\tscope = character\n'
             '\teffect = {\n\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n')
 
 
-CLEAR_EFFECT = ('# The player emptied the queue.\npmr_cc_clear = {\n\tsave_scope_as = pmr_cc_co\n'
-                + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_cc_q{i} }} remove_variable = pmr_cc_q{i} }}\n'
-                          for i in range(1, QUEUE + 1))
-                + '\tpmr_cc_mirror = yes\n}\n\n')
-
 ON_ACTIONS = '''# Company Culture (company_culture.py). Appended to vanilla on_actions the documented way.
+on_game_started_after_lobby = { on_actions = { pmr_cc_game_started } }
 on_monthly_pulse_country = { on_actions = { pmr_cc_monthly_country } }
 on_company_established = { on_actions = { pmr_cc_on_company_established } }
 on_company_disbanded = { on_actions = { pmr_cc_on_company_disbanded } }
 
-# Root = country. Every company earns, buys (AI) or runs its queue (players), and keeps its executive's traits.
+# No root. Every company's numbers and tab from the first day, before any monthly pulse (in game 12:37Z the Hudson's
+# Bay Company's tab read 0 / 0 with nothing to click until a month had passed).
+pmr_cc_game_started = {
+	effect = {
+		every_country = {
+			every_company = {
+				pmr_cc_refresh = yes
+			}
+		}
+	}
+}
+
+# Root = country. Every company earns, buys (AI companies) and keeps its executive's traits.
 pmr_cc_monthly_country = {
 	effect = {
 		every_company = {
@@ -623,7 +584,7 @@ pmr_cc_on_company_disbanded = {
 # Test build only: a point takes a company of prosperity 50 about fifteen months, too slow to try the tree.
 TEST_POINTS = 6
 TEST_DECISION = f'''# Company Culture test decision (test builds only). The AI never takes it. Gives each of the player's companies
-# {TEST_POINTS} Culture points (not levels), runs its queue and refreshes its tab. Writes PMR;rec=CC_TEST lines.
+# {TEST_POINTS} Culture points (not levels) and refreshes its tab. Writes PMR;rec=CC_TEST lines.
 pmr_cc_test_points_decision = {{
 	is_shown = {{ always = yes }}
 	possible = {{ always = yes }}
@@ -635,8 +596,6 @@ pmr_cc_test_points_decision = {{
 				pmr_cc_init = yes
 			}}
 			change_variable = {{ name = pmr_cc_pts add = {TEST_POINTS} }}
-			pmr_cc_run_queue = yes
-			save_scope_as = pmr_cc_co
 			if = {{
 				limit = {{ executive ?= {{ NOT = {{ var:pmr_cc_of ?= scope:pmr_cc_co }} }} }}
 				pmr_cc_apply = yes
@@ -724,12 +683,11 @@ def node(code, k, t, name, icon, ind):
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
     sg = f"GetScriptedGui('pmr_cc_pick_sgui')"
     scope = f"{SG_SCOPE}.AddScope('line', MakeScopeValue('(CFixedPoint){code}')).End"
-    can = f"And({LOCAL}, And(Or({EQ(st, 1)}, {EQ(st, 2)}), {sg}.IsValid({scope})))"
+    can = f"And({LOCAL}, And({EQ(st, 1)}, {sg}.IsValid({scope})))"
 
     def content(ii):
-        lines = [(1, f'PMR_CC_NODE_BUY_{t}'), (2, f'PMR_CC_NODE_QUEUE_{t}'), (3, 'PMR_CC_NODE_QUEUED'),
-                 (4, 'PMR_CC_NODE_OWNED'), (5, f'PMR_CC_NODE_RULED_OUT_{k}'), (0, f'PMR_CC_COST_{t}'),
-                 (6, 'PMR_CC_NODE_QUEUE_FULL')]
+        lines = [(1, f'PMR_CC_NODE_BUY_{t}'), (2, f'PMR_CC_NODE_NEED_{t}'), (4, 'PMR_CC_NODE_OWNED'),
+                 (5, f'PMR_CC_NODE_RULED_OUT_{k}'), (0, f'PMR_CC_COST_{t}')]
         out = (f'{ii}icon = {{\n{ii}\tposition = {{ 8 0 }}\n{ii}\tparentanchor = vcenter\n{ii}\tsize = {{ 44 44 }}\n'
                f'{ii}\ttexture = "{TRAIT_ICON.format(icon)}"\n{ii}\talwaystransparent = yes\n{ii}}}\n'
                f'{ii}textbox = {{\n{ii}\tposition = {{ 58 8 }}\n{ii}\tsize = {{ {NODE_W - 64} 24 }}\n'
@@ -741,19 +699,20 @@ def node(code, k, t, name, icon, ind):
                     f'{ii}\ttext = "{key}"\n{ii}\talwaystransparent = yes\n{ii}}}\n')
         return out
     return (f'{ind}widget = {{\n{i1}size = {{ {NODE_W} {NODE_H} }}\n'
-            # bought: a held card, as vanilla shows a law in force
+            # bought (Pat 12:37Z: the chosen tiers highlighted with a frame): a gold-tinted card inside the frame
+            # vanilla draws round a selected building type (companies_panel.gui, highlighted_selected_square_selection)
             f'{i1}widget = {{\n{i2}visible = "[{EQ(st, 4)}]"\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "PMR_CC_TT_{k}_{t}"\n'
             f'{i2}background = {{\n{i3}using = entry_bg\n{i2}}}\n'
-            f'{i2}background = {{\n{i3}using = highlighted_selected_square_selection\n{i2}}}\n'
-            + content(i2) + f'{i1}}}\n'
-            # every other state: a button, live when the node can be bought or queued
+            f'{i2}icon = {{\n{i3}size = {{ 100% 100% }}\n{i3}texture = "{WHITE}"\n{i3}color = {{ 0.74 0.60 0.30 0.22 }}\n'
+            f'{i3}alwaystransparent = yes\n{i2}}}\n'
+            + content(i2) +
+            f'{i2}icon = {{\n{i3}using = highlighted_selected_square_selection\n{i3}alwaystransparent = yes\n{i2}}}\n'
+            f'{i1}}}\n'
+            # every other state: a button, live only when the next tier is affordable
             f'{i1}button = {{\n{i2}visible = "[Not({EQ(st, 4)})]"\n{i2}using = default_button\n{i2}size = {{ 100% 100% }}\n'
             f'{i2}alpha = "[TransparentIfFalse(Not({EQ(st, 5)}))]"\n'
             f'{i2}enabled = "[{can}]"\n{i2}onclick = "[{sg}.Execute({scope})]"\n{i2}tooltip = "PMR_CC_TT_{k}_{t}"\n'
             + content(i2) + f'{i1}}}\n'
-            # queued: a gold rim
-            f'{i1}widget = {{\n{i2}visible = "[{EQ(st, 3)}]"\n{i2}size = {{ 100% 100% }}\n{i2}alwaystransparent = yes\n'
-            f'{i2}background = {{\n{i3}using = highlighted_selected_square_selection\n{i3}alpha = 0.5\n{i2}}}\n{i1}}}\n'
             f'{ind}}}\n')
 
 
@@ -819,8 +778,15 @@ def tab(rows, untreated):
         elif n == 1:
             cols += f'{i3}widget = {{\n{i4}size = {{ {GAP} 40 }}\n{i3}}}\n'
     bar_value = f"FixedPointToFloat({V('pmr_cc_pct')})"
+    # Every mirrored executive holds a cost (800 and up). Without one (a new executive this month, a save from
+    # before Company Culture) the tab offers a button that reads the company in, instead of an empty tree.
+    ready = GT('pmr_cc_cost', 0)
+    refresh = "GetScriptedGui('pmr_cc_refresh_sgui')"
+    show = (f'{i1}button = {{\n{i2}visible = "[Not({ready})]"\n{i2}parentanchor = hcenter\n{i2}using = default_button\n'
+            f'{i2}size = {{ 300 40 }}\n{i2}text = "PMR_CC_SHOW"\n{i2}tooltip = "PMR_CC_SHOW_TT"\n'
+            f'{i2}onclick = "[{refresh}.Execute({SG_SCOPE}.End)]"\n{i1}}}\n')
     header = (
-        f'{i1}widget = {{\n{i2}parentanchor = hcenter\n{i2}size = {{ 540 82 }}\n'
+        f'{i1}widget = {{\n{i2}visible = "[{ready}]"\n{i2}parentanchor = hcenter\n{i2}size = {{ 540 82 }}\n'
         f'{i2}background = {{\n{i3}using = entry_bg\n{i2}}}\n'
         f'{i2}textbox = {{\n{i3}position = {{ 16 10 }}\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n'
         f'{i3}using = fontsize_xxl\n{i3}text = "PMR_CC_LEVEL"\n{i3}tooltip = "PMR_CC_LEVEL_TT"\n{i2}}}\n'
@@ -837,22 +803,9 @@ def tab(rows, untreated):
         f'{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n{i3}text = "PMR_CC_RATE_NONE"\n{i3}tooltip = "PMR_CC_BAR_TT"\n{i2}}}\n'
         f'{i1}}}\n')
     tree = (f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_TREE_HEADER"\n{i2}}}\n{i1}}}\n'
-            f'{i1}flowcontainer = {{\n{i2}parentanchor = hcenter\n{i2}direction = horizontal\n{i2}spacing = 0\n'
-            + cols + f'{i1}}}\n')
-    clear = "GetScriptedGui('pmr_cc_clear_sgui')"
-    queue = (f'{i1}flowcontainer = {{\n{i2}visible = "[{GT("pmr_cc_qlen", 0)}]"\n{i2}parentanchor = hcenter\n{i2}spacing = 10\n'
-             f'{i2}margin = {{ 0 4 }}\n'
-             f'{i2}textbox = {{\n{i3}parentanchor = vcenter\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n'
-             f'{i3}text = "PMR_CC_QUEUE"\n{i2}}}\n'
-             f'{i2}button = {{\n{i3}visible = "[{LOCAL}]"\n{i3}using = default_button\n{i3}size = {{ 140 30 }}\n'
-             f'{i3}text = "PMR_CC_QUEUE_CLEAR"\n{i3}tooltip = "PMR_CC_QUEUE_CLEAR_TT"\n'
-             f'{i3}enabled = "[{clear}.IsValid({SG_SCOPE}.End)]"\n{i3}onclick = "[{clear}.Execute({SG_SCOPE}.End)]"\n{i2}}}\n'
-             f'{i1}}}\n')
-    active = text_row('PMR_CC_ACTIVE_NONE', i1, f'And(Not({GT("pmr_cc_eq", 0)}), And(Not({GT("pmr_cc_pp", 0)}), Not({GT("pmr_cc_sc", 0)})))')
-    for _code, k, *_r in LINES:
-        for t in (1, 2, 3):
-            active += text_row(f'PMR_CC_ACTIVE_{k}_{t}', i1, EQ(f'pmr_cc_{k}', t))
-    methods = (f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_METHODS_HEADER"\n{i2}}}\n{i1}}}\n'
+            f'{i1}flowcontainer = {{\n{i2}visible = "[{ready}]"\n{i2}parentanchor = hcenter\n{i2}direction = horizontal\n'
+            f'{i2}spacing = 0\n' + cols + f'{i1}}}\n')
+    methods =(f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_METHODS_HEADER"\n{i2}}}\n{i1}}}\n'
                + text_row('PMR_CC_METHODS_INTRO', i1, small=True) +
                f'{i1}flowcontainer = {{\n{i2}parentanchor = hcenter\n{i2}direction = vertical\n{i2}spacing = 4\n'
                f'{i2}datamodel = "[Company.GetBuildingTypes]"\n{i2}item = {{\n'
@@ -870,9 +823,7 @@ def tab(rows, untreated):
             '\t\tdirection = vertical\n\t\tusing = default_list_position\n\t\tusing = default_content_fade\n'
             '\t\tspacing = 6\n\t\tmargin_bottom = 10\n\t\tminimumsize = { 540 -1 }\n'
             '\t\tdatacontext = "[Company.GetExecutive]"\n\n'
-            + header + tree + queue
-            + f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_ACTIVE_HEADER"\n{i2}}}\n{i1}}}\n'
-            + active + methods +
+            + show + header + tree + methods +
             '\t}\n}\n')
 
 
@@ -920,37 +871,32 @@ def localization(cal, rows, pms_techs):
         f' PMR_CC_RATE:0 "+{v("pmr_cc_rate", 0)} a month, next point in about {v("pmr_cc_mo", 0)} months"',
         ' PMR_CC_RATE_NONE:0 "Earning nothing while its prosperity is 0"',
         ' PMR_CC_TREE_HEADER:0 "Culture"',
-        ' PMR_CC_EXCLUSIVE_TT:0 "#header Equipment or People#!\\nA company focuses on its machinery or on its people. The first Equipment or People tier it buys or queues rules out the other column."',
+        ' PMR_CC_EXCLUSIVE_TT:0 "#header Equipment or People#!\\nA company focuses on its machinery or on its people. The first Equipment or People tier it buys rules out the other column."',
+        ' PMR_CC_SHOW:0 "Show Company Culture"',
+        ' PMR_CC_SHOW_TT:0 "This company\'s Culture has not been read in yet (a new executive this month, or a game started before Company Culture). Click to bring it up to date; it also updates on its own at the start of each month."',
         ' PMR_CC_COLUMN_eq:0 "Equipment"',
         ' PMR_CC_COLUMN_pp:0 "People"',
         ' PMR_CC_COLUMN_sc:0 "Scale"',
         ' PMR_CC_COLUMN_TT_eq:0 "#header Equipment#!\\nThe company invests in its machinery: every level it owns needs fewer input goods.\\n\\nEach tier raises productivity about as much as the People tier beside it, at base prices for this company\'s buildings, or less where inputs are so cheap that the cut would pass 20%. Rules out People."',
         ' PMR_CC_COLUMN_TT_pp:0 "#header People#!\\nThe company invests in its workforce: fewer laborer jobs on every level it owns, and a few engineer jobs in their place, so fewer jobs in all.\\n\\nEngineer jobs left empty lower output like any unfilled job. Rules out Equipment."',
         ' PMR_CC_COLUMN_TT_sc:0 "#header Scale#!\\nMore throughput on every level the company owns."',
-        ' PMR_CC_NODE_QUEUED:0 "#v Queued#!"',
         ' PMR_CC_NODE_OWNED:0 "#v Bought#!"',
-        ' PMR_CC_NODE_QUEUE_FULL:0 "Queue full"',
         ' PMR_CC_NODE_RULED_OUT_eq:0 "Ruled out by People"',
         ' PMR_CC_NODE_RULED_OUT_pp:0 "Ruled out by Equipment"',
         ' PMR_CC_NODE_RULED_OUT_sc:0 ""',
-        f' PMR_CC_QUEUE:0 "#v {v("pmr_cc_qlen", 0)}#! queued, bought in order as points arrive"',
-        ' PMR_CC_QUEUE_CLEAR:0 "Clear queue"',
-        ' PMR_CC_QUEUE_CLEAR_TT:0 "Empty the queue. Points already spent stay spent."',
-        ' PMR_CC_ACTIVE_HEADER:0 "In Force"',
-        ' PMR_CC_ACTIVE_NONE:0 "Nothing bought yet. Click a tier above to buy it, or to queue it until the points arrive."',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
         ' PMR_CC_METHODS_INTRO:0 "Every recipe of this company\'s buildings, oldest to newest. Greyed: not yet researched. Gold: the newest one the country can run, which its levels retool to. Under each, the share of your levels running it."',
         ' PMR_CC_METHODS_NONE:0 "No recipes to retool"',
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
-        f' pmr_cc_test_points_decision_desc:0 "Gives every company of yours {TEST_POINTS} Culture points to spend, runs its queue and refreshes its Company Culture tab, so the tree can be tried without waiting. Levels do not change."',
+        f' pmr_cc_test_points_decision_desc:0 "Gives every company of yours {TEST_POINTS} Culture points to spend and refreshes its Company Culture tab, so the tree can be tried without waiting. Levels do not change."',
         ' building_employment_laborers_mult:0 "Laborer jobs"',
         ' building_employment_laborers_mult_desc:0 "Change to the laborer jobs of each building level."',
     ]
     for t in (1, 2, 3):
         pts = 'point' if t == 1 else 'points'
         loc += [f' PMR_CC_COST_{t}:0 "{t} {pts}"',
-                f' PMR_CC_NODE_BUY_{t}:0 "#P Buy now#!: {t} {pts}"',
-                f' PMR_CC_NODE_QUEUE_{t}:0 "Queue it: {t} {pts}"']
+                f' PMR_CC_NODE_BUY_{t}:0 "#P Buy#!: {t} {pts}"',
+                f' PMR_CC_NODE_NEED_{t}:0 "Needs {t} {pts}"']
     names = {k: n for _c, k, _col, n, _i in LINES}
     roman = ('I', 'II', 'III')
     for t in (1, 2, 3):
@@ -969,9 +915,6 @@ def localization(cal, rows, pms_techs):
             f' PMR_CC_TT_pp_{t}:0 "#header {names["pp"][t - 1]}#!\\nEvery level {co} owns has #v {l}#! fewer laborer jobs and #v {a}#! more engineer jobs: about {cut}% fewer jobs in all, so about #v +{p}#! productivity ({names["eq"][t - 1]}: +{e} at base prices). Engineer jobs left empty lower output like any unfilled job.\\n\\n'
             f'Costs #v {t}#! {pts}. People rules out Equipment for this company."',
             f' PMR_CC_TT_sc_{t}:0 "#header {names["sc"][t - 1]}#!\\nEvery level {co} owns has #v +{thr}%#! throughput in all.\\n\\nCosts #v {t}#! {pts}."',
-            f' PMR_CC_ACTIVE_eq_{t}:0 "#bold {names["eq"][t - 1]}#!: every level the company owns uses #v {x}#! fewer input goods."',
-            f' PMR_CC_ACTIVE_pp_{t}:0 "#bold {names["pp"][t - 1]}#!: #v {l}#! fewer laborer jobs and #v {a}#! more engineer jobs on every level the company owns."',
-            f' PMR_CC_ACTIVE_sc_{t}:0 "#bold {names["sc"][t - 1]}#!: #v +{thr}%#! throughput on every level the company owns."',
         ]
     desc = {'eq': 'Company Culture, Equipment: the levels this executive\'s company owns use fewer input goods.',
             'pp': 'Company Culture, People: the levels this executive\'s company owns need fewer laborers and some engineers.',
@@ -1004,7 +947,7 @@ def write_all(game, write, header_text, report):
     rows, untreated = method_rows(report, pms, comps)
     write('common/character_traits/pmr_cc_traits.txt', header_text + traits(cal))
     write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + MODIFIER_TYPES)
-    write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(cal) + CLEAR_EFFECT)
+    write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(cal))
     write('common/scripted_triggers/pmr_cc_triggers.txt', header_text + triggers())
     write('common/scripted_guis/pmr_cc_sguis.txt', header_text + sguis())
     write('common/on_actions/pmr_cc_on_actions.txt', header_text + ON_ACTIONS)

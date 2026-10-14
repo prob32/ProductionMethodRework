@@ -12,7 +12,9 @@ error there means the mechanism below never ran, and a missing log line is then 
 
 ## Latest: Company Culture, a trait tree on every company (test mod; a new game is best)
 
-Built from your answers of 2026-10-14 04:00Z. Every company's panel has a fourth tab, **Company Culture**:
+Built from your answers of 2026-10-14 04:00Z, changed at 12:37Z: **no queue** (a click spends points already
+earned), **no In Force list** (bought tiers carry a gold frame instead), and every company's tab is filled from the
+first day. Every company's panel has a fourth tab, **Company Culture**:
 
 - **Points.** Each month a company earns its prosperity times its size (x1, plus a tenth per 5 employed levels, at
   most x2). A full bar is one point and one Culture level; each level costs more (800 for the first, then
@@ -20,12 +22,13 @@ Built from your answers of 2026-10-14 04:00Z. Every company's panel has a fourth
 - **Three columns, tiers costing 1, 2 and 3 points.** Equipment (Refined Process I-III): fewer input goods on every
   level the company owns. People (Skilled Workforce I-III): fewer laborer jobs, one engineer job for every four
   laborer jobs cut, so 3 / 6 / 10% fewer jobs in all. Scale (Expanded Works I, II, Mass Production): +5 / +10 / +20%
-  throughput. The first Equipment or People tier bought or queued locks the other column. No charter bonus.
+  throughput. The first Equipment or People tier bought locks the other column. No charter bonus.
+- **Clicking.** Only a column's next tier can be clicked, and only when the company has the points ("Buy: 1 point").
+  Without them it reads "Needs 2 points" and does nothing. A bought tier gets a gold frame and reads "Bought".
 - **Matched per company on productivity.** Each Equipment tier raises a level's productivity as much as the People
   tier beside it (+3.1 / +6.4 / +11.1%) at base prices, so the input cut is company by company (-1.3% at Refined
   Process I for a steel firm, -5.6% for a plantation). Where inputs are so cheap that the cut would pass 20%
   (58 of 221 companies, mostly plantations), Equipment gains less. Table: `/mnt/project-files/pmr/mio/calibration.md`.
-- **Queue.** Clicking a tier you can't afford yet queues it (up to 3); the queue buys in order as points arrive.
 - **AI companies** earn and buy on their own, their column chosen from their inputs (People where inputs are small
   against value added), a quarter of the time the other one.
 - **Methods**: every recipe of the company's building types, greyed until researched, the newest you can run framed
@@ -35,33 +38,36 @@ Built from your answers of 2026-10-14 04:00Z. Every company's panel has a fourth
   executive gets them within a month.
 
 **Setup.** Same playset, only **Production Method Rework (Queue Test)**, updated in place. Start a **new game as
-Great Britain**. Older saves load too, but not the one where Hudson's Bay got the probe trait: that trait is gone
-from this build. Log lines: `PMR;rec=CC` in debug.log, your companies only.
+Great Britain** (your save from this morning loads too; see item 1). Log lines: `PMR;rec=CC` in debug.log, your
+companies only.
 
-1. **The tab.** Open any company (yours or a foreign one): a fourth tab, **Company Culture**, next to Statistics.
-   **No fourth tab:** PMR's copy of the company panel didn't load; send me error.log lines with `company_panel`.
-   **The tab opens empty or broken:** the tab's layout failed; send me a screenshot and error.log lines with
-   `pmr_company_culture`.
-2. **Points come in.** After the first 1st of a month: "Culture Level 0", a bar with funds / 800, and "+N a month,
-   next point in about M months". debug.log has one `PMR;rec=CC;` line a month per company of yours (`rate=`,
-   `funds=`). **No CC lines at all:** the monthly hook never ran; send me error.log lines with `pmr_cc`. **Lines
-   with rate=0 while the company's prosperity (Overview tab) is above 5:** the prosperity read is wrong. A company
-   at prosperity 0 earning nothing is expected.
-3. **Buying.** Take the decision **PMR test: 6 Culture points for each of your companies**. Each tab shows 6 points
-   to spend. Click **Skilled Workforce I**: it turns **Bought**, the points drop to 5, a `PMR;rec=CC_BUY;...line=pp`
-   line appears, the In Force list names it, and the whole Equipment column reads "Ruled out by People" and can't be
-   clicked. **Nothing happens on click:** the button's script refused; tell me what the node said before you clicked.
+1. **The tab is filled from day one.** Open the Hudson's Bay Company, then the East India Company, switching between
+   them with the tab left open: each shows "Culture Level 0", a bar at 0 / 800 and its tree, with no month passed.
+   In this morning's save a company not yet read shows one button, **Show Company Culture**; clicking it brings up
+   the tree. **"0 / 0" anywhere:** can't happen any more, so send a screenshot. **The tree is missing in a new game
+   (only the button shows):** the game-start hook didn't run; send error.log lines with `pmr_cc`. **The button does
+   nothing:** its script failed; same lines.
+2. **Points come in.** After the first 1st of a month: "+N a month, next point in about M months" under the bar.
+   debug.log has one `PMR;rec=CC;` line a month per company of yours (`rate=`, `funds=`). **No CC lines at all:**
+   the monthly hook never ran; send me error.log lines with `pmr_cc`. **Lines with rate=0 while the company's
+   prosperity (Overview tab) is above 5:** the prosperity read is wrong. A company at prosperity 0 earning nothing is
+   expected.
+3. **Buying.** Before the decision, every tier I reads "Needs 1 point" and clicking it does nothing. Take the
+   decision **PMR test: 6 Culture points for each of your companies**: each tab shows 6 points to spend and the tier
+   I nodes read "Buy: 1 point". Click **Skilled Workforce I**: it gets a gold frame and reads **Bought**, the points
+   drop to 5, a `PMR;rec=CC_BUY;...line=pp` line appears, and the whole Equipment column reads "Ruled out by People"
+   and can't be clicked. **Nothing happens on click:** the button's script refused; tell me what the node said
+   before you clicked. **Bought but no frame:** the frame failed to draw; send a screenshot.
 4. **The bonus reaches the buildings.** Open a building the company owns and hover over its employment and its
    inputs: an "Executive Trait" line for the tier, as in the Hudson's Bay test (laborer jobs down, engineer jobs up
    for People; input goods down for Equipment; throughput up for Scale). A building the company doesn't own is
    unchanged. **No line but the CC_BUY line is there:** the trait didn't reach the executive; open the executive's
    character window and tell me whether the trait shows.
-5. **Queue.** Buy Skilled Workforce II and Expanded Works I (5 points down to 2), then click Skilled Workforce III
-   (3 points): it shows **Queued**, the row under the tree says "1 queued", and a `CC_QUEUE` line appears. Take the decision again: the queued tier is bought at once. **Clear
-   queue** empties it without refunding anything. **A queued tier never buys when points arrive:** send me the CC
-   lines from that month.
+5. **Not enough points.** Buy Skilled Workforce II and Expanded Works I (5 points down to 2). Skilled Workforce III
+   now reads "Needs 3 points" and clicking it does nothing; Expanded Works II reads "Buy: 2 points". **Skilled
+   Workforce III can be bought with 2 points:** the price check is wrong; send the CC_BUY lines.
 6. **AI companies.** Play on a few years (or run as observer), then open some foreign companies' tabs: levels above
-   0 and some tiers Bought, People mostly for farms, mines and plantations and Equipment mostly for factories and
+   0 and some tiers framed, People mostly for farms, mines and plantations and Equipment mostly for factories and
    shipyards. **All still at level 0 with full bars:** AI buying is broken; **bars empty after years:** AI companies
    don't earn.
 7. **Methods.** In the tab's Methods list, each of the company's building types shows its recipes oldest to newest:
