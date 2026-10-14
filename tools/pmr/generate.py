@@ -116,6 +116,12 @@ ABROAD_SLOT = 0
 # funded like any other. Its cap (pmr_cap_priv1_<b>) is what it has queued plus the room; a site under construction
 # exists at level 0 (Pat's 1836 save), so level_after_queued_constructions counts every queued level against it.
 # It goes once every queued level has landed and been counted (release()).
+# Pat's console check 2026-10-14 (ai_evaluate_autonomous_construction) gave Jamaica's queued coffee site "Should
+# construct: NO" with room for 4 more, where a fresh site and a vanilla ranch with a level queued said YES. The
+# 1.14.5 code behind it (the "Should construct" test, 0x141514c50 and its inlined copies in the console commands)
+# lets the AI add to a building that already exists only at PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8)
+# employment or if it hired last week, and where the state lacks workforce only at full employment with spare
+# infrastructure. A site with no jobs never passes, so stacking needs the crew below (RETOOL_CREW).
 RETOOL_STACK = True
 # Pat, 2026-10-13: private retool buildings get a crew so investors can expand them. 1.14.5's AI
 # expands no building under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8) employment unless it
@@ -126,7 +132,13 @@ RETOOL_STACK = True
 # "Retooling: Iron Mines" at level 1 in Yorkshire) and investors did not stack levels on them. So
 # RETOOL_CREW is 0: no crew, and a private retool building goes the moment its level is counted, as a
 # government one does. Only construction sites still show while they build.
-RETOOL_CREW = 0
+# Pat, 2026-10-14 01:34Z: give the site employment and income so the AI's expansion test passes. The 03:37Z crew
+# earned nothing, so it could not pay to hire (1.14.5 logs "cant_afford_hires"). Now each level employs
+# RETOOL_CREW and makes RETOOL_CREW_OUTPUT of RETOOL_CREW_GOOD at full staff, a little more than the crew's wages,
+# so it hires, stays staffed and investors may add levels; it stays while staffed (RETOOL_CREW_GRACE_DAYS).
+RETOOL_CREW = 10
+RETOOL_CREW_GOOD = 'services'   # local, cost 30: 0.1 a week is about 3, against a few pounds a week for 10 laborers
+RETOOL_CREW_OUTPUT = 0.1
 RETOOL_CREW_POP = 'laborers'
 # A private retool building with a finished level stays while its crew is hiring; one still short of
 # RETOOL_CREW_STAFFED this many days after its last level landed goes, so the next level is a new
@@ -945,7 +957,7 @@ def main():
 
         for rbx in priv_slots(b):
             loc += [f' {rbx}:0 "Retooling: ${bk}$"',
-                    f' {rbx}_desc:0 "Privately funded construction that switches one level of ${bk}$ to its newest recipe. Investors from countries that own part of the building fund the privately owned share. ' + (f'A crew of {RETOOL_CREW} keeps it staffed so investors can add more levels to it.' if RETOOL_CREW else
+                    f' {rbx}_desc:0 "Privately funded construction that switches one level of ${bk}$ to its newest recipe. Investors from countries that own part of the building fund the privately owned share. ' + (f'Each level employs a crew of {RETOOL_CREW}, paid from a little ${RETOOL_CREW_GOOD}$ they make, so investors can add levels to it while it is staffed.' if RETOOL_CREW else
        'Investors may queue several levels on it at once; it goes once they are all done.' if RETOOL_STACK else 'It goes once its level is done.') + '"']
         for r in recipes:
             if isinstance(r, ElectricRecipe):
@@ -1114,7 +1126,9 @@ def main():
     write('common/production_methods/pmr_retool_production_methods.txt', header + RETOOL_CREW_DOC +
           'pm_pmr_retool_crew = {\n'
           f'\ttexture = "{RETOOL_CREW_ICON}"\n'
-          '\tbuilding_modifiers = {\n\t\tunscaled = {\n'
+          '\tbuilding_modifiers = {\n\t\tworkforce_scaled = {\n'
+          f'\t\t\tgoods_output_{RETOOL_CREW_GOOD}_add = {RETOOL_CREW_OUTPUT}\n'
+          '\t\t}\n\t\tlevel_scaled = {\n'
           f'\t\t\tbuilding_employment_{RETOOL_CREW_POP}_add = {RETOOL_CREW}\n'
           '\t\t}\n\t}\n}\n')
     write('common/production_method_groups/pmr_retool_groups.txt', header +
@@ -1741,11 +1755,10 @@ RETOOL_TRIGGERS_DOC = """# State scope. pmr_retool_room_gov_<b>: true while the 
 """
 
 
-RETOOL_CREW_DOC = f"""# The crew of a private retool building: {RETOOL_CREW} {RETOOL_CREW_POP} whatever its level ("unscaled"; vanilla
-# documents unscaled building_modifiers but uses them only for other modifiers). 1.14.5 always lets a
-# building with fewer than MINIMUM_EMPLOYEES (10) employees hire, though a retool building earns
-# nothing, and its AI expands only buildings at PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8)
-# employment or that hired last week.
+RETOOL_CREW_DOC = f"""# The crew of a private retool building: {RETOOL_CREW} {RETOOL_CREW_POP} per level, making {RETOOL_CREW_OUTPUT} {RETOOL_CREW_GOOD}
+# per level at full staff so it can pay them. 1.14.5's AI adds levels to a building that exists only at
+# PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8) employment or if it hired last week, and a building that
+# earns nothing cannot afford to hire.
 
 """
 

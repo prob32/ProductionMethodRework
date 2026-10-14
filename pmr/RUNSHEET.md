@@ -1,4 +1,4 @@
-# PMR run sheet: one retool site per building that investors may queue several levels on (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: one retool site per building with a paid crew so investors can add levels (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,7 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: one retool site per building, picked by investors, several levels at once (test mod, new game)
+## Latest: one retool site per building with a paid crew, so investors can add levels (test mod, new game)
 
 Third round of the queue test, after your call on 2026-10-14 that retooling must stay with investors. Investors
 pick retooling exactly as in 0.1.0: the building's own score x2, your priorities, Focus on Infrastructure, and
@@ -18,8 +18,10 @@ funding like any other investment. PMR queues nothing itself any more. Two thing
 
 - **One site per building, not five.** That is the speed gain: the AI keeps a record per country for every
   building type, and the four extra sites per building were most of them.
-- **Several levels at once on that site.** Investors may add a level to it while others are still queued or
-  building, up to the levels still to retool. It goes once they have all landed.
+- **A paid crew on that site.** The game adds a level to a building that already stands only if it employs 80% of its
+  jobs or hired last week (read in the 1.14.5 code behind `ai_evaluate_autonomous_construction`). A site had no jobs,
+  so Jamaica's said NO. Now each site level employs 10 laborers and makes 0.1 services a week to pay them, and the
+  site stays while it is staffed, so investors can queue more levels on it.
 
 Also fixed: round 2's Market Liberal file was missing its last brace.
 
@@ -30,15 +32,17 @@ the log and the save myself.
 1. **Investors pick retooling.** By mid-1836 your **Private** queue holds **Retooling: X** entries among
    investors' new buildings, as in 0.1.0. **None by July:** investors never pick the one site. Send me a
    screenshot of the Private tab.
-2. **Several levels on one site.** Somewhere in the year a building's retooling in one state has two or more
-   levels queued: two **Retooling: X** entries for the same state in the queue, or `queued_priv=2` or more on
-   its `PMR;rec=` line. **Never more than one per state all year:** investors won't add a level to a site that
-   is already queued, so each building retools one level per state at a time. Then the choice is four sites
-   (0.1.0's speed) or one level at a time.
+2. **The crew, then more levels.** Once a site's first level lands, it stands in that state's Buildings tab as
+   **Retooling: X** and hires 10 laborers within a few weeks. Then run
+   `ai_evaluate_autonomous_construction building_pmr_retool_<building>_1 STATE_<STATE>` on it: **Should construct:
+   YES**, and later two or more levels on it, or `queued_priv=2`+ on its `PMR;rec=` line. **Crew stays at 0:** it
+   can't afford to hire or finds no laborers; hover over its employment and send me the tooltip. **Staffed but NO:**
+   the employment rule isn't the only gate.
 3. **No red crosses.** A cross on a waiting **Retooling** entry: the game re-checks it and counts the entry
    against its own cap (vanilla's trade centres use the same check). Hover over it and send me the tooltip.
-4. **Levels land.** Bars move a level at a time; the site goes once nothing is queued on it. **Null:** a
-   Retooling building in a state's building list with nothing queued: the cleanup misses the stacked site.
+4. **Levels land.** Bars move a level at a time. The site stays while its crew is staffed and goes once its
+   building has nothing left to retool (or its crew is still short 90 days after its last level). **Null:** a
+   Retooling building standing after its building is fully retooled.
 5. **Abroad.** Where your investors own levels abroad, retooling lands there too (`RETOOL_LEVEL` lines for that
    state). **None by 1837** while the state has levels to retool: the one site doesn't let the host's
    investors build it for you.
