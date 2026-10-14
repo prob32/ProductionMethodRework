@@ -36,6 +36,10 @@ laborers still count as employed. PMR now also replaces the game's state Buildin
 a **new game as Great Britain** (the site types changed). Play to 1 January 1837, save, quit and tell me; I read
 the log and the save myself.
 
+**Observer run (your 02:46Z call).** With no player country, PMR writes no `PMR;rec=` lines (they cover the
+player's states only), so an empty filter is expected, not a failure. Item 5 can't happen either: the abroad site
+opens only for levels the player owns abroad. Items 1, 3, 4 and 6 are read from the save, item 7 from error.log.
+
 1. **Investors pick retooling.** By mid-1836 your **Private** queue holds **Retooling: X** entries among
    investors' new buildings, as in 0.1.0. **None by July:** investors never pick the one site. Send me a
    screenshot of the Private tab.
@@ -65,7 +69,7 @@ the log and the save myself.
 8. **Timing (optional).** Time 1 Jan 1836 to 1 Jan 1837 at speed 5 with a stopwatch, once with only the
    published mod and once with only the test mod, each from a new game. **No speed-up while item 6 passes**
    means the retool sites weren't the drag; the share blend itself is (performance review 2, section 3).
-9. **Hidden from the Buildings tab.** Open a state with a **Retooling: X** entry in the queue that has landed a
+9. **Hidden from the Buildings tab.** PASSED 02:46Z (no tile, no gap). Open a state with a **Retooling: X** entry in the queue that has landed a
    level (the Private tab or the queue's location filter finds one) and look at its Buildings tab in both the grid
    and the list view (the toggle top right). Expect no **Retooling: X** tile or row, and every other building as
    before. **The site still shows:** the filter didn't apply; send me error.log lines naming
