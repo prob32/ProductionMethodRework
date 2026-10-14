@@ -88,7 +88,7 @@ RETOOL_AI_PER_EARNING = round(7500 / 52)
 RETOOL_AI_MULT = 2
 RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
-RETOOL_SLOTS = 1           # private retool buildings per building type; each starts as one new construction
+RETOOL_SLOTS = 2           # private retool buildings per building type: one at home, one abroad (ABROAD_SLOT)
 # The last slot is the player's investors' abroad (Pat 2026-10-13 19:25Z: no level abroad ever retooled). 1.14.5's
 # investment AI picks one state per building type and investor and only then tests can_build_private: Great
 # Britain's 15 retool candidates abroad in the 1844 save all sat in states where the host's own slot was open and
@@ -109,7 +109,13 @@ RETOOL_SLOTS = 1           # private retool buildings per building type; each st
 # and the priorities steer their picks, so they choose retooling again. The one site serves home and abroad:
 # where the player owns levels abroad (pmr_abroad_<b>) the host's investors pass the investor check
 # (pmr_retool_investor_abroad_<b>), and bg_pmr_retool keeps foreign pools off (foreign_investment_ai_factor 0).
-ABROAD_SLOT = 0
+# Pat, 2026-10-14 02:33Z (console, West Bengal coal mine): "I want my investors to be able to re-tool this coal mine";
+# whoever owns levels and has the technology may retool. The site scored "Foreign investment factor: x0" for Britain,
+# so only the East India Company's investors could build it. A foreign weight on the one site would let every pool
+# pick a foreign state its investors can't build in and lose that building's retooling at home (the 1844 save
+# above), so the abroad site comes back: slot 1 at home, slot 2 only where the player owns levels abroad, with
+# foreign weight. 90 private retool types against 0.1.0's 225.
+ABROAD_SLOT = 2
 # Pat, 2026-10-14 01:09Z: the one site may be queued for several levels at once ("allowing for one level of
 # re-tooling to be queued multiple levels as necessary"). So it takes all of its building's private room: investors
 # may add a level to it while others are still queued or building, each level an investment of its own, scored and

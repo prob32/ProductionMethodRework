@@ -16,8 +16,8 @@ Third round of the queue test, after your call on 2026-10-14 that retooling must
 pick retooling exactly as in 0.1.0: the building's own score x2, your priorities, Focus on Infrastructure, and
 funding like any other investment. PMR queues nothing itself any more. Two things differ from 0.1.0:
 
-- **One site per building, not five.** That is the speed gain: the AI keeps a record per country for every
-  building type, and the four extra sites per building were most of them.
+- **Two sites per building, not five:** one at home and one abroad (your 02:33Z call, item 5). That is the speed
+  gain: the AI keeps a record per country for every building type, and the extra sites were most of them.
 - **A paid crew on that site.** The game adds a level to a building that already stands only if it employs 80% of its
   jobs or hired last week (read in the 1.14.5 code behind `ai_evaluate_autonomous_construction`). A site had no jobs,
   so Jamaica's said NO. Now each site level employs 10 laborers and makes 0.1 services a week to pay them, and the
@@ -51,10 +51,14 @@ the log and the save myself.
 4. **Levels land.** Bars move a level at a time. The site stays while its crew is staffed and goes once its
    building has nothing left to retool (or its crew is still short 90 days after its last level). **Null:** a
    Retooling building standing after its building is fully retooled.
-5. **Abroad.** Where your investors own levels abroad, retooling lands there too (`RETOOL_LEVEL` lines for that
-   state). **None by 1837** while the state has levels to retool: the one site doesn't let the host's
-   investors build it for you.
-6. **The save.** I count the AI's retool records: about 40% of 0.1.0's at the same date. **The same count as
+5. **Abroad.** Your 02:33Z call: your own investors retool levels you own abroad. Where you own levels abroad the
+   site is now its own type, `building_pmr_retool_<building>_2` (home stays `_1`), and your investors weigh it
+   like any foreign investment. Check: `ai_evaluate_autonomous_construction building_pmr_retool_coal_mine_2
+   STATE_WEST_BENGAL` should show **Foreign investment factor: x1**, not x0, and a score above 0. Within a few
+   months, expect a **Retooling: Coal Mines** entry in West Bengal in your Private queue. **x0 again:** the abroad
+   group's foreign weight didn't apply. **x1 but never queued by 1838:** the AI's one-state-per-type pick still
+   lands somewhere your investors can't build. Send me the console output.
+6. **The save.** I count the AI's retool records: about 55% of 0.1.0's at the same date (180 retool types, not 315). **The same count as
    0.1.0** means the published mod was loaded, not the test one.
 7. **Market Liberal.** I read error.log for lines naming `ideology_market_liberal` or `zz_pmr_market_liberal`.
    **A line there** means the game doesn't accept the replace for ideologies.
