@@ -327,8 +327,10 @@ THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the preview, 1024 x 1
 # the Workshop upload the mod's root folder (Steam showed a blank preview without the root copy, fixed 2026-10-14)
 # Dev-only probes, each laid out like a mod (pmr/test_probes/<probe>/common/...), copied as they are into test
 # builds only. Pat 2026-10-14 03:42Z: one live and one test mod, so probes ride in the test build rather than in
-# add-on mods. None at present: works_probe (the Hudson's Bay executive trait) passed 03:51Z and was retired
-# when Company Culture (company_culture.py) took over building_employment_laborers_mult.
+# add-on mods. works_probe (the Hudson's Bay executive trait) passed 03:51Z and was retired when Company Culture
+# (company_culture.py) took over building_employment_laborers_mult. buyin_probe (Pat 13:54Z): eight decisions that
+# rewrite the Valencia paper mill's owners with create_building / add_ownership, for the foreign buy-in design
+# (/mnt/project-files/pmr/foreign-buyin/DESIGN.md, section Probe).
 TEST_PROBES = os.path.join(ROOT, 'pmr', 'test_probes')
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')

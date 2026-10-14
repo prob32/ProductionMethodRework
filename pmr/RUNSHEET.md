@@ -1,4 +1,4 @@
-# PMR run sheet: Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Company Culture tab on every company (test mod), a foreign buy-in probe (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -74,6 +74,50 @@ companies only.
    unresearched ones greyed, the newest you can run in a gold frame, your share of levels under each. **A building
    type with no row:** PMR doesn't retool it (3 types, said in the row).
 8. **No errors.** error.log has no line with `pmr_cc` or `pmr_company_culture`.
+
+## Next: foreign buy-in probe (test mod; after the Company Culture test, the same new game is fine)
+
+From the "Foreign retooling earns ownership" thread (design: `/mnt/project-files/pmr/foreign-buyin/DESIGN.md`,
+section Probe). The question: can script rewrite who owns a building's levels? Eight decisions, **PMR test: buy-in
+probe step 1** to **step 7b**, each rewrite the owners of **Valencia's paper mill** (Spain) with `create_building`
+and `add_ownership`, and log the mill before and after.
+
+**Setup.** The same Queue Test game as above, or any new 1836 game; any country. Before step 1, open Valencia
+(Spain), hover the paper mill's Owners list and note it. Take the decisions **in order, one per in-game day**
+(unpause a day between them). After each, note the mill's level and Owners list. Every step writes two lines:
+
+```
+findstr /C:"BUYIN_PROBE" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\logs\debug.log"
+```
+
+`PMR;rec=BUYIN_PROBE;arm=S1_BEFORE;...;level=;spa=;gbr=;gov_pct=` then `arm=S1_AFTER`: the mill's level, the levels
+owned by Spain and by Britain (government and investors together, -1 if there is no mill) and Spain's government
+share in steps of 10%. Read every step against its own BEFORE line, not against the expectation, because each step
+starts where the last one left the mill. Afterwards send me the BUYIN_PROBE lines and any error.log line naming
+`create_building`, `add_ownership`, `region`, `levels` or `pmr_bp`.
+
+**No BUYIN_PROBE lines at all, or no "buy-in probe" decisions:** the probe files didn't load; send error.log lines
+with `pmr_bp` or `buyin`. That is not an answer to any question below.
+
+1. **Constants** (Spanish government 1, British financial district in the Home Counties 1). Expected: 3 levels,
+   spa=2, gbr=1 (the listed owners set, Spain's own district kept). **More levels and Spain not reduced:** stakes
+   add rather than set, so levels can't be moved this way. **AFTER = BEFORE and no error:** `create_building` ignores
+   ownership on a building that already exists; nothing below can work. **Production methods reset to defaults**
+   (Owners list fine): workable, note it.
+2. **Scoped country** (Britain through a saved scope at 2, Spanish government 0). Expected: 3 levels, spa=1, gbr=2,
+   gov_pct=0. **Unchanged or an error:** `country =` takes a literal tag only.
+3. **Scoped region** (Britain's district found from its capital at 3, Spain's district 0). Expected: 3 levels, gbr=3,
+   spa=0. **Unchanged or an error:** `region =` takes a literal state key only.
+4. **Variable count** (Britain at a variable set to 2). Expected: 2 levels, gbr=2. **Unchanged or an error:** `levels =`
+   takes numbers only.
+5. **Missing owner** (a British financial district in Munster, which has none in 1836, at 1). Any of three answers:
+   a new owner in the Owners list (gbr up by one); nothing; or an error.log line. Tell me which.
+6. **Read-back** (Home Counties district set to 3, logged inside the same effect). Also writes `S6_MID_BEFORE` and
+   `S6_MID_AFTER`. **MID_AFTER shows the new level:** script sees the change at once. **MID_AFTER = MID_BEFORE but the
+   Owners list changed:** the change lands later, so the design needs a day's wait between steps.
+7. **7a, plain level** (`level = 1` on the existing mill). Expected from the docs: no change. **One level fewer:** note
+   which owner lost it. **7b, stake of -1** (Home Counties district `levels = -1`). **gbr one lower and one level
+   fewer:** a stake can be lowered by one. **Unchanged or an error:** not available.
 
 ## Latest: one retool site per building with a paid crew, so investors can add levels (test mod, new game)
 
