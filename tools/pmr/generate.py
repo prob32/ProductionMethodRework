@@ -35,10 +35,10 @@ What it does, building by building (see pmr/README.md for the design):
    the first method of its lock group, so a share and lock that are both unavailable settle at once
    (a new building can inherit them from two different buildings; with ``_any`` last that froze the game).
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
-   building's construction cost: one private one, ``building_pmr_retool_<b>_1``, which the tick queues
-   itself as privately funded construction for the privately owned levels, one level at a time while
-   the owner's investment pool and construction have room to spare (RETOOL_PRIVATE_GATE), and one
-   government one, ``building_pmr_retool_gov_<b>``, queued by the government.
+   building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, built
+   by investors who own part of the building (with ABROAD_SLOT, that one only where the player owns
+   levels abroad and the others only elsewhere; without, the one site everywhere), and one government
+   one, ``building_pmr_retool_gov_<b>``, queued by the government.
    Abroad the player's government retools its own levels on ``building_pmr_retool_gova_<b>``, a site the tick keeps
    standing so the upgrade button can expand it into the government construction queue.
    The government retools the levels it owns that don't run the target yet; private investors the
@@ -83,33 +83,40 @@ GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from 
 # weighed a pound at 7,500 and added 150,000, so retool sites scored 39,000..75,000 before the roll
 # against 30..3,400 for new builds (a tea plantation 14,000) and took every pick. For the 48 investable
 # types private_investment.py swaps RETOOL_AI_BASE for the building's own ai_value (pmr_ai_value_<b>).
-# Since the script queue (RETOOL_PRIVATE_GATE) this weighs only the government site, for AI governments.
 RETOOL_AI_BASE = 1000
 RETOOL_AI_PER_EARNING = round(7500 / 52)
 RETOOL_AI_MULT = 2
 RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
-RETOOL_SLOTS = 1           # private retool building types per building type
-# Pat, 2026-10-14 00:10Z ("Script-queued slot", performance review 2): the four home slots and the abroad slot
-# went. Each was one more building type per PMR building, and the country AI keeps a record per country per
-# building type and re-checks it on its own clock even when it can never build it: in Pat's 1837 autosave the
-# 315 retool types held 78% of the AI's building records (66 MB of a 220 MB save). Investors no longer pick
-# private retooling (ai_value 0): the tick queues it on the one
-# private site with start_privately_funded_building_construction, which was PMR's private queue until 20c1f04
-# and landed in the Private queue once bg_pmr_retool sat under bg_manufacturing (d051f30). The effect names no
-# investor, so the state owner's pool pays, abroad too (inferred; Pat 2026-10-13 23:10Z: the host's investors may
-# retool levels abroad, which stay their owners'). This retires the 2x retool score (Pat 20:12Z), Focus on
-# Infrastructure's retool weight and companies listing retool sites (Pat 22:53Z), for private retooling only.
-# Pat, 2026-10-14 00:39Z: no fixed number in flight; queue as much as the investor can implement. So each check
-# (the monthly tick, research, a level landing) adds one level, and only while the state owner's investment pool
-# is growing and the country has the construction to spend it: the level then starts at once instead of waiting
-# in the queue, and retooling spends only what investors leave unspent, so their builds (which the priorities
-# steer) are never pushed back. The first queue test (af82983) kept up to 4 in flight per building per state and
-# let the site be built only while pmr_pq_<b> was set around its own queueing; the game re-checks
-# can_build_private for every waiting construction, so each waiting retool level showed as invalid (red cross,
-# Pat's queue 00:35Z). The site is now buildable while its building's retooling is open (pmr_retool_gate_<b>).
-RETOOL_PRIVATE_GATE = ('investment_pool > 0 investment_pool_net_income > 0 '
-                       'has_sufficient_construction_capacity_for_investment = yes')
+RETOOL_SLOTS = 1           # private retool buildings per building type; each starts as one new construction
+# The last slot is the player's investors' abroad (Pat 2026-10-13 19:25Z: no level abroad ever retooled). 1.14.5's
+# investment AI picks one state per building type and investor and only then tests can_build_private: Great
+# Britain's 15 retool candidates abroad in the 1844 save all sat in states where the host's own slot was open and
+# Britain owned no level, so none could be built, and the West Bengal coal mine (Britain's two levels, both
+# slots open a year) never got one. So slots 1..ABROAD_SLOT-1 open only where investors retool at home, in
+# bg_pmr_retool with foreign_investment_ai_factor = 0 (vanilla's building-group weight for investing abroad), and
+# ABROAD_SLOT opens only where the player owns levels abroad (pmr_abroad_<b>), in bg_pmr_retool_abroad, so the
+# player's pool finds a state its investors may build in.
+# Pat, 2026-10-13 22:37Z: still only home retooling, with the West Bengal coal mine's abroad slot open since 1839.
+# The state pick tests can_build_private as the host's investors would (pmr_retool_investor_abroad_<b>), so the
+# abroad slot lets the host pass; and its Focus on Infrastructure weight is the investor's, not the host's
+# (private_investment.py, pmr_reinvest_mult_abroad_<g>).
+# Pat, 2026-10-14: one private site per building, picked by investors (ABROAD_SLOT 0: no slot of its own abroad).
+# Performance review 2 measured a record per country per building type in the AI, 78% of them for the 315 retool
+# types in Pat's 1837 save; slots 2..5 were four of the five private types per building. The script-queued
+# test that replaced them (af82983, 672ae8e) queued levels the investment pool could not fund: the game marks
+# those invalid (red cross) and the pool sat at zero. Investors queue a build only once the pool can fund it,
+# and the priorities steer their picks, so they choose retooling again. The one site serves home and abroad:
+# where the player owns levels abroad (pmr_abroad_<b>) the host's investors pass the investor check
+# (pmr_retool_investor_abroad_<b>), and bg_pmr_retool keeps foreign pools off (foreign_investment_ai_factor 0).
+ABROAD_SLOT = 0
+# Pat, 2026-10-14 01:09Z: the one site may be queued for several levels at once ("allowing for one level of
+# re-tooling to be queued multiple levels as necessary"). So it takes all of its building's private room: investors
+# may add a level to it while others are still queued or building, each level an investment of its own, scored and
+# funded like any other. Its cap (pmr_cap_priv1_<b>) is what it has queued plus the room; a site under construction
+# exists at level 0 (Pat's 1836 save), so level_after_queued_constructions counts every queued level against it.
+# It goes once every queued level has landed and been counted (release()).
+RETOOL_STACK = True
 # Pat, 2026-10-13: private retool buildings get a crew so investors can expand them. 1.14.5's AI
 # expands no building under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8) employment unless it
 # hired last week, and a building under MINIMUM_EMPLOYEES (10) employees always tries to hire, even
@@ -126,10 +133,15 @@ RETOOL_CREW_POP = 'laborers'
 # construction again, as before the crew existed.
 RETOOL_CREW_GRACE_DAYS = 90
 RETOOL_CREW_STAFFED = 0.8
-# Pat, 2026-10-13 (reversing 2026-10-12): companies listed private retooling, so a company could own and expand
-# it, and from 22:53Z the retooling of their additional industries too. Off again since the script queue
-# (RETOOL_PRIVATE_GATE): investors no longer choose retool sites, so a company listing one changes nothing.
-COMPANY_RETOOL = False
+# Pat, 2026-10-13 (reversing 2026-10-12): companies list retooling again, so a company can own and
+# expand it. Only the first private retool building of each type, which also takes the levels that
+# can stack, so each company panel shows one Retooling icon per building type it lists.
+COMPANY_RETOOL = True
+COMPANY_RETOOL_SLOTS = 1
+# Pat, 2026-10-13 20:00Z: companies also list ABROAD_SLOT, so a company owning levels abroad can own their
+# retooling and its company weight counts there; the first slot opens only at home since 2d3f175. A company
+# panel then shows a second Retooling icon per building type it lists.
+COMPANY_RETOOL_ABROAD = bool(ABROAD_SLOT)
 # Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
 # building. Pat, 2026-10-13: muted, in Victoria 3's own style, and no red or green, which read as bad
 # and good. Drawn on vanilla's stacked bar chart texture, as the Owners bar is.
@@ -933,7 +945,8 @@ def main():
 
         for rbx in priv_slots(b):
             loc += [f' {rbx}:0 "Retooling: ${bk}$"',
-                    f' {rbx}_desc:0 "Privately funded construction that switches privately owned levels of ${bk}$ to their newest recipe, paid from the investment pool. PMR adds a level while the pool is growing and there is construction to spare. It goes once its levels are done."']
+                    f' {rbx}_desc:0 "Privately funded construction that switches one level of ${bk}$ to its newest recipe. Investors from countries that own part of the building fund the privately owned share. ' + (f'A crew of {RETOOL_CREW} keeps it staffed so investors can add more levels to it.' if RETOOL_CREW else
+       'Investors may queue several levels on it at once; it goes once they are all done.' if RETOOL_STACK else 'It goes once its level is done.') + '"']
         for r in recipes:
             if isinstance(r, ElectricRecipe):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
@@ -1058,7 +1071,8 @@ def main():
     # ---- companies: a company that owns a building type may own its private retooling ----------
     # When the investment pool builds a building type a company lists in building_types, the company
     # can be chosen as owner (OWNER_COMPANY_EXPANSION_CHANCE_MULTIPLIER, x OWNER_COMPANY_OWN_STATE_MULT
-    # in its headquarters state). With COMPANY_RETOOL each treated type's private retool building is listed beside it,
+    # in its headquarters state). With COMPANY_RETOOL each treated type's first COMPANY_RETOOL_SLOTS
+    # private retool buildings (and ABROAD_SLOT with COMPANY_RETOOL_ABROAD) are listed beside it,
     # rewriting the vanilla company files with only those lines inserted. Off 2026-10-12 to keep
     # Retooling icons out of the company panels; on again 2026-10-13 (Pat): the autonomous investment
     # AI favours expanding a building a company lists
@@ -1072,7 +1086,9 @@ def main():
     # In extension_building_types they would be offered as additional industries of their own instead.
     report['company_types'] = []
     if COMPANY_RETOOL:
-        retool_of = {t[0]: priv_slots(short(t[0])) for t in treated}
+        retool_of = {t[0]: priv_slots(short(t[0]))[:COMPANY_RETOOL_SLOTS]
+                     + (priv_slots(short(t[0]))[ABROAD_SLOT - 1:ABROAD_SLOT] if COMPANY_RETOOL_ABROAD else [])
+                     for t in treated}
         for csrc in load_dir(game, 'company_types'):
             for ck, cn in csrc.objects().items():
                 bt = pdx.get(cn.value, 'building_types')
@@ -1113,10 +1129,13 @@ def main():
           '# Districts, Manor Houses) pick by the building groups their investment_scores name, which a\n'
           '# child group inherits from its parent. bg_manufacturing is the parent with no land usage or\n'
           '# resource cap to inherit; Financial Districts score it.\n'
-          '# PMR\'s tick queues the private retool levels itself (RETOOL_PRIVATE_GATE in tools/pmr/generate.py);\n'
-          '# no investor picks them, at home or abroad.\n'
+          '# Investors retool at home in bg_pmr_retool and abroad in bg_pmr_retool_abroad (see ABROAD_SLOT in\n'
+          '# tools/pmr/generate.py): a foreign pool weighs the home slots at 0, so it does not pick a state where\n'
+          '# only the host\'s investors may build.\n'
           'bg_pmr_retool = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
           '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n\n'
+          'bg_pmr_retool_abroad = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
+          '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 1\n}\n\n'
           '# The government-owned share is retooled by the government: the player builds it from the state,\n'
           '# AI governments by ai_value. Shaped on bg_government, which is how vanilla marks government-only\n'
           '# construction; the lens puts it in the development construction list.\n'
@@ -1205,13 +1224,13 @@ def main():
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
-    loc += [' bg_pmr_retool:0 "Retooling"',
+    loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
         write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
         loc += DECISION_LOC
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
-    # building files written above (company ai_value) and reads pmr_retool_buildings.txt.
+    # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     loc += private_investment.write_all(game, write, header, args.out)
     if args.trace_from:
         write('common/scripted_effects/pmr_trace_effects.txt', header + trace_pm_effects(game, args.out, args.trace_from))
@@ -1698,18 +1717,26 @@ def option_effects(bk, b, conv, goods_cost, recipes):
 
 
 # ---------------------------------------------------------------------------------------------
-# Retooling construction. Per building type, one private pseudo-building, building_pmr_retool_<b>_1, for the
-# privately owned share of the levels being retooled, which the tick queues itself as privately funded
-# construction (RETOOL_PRIVATE_GATE), and one government one, building_pmr_retool_gov_<b>, for its share,
-# which the government queues (the upgrade button, or an AI government by ai_value). Abroad the player's
-# government retools its own levels on building_pmr_retool_gova_<b>. The government sites are capped the way
-# vanilla caps trade centers under the canton system (can_build_government): the level after queued
-# constructions, plus the levels being added (scope:num_levels), may not pass the cap the tick stores on the
-# state. Every site keeps its levels until all have landed and been counted, then goes.
+# Retooling construction. Per building type, RETOOL_SLOTS private pseudo-buildings,
+# building_pmr_retool_<b>_<n>, built only by private investors for the privately owned share of the
+# levels being retooled, and one government one, building_pmr_retool_gov_<b>, for its share. Nothing
+# queues them: the investment pool and the government choose. 1.14.5's investment pool never queued a
+# second level on a retool building that had one, inferred to be its employment rule (RETOOL_CREW),
+# so a private retool building has a fixed crew that keeps it fully employed. Each empty one takes one
+# level as a new construction; the rest of the private room goes to the first one with a finished
+# level, which investors may then expand. One whose crew is still short after RETOOL_CREW_GRACE_DAYS
+# is removed once its levels are counted, so its next level is a new construction again. Every
+# retool building is capped the way vanilla caps trade centers under the canton system (in both
+# can_build_government and can_build_private): the level after queued constructions, plus the levels
+# being added (scope:num_levels), may not pass the cap the tick stores on the state.
 
 RETOOL_TRIGGERS_DOC = """# State scope. pmr_retool_room_gov_<b>: true while the government may add scope:num_levels more
 # retool levels in the state, against pmr_cap_gov_<b>, recomputed by pmr_split_retool_<b> every tick.
 # pmr_retool_room_gova_<b>: the same for the player's government abroad (pmr_abroad_<b>), on its own site.
+# pmr_retool_room_priv_<b>_<n>: the same for private retool building n, against pmr_cap_priv<n>_<b>.
+# pmr_retool_investor_<b>: true when scope:investor_country's investors own part of the building, so
+# an investment agreement alone does not let a foreign pool retool it.
+# pmr_retool_investor_abroad_<b>: the same for the abroad slot, where the host's own investors also pass.
 
 """
 
@@ -1730,18 +1757,28 @@ def priv_slots(b):
 
 def retool_buildings(b, bk, icon):
     out = []
-    sides = [('priv', 'bg_pmr_retool', rbx, j) for j, rbx in enumerate(priv_slots(b), 1)]
+    sides = [('priv', 'bg_pmr_retool_abroad' if j == ABROAD_SLOT else 'bg_pmr_retool', rbx, j)
+             for j, rbx in enumerate(priv_slots(b), 1)]
     sides.append(('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}', 0))
     sides.append(('gova', 'bg_pmr_retool_gov_abroad', f'building_pmr_retool_gova_{b}', 0))
     for side, group, rb, j in sides:
         if side == 'priv':
-            who = ('\t# Privately funded. Every building vanilla lets private investors build says ownership_type = self.\n'
+            flag = f'pmr_retool_open_priv_{b}_{j}'
+            ai_limit = f'has_variable = {flag}'
+            who = ('\t# Private investors only, for the privately owned share. Every building vanilla lets private\n'
+                   '\t# investors build says ownership_type = self.\n'
                    '\townership_type = self\n'
                    f'\tcan_build_government = {{ always = no }}\n'
-                   '\t# Buildable while the building\'s retooling is open: the game re-checks this for every waiting\n'
-                   '\t# construction (a flag set only around the tick\'s own queueing left them all invalid). Only the\n'
-                   '\t# tick queues it: ai_value 0 keeps investors off.\n'
-                   f'\tcan_build_private = {{ has_variable = pmr_retool_gate_{b} }}\n')
+                   '\t# This one open, room left under its cap, and only investors from a country whose investors\n'
+                   '\t# own part of the building'
+                   + (', or the host\'s, whose check the game makes first (pmr_retool_investor_abroad_<b>)'
+                      if j == ABROAD_SLOT else
+                      '; where the player owns levels abroad, also the host\'s (pmr_retool_investor_abroad_<b>)'
+                      if not ABROAD_SLOT else '') + '.\n'
+                   f'\tcan_build_private = {{\n\t\thas_variable = {flag}\n\t\tpmr_retool_room_priv_{b}_{j} = yes\n'
+                   + (f'\t\tpmr_retool_investor{"_abroad" if j == ABROAD_SLOT else ""}_{b} = yes\n\t}}\n' if ABROAD_SLOT else
+                      f'\t\ttrigger_if = {{\n\t\t\tlimit = {{ has_variable = pmr_abroad_{b} }}\n\t\t\tpmr_retool_investor_abroad_{b} = yes\n\t\t}}\n'
+                      f'\t\ttrigger_else = {{ pmr_retool_investor_{b} = yes }}\n\t}}\n'))
             pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_dummy'
         elif side == 'gov':
             flag = f'pmr_retool_open_gov_{b}'
@@ -1766,12 +1803,11 @@ def retool_buildings(b, bk, icon):
             f'\tdownsizeable = no\n'
             '\t# Retool levels come only from the funders below, never from auto-expansion.\n'
             '\tshould_auto_expand = { always = no }\n'
-            f'\t# Open only while script is retooling a {bk} in this state.\n'
+            f'\t# Open only while script is retooling a {bk} in this state'
+            + (', where the player owns levels abroad' if j == ABROAD_SLOT else '') + '.\n'
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             + who +
             ('\t# Only ever the player\'s click: no AI scores it.\n\tai_value = 0\n' if side == 'gova' else
-             '\t# Only ever the tick queues it (RETOOL_PRIVATE_GATE): no investor scores it, and the 1.14.5\n'
-             '\t# investment roll skips a score of 0.\n\tai_value = 0\n' if side == 'priv' else
              '\t# While there is room: what an expansion of the building would score from its earnings\n'
              f'\t# (pmr_ai_w_<b>, set by the tick), x {RETOOL_AI_MULT}, so investors (or an AI government) are likelier\n'
              '\t# to retool it than to expand it.\n'
@@ -1810,6 +1846,47 @@ def retool_triggers(b, bk):
         '\t}\n'
         f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
         '}\n']
+    # A private retool building takes levels up to the cap the tick gives it (pmr_cap_priv<j>_<b>).
+    for j, rbx in enumerate(priv_slots(b), 1):
+        cap = f'pmr_cap_priv{j}_{b}'
+        out.append(f'pmr_retool_room_priv_{b}_{j} = {{\n'
+                   f'\thas_variable = {cap}\n'
+                   '\ttrigger_if = {\n'
+                   f'\t\tlimit = {{ exists = b:{rbx} }}\n'
+                   f'\t\tb:{rbx} = {{ level_after_queued_constructions <= pmr_room_value_priv_{b}_{j} }}\n'
+                   '\t}\n'
+                   f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
+                   '}\n')
+    # levels_owned_by_country counts "a country or investors in that country" (triggers.log), so for
+    # the state's own country it includes the government's levels: its investors need more than those.
+    # Vanilla compares the same trigger against c:RUS for the Manchurian railway.
+    out.append(
+        f'pmr_retool_investor_{b} = {{\n'
+        '\texists = scope:investor_country\n'
+        f'\texists = b:{bk}\n'
+        '\ttrigger_if = {\n'
+        '\t\tlimit = { owner = scope:investor_country }\n'
+        f'\t\thas_variable = pmr_gov_levels_{b}\n'
+        f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
+        '\t}\n'
+        f'\ttrigger_else = {{\n\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value >= 1 }} }}\n\t}}\n'
+        '}\n')
+    # The abroad slot (ABROAD_SLOT): any investors who own part of the building, and the host's own whatever they
+    # own. The investment AI picks a building type's one candidate state by testing can_build_private with the
+    # state's owner as scope:investor_country, and only then tests the investor itself (inferred from Pat's
+    # autosaves of 1 July 1839 and 1 January 1841: Britain's abroad slots were picked in exactly the states where
+    # the host's own investors owned levels, e.g. the Mysore coffee plantation and Quebec shipyard, and never in
+    # West Bengal, whose coal and iron mines Britain owns whole). So the host must pass for the player's investors
+    # to be offered the state at all; its own investors may then retool there too.
+    out.append(
+        f'pmr_retool_investor_abroad_{b} = {{\n'
+        '\texists = scope:investor_country\n'
+        f'\texists = b:{bk}\n'
+        '\tOR = {\n'
+        '\t\towner = scope:investor_country\n'
+        f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value >= 1 }} }}\n'
+        '\t}\n'
+        '}\n')
     return '\n'.join(out)
 
 
@@ -1848,10 +1925,12 @@ def gov_retool_country_sgui(bk):
 
 
 def retool_values(b):
-    """Building scope: the most retool levels the government retool building may have after queued
+    """Building scope: the most retool levels each retool building may have after queued
     constructions, before the scope:num_levels being added."""
     return (f'pmr_room_value_gov_{b} = {{\n\tvalue = state.var:pmr_cap_gov_{b}\n'
-            '\tsubtract = scope:num_levels\n}\n')
+            '\tsubtract = scope:num_levels\n}\n'
+            + ''.join(f'pmr_room_value_priv_{b}_{j} = {{\n\tvalue = state.var:pmr_cap_priv{j}_{b}\n'
+                      '\tsubtract = scope:num_levels\n}\n' for j in range(1, RETOOL_SLOTS + 1)))
 
 
 
@@ -1881,7 +1960,14 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     building's goods are the level-weighted mix of its recipes in its own production figures."""
     k = len(recipes)
     slots = list(enumerate(priv_slots(b), 1))
-    rbp = priv_slots(b)[0]                   # the private site, which the tick queues itself
+
+    def slot_here(j):
+        # the abroad slot only where the player owns levels abroad, the home slots everywhere else (ABROAD_SLOT);
+        # without an abroad slot, every slot everywhere
+        if not ABROAD_SLOT:
+            return ''
+        return (f'has_variable = pmr_abroad_{b}' if j == ABROAD_SLOT
+                else f'NOT = {{ has_variable = pmr_abroad_{b} }}')
     rbg = f'building_pmr_retool_gov_{b}'
     rbga = f'building_pmr_retool_gova_{b}'   # the player's government's site abroad
     v = lambda name: f'{name}_{b}'           # noqa: E731  state variable for this building type
@@ -2194,9 +2280,6 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     # Who may add retool levels, from who owns the building now. The levels still to retool (need)
     # are split by ownership; each side's room is its share less what it already has queued, and
     # the rooms never add up to more than need less everything queued.
-    pq_fields = ''.join(f";{n}=[THIS.Var('{v(var)}').GetValue|0]" for n, var in
-                        (('inflight', 'pmr_pending_priv'), ('room_priv', 'pmr_room_priv')))
-
     def clamp_to(name, other):
         return (f'\tif = {{ limit = {{ var:{v(name)} > var:{v(other)} }} '
                 f'{setv(name, "var:" + v(other))} }}\n')
@@ -2220,6 +2303,12 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
                 + on_index('pmr_to', lambda i: f'if = {{ limit = {{ var:pmr_elec = 0 }} {setv("pmr_room", 0)} {setv("pmr_elec_wait", 1)} }}'
                            if i in elec_tiers else f'{setv("pmr_elec_wait", 0)}')
                 if elec_tiers else '') +
+             ('' if RELEASE else
+                '\t# Diagnostic for the log: may the home investment pool fund this building\'s private retooling?\n'
+                '\tif = {\n\t\tlimit = { owner = { is_player = yes } }\n'
+                '\t\towner = { save_temporary_scope_as = investor_country }\n'
+                f'\t\tif = {{ limit = {{ pmr_retool_investor_{b} = yes }} {setv("pmr_inv_home", 1)} }}\n'
+                f'\t\telse = {{ {setv("pmr_inv_home", 0)} }}\n\t}}\n') +
              f'\t{setv("pmr_room_gov", "var:" + v("pmr_retool_gov"))}\n'
              f'\t{chg("pmr_room_gov", "subtract", "var:" + v("pmr_pending_gov"))}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} < 0 }} {setv("pmr_room_gov", 0)} }}\n'
@@ -2252,21 +2341,41 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_seen_gov")} }} }} {setv("pmr_seen_gov", 0)} }}\n'
              f'\t\t{chg("pmr_seen_gov", "add", 1)}\n'
              f'\t\t{chg("pmr_cap_gov", "add", 1)}\n\t}}\n'
-             '\t# Private (Pat 2026-10-14 00:39Z, RETOOL_PRIVATE_GATE): one privately funded level per check on the one\n'
-             '\t# private site, while the state owner\'s investment pool is growing and its country has the construction\n'
-             '\t# to spend it, so the level starts at once and spends only what investors leave unspent.\n'
-             f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_room_priv")} > 0 owner = {{ {RETOOL_PRIVATE_GATE} }} }}\n'
-             f'\t\tstart_privately_funded_building_construction = {rbp}\n'
-             '\t\t# read again, so what is in flight includes what the game took\n'
-             f'\t\tpmr_read_retool_{b} = yes\n'
-             f'\t\t{log("PQUEUE", bk, b, k, extra=pq_fields)}\n'
-             '\t}\n'
+             + ('\t# Private: the retool building takes the whole room (RETOOL_STACK), so investors may queue\n'
+                '\t# several levels on it at once. Its cap (pmr_cap_priv<j>_<b>) is what it has plus the room.\n'
+                if RETOOL_STACK else
+                '\t# Private: each empty retool building may take one level, as a new construction; the rest\n'
+                '\t# of the room goes to the first one with a finished level, whose crew lets investors\n'
+                '\t# expand it. Each gets a cap (pmr_cap_priv<j>_<b>) of what it has plus its share.\n') +
+             '\t# The home slots where investors retool at home, the abroad slot where the player owns levels\n'
+             '\t# abroad (ABROAD_SLOT).\n'
+             f'\t{setv("pmr_slots_left", "var:" + v("pmr_room_priv"))}\n'
+             + ''.join(f'\t{setv(f"pmr_alloc{j}", 0)}\n' for j, _ in slots)
+             + (''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 {slot_here(j)} }}\n'
+                        f'\t\t{setv(f"pmr_alloc{j}", "var:" + v("pmr_slots_left"))}\n\t\t{setv("pmr_slots_left", 0)}\n\t}}\n'
+                        for j, _ in slots) if RETOOL_STACK else
+                ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 var:{v(f"pmr_retool_q_priv{j}")} <= 0 {slot_here(j)} }}\n'
+                        f'\t\t{setv(f"pmr_alloc{j}", 1)}\n\t\t{chg("pmr_slots_left", "subtract", 1)}\n\t}}\n'
+                        for j, _ in slots)
+                + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_slots_left")} > 0 var:{v(f"pmr_retool_built_priv{j}")} > 0 {slot_here(j)} }}\n'
+                          f'\t\t{chg(f"pmr_alloc{j}", "add", "var:" + v("pmr_slots_left"))}\n\t\t{setv("pmr_slots_left", 0)}\n\t}}\n'
+                          for j, _ in slots))
+             + ''.join(f'\tset_variable = {{ name = pmr_cap_priv{j}_{b} value = var:{v(f"pmr_retool_q_priv{j}")} }}\n'
+                       f'\tchange_variable = {{ name = pmr_cap_priv{j}_{b} add = var:{v(f"pmr_alloc{j}")} }}\n'
+                       # with levels stacked on it the site stays open while any is still queued, in case the game
+                       # re-checks can_build_private for waiting constructions; its cap still stops new ones
+                       + (f'\tif = {{ limit = {{ OR = {{ var:{v(f"pmr_alloc{j}")} > 0 '
+                          f'var:{v(f"pmr_retool_q_priv{j}")} > var:{v(f"pmr_retool_built_priv{j}")} }} }} '
+                          f'set_variable = pmr_retool_open_priv_{b}_{j} }}\n' if RETOOL_STACK else
+                          f'\tif = {{ limit = {{ var:{v(f"pmr_alloc{j}")} > 0 }} set_variable = pmr_retool_open_priv_{b}_{j} }}\n')
+                       + f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_priv_{b}_{j} }} remove_variable = pmr_retool_open_priv_{b}_{j} }}\n'
+                       for j, _ in slots) +
              '}\n\n')
 
     # Nothing left to retool. A retool building with levels still queued is never removed: that
     # leaves a construction with no building (seen as NULL_STATE in the queue). It is closed
     # instead, and removed by a later tick once its queue has emptied.
-    flags = [f'pmr_retool_open_gov_{b}']
+    flags = [f'pmr_retool_open_priv_{b}_{j}' for j, _ in slots] + [f'pmr_retool_open_gov_{b}']
     o.append(f'pmr_close_retool_{b} = {{\n'
              + ''.join(f'\tif = {{ limit = {{ has_variable = {fl} }} remove_variable = {fl} }}\n' for fl in flags)
              + f'\t{setv("pmr_room_priv", 0)}\n\t{setv("pmr_room_gov", 0)}\n'
@@ -2345,10 +2454,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
              f";room_gov={f('pmr_room_gov')};room_priv={f('pmr_room_priv')}"
              + ';gov_lv=' + '/'.join(f(f'pmr_lvg_{i}') for i in range(1, k + 1))
-             + f";site_priv={f('pmr_retool_q_priv1')}"
+             + ';slots=' + '/'.join(f(f'pmr_retool_q_priv{j}') for j in range(1, RETOOL_SLOTS + 1))
              + (';crew=' + '/'.join(f(f'pmr_staff_priv{j}') for j in range(1, RETOOL_SLOTS + 1)) if RETOOL_CREW else '')
              + f";elec=[THIS.Var('pmr_elec').GetValue|0]" + (f";elec_wait={f('pmr_elec_wait')}" if elec_tiers else '')
-             + ";pool=[THIS.Var('pmr_pool').GetValue|0]"
+             + f";home_investors={f('pmr_inv_home')};pool=[THIS.Var('pmr_pool').GetValue|0]"
              + f";earn={f('pmr_earn')};ai_w={f('pmr_ai_w')}"
              + ";unemp=[THIS.Var('pmr_unemp').GetValue|0]")
     done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"

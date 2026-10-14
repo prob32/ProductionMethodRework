@@ -1,4 +1,4 @@
-# PMR run sheet: PMR queues private retooling itself (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: one retool site per building that investors may queue several levels on (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,57 +10,49 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: PMR queues private retooling from what investors leave unspent (test mod, new game)
+## Latest: one retool site per building, picked by investors, several levels at once (test mod, new game)
 
-Second round of the queue test, after your Private queue on 2026-10-14. Three changes:
+Third round of the queue test, after your call on 2026-10-14 that retooling must stay with investors. Investors
+pick retooling exactly as in 0.1.0: the building's own score x2, your priorities, Focus on Infrastructure, and
+funding like any other investment. PMR queues nothing itself any more. Two things differ from 0.1.0:
 
-- **No red crosses.** The cross means the game marked the entry invalid. The first test let the retool site be
-  built only at the moment PMR queued it, and the game re-checks every waiting entry, so all of them failed.
-  The site now stays buildable while its building has retooling to do.
-- **No fixed number.** There's no limit of 4 per building any more. At each check (monthly, on research, and
-  when a level lands) PMR adds one level, but only while the owner's investment pool is growing and the
-  country has construction to spare. The level then starts at once, and retooling only spends what investors
-  aren't spending.
-- **Market Liberal only.** The mod no longer ships vanilla's whole character ideology file. It replaces just
-  Market Liberal, in a file of its own.
+- **One site per building, not five.** That is the speed gain: the AI keeps a record per country for every
+  building type, and the four extra sites per building were most of them.
+- **Several levels at once on that site.** Investors may add a level to it while others are still queued or
+  building, up to the levels still to retool. It goes once they have all landed.
 
-**Setup.** Use the same playset with only **Production Method Rework (Queue Test)**; its folder was updated in
-place. Start a **new game as Great Britain**. The first test's game still holds the invalid entries. Quit when
-you're done and tell me, and I'll read the log and the save myself.
+Also fixed: round 2's Market Liberal file was missing its last brace.
 
-1. **The first months** (to 1 April 1836). Expect **Retooling: X** entries in your **Private** queue, each
-   building or marked "Queued", and `PMR;rec=PQUEUE` lines in debug.log, one level each, with `inflight=`
-   going up by one.
-   - **A red cross on a retooling entry:** the game still rejects it. Hover over the cross and send me the
-     tooltip.
-   - **No PQUEUE line by April:** the gate never opened. Note your pool's weekly income and spending on the
-     Private tab, which tells me which half held it shut.
-   - **The entries sit in the Government queue:** the retool group lost its tie to Manufacturing.
-2. **Investors still build.** By mid-1836 your Private queue holds investors' new buildings as well as
-   retooling. **Null:** months with nothing but retooling in it means retooling still crowds investors out.
-3. **A year of play** (to 1 January 1837). I check that every private retool level has a PQUEUE line before it.
-   A level without one means investors pick the site after all, so a score of 0 isn't keeping them off.
-4. **Levels land.** Bars move a level at a time, and a site goes once all its queued levels are done. **Null:** a
-   Retooling building still standing in the state's building list with nothing queued: the cleanup doesn't
-   see the multi-level private site.
-5. **Abroad** (your investors own levels in India or elsewhere): a PQUEUE line for that state, and the levels
-   land. **No line:** the room abroad never reaches the queue, or the host's pool and construction never had
-   room. **A line but no landing:** the host's queue refused it.
-6. **Save after the year.** I count the AI's retool records in the save: about 40% of 0.1.0's at the same
-   date. **The same count as before** means the published mod was loaded, not the test one.
+**Setup.** Same playset, only **Production Method Rework (Queue Test)**; its folder was updated in place. Start
+a **new game as Great Britain** (the site types changed). Play to 1 January 1837, save, quit and tell me; I read
+the log and the save myself.
+
+1. **Investors pick retooling.** By mid-1836 your **Private** queue holds **Retooling: X** entries among
+   investors' new buildings, as in 0.1.0. **None by July:** investors never pick the one site. Send me a
+   screenshot of the Private tab.
+2. **Several levels on one site.** Somewhere in the year a building's retooling in one state has two or more
+   levels queued: two **Retooling: X** entries for the same state in the queue, or `queued_priv=2` or more on
+   its `PMR;rec=` line. **Never more than one per state all year:** investors won't add a level to a site that
+   is already queued, so each building retools one level per state at a time. Then the choice is four sites
+   (0.1.0's speed) or one level at a time.
+3. **No red crosses.** A cross on a waiting **Retooling** entry: the game re-checks it and counts the entry
+   against its own cap (vanilla's trade centres use the same check). Hover over it and send me the tooltip.
+4. **Levels land.** Bars move a level at a time; the site goes once nothing is queued on it. **Null:** a
+   Retooling building in a state's building list with nothing queued: the cleanup misses the stacked site.
+5. **Abroad.** Where your investors own levels abroad, retooling lands there too (`RETOOL_LEVEL` lines for that
+   state). **None by 1837** while the state has levels to retool: the one site doesn't let the host's
+   investors build it for you.
+6. **The save.** I count the AI's retool records: about 40% of 0.1.0's at the same date. **The same count as
+   0.1.0** means the published mod was loaded, not the test one.
 7. **Market Liberal.** I read error.log for lines naming `ideology_market_liberal` or `zz_pmr_market_liberal`.
-   **A line there** means the game doesn't accept the replace for ideologies, and Market Liberal may be missing.
-8. **Timing.** Time one in-game year (1 Jan 1836 to 1 Jan 1837) at speed 5 with a stopwatch, once with only
-   the published mod and once with only the test mod, each from a new game. **No speed-up while item 6 passes**
+   **A line there** means the game doesn't accept the replace for ideologies.
+8. **Timing (optional).** Time 1 Jan 1836 to 1 Jan 1837 at speed 5 with a stopwatch, once with only the
+   published mod and once with only the test mod, each from a new game. **No speed-up while item 6 passes**
    means the retool sites weren't the drag; the share blend itself is (performance review 2, section 3).
-   Your first test game's log ran about 3.2 days a second from January to November 1836.
 
-What changes for play: retooling no longer competes with new builds; it takes only money and construction
-investors leave unused, so your priorities steer what investors build and retooling never pushes it back. The
-2x retool score, Focus on Infrastructure's retool weight (its card now shows only railway and port throughput)
-and companies listing retool sites are gone. Abroad, the host country's pool pays for retooling there.
-Government retooling and the upgrade button are unchanged. The Workshop update will need a "start a new game"
-note.
+What changes for play: nothing in how investors choose retooling. A building's private retooling in a state
+runs on one site that can hold several levels, where 0.1.0 had up to four sites of one level each. Government
+retooling and the upgrade button are unchanged. The Workshop update will need a "start a new game" note.
 
 ## Latest: your investors retool abroad, and companies own their additional industries' retooling (your current save works)
 

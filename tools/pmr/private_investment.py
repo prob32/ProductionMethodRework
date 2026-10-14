@@ -42,8 +42,9 @@ Pat also asked for a few fitting benefits to round them out: the modifiers in PO
     modifier or per-country define for company weighting, so each company building type in PMR's building files gets
     ai_value = pmr_ai_value_<b>: its vanilla ai_value plus CORP_BONUS while the card is held. Its other benefits
     work the interventionist way: since Pat 16:42Z only a free charter.
-  - Focus on Infrastructure (was Re-invest, Pat 04:15Z): railway and port throughput. Its retool weight (x100 at a full
-    slider) went with the script-queued private retooling (Pat 2026-10-14 00:10Z): investors no longer pick retool sites.
+  - Re-invest (Pat 04:15Z): private retooling of a building is weighted by its group's slider, x(1 + 0.99 x slider%),
+    so x100 at a full slider. Retool weight is mostly ai_value (no profit terms), so this multiplies
+    pmr_retool_buildings.txt's private ai_value.
   - Favour Small Businesses (Pat confirmed 04:25Z): shopkeepers' investment efficiency +15%, self-investment chance +10%.
   - Bulls & Bears (Laissez-faire, needs Investment Banks; Pat 16:06Z): the modifiers in POLICIES, profitability
     weight in pmr_ai_value_<b>, Market Liberal leader weights x LIBERAL_WEIGHT (patch_ideologies).
@@ -55,8 +56,8 @@ Wiring into generate.py main(), after the other writes and before the localizati
     import private_investment
     loc += private_investment.write_all(game, write, header, args.out)
 
-It must run after the building files and pmr_retool_buildings.txt are written: it patches the building files in place
-(company ai_value) and reads the retool buildings, and asserts what it expects to find.
+It must run after the building files and pmr_retool_buildings.txt are written: it patches those two outputs in place
+(company ai_value; Re-invest's retool multiplier) and asserts what it expects to find.
 """
 import colorsys
 import os
@@ -123,6 +124,7 @@ GROUP_OF = {bg: k for k, _n, _d, _c, bgs in GROUPS for bg in bgs}
 NO_GROUP = 'none'          # a scored building group outside the five (Manufacturing itself): an untouched slider
 # The chart counts private levels of these building groups; subsistence farms and ranches are no investors' business.
 CHART_EXCLUDE = ('bg_subsistence_agriculture', 'bg_subsistence_ranching')
+REINVEST_PER_POINT = 0.99  # Re-invest: retool ai_value x (1 + this x slider%): x100 at 100%
 # Vanilla's profit term is 5000 x 1.5 a pound of predicted WEEKLY profit per employee (00_ai.txt); the
 # earnings PMR reads (pmr_ai_earn_<b>) are a YEAR's, so a pound of them weighs 7500 / 52. Until 20:12Z PMR
 # weighed it at 7,500, which made every weight below about 50 times too strong (Pat's 1838 autosave: new
@@ -159,9 +161,9 @@ POLICIES = [
      'National champions get licences, contracts and charters ahead of their smaller rivals.'),
     ('reinvest', 'Focus on Infrastructure', 'gfx/interface/icons/ai_strategy_icons/unused/infrastructure_expansion.dds',
      {'building_railway_throughput_add': 0.1, 'building_port_throughput_add': 0.1},
-     # Its retool weight (up to x100 by the group's priority) went with the script-queued retooling (Pat 2026-10-14
-     # 00:10Z): investors no longer choose retool sites.
-     None, None,
+     '#P Up to 100×#! Investment Weight for Retooling',
+     'Investors favour retooling a building by its group\'s investment priority: up to #P 100×#! at a full '
+     'priority.',
      'Rails, docks and new machinery come before new sites: the state guarantees the loans and the works are '
      'brought up to date.'),
     ('small', 'Favour Small Businesses', 'gfx/interface/icons/law_icons/cooperative_ownership.dds',
@@ -472,6 +474,31 @@ def script_values():
     for g in keys:
         v = VAR.format(g)
         out += (f'{v}_pct = {{\n\tvalue = pmr_ipw_now_{g}\n\tmultiply = pmr_ipw_cap\n\tdivide = 100\n}}\n\n')
+    out += ('# State scope, multiplied into private retool buildings\' ai_value (pmr_retool_buildings.txt): while the\n'
+            f'# owner holds Re-invest, 1 + {REINVEST_PER_POINT} x the slider of the retooled building\'s group (x100 at 100%).\n')
+    for g in keys:
+        v = VAR.format(g)
+        out += (f'pmr_reinvest_mult_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
+                f'\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
+                f'\t\tvalue = owner.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n')
+    # Pat, 2026-10-13 22:37Z: the player's investors, on Focus on Infrastructure with Resources at the top, retooled
+    # only at home, x100 there and x1 abroad, as the host's card was read. The abroad slot reads the investors' own
+    # card where the game names them (scope:investor_country) and the player's otherwise (pmr_reinvest_<g>, a global
+    # the player's weekly clock keeps): the slot opens only where the player's levels need retooling.
+    out += ('# Country scope: the country\'s own Focus on Infrastructure multiplier for a group (as pmr_reinvest_mult_<g>).\n')
+    for g in keys:
+        v = VAR.format(g)
+        out += (f'pmr_reinvest_own_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\thas_modifier = pmr_policy_reinvest\n'
+                f'\t\t\thas_variable = {v}\n\t\t}}\n\t\tvalue = var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n')
+    out += ('# State scope, multiplied into the abroad retool slot\'s ai_value: the investors\' own multiplier where the game\n'
+            '# names them, else the player\'s (pmr_reinvest_<g>, set by pmr_reinvest_publish).\n')
+    for g in keys:
+        v = VAR.format(g)
+        out += (f'pmr_reinvest_mult_abroad_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\texists = scope:investor_country\n'
+                f'\t\t\tscope:investor_country = {{\n\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
+                f'\t\tvalue = scope:investor_country.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n'
+                f'\telse_if = {{\n\t\tlimit = {{\n\t\t\tNOT = {{ exists = scope:investor_country }}\n'
+                f'\t\t\thas_global_variable = pmr_reinvest_{g}\n\t\t}}\n\t\tvalue = global_var:pmr_reinvest_{g}\n\t}}\n}}\n\n')
     # The contributors chart: privately owned levels per priority group (the game's per-building amounts exist only
     # as text). private_ownership_fraction is a comparison, so a building's private share is read to the nearest
     # quarter.
@@ -715,6 +742,7 @@ def on_actions():
             '\t\tpmr_policy_ai_pick = yes\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
             '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
+            '\t\t\tpmr_reinvest_publish = yes\n'
             '\t\t\tpmr_pi_start_clock = yes\n\t\t}\n'
             '\t}\n}\n\n'
             '# Root = building, a level of it starting construction (the Recent Investments bars).\n'
@@ -773,6 +801,11 @@ def policy_effects():
             + ''.join(f'\t\t\t1 = {{\n\t\t\t\ttrigger = {{ {can(k)} }}\n\t\t\t\tpmr_policy_adopt_{k} = yes\n\t\t\t}}\n'
                       for k in picks)
             + '\t\t}\n\t}\n}\n\n')
+    out += ('# Country scope, the player (weekly clock, monthly pulse): its Focus on Infrastructure multipliers as globals,\n'
+            '# read by the abroad retool slot (pmr_reinvest_mult_abroad_<g>).\n'
+            'pmr_reinvest_publish = {\n'
+            + ''.join(f'\tset_global_variable = {{ name = pmr_reinvest_{g} value = pmr_reinvest_own_{g} }}\n' for g, *_r in GROUPS)
+            + '}\n\n')
     out += ('pmr_ipw_weekly = {\n'
             '\tif = {\n\t\tlimit = { has_variable = pmr_fd_wk }\n\t\tchange_variable = { name = pmr_fd_wk add = -1 }\n'
             '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tvar:pmr_fd_wk <= 0\n'
@@ -816,7 +849,7 @@ def events():
             'pmr_pi.1 = {\n\ttype = country_event\n\thidden = yes\n\timmediate = {\n\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
             '\t\t\tset_variable = { name = pmr_pi_clock days = 9 }\n'
             '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
-            '\t\t\tpmr_pc_record = yes\n\t\t\tpmr_rw_record = yes\n\t\t\tpmr_ipw_weekly = yes\n'
+            '\t\t\tpmr_pc_record = yes\n\t\t\tpmr_rw_record = yes\n\t\t\tpmr_ipw_weekly = yes\n\t\t\tpmr_reinvest_publish = yes\n'
             '\t\t\ttrigger_event = { id = pmr_pi.1 days = 7 }\n\t\t}\n\t}\n}\n')
 
 
@@ -930,6 +963,7 @@ def invest_effects(types, retools):
             inner = ''.join('\t' + line + '\n' for line in
                             ''.join(call(k, s, g, c, t) for k, (s, g, c, t) in enumerate(retools)).rstrip('\n').split('\n'))
             out += ('\t\telse_if = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tis_building_group = bg_pmr_retool\n'
+                    '\t\t\t\t\tis_building_group = bg_pmr_retool_abroad\n'
                     '\t\t\t\t\tis_building_group = bg_pmr_retool_gov\n'
                     '\t\t\t\t\tis_building_group = bg_pmr_retool_gov_abroad\n\t\t\t\t}\n\t\t\t}\n' + inner + '\t\t}\n')
         return out
@@ -1769,6 +1803,43 @@ def company_owners(game):
     return owners
 
 
+def patch_retool_ai(text, btype, parent, invest):
+    """pmr_retool_buildings.txt: each private retool building's ai_value ends with multiply = pmr_reinvest_mult_<group>,
+    and for an investable type (invest) its base is the building's own ai_value, pmr_ai_value_<b> (vanilla's, with the
+    foreign-or-domestic notch and the company policies), plus PROFIT_WEIGHT x its earnings: the score of an expansion
+    of the building, which generate.py's ai_value then multiplies by RETOOL_AI_MULT (Pat 20:12Z)."""
+    edits, n = [], 0
+    for k, _s, o, c in top_blocks(text):
+        m = re.fullmatch(r'building_pmr_retool_(.+)_(\d+)', k)
+        if not m or k.startswith('building_pmr_retool_gov_'):
+            continue
+        g = group_of('building_' + m.group(1), btype, parent)
+        if not g:
+            fail('pmr_retool_buildings.txt', f'no priority group for {k}')
+        a = text.find('\tai_value = {', o, c)
+        if a < 0:
+            fail('pmr_retool_buildings.txt', f'{k} has no ai_value block')
+        close = block_end(text, text.index('{', a))
+        b = m.group(1)
+        if 'building_' + b in invest:
+            fallback = re.compile(r'\t\t\tvalue = \d+\n\t\t\tif = \{ limit = \{ has_variable = pmr_ai_w_' + b
+                                  + r' \} value = var:pmr_ai_w_' + b + r' \}\n')
+            f = fallback.search(text, a, close)
+            if not f:
+                fail('pmr_retool_buildings.txt', f'{k}: ai_value base not found')
+            edits.append((f.start(), f'\t\t\t# PMR: the building\'s own ai_value and earnings\n\t\t\tvalue = pmr_ai_value_{b}\n'
+                                     f'\t\t\tif = {{ limit = {{ has_variable = pmr_earn_{b} }} add = {{ value = var:pmr_earn_{b} '
+                                     f'multiply = {PROFIT_WEIGHT} }} }}\n', f.end()))
+        mult = f'pmr_reinvest_mult_abroad_{g}' if 'building_group = bg_pmr_retool_abroad' in text[o:c] else f'pmr_reinvest_mult_{g}'
+        edits.append((close, f'\t# PMR: Re-invest card, x the {g} priority\n\t\tmultiply = {mult}\n\t', close))
+        n += 1
+    if not n:
+        fail('pmr_retool_buildings.txt', 'found no private retool buildings')
+    for pos, ins, end in sorted(edits, reverse=True):
+        text = text[:pos] + ins + text[end:]
+    return text, n
+
+
 def patch_ai_value(text, owners, invest):
     """A building file: each building type a company lists (owners) or the investment bars count (invest) gets
     ai_value = pmr_ai_value_<b>, whose body is the vanilla ai_value (number, block, or the 1000 default), plus
@@ -2008,7 +2079,7 @@ def patch_ideologies(text):
     if start < 0:
         fail(IDEOLOGY_SOURCE, 'ideology_market_liberal not found')
     end = block_end(text, text.index('{', start))
-    block = text[start:end]
+    block = text[start:end + 1]
     for key, desc in (('interest_group_leader_weight', '\n\t\t\tdesc = "PMR_POLICY_bulls"'),
                       ('non_interest_group_leader_weight', '')):
         m = re.search(r'^\t' + key + r' = \{', block, re.M)
@@ -2046,7 +2117,11 @@ def write_all(game, write, header_text, out=None):
     write(PANEL_GUI, patch_panel(vanilla(PANEL_GUI)), bom=False)
     write(OWN_GUI, '# GENERATED by tools/pmr/private_investment.py\n' + private_tab(), bom=False)
     if out:
+        btype, parent = building_groups(game)
+        rpath = os.path.join(out, 'common', 'buildings', 'pmr_retool_buildings.txt')
         invest = {f'building_{s}' for s, _g, _c in types}
+        text, n = patch_retool_ai(open(rpath, encoding='utf-8-sig').read(), btype, parent, invest)
+        write('common/buildings/pmr_retool_buildings.txt', text)
         owners = company_owners(game)
         wrapped, patched, done = [], [], set()
         # generate.py's building files, this feature's copy of SOURCE_FILE, and the vanilla files holding other
@@ -2082,7 +2157,7 @@ def write_all(game, write, header_text, out=None):
                    f'{PROFIT_WEIGHT} x earnings) x pmr_fd_gain for the\n'
                    f'# owner\'s foreign-or-domestic notch, and {PROFIT_WEIGHT // 2} x earnings under Bulls & Bears.\n'
                    + '\n'.join(wrapped))
-        print(f'private investment: {len(names)} building types take '
+        print(f'private investment: {n} private retool buildings take Re-invest; {len(names)} building types take '
               f'the company card or the investment focus, in {", ".join(patched)}')
     write(SOURCE_FILE, buildings)
     write('common/script_values/pmr_ipw_values.txt', header_text + values)
