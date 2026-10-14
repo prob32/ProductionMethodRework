@@ -2933,8 +2933,7 @@ def principle_bonus(treated, drop_base, pms):
             loc += [f' {thr}:0 "${group}$"', f' {inf}:0 "${group}$"']
             lvs = ' '.join(f'add = var:pmr_lv_{i}_{b}' for i in sorted(extra))
             eff.append(
-                f'\tif = {{ limit = {{ has_modifier = {thr} }} remove_modifier = {thr} }}\n'
-                f'\tif = {{ limit = {{ has_modifier = {inf} }} remove_modifier = {inf} }}\n'
+                '\tset_variable = { name = pmr_pb_thr value = 0 }\n\tset_variable = { name = pmr_pb_inf value = 0 }\n'
                 '\tif = {\n\t\tlimit = {\n'
                 f'\t\t\towner = {{ power_bloc ?= {{ has_principle = principle:{principle} }} }}\n'
                 f'\t\t\thas_building = {bk}\n\t\t\tb:{bk} = {{ level >= 1 }}\n'
@@ -2942,7 +2941,6 @@ def principle_bonus(treated, drop_base, pms):
                 '\t\t}\n'
                 f'\t\t# the levels on recipes {sorted(extra)}, as a share of the building, times {fmt(PRINCIPLE_THROUGHPUT * 100)}%\n'
                 f'\t\tset_variable = {{ name = pmr_pb_thr value = {{ value = 0 {lvs} multiply = {fmt(PRINCIPLE_THROUGHPUT * 100)} divide = b:{bk}.level }} }}\n'
-                '\t\tif = { limit = { var:pmr_pb_thr > 0 } add_modifier = { name = ' + thr + ' multiplier = var:pmr_pb_thr } }\n'
                 '\t\t# the extra infrastructure, by recipe, scaled by employment\n'
                 '\t\tset_variable = { name = pmr_pb_inf value = { value = 0 '
                 + ' '.join(f'add = {{ value = var:pmr_lv_{i}_{b} multiply = {fmt(x)} }}' for i, x in sorted(extra.items()) if x) + ' } }\n'
@@ -2953,9 +2951,19 @@ def principle_bonus(treated, drop_base, pms):
                 f'\t\telse_if = {{ limit = {{ b:{bk} = {{ occupancy >= 0.3 }} }} set_variable = {{ name = pmr_pb_occ value = 0.4 }} }}\n'
                 f'\t\telse_if = {{ limit = {{ b:{bk} = {{ occupancy > 0 }} }} set_variable = {{ name = pmr_pb_occ value = 0.2 }} }}\n'
                 '\t\tchange_variable = { name = pmr_pb_inf multiply = var:pmr_pb_occ }\n'
-                '\t\tif = { limit = { var:pmr_pb_inf > 0 } add_modifier = { name = ' + inf + ' multiplier = var:pmr_pb_inf } }\n'
-                '\t\tremove_variable = pmr_pb_thr\n\t\tremove_variable = pmr_pb_inf\n\t\tremove_variable = pmr_pb_occ\n'
-                '\t}\n')
+                '\t\tremove_variable = pmr_pb_occ\n'
+                '\t}\n'
+                # Performance review 2 (2026-10-14): a state modifier removed and added again dirties every
+                # building and pop of the state for the modifier update, so each is replaced only when its
+                # value moved (pmr_pb_<...>_v keeps the value applied).
+                + ''.join(
+                    f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {m}_v }} }}\n\t\tset_variable = {{ name = {m}_v value = -1 }}\n\t}}\n'
+                    f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:{m}_v = var:{var} }} }}\n'
+                    f'\t\tif = {{ limit = {{ has_modifier = {m} }} remove_modifier = {m} }}\n'
+                    f'\t\tif = {{ limit = {{ var:{var} > 0 }} add_modifier = {{ name = {m} multiplier = var:{var} }} }}\n'
+                    f'\t\tset_variable = {{ name = {m}_v value = var:{var} }}\n\t}}\n'
+                    for m, var in ((thr, 'pmr_pb_thr'), (inf, 'pmr_pb_inf')))
+                + '\tremove_variable = pmr_pb_thr\n\tremove_variable = pmr_pb_inf\n')
     return ('# State scope, monthly: the bonus of a power bloc principle whose recipe variants PMR drops (PRINCIPLE_THROUGHPUT).\n'
             'pmr_principle_bonus = {\n' + ''.join(eff) + '}\n'), ''.join(mods), loc
 
