@@ -1,4 +1,4 @@
-# PMR run sheet: your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: PMR queues private retooling itself (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -9,6 +9,47 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
+
+## Latest: PMR queues private retooling itself (separate test mod, new game)
+
+Your "Script-queued slot" choice. Investors no longer pick retool sites: once a month PMR queues the privately
+owned levels' retooling itself, up to 4 at a time per building per state, paid from the state owner's
+investment pool, on one site type per building instead of five. This is a **test build** in its own mod
+folder, **Production Method Rework (Queue Test)**. The published mod and its folder are untouched, and nothing
+goes to the Workshop until this test passes.
+
+**Setup.** In the launcher make a new playset with only **Production Method Rework (Queue Test)**. Leave both
+the Workshop copy and your local Production Method Rework out: they define the same files. Start a **new game
+as Great Britain**; saves from 0.1.0 won't load right in it. The test build writes `PMR;rec=` lines again and
+has the pause decision. Quit the game when you're done and tell me, and I'll read the log and the save myself.
+
+1. **The first month.** Run to 1 March 1836. Many buildings start behind your technology, so retooling opens at
+   the first monthly tick. Expect **Retooling: X** entries in your **Private** construction queue, up to 4 per
+   building, and `PMR;rec=PQUEUE` lines in debug.log with `queued=4` (or less) and `inflight=` the same number.
+   - **No PQUEUE line at all:** the tick never reached the queue (no room, or the pool gate). Not a result yet.
+   - **PQUEUE lines but no queue entries** (`inflight=0`): the game refused the construction.
+   - **The entries sit in the Government queue:** the retool group lost its tie to Manufacturing.
+   - **`queued=4 inflight=1`:** the game takes one level per call per day; I'd queue one per tick instead.
+2. **A year of play** (to 1 January 1837): I check that every private retool level has a PQUEUE line before it.
+   One without means investors still pick the site, so a score of 0 isn't keeping them off.
+3. **Levels land.** Bars move a level at a time, and a site goes once all its queued levels are done. **Null:** a
+   Retooling building still standing in the state's building list with nothing queued: the cleanup doesn't
+   see the multi-level private site.
+4. **Investment pool near zero.** Just note what happens to queued retooling when the pool runs dry: it carries
+   on, stalls, or the government pays. There's no pass or fail; it tells me whether the pool gate needs work.
+5. **Abroad** (your investors own levels in India or elsewhere): a PQUEUE line for that state, and the levels
+   land. **No line:** the room abroad never reaches the queue. **A line but no landing:** the host's queue
+   refused it.
+6. **Save after the year.** I count the AI's retool records in the save: about 40% of 0.1.0's at the same
+   date. **The same count as before** means the published mod was loaded, not the test one.
+7. **Timing.** Time one in-game year (1 Jan 1836 to 1 Jan 1837) at speed 5 with a stopwatch, once with only
+   the published mod and once with only the test mod, each from a new game. **No speed-up while item 6 passes**
+   means the retool sites weren't the drag; the share blend itself is (performance review 2, section 3).
+
+What changes for play: retooling no longer competes with new builds, so the 2x retool score, Focus on
+Infrastructure's retool weight (its card now shows only railway and port throughput) and companies listing
+retool sites are gone. Abroad, the host country's pool pays for retooling there. Government retooling and
+the upgrade button are unchanged. The Workshop update will need a "start a new game" note.
 
 ## Latest: your investors retool abroad, and companies own their additional industries' retooling (your current save works)
 
