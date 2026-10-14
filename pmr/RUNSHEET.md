@@ -25,6 +25,9 @@ funding like any other investment. PMR queues nothing itself any more. Two thing
 
 Also fixed: round 2's Market Liberal file was missing its last brace.
 
+Also changed (your 01:53Z call): Focus on Infrastructure multiplies retooling by up to **3** at a full priority, not
+100, so a far more profitable new build can still beat retooling.
+
 **Setup.** Same playset, only **Production Method Rework (Queue Test)**; its folder was updated in place. Start
 a **new game as Great Britain** (the site types changed). Play to 1 January 1837, save, quit and tell me; I read
 the log and the save myself.

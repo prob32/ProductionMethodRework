@@ -124,7 +124,11 @@ GROUP_OF = {bg: k for k, _n, _d, _c, bgs in GROUPS for bg in bgs}
 NO_GROUP = 'none'          # a scored building group outside the five (Manufacturing itself): an untouched slider
 # The chart counts private levels of these building groups; subsistence farms and ranches are no investors' business.
 CHART_EXCLUDE = ('bg_subsistence_agriculture', 'bg_subsistence_ranching')
-REINVEST_PER_POINT = 0.99  # Re-invest: retool ai_value x (1 + this x slider%): x100 at 100%
+# Re-invest: retool ai_value x (1 + REINVEST_PER_POINT x slider%), so x REINVEST_MAX at 100%. Pat 04:15Z set x100; Pat
+# 2026-10-14 (console, East Anglia): x100 put a retool site at 176x a new shipyard, against the 20:12Z rule that a
+# much more profitable new build must still win, so x3.
+REINVEST_MAX = 3
+REINVEST_PER_POINT = (REINVEST_MAX - 1) / 100
 # Vanilla's profit term is 5000 x 1.5 a pound of predicted WEEKLY profit per employee (00_ai.txt); the
 # earnings PMR reads (pmr_ai_earn_<b>) are a YEAR's, so a pound of them weighs 7500 / 52. Until 20:12Z PMR
 # weighed it at 7,500, which made every weight below about 50 times too strong (Pat's 1838 autosave: new
@@ -161,9 +165,9 @@ POLICIES = [
      'National champions get licences, contracts and charters ahead of their smaller rivals.'),
     ('reinvest', 'Focus on Infrastructure', 'gfx/interface/icons/ai_strategy_icons/unused/infrastructure_expansion.dds',
      {'building_railway_throughput_add': 0.1, 'building_port_throughput_add': 0.1},
-     '#P Up to 100×#! Investment Weight for Retooling',
-     'Investors favour retooling a building by its group\'s investment priority: up to #P 100×#! at a full '
-     'priority.',
+     f'#P Up to {REINVEST_MAX}×#! Investment Weight for Retooling',
+     'Investors favour retooling a building by its group\'s investment priority: up to '
+     f'#P {REINVEST_MAX}×#! at a full priority.',
      'Rails, docks and new machinery come before new sites: the state guarantees the loans and the works are '
      'brought up to date.'),
     ('small', 'Favour Small Businesses', 'gfx/interface/icons/law_icons/cooperative_ownership.dds',
@@ -475,7 +479,7 @@ def script_values():
         v = VAR.format(g)
         out += (f'{v}_pct = {{\n\tvalue = pmr_ipw_now_{g}\n\tmultiply = pmr_ipw_cap\n\tdivide = 100\n}}\n\n')
     out += ('# State scope, multiplied into private retool buildings\' ai_value (pmr_retool_buildings.txt): while the\n'
-            f'# owner holds Re-invest, 1 + {REINVEST_PER_POINT} x the slider of the retooled building\'s group (x100 at 100%).\n')
+            f'# owner holds Re-invest, 1 + {REINVEST_PER_POINT} x the slider of the retooled building\'s group (x{REINVEST_MAX} at 100%).\n')
     for g in keys:
         v = VAR.format(g)
         out += (f'pmr_reinvest_mult_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
