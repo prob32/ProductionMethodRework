@@ -1,0 +1,20 @@
+# PMR Works probe (2026-10-14). Dev only. Tests which keys an executive_modifier carries onto the
+# company's own building levels. Each key is deliberately absurd so its line is unmistakable in the
+# building's tooltips.
+pmr_works_probe = {
+	type = condition
+	texture = "gfx/interface/icons/character_trait_icons/experienced_entrepreneur.dds"
+
+	executive_modifier = {
+		building_throughput_add = 0.25				# control: the key vanilla executives use
+		goods_input_tools_add = 100				# flat tools, even where the recipe has none
+		goods_input_tools_mult = 10				# x11 on tools the recipe already uses
+		goods_output_wood_mult = -0.5				# halves wood: a goods multiplier the camps surely have
+		building_employment_aristocrats_add = 5000	# landowners, flat
+		building_employment_laborers_mult = 1		# doubles laborers: an employment multiplier
+	}
+
+	possible = { always = no }
+	weight = { value = 0 }
+	value = 0
+}

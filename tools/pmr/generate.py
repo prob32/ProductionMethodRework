@@ -323,6 +323,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 DEFAULT_OUT = os.path.join(ROOT, 'pmr', MOD_NAME)
 RELEASE_OUT = os.path.join(ROOT, 'pmr', 'release', MOD_NAME)
 THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the Workshop preview, 1024 x 1024 (.metadata/thumbnail.png)
+# Dev-only probes, each laid out like a mod (pmr/test_probes/<probe>/common/...), copied as they are into test
+# builds only. Pat 2026-10-14 03:42Z: one live and one test mod, so probes ride in the test build rather than in
+# add-on mods. works_probe: the Hudson's Bay Company executive trait (company trait plan, smoke test S3).
+TEST_PROBES = os.path.join(ROOT, 'pmr', 'test_probes')
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')
 # The game's other languages (1.14.5 game/localization). The release build gives each the English text.
@@ -1254,6 +1258,13 @@ def main():
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
         write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
         loc += DECISION_LOC
+        for probe in sorted(os.listdir(TEST_PROBES)) if os.path.isdir(TEST_PROBES) else []:
+            src = os.path.join(TEST_PROBES, probe)
+            for dirpath, _dirs, files in os.walk(src):
+                for fn in files:
+                    dst = os.path.join(args.out, os.path.relpath(os.path.join(dirpath, fn), src))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copyfile(os.path.join(dirpath, fn), dst)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     loc += private_investment.write_all(game, write, header, args.out)

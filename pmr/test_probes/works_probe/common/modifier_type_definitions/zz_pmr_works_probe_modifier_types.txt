@@ -1,0 +1,26 @@
+# Dynamic modifier types vanilla 1.14.5 does not define (the exe has the patterns goods_input_{}_mult,
+# goods_output_{}_mult and building_employment_{}_mult).
+goods_input_tools_mult = {
+	decimals = 0
+	color = bad
+	percent = yes
+	game_data = { ai_value = 0 }
+}
+goods_output_wood_mult = {
+	decimals = 0
+	color = good
+	percent = yes
+	game_data = { ai_value = 0 }
+}
+building_employment_laborers_mult = {
+	decimals = 0
+	color = neutral
+	percent = yes
+	game_data = { ai_value = 0 }
+}
+building_employment_aristocrats_mult = {
+	decimals = 0
+	color = neutral
+	percent = yes
+	game_data = { ai_value = 0 }
+}

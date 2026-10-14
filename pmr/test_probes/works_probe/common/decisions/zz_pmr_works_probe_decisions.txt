@@ -1,0 +1,37 @@
+# PMR Works probe. Give or take the probe trait on the Hudson's Bay Company's executive.
+# Lines in debug.log start PMR;rec=WORKS_PROBE.
+pmr_works_probe_give_decision = {
+	is_shown = { has_company = company_type:company_hbc }
+	possible = { has_company = company_type:company_hbc }
+	when_taken = {
+		company:company_hbc = {
+			executive ?= {
+				add_trait = pmr_works_probe
+			}
+			if = {
+				limit = { executive ?= { has_trait = pmr_works_probe } }
+				owner.capital = { debug_log = "PMR;rec=WORKS_PROBE;arm=TRAIT_ON;date=[TimeKeeper.GetCurrentDate.GetString]" }
+			}
+			else_if = {
+				limit = { exists = executive }
+				owner.capital = { debug_log = "PMR;rec=WORKS_PROBE;arm=TRAIT_REFUSED;date=[TimeKeeper.GetCurrentDate.GetString]" }
+			}
+			else = {
+				owner.capital = { debug_log = "PMR;rec=WORKS_PROBE;arm=NO_EXECUTIVE;date=[TimeKeeper.GetCurrentDate.GetString]" }
+			}
+		}
+	}
+	ai_chance = { value = 0 }
+}
+
+pmr_works_probe_take_decision = {
+	is_shown = { has_company = company_type:company_hbc }
+	possible = { has_company = company_type:company_hbc }
+	when_taken = {
+		company:company_hbc = {
+			executive ?= { remove_trait = pmr_works_probe }
+			owner.capital = { debug_log = "PMR;rec=WORKS_PROBE;arm=TRAIT_OFF;date=[TimeKeeper.GetCurrentDate.GetString]" }
+		}
+	}
+	ai_chance = { value = 0 }
+}
