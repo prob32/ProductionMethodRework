@@ -1,4 +1,4 @@
-# PMR run sheet: one retool site per building with a paid crew so investors can add levels (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -28,6 +28,10 @@ Also fixed: round 2's Market Liberal file was missing its last brace.
 Also changed (your 01:53Z call): Focus on Infrastructure multiplies retooling by up to **3** at a full priority, not
 100, so a far more profitable new build can still beat retooling.
 
+Also new (your 01:54Z ask): the retool sites no longer show in a state's **Buildings** tab, in the grid or the list
+view. They are still real buildings: their **Retooling: X** entries stay in the construction queue and their
+laborers still count as employed. PMR now also replaces the game's state Buildings tab file.
+
 **Setup.** Same playset, only **Production Method Rework (Queue Test)**; its folder was updated in place. Start
 a **new game as Great Britain** (the site types changed). Play to 1 January 1837, save, quit and tell me; I read
 the log and the save myself.
@@ -35,8 +39,9 @@ the log and the save myself.
 1. **Investors pick retooling.** By mid-1836 your **Private** queue holds **Retooling: X** entries among
    investors' new buildings, as in 0.1.0. **None by July:** investors never pick the one site. Send me a
    screenshot of the Private tab.
-2. **The crew, then more levels.** Once a site's first level lands, it stands in that state's Buildings tab as
-   **Retooling: X** and hires 10 laborers within a few weeks. Then run
+2. **The crew, then more levels.** PASSED 01:48-01:54Z: East Anglia's staffed site said YES and stood at 1+1. From
+   this build the site is hidden from the Buildings tab, so check it from the queue and the console. Once a site's
+   first level lands, it hires 10 laborers within a few weeks. Then run
    `ai_evaluate_autonomous_construction building_pmr_retool_<building>_1 STATE_<STATE>` on it: **Should construct:
    YES**, and later two or more levels on it, or `queued_priv=2`+ on its `PMR;rec=` line. **Crew stays at 0:** it
    can't afford to hire or finds no laborers; hover over its employment and send me the tooltip. **Staffed but NO:**
@@ -56,6 +61,13 @@ the log and the save myself.
 8. **Timing (optional).** Time 1 Jan 1836 to 1 Jan 1837 at speed 5 with a stopwatch, once with only the
    published mod and once with only the test mod, each from a new game. **No speed-up while item 6 passes**
    means the retool sites weren't the drag; the share blend itself is (performance review 2, section 3).
+9. **Hidden from the Buildings tab.** Open a state with a **Retooling: X** entry in the queue that has landed a
+   level (the Private tab or the queue's location filter finds one) and look at its Buildings tab in both the grid
+   and the list view (the toggle top right). Expect no **Retooling: X** tile or row, and every other building as
+   before. **The site still shows:** the filter didn't apply; send me error.log lines naming
+   `states_panel_buildings`. **The tab is empty or broken:** the game rejected PMR's copy of the file; same
+   lines, and tell me at once. **An empty cell before the + tile:** the game places that tile by counting
+   hidden sites too. That's cosmetic, but tell me.
 
 What changes for play: nothing in how investors choose retooling. A building's private retooling in a state
 runs on one site that can hold several levels, where 0.1.0 had up to four sites of one level each. Government

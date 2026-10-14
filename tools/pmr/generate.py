@@ -882,6 +882,7 @@ def main():
 
     # ---- new script ------------------------------------------------------------------------------
     labour_pms, labour_groups, retools, costs, loc = [], [], [], [], []
+    site_types = []    # every retool site type, hidden from the state Buildings tab
     blend_pms, blend_groups = [], []
     triggers = []
     tick_effects, dispatch = [], []
@@ -952,6 +953,7 @@ def main():
         costs.append(f'pmr_retool_cost_{b} = {fmt(retool_cost)}  # {rc.value} = {fmt(base_cost)} x {RETOOL_SHARE} / {N}')
         icon = pdx.get(bn.value, 'icon').value
         retools.append(retool_buildings(b, bk, icon))
+        site_types += priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
         triggers.append(retool_triggers(b, bk))
         costs.append(retool_values(b))
 
@@ -1235,6 +1237,9 @@ def main():
         patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
         extra=browser_bars, also=also), dispatch), bom=False)
+    # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
+    write('gui/states_panel_buildings.gui', hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types),
+          bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(recipe_keys) + option_loc(opt_ui)
@@ -3155,6 +3160,45 @@ def any_type(buildings):
     for bk in reversed(buildings[:-1]):
         expr = f'Or({is_type(bk)}, {expr})'
     return expr
+
+
+def any_of(exprs):
+    """Or() over exprs, nested as a balanced tree so a long list stays shallow."""
+    if len(exprs) == 1:
+        return exprs[0]
+    mid = len(exprs) // 2
+    return f'Or({any_of(exprs[:mid])}, {any_of(exprs[mid:])})'
+
+
+def hide_retool_sites(text, site_types):
+    """states_panel_buildings.gui: the state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
+
+    A site has to stay a real building: investors pick it and the crew works there. The engine fills the
+    tab's urban grid and list (State.AccessUrbanBuildings) with every building whose group's category is
+    urban (1.14.5 exe, 0x141a8c560), and a site's group needs bg_manufacturing as its parent for investors
+    to score it, so its category stays urban. The tab hides it instead: the item is invisible and the grid
+    ignores invisible items, as the lens toolbar's grid does. The list view's grid is shared with the rural
+    and development lists, which never hold a site."""
+    hidden = 'Not(' + any_of([is_type(t) for t in site_types]) + ')'
+    for old, new, what in [
+            ('\t\t\t\t\tdatamodel = "[State.AccessUrbanBuildings]"\n\t\t\t\t\tdatamodel_wrap = 4\n'
+             '\t\t\t\t\tflipdirection = yes\n\n\t\t\t\t\titem = {\n\t\t\t\t\t\tbuilding_item = {}\n',
+             '\t\t\t\t\tdatamodel = "[State.AccessUrbanBuildings]"\n\t\t\t\t\tdatamodel_wrap = 4\n'
+             '\t\t\t\t\tflipdirection = yes\n\t\t\t\t\t# PMR: no retool sites\n'
+             '\t\t\t\t\tignoreinvisible = yes\n\n\t\t\t\t\titem = {\n'
+             f'\t\t\t\t\t\tbuilding_item = {{\n\t\t\t\t\t\t\tvisible = "[{hidden}]"\n\t\t\t\t\t\t}}\n',
+             'the urban grid'),
+            ('\t\tdynamicgridbox = {\n\t\t\tblock "datamodel" {}\n\n\t\t\titem = {\n'
+             '\t\t\t\tbuildings_list_item = {}\n',
+             '\t\tdynamicgridbox = {\n\t\t\tblock "datamodel" {}\n\t\t\t# PMR: no retool sites\n'
+             '\t\t\tignoreinvisible = yes\n\n\t\t\titem = {\n'
+             f'\t\t\t\tbuildings_list_item = {{\n\t\t\t\t\tvisible = "[{hidden}]"\n\t\t\t\t}}\n',
+             'the list view')]:
+        if text.count(old) != 1:
+            raise SystemExit(f'states_panel_buildings.gui: expected one {what} item, found {text.count(old)}; '
+                             'update hide_retool_sites')
+        text = text.replace(old, new)
+    return text
 
 
 def state_var(b, name):
