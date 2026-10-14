@@ -192,7 +192,7 @@ FLUSH_PAD = 4500
 # of the building, in 1% steps, through share methods built like the recipe ones; the do-nothing method
 # is the remainder. The vanilla group stays on the building as a marker that carries nothing: it keeps
 # the game's history setup readable at game start and lets can_activate_production_method gate each
-# option by technology, law and recipe as vanilla would. Tech ladders (automation, rail, explosives,
+# option by technology, law and recipe as vanilla would. Tech ladders (automation, rail,
 # ...) are not converted yet.
 # Trade-offs (pmr/second-groups.md): once a month each option is valued at local prices (outputs minus
 # inputs per level, goods only), and points move from the worst-paying option with a share to the
@@ -206,7 +206,13 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 'pmg_aeroplanes', 'pmg_tanks', 'pmg_synthetic_silk', 'pmg_radios_category',
                 'pmg_secondary_building_rye_farm', 'pmg_secondary_building_wheat_farm',
                 'pmg_secondary_building_rice_farm', 'pmg_secondary_building_maize_farm',
-                'pmg_secondary_building_millet_farm')
+                'pmg_secondary_building_millet_farm',
+                # 2026-10-14: the mines' explosives (none, nitroglycerin, dynamite) trade explosives for
+                # ore. Left vanilla, they lost their selector with the rest of the hidden method grid,
+                # so the player's mines never used explosives.
+                'pmg_explosives_building_coal_mine', 'pmg_explosives_building_iron_mine',
+                'pmg_explosives_building_lead_mine', 'pmg_explosives_building_sulfur_mine',
+                'pmg_explosives_building_gold_mine')
 TRADE_GAIN = 1.0
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
