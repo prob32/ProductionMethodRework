@@ -36,8 +36,9 @@ What it does, building by building (see pmr/README.md for the design):
    (a new building can inherit them from two different buildings; with ``_any`` last that froze the game).
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
    building's construction cost: one private one, ``building_pmr_retool_<b>_1``, which the tick queues
-   itself as privately funded construction for the privately owned levels (RETOOL_PRIVATE_PARALLEL
-   at a time), and one government one, ``building_pmr_retool_gov_<b>``, queued by the government.
+   itself as privately funded construction for the privately owned levels, one level at a time while
+   the owner's investment pool and construction have room to spare (RETOOL_PRIVATE_GATE), and one
+   government one, ``building_pmr_retool_gov_<b>``, queued by the government.
    Abroad the player's government retools its own levels on ``building_pmr_retool_gova_<b>``, a site the tick keeps
    standing so the upgrade button can expand it into the government construction queue.
    The government retools the levels it owns that don't run the target yet; private investors the
@@ -82,7 +83,7 @@ GOV_FRACTION_STEP = 0.05   # resolution of the government-owned share read from 
 # weighed a pound at 7,500 and added 150,000, so retool sites scored 39,000..75,000 before the roll
 # against 30..3,400 for new builds (a tea plantation 14,000) and took every pick. For the 48 investable
 # types private_investment.py swaps RETOOL_AI_BASE for the building's own ai_value (pmr_ai_value_<b>).
-# Since the script queue (RETOOL_PRIVATE_PARALLEL) this weighs only the government site, for AI governments.
+# Since the script queue (RETOOL_PRIVATE_GATE) this weighs only the government site, for AI governments.
 RETOOL_AI_BASE = 1000
 RETOOL_AI_PER_EARNING = round(7500 / 52)
 RETOOL_AI_MULT = 2
@@ -93,15 +94,22 @@ RETOOL_SLOTS = 1           # private retool building types per building type
 # went. Each was one more building type per PMR building, and the country AI keeps a record per country per
 # building type and re-checks it on its own clock even when it can never build it: in Pat's 1837 autosave the
 # 315 retool types held 78% of the AI's building records (66 MB of a 220 MB save). Investors no longer pick
-# private retooling (ai_value 0, can_build_private only while pmr_pq_<b> is set): the tick queues it on the one
+# private retooling (ai_value 0): the tick queues it on the one
 # private site with start_privately_funded_building_construction, which was PMR's private queue until 20c1f04
-# and landed in the Private queue once bg_pmr_retool sat under bg_manufacturing (d051f30). Up to
-# RETOOL_PRIVATE_PARALLEL levels per building per state are in flight, as with the four slots, and only while the
-# state owner's investment pool holds anything. The effect names no investor, so the state owner's pool pays,
-# abroad too (inferred; Pat 2026-10-13 23:10Z: the host's investors may retool levels abroad, which stay their
-# owners'). This retires the 2x retool score (Pat 20:12Z), Focus on Infrastructure's retool weight and
-# companies listing retool sites (Pat 22:53Z), for private retooling only.
-RETOOL_PRIVATE_PARALLEL = 4
+# and landed in the Private queue once bg_pmr_retool sat under bg_manufacturing (d051f30). The effect names no
+# investor, so the state owner's pool pays, abroad too (inferred; Pat 2026-10-13 23:10Z: the host's investors may
+# retool levels abroad, which stay their owners'). This retires the 2x retool score (Pat 20:12Z), Focus on
+# Infrastructure's retool weight and companies listing retool sites (Pat 22:53Z), for private retooling only.
+# Pat, 2026-10-14 00:39Z: no fixed number in flight; queue as much as the investor can implement. So each check
+# (the monthly tick, research, a level landing) adds one level, and only while the state owner's investment pool
+# is growing and the country has the construction to spend it: the level then starts at once instead of waiting
+# in the queue, and retooling spends only what investors leave unspent, so their builds (which the priorities
+# steer) are never pushed back. The first queue test (af82983) kept up to 4 in flight per building per state and
+# let the site be built only while pmr_pq_<b> was set around its own queueing; the game re-checks
+# can_build_private for every waiting construction, so each waiting retool level showed as invalid (red cross,
+# Pat's queue 00:35Z). The site is now buildable while its building's retooling is open (pmr_retool_gate_<b>).
+RETOOL_PRIVATE_GATE = ('investment_pool > 0 investment_pool_net_income > 0 '
+                       'has_sufficient_construction_capacity_for_investment = yes')
 # Pat, 2026-10-13: private retool buildings get a crew so investors can expand them. 1.14.5's AI
 # expands no building under PRODUCTION_BUILDING_LOW_EMPLOYMENT_THRESHOLD (0.8) employment unless it
 # hired last week, and a building under MINIMUM_EMPLOYEES (10) employees always tries to hire, even
@@ -120,7 +128,7 @@ RETOOL_CREW_GRACE_DAYS = 90
 RETOOL_CREW_STAFFED = 0.8
 # Pat, 2026-10-13 (reversing 2026-10-12): companies listed private retooling, so a company could own and expand
 # it, and from 22:53Z the retooling of their additional industries too. Off again since the script queue
-# (RETOOL_PRIVATE_PARALLEL): investors no longer choose retool sites, so a company listing one changes nothing.
+# (RETOOL_PRIVATE_GATE): investors no longer choose retool sites, so a company listing one changes nothing.
 COMPANY_RETOOL = False
 # Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
 # building. Pat, 2026-10-13: muted, in Victoria 3's own style, and no red or green, which read as bad
@@ -925,7 +933,7 @@ def main():
 
         for rbx in priv_slots(b):
             loc += [f' {rbx}:0 "Retooling: ${bk}$"',
-                    f' {rbx}_desc:0 "Privately funded construction that switches privately owned levels of ${bk}$ to their newest recipe, {RETOOL_PRIVATE_PARALLEL} at a time, paid from the investment pool. It goes once its levels are done."']
+                    f' {rbx}_desc:0 "Privately funded construction that switches privately owned levels of ${bk}$ to their newest recipe, paid from the investment pool. PMR adds a level while the pool is growing and there is construction to spare. It goes once its levels are done."']
         for r in recipes:
             if isinstance(r, ElectricRecipe):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
@@ -1105,7 +1113,7 @@ def main():
           '# Districts, Manor Houses) pick by the building groups their investment_scores name, which a\n'
           '# child group inherits from its parent. bg_manufacturing is the parent with no land usage or\n'
           '# resource cap to inherit; Financial Districts score it.\n'
-          '# PMR\'s tick queues the private retool levels itself (RETOOL_PRIVATE_PARALLEL in tools/pmr/generate.py);\n'
+          '# PMR\'s tick queues the private retool levels itself (RETOOL_PRIVATE_GATE in tools/pmr/generate.py);\n'
           '# no investor picks them, at home or abroad.\n'
           'bg_pmr_retool = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
           '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n\n'
@@ -1692,7 +1700,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
 # ---------------------------------------------------------------------------------------------
 # Retooling construction. Per building type, one private pseudo-building, building_pmr_retool_<b>_1, for the
 # privately owned share of the levels being retooled, which the tick queues itself as privately funded
-# construction (RETOOL_PRIVATE_PARALLEL), and one government one, building_pmr_retool_gov_<b>, for its share,
+# construction (RETOOL_PRIVATE_GATE), and one government one, building_pmr_retool_gov_<b>, for its share,
 # which the government queues (the upgrade button, or an AI government by ai_value). Abroad the player's
 # government retools its own levels on building_pmr_retool_gova_<b>. The government sites are capped the way
 # vanilla caps trade centers under the canton system (can_build_government): the level after queued
@@ -1730,8 +1738,10 @@ def retool_buildings(b, bk, icon):
             who = ('\t# Privately funded. Every building vanilla lets private investors build says ownership_type = self.\n'
                    '\townership_type = self\n'
                    f'\tcan_build_government = {{ always = no }}\n'
-                   '\t# Only while the tick queues it (pmr_pq_<b>, set around its own queueing): no investor picks it.\n'
-                   f'\tcan_build_private = {{ has_variable = pmr_pq_{b} }}\n')
+                   '\t# Buildable while the building\'s retooling is open: the game re-checks this for every waiting\n'
+                   '\t# construction (a flag set only around the tick\'s own queueing left them all invalid). Only the\n'
+                   '\t# tick queues it: ai_value 0 keeps investors off.\n'
+                   f'\tcan_build_private = {{ has_variable = pmr_retool_gate_{b} }}\n')
             pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_dummy'
         elif side == 'gov':
             flag = f'pmr_retool_open_gov_{b}'
@@ -1760,7 +1770,7 @@ def retool_buildings(b, bk, icon):
             f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
             + who +
             ('\t# Only ever the player\'s click: no AI scores it.\n\tai_value = 0\n' if side == 'gova' else
-             '\t# Only ever the tick queues it (RETOOL_PRIVATE_PARALLEL): no investor scores it, and the 1.14.5\n'
+             '\t# Only ever the tick queues it (RETOOL_PRIVATE_GATE): no investor scores it, and the 1.14.5\n'
              '\t# investment roll skips a score of 0.\n\tai_value = 0\n' if side == 'priv' else
              '\t# While there is room: what an expansion of the building would score from its earnings\n'
              f'\t# (pmr_ai_w_<b>, set by the tick), x {RETOOL_AI_MULT}, so investors (or an AI government) are likelier\n'
@@ -2185,7 +2195,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     # are split by ownership; each side's room is its share less what it already has queued, and
     # the rooms never add up to more than need less everything queued.
     pq_fields = ''.join(f";{n}=[THIS.Var('{v(var)}').GetValue|0]" for n, var in
-                        (('queued', 'pmr_pq_ask'), ('inflight', 'pmr_pending_priv'), ('room_priv', 'pmr_room_priv')))
+                        (('inflight', 'pmr_pending_priv'), ('room_priv', 'pmr_room_priv')))
 
     def clamp_to(name, other):
         return (f'\tif = {{ limit = {{ var:{v(name)} > var:{v(other)} }} '
@@ -2242,19 +2252,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
              f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_seen_gov")} }} }} {setv("pmr_seen_gov", 0)} }}\n'
              f'\t\t{chg("pmr_seen_gov", "add", 1)}\n'
              f'\t\t{chg("pmr_cap_gov", "add", 1)}\n\t}}\n'
-             '\t# Private (Pat 2026-10-14 00:10Z, RETOOL_PRIVATE_PARALLEL): the tick queues the privately funded levels\n'
-             '\t# itself on the one private site, keeping up to that many in flight, while the state owner\'s\n'
-             '\t# investment pool holds anything. pmr_pq_<b> lets the site be built only during the loop.\n'
-             f'\t{setv("pmr_pq_n", RETOOL_PRIVATE_PARALLEL)}\n'
-             f'\t{chg("pmr_pq_n", "subtract", "var:" + v("pmr_pending_priv"))}\n'
-             + clamp_to("pmr_pq_n", "pmr_room_priv") +
-             f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_pq_n")} > 0 owner = {{ investment_pool > 0 }} }}\n'
-             + ('' if RELEASE else f'\t\t{setv("pmr_pq_ask", "var:" + v("pmr_pq_n"))}\n') +
-             f'\t\tset_variable = pmr_pq_{b}\n'
-             f'\t\twhile = {{\n\t\t\tlimit = {{ var:{v("pmr_pq_n")} > 0 }}\n'
-             f'\t\t\tstart_privately_funded_building_construction = {rbp}\n'
-             f'\t\t\t{chg("pmr_pq_n", "subtract", 1)}\n\t\t}}\n'
-             f'\t\tremove_variable = pmr_pq_{b}\n'
+             '\t# Private (Pat 2026-10-14 00:39Z, RETOOL_PRIVATE_GATE): one privately funded level per check on the one\n'
+             '\t# private site, while the state owner\'s investment pool is growing and its country has the construction\n'
+             '\t# to spend it, so the level starts at once and spends only what investors leave unspent.\n'
+             f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_room_priv")} > 0 owner = {{ {RETOOL_PRIVATE_GATE} }} }}\n'
+             f'\t\tstart_privately_funded_building_construction = {rbp}\n'
              '\t\t# read again, so what is in flight includes what the game took\n'
              f'\t\tpmr_read_retool_{b} = yes\n'
              f'\t\t{log("PQUEUE", bk, b, k, extra=pq_fields)}\n'
