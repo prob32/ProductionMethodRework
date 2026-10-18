@@ -7,8 +7,8 @@ testing; it rewrites the mod folder in place.
     python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"
 
 With ``--release`` it writes the build players get, to pmr/release/ProductionMethodRework: no "PMR test:"
-decision, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED; its
-English text is copied to every other game language. The default build keeps the test tools.
+decision, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED.
+The default build keeps the test tools. Both copy the English text to every other game language.
 
 What it does, building by building (see pmr/README.md for the design):
 
@@ -333,7 +333,7 @@ THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the preview, 1024 x 1
 TEST_PROBES = os.path.join(ROOT, 'pmr', 'test_probes')
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')
-# The game's other languages (1.14.5 game/localization). The release build gives each the English text.
+# The game's other languages (1.14.5 game/localization). Every build gives each the English text.
 OTHER_LANGUAGES = ('braz_por', 'french', 'german', 'japanese', 'korean', 'polish', 'russian', 'simp_chinese',
                    'spanish', 'turkish')
 # The release build keeps only these log lines: the loop breaker's, and the one saying the mod loaded.
@@ -1277,9 +1277,10 @@ def main():
     if args.trace_from:
         write('common/scripted_effects/pmr_trace_effects.txt', header + trace_pm_effects(game, args.out, args.trace_from))
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
-    if args.release:    # a game set to another language shows raw keys where it has no text: give it the English
-        for lang in OTHER_LANGUAGES:
-            write(f'localization/{lang}/pmr_l_{lang}.yml', f'l_{lang}:\n' + '\n'.join(loc) + '\n')
+    # A game set to another language shows raw keys where it has no text: give it the English. Test builds too, or a
+    # tester playing in another language sees every PMR key raw.
+    for lang in OTHER_LANGUAGES:
+        write(f'localization/{lang}/pmr_l_{lang}.yml', f'l_{lang}:\n' + '\n'.join(loc) + '\n')
 
     # A test build for its own mod folder (--test-name) carries its own name and id, so the launcher lists it
     # beside the published mod and a playset holds one or the other.
