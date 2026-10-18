@@ -1,4 +1,4 @@
-# PMR run sheet: profit figures at market prices, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,21 +10,30 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: profit figures at market prices (q24, test mod; a new game is needed)
+## Latest: profit figures at market prices, and Private Owners' Methods moves to the Buildings panel (q24, test mod; a new game is needed)
 
 From the PM rework thread (dev dce666b, your 18:15Z screenshot): in q23 the profit pick was worked out during game
 setup, before the market had prices (steel read 0.25-0.35 of base), so the Alsace-Lorraine steel mill showed Blister
 Steel at £-2990 a level a week while it earned +1.57K. Each building's pick is now worked out again on its first
 monthly pulse, at market prices, and that pass writes the `why=first_month` line.
 
+Also from the PM rework thread (dev 3944076, your 18:17Z ask): "Private Owners' Methods" has left the Private tab. The
+top-bar Buildings panel (not a state's Buildings tab) now has two tab headings, "Buildings" and "Private Owners'
+Methods". The second shows each building type's recipe row and, for the 15 types that fold automation, a grid: a
+column per recipe, a row per automation option, £ per level a week in each cell, gold behind the best pair and faded
+cells for pairs that can't run. Retooling still follows the folded recipes.
+
 1. Start a new game on the PMR Test playset (a q23 save keeps its setup-time picks) and play past 1 February 1836.
 2. Open the Alsace-Lorraine steel mill (or any steel mill) and hover the "Most profitable" row.
-3. Tell the build thread; it reads debug.log (`PMR;rec=PROFIT`).
+3. Open the Buildings panel from the top bar and click the "Private Owners' Methods" heading.
+4. Tell the build thread; it reads debug.log (`PMR;rec=PROFIT`).
 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
 | A2 | Play past 1 February 1836 | `why=first_month` PROFIT lines whose `px=` shows market prices: tools about 1.2-1.6, iron about 1.6, steel well above 0.35 | Steel still 0.25-0.35 in every state: the first-month pass didn't recompute (`pmr_pmkt_<b>`) and the setup pick stands. No PROFIT lines at all: nothing logs |
 | A3 | Hover the steel mill's "Most profitable" row after 1 February | Blister Steel positive, roughly +£850 a level a week at May 1836 prices, with the same figure as the building's PROFIT line | Still £-2990: the panel reads the setup-time numbers |
+| M2 | Buildings panel (top bar), "Private Owners' Methods" heading, after 1 February | Each building type's recipe row; a steel or textile mill also shows the recipe x automation grid with gold behind one cell and some cells faded | No second heading: the panel patch didn't load. Every £ reads 0: the picks haven't been recomputed yet (before 1 February) or the heading wasn't clicked. The Private tab still shows the section: an old build |
+| A4 | Play past 1 February 1836 | PROFIT lines for steel mills, textile mills and the other types that fold automation carry `pair=<recipe>x<automation>` and `cp=` | No `pair=` on those lines: the pair profit effect didn't load |
 
 ## Earlier: the profit pick logs itself, and private owners' methods on the Private tab (q23, test mod; a new game is best)
 
@@ -44,7 +53,7 @@ From the PM rework thread (dev 0bda5cf and f031724, your 17:59Z and 18:00Z messa
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
 | A1 | Play past 1 February 1836 | `PMR;rec=PROFIT` lines with `why=first_month`, one per building of yours, each with `to=`, `newest=`, `pick=` and an `rm=` per recipe | No PROFIT lines by 1 February 1836: the pick isn't computed or logged |
-| M1 | Private tab, below the priorities | "Private Owners' Methods": a row per building type you have, £ under each recipe, a gold square on the pick | Section empty: the view isn't refreshed when the tab opens (`pmr_mv_refresh`). Every £ reads 0: the per-state values (`pmr_level_<b>`, `pmr_rm`) weren't found |
+| M1 | Private tab, below the priorities (replaced in q24 by M2: the section moved to the Buildings panel) | "Private Owners' Methods": a row per building type you have, £ under each recipe, a gold square on the pick | Section empty: the view isn't refreshed when the tab opens (`pmr_mv_refresh`). Every £ reads 0: the per-state values (`pmr_level_<b>`, `pmr_rm`) weren't found |
 
 ## Earlier: each building shows its most profitable recipe (q22, test mod; your current save works)
 
