@@ -50,40 +50,78 @@ pmr_wsp_log = {
 				if = {
 					limit = { var:pmr_wsp_val != 0 }
 					root = { change_variable = { name = pmr_wsp_hit add = 1 } }
-					# Pat 16:14Z: the building's owners in full, company + government + the rest (financial districts, manor
-					# houses and anyone else), so a split like Krupp 2 + government 3 + others 0 can be stated. The
-					# government's share is read the way PMR reads it (country_ownership_fraction to the nearest 0.05,
-					# every government's levels together); the rest is what neither accounts for.
-					set_variable = { name = pmr_wsp_govf value = 0 }
-					if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.975 } } set_variable = { name = pmr_wsp_govf value = 1 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.925 } } set_variable = { name = pmr_wsp_govf value = 0.95 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.875 } } set_variable = { name = pmr_wsp_govf value = 0.9 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.825 } } set_variable = { name = pmr_wsp_govf value = 0.85 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.775 } } set_variable = { name = pmr_wsp_govf value = 0.8 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.725 } } set_variable = { name = pmr_wsp_govf value = 0.75 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.675 } } set_variable = { name = pmr_wsp_govf value = 0.7 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.625 } } set_variable = { name = pmr_wsp_govf value = 0.65 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.575 } } set_variable = { name = pmr_wsp_govf value = 0.6 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.525 } } set_variable = { name = pmr_wsp_govf value = 0.55 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.475 } } set_variable = { name = pmr_wsp_govf value = 0.5 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.425 } } set_variable = { name = pmr_wsp_govf value = 0.45 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.375 } } set_variable = { name = pmr_wsp_govf value = 0.4 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.325 } } set_variable = { name = pmr_wsp_govf value = 0.35 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.275 } } set_variable = { name = pmr_wsp_govf value = 0.3 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.225 } } set_variable = { name = pmr_wsp_govf value = 0.25 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.175 } } set_variable = { name = pmr_wsp_govf value = 0.2 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.125 } } set_variable = { name = pmr_wsp_govf value = 0.15 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.075 } } set_variable = { name = pmr_wsp_govf value = 0.1 } }
-					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.025 } } set_variable = { name = pmr_wsp_govf value = 0.05 } }
-					set_variable = { name = pmr_wsp_gl value = { value = var:pmr_wsp_govf multiply = var:pmr_wsp_lvl } }
-					round_variable = { name = pmr_wsp_gl nearest = 1 }
-					set_variable = { name = pmr_wsp_ol value = var:pmr_wsp_lvl }
-					change_variable = { name = pmr_wsp_ol subtract = var:pmr_wsp_gl }
-					change_variable = { name = pmr_wsp_ol subtract = var:pmr_wsp_cl }
+					# Round 2 (Pat 16:14Z: the split must be definitive, e.g. Westfalen steel = Krupp 2, government 3, FD/MH 0).
+					# The ownership fractions, to the nearest 0.05 at or below (-1 = the trigger never held).
+					if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 1 } } set_variable = { name = pmr_wsp_gov value = 1 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.95 } } set_variable = { name = pmr_wsp_gov value = 0.95 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.9 } } set_variable = { name = pmr_wsp_gov value = 0.9 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.85 } } set_variable = { name = pmr_wsp_gov value = 0.85 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.8 } } set_variable = { name = pmr_wsp_gov value = 0.8 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.75 } } set_variable = { name = pmr_wsp_gov value = 0.75 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.7 } } set_variable = { name = pmr_wsp_gov value = 0.7 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.65 } } set_variable = { name = pmr_wsp_gov value = 0.65 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.6 } } set_variable = { name = pmr_wsp_gov value = 0.6 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.55 } } set_variable = { name = pmr_wsp_gov value = 0.55 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.5 } } set_variable = { name = pmr_wsp_gov value = 0.5 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.45 } } set_variable = { name = pmr_wsp_gov value = 0.45 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.4 } } set_variable = { name = pmr_wsp_gov value = 0.4 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.35 } } set_variable = { name = pmr_wsp_gov value = 0.35 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.3 } } set_variable = { name = pmr_wsp_gov value = 0.3 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.25 } } set_variable = { name = pmr_wsp_gov value = 0.25 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.2 } } set_variable = { name = pmr_wsp_gov value = 0.2 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.15 } } set_variable = { name = pmr_wsp_gov value = 0.15 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.1 } } set_variable = { name = pmr_wsp_gov value = 0.1 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0.05 } } set_variable = { name = pmr_wsp_gov value = 0.05 } }
+					else_if = { limit = { scope:pmr_wsp_b = { country_ownership_fraction >= 0 } } set_variable = { name = pmr_wsp_gov value = 0 } }
+					else = { set_variable = { name = pmr_wsp_gov value = -1 } }
+					if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 1 } } set_variable = { name = pmr_wsp_prv value = 1 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.95 } } set_variable = { name = pmr_wsp_prv value = 0.95 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.9 } } set_variable = { name = pmr_wsp_prv value = 0.9 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.85 } } set_variable = { name = pmr_wsp_prv value = 0.85 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.8 } } set_variable = { name = pmr_wsp_prv value = 0.8 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.75 } } set_variable = { name = pmr_wsp_prv value = 0.75 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.7 } } set_variable = { name = pmr_wsp_prv value = 0.7 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.65 } } set_variable = { name = pmr_wsp_prv value = 0.65 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.6 } } set_variable = { name = pmr_wsp_prv value = 0.6 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.55 } } set_variable = { name = pmr_wsp_prv value = 0.55 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.5 } } set_variable = { name = pmr_wsp_prv value = 0.5 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.45 } } set_variable = { name = pmr_wsp_prv value = 0.45 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.4 } } set_variable = { name = pmr_wsp_prv value = 0.4 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.35 } } set_variable = { name = pmr_wsp_prv value = 0.35 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.3 } } set_variable = { name = pmr_wsp_prv value = 0.3 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.25 } } set_variable = { name = pmr_wsp_prv value = 0.25 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.2 } } set_variable = { name = pmr_wsp_prv value = 0.2 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.15 } } set_variable = { name = pmr_wsp_prv value = 0.15 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.1 } } set_variable = { name = pmr_wsp_prv value = 0.1 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0.05 } } set_variable = { name = pmr_wsp_prv value = 0.05 } }
+					else_if = { limit = { scope:pmr_wsp_b = { private_ownership_fraction >= 0 } } set_variable = { name = pmr_wsp_prv value = 0 } }
+					else = { set_variable = { name = pmr_wsp_prv value = -1 } }
+					if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 1 } } set_variable = { name = pmr_wsp_self value = 1 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.95 } } set_variable = { name = pmr_wsp_self value = 0.95 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.9 } } set_variable = { name = pmr_wsp_self value = 0.9 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.85 } } set_variable = { name = pmr_wsp_self value = 0.85 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.8 } } set_variable = { name = pmr_wsp_self value = 0.8 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.75 } } set_variable = { name = pmr_wsp_self value = 0.75 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.7 } } set_variable = { name = pmr_wsp_self value = 0.7 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.65 } } set_variable = { name = pmr_wsp_self value = 0.65 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.6 } } set_variable = { name = pmr_wsp_self value = 0.6 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.55 } } set_variable = { name = pmr_wsp_self value = 0.55 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.5 } } set_variable = { name = pmr_wsp_self value = 0.5 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.45 } } set_variable = { name = pmr_wsp_self value = 0.45 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.4 } } set_variable = { name = pmr_wsp_self value = 0.4 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.35 } } set_variable = { name = pmr_wsp_self value = 0.35 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.3 } } set_variable = { name = pmr_wsp_self value = 0.3 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.25 } } set_variable = { name = pmr_wsp_self value = 0.25 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.2 } } set_variable = { name = pmr_wsp_self value = 0.2 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.15 } } set_variable = { name = pmr_wsp_self value = 0.15 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.1 } } set_variable = { name = pmr_wsp_self value = 0.1 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0.05 } } set_variable = { name = pmr_wsp_self value = 0.05 } }
+					else_if = { limit = { scope:pmr_wsp_b = { self_ownership_fraction >= 0 } } set_variable = { name = pmr_wsp_self value = 0 } }
+					else = { set_variable = { name = pmr_wsp_self value = -1 } }
 					# Logged from the building, which names itself (q19: SCOPE.sBuilding from the state printed no name, THIS.GetName failed). The
 					# numbers sit on the state, because buildings hold no variables.
 					scope:pmr_wsp_b = {
-						debug_log = "PMR;rec=WSP;date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetBuilding.GetState.GetName];building=[THIS.GetBuilding.GetName];level=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_lvl').GetValue|0];marker=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_val').GetValue|3];company_levels=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_cl').GetValue|2];government_levels=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_gl').GetValue|0];other_levels=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_ol').GetValue|2]"
+						debug_log = "PMR;rec=WSP;date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetBuilding.GetState.GetName];building=[THIS.GetBuilding.GetName];level=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_lvl').GetValue|0];marker=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_val').GetValue|3];company_levels=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_cl').GetValue|2];gov=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_gov').GetValue|2];private=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_prv').GetValue|2];self=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_self').GetValue|2]"
 					}
 				}
 			}

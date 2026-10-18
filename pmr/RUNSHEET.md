@@ -16,19 +16,20 @@ What q19 answered (2026-10-18): a company's executive trait lands on each buildi
 and script reads it (Krupp's 2 of 5 Westfalen steel levels read `marker=0.400`, `company_levels=2.00`). A trait's
 engines input shows in the Modifiers tab only and is not a real input or demand.
 
-q20 adds the rest of the split you asked for (16:14Z). Each `PMR;rec=WSP` line now names its state and building and
-adds `government_levels` (read the way PMR reads it, every government's levels together, to the nearest 5%) and
-`other_levels`, whatever neither the company nor a government owns: financial districts, manor houses and anyone
-else. The probe is still on in your save; in a new game take the decision again.
+q20 adds the rest of the split you asked for (16:14Z), from the Company Culture thread. Each `PMR;rec=WSP` line
+now names its state and building and adds `gov`, `private` and `self`: the building's government, private and
+self-owned fractions, to the nearest 0.05 at or below (-1 = that trigger never held). The probe is still on in your
+save; in a new game take the decision again.
 
 1. Load and let one month pass.
 2. Filter debug.log for `PMR;rec=WSP` and find the Westfalen Steel Mills line.
 
 | Result | Meaning (decided before the run) |
 | --- | --- |
-| `building=Steel Mills`, `company_levels=2.00`, `government_levels=3`, `other_levels=0.00` | **Works.** Script can state the split: Krupp 2 (its special method's share), government 3, financial districts and manor houses 0 |
-| `government_levels=0` on the steel mill | The ownership read doesn't work through the probe's saved building: a probe bug, not an answer (PMR's own government read is confirmed in game) |
-| `other_levels` below 0 | The company and government reads overlap; the split can't be stated this simply |
+| Westfalen steel: `marker=0.400`, `gov=0.6`, `private=0.4`, `self=0` | **Works.** Krupp 2, government 3, financial districts and manor houses 2 - 2 = 0: the split is definitive |
+| `private` minus `marker` is not 0 on a building whose ownership tooltip shows no financial district or manor | Companies don't count as private; see whether `self` or foreign owners make up the gap |
+| `gov` + `private` + `self` isn't 1 where there are no foreign owners | One of the fractions means something else; compare with the ownership tooltip |
+| Any field -1 | That trigger doesn't read on this building |
 | `state=` or `building=` empty or ERROR | The names are still broken; the numbers still count |
 
 ## Earlier: Company Works share probe (q19; answered 2026-10-18 16:10Z, above)
