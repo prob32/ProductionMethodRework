@@ -1,4 +1,4 @@
-# PMR run sheet: recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,55 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: recipe and automation chosen as pairs, and the investment cards move to Private Owners' Methods (q25, test mod; a new game is needed)
+## Latest: the Company Culture wheel, research grants and the companies' special methods (q26, test mod; a new game is needed)
+
+From the build thread (your 18:18Z "ok submit this to the build agent to construct", BUILD-SPEC.md). Each company's
+Company Culture tab is now a wheel on the tech tree's backdrop: drag to pan, mouse wheel to zoom. Four arms sit on the
+diagonals. Engineering and Expansion are opposed, as are Stewardship and Providence, and a company holds one of each
+pair. Each pair of neighbouring arms shares a charter node halfway out (Trade = Engineering + Stewardship, Investment =
+Engineering + Providence, Industry = Expansion + Stewardship, Monopoly = Expansion + Providence) with a synergy node
+behind it. The dashed gold ring is the gate: nodes past it stay locked until the company holds a shared charter of that
+arm. A vanilla charter can now be taken only by a company holding its node, and charters cost no authority.
+
+Engineering's Works Method nodes are the company's special production methods, one line per goods-line building (Krupp:
+steel mill and artillery foundry). Buying a tier starts a 24-month research grant, shown as a green bar; while it runs,
+the company's buildings use 5% more input goods. When it ends, the company's levels of that building blend in the new
+method: more of the main good (+15% / +25% / +40% by tier) for more of one input (+5% / +10% / +15%). Only the
+company's share of the building's levels changes, and those levels fall back to the base method while that extra input
+sits at the +75% price cap. Tier II and III appear once your technology has the building's second and third recipe.
+
+Two test decisions save waiting: "PMR test: 6 Culture points for each of your companies" (repeatable) and "PMR test:
+finish your companies' research grants", which completes every running grant at the next monthly tick.
+
+1. Start a new game on the PMR Test playset as Prussia (Krupp owns steel mill levels in Westfalen) and unpause.
+2. Take "PMR test: 6 Culture points for each of your companies" twice.
+3. Open Krupp's company panel and its Company Culture tab. Click Engineering, then the steel mill's Works Method I.
+   Hover the Westfalen steel mill's modifiers.
+4. Take "PMR test: finish your companies' research grants" and play two months.
+5. Back on Krupp's wheel, buy Safety Rules, Stewardship, Fair Wages and Living Wage.
+6. Optional, for the charters: establish a second company, take the points decision twice more, and on that company
+   buy Expansion, Supply I and II, Stewardship, Company Housing, Model Dwellings and the Industry Charter. Then open
+   its charters.
+7. Close the game and tell the build thread; it reads debug.log (`PMR;rec=CC`, `CC_BUY`, `CC_TEST`, `CC_TEST_GRANT`,
+   `CC_GRANT_DONE`, `WORKS`) and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| C1 | Open Krupp's Company Culture tab | The tech tree's backdrop with Krupp's icon in a centre seal ("Choose a founding culture"), four arm titles on the diagonals, faint orbits, dotted links between nodes, a dashed gold ring, and a "Node outline" legend with five colours at the bottom left. Dragging pans, the mouse wheel zooms | The old list or a blank tab: the wheel didn't load, and error.log names `pmr_company_culture.gui`. Every node piled in one corner: the node positions didn't apply. No company icon: `AccessCompanyType.GetIcon` doesn't exist (cosmetic) |
+| C2 | Hover and read a Works Method node | A yellow method name, a small yellow glyph of the building, a net line such as "+15% Steel for +5% Coal" and a grey "over the base … method" line | A solid yellow square instead of the glyph: the icon mask doesn't work on that widget (cosmetic). Blank good or method names: the nested custom localisation doesn't resolve |
+| C3 | Take the points decision | A `CC_TEST` line per company of yours, each with `pts=` 6 higher; the tab's points go up by 6 | No `CC_TEST` line: the decision didn't run, so nothing below can be bought |
+| C4 | Click Engineering | It turns gold at no cost. Expansion, every Expansion node and the Industry and Monopoly charters turn grey with a red warning. A `CC_BUY` line with `line=fe` | No change on click: the click never reached the script (no `CC_BUY`). Expansion still buyable: the opposed-pair rule failed |
+| C5 | Buy the steel mill's Works Method I, then hover the Westfalen steel mill's modifiers | The node shows a green bar "Research grant 0 / 24 months" and `CC_BUY` has `grant=5/1/0`. The steel mill's input goods are up by Krupp's share of 5% (about +2% with Krupp at 2 of 5 levels) | No bar while `grant=5/1/0`: the grant state isn't drawn. No input increase: the grant trait isn't on Krupp's executive |
+| C6 | Take the finish-grants decision, play into the next month | A `CC_TEST_GRANT` line with `grant=5/1/23`, then `CC_GRANT_DONE` with `g1=1` and `grant=5/1/24`. The node turns gold, the input increase goes, and the steel mill's methods gain "Company works output (n/40)" and "Company works input (n/40)" | No `CC_GRANT_DONE` after a full month: the monthly grant tick didn't run. Gold node but both shares stay at 0/40: see W1 |
+| W1 | Play one more month | A `WORKS` line for each of your states where Krupp holds steel mill levels: `t1=` Krupp's levels there, `out=` t1 x 15 / level and `in=` t1 x 13.3 / level, rounded (Westfalen at 2 of 5: `out=6;in=5`), and `px_coal=` under 1.75 | No `WORKS` line: either the global switch wasn't set when the grant completed or the modifier read failed, and `CC_GRANT_DONE` decides which. `t1=0` everywhere: Krupp's tier trait isn't scaling onto the building. `out=0` with `px_coal=` 1.75 or more: the price-cap fallback, a pass |
+| W2 | Open the Westfalen steel mill | Steel output up by about `out=`% (+6%) and coal input up by about `in=` x 0.375% (+1.9%) over the plain recipe | The two shares are listed but steel output doesn't change: unscaled goods modifiers don't work inside a production method |
+| C7 | Buy Safety Rules, then Stewardship | Stewardship is buyable only once two Engineering nodes are done (Works Method I and Safety Rules) and costs 2 points; Providence then turns grey with the warning | Stewardship buyable before that: the reach rule failed |
+| G1 | Buy Fair Wages and Living Wage, then look past the gold ring | `CC_BUY` lines with `fw=1` and `fw=2`. Profit Sharing and Works Method III stay locked past the ring. The Trade Charter stays locked: it needs Works Method II on the artillery foundry, which waits for Shell Gun | A node past the ring is buyable without a shared charter: the gate failed |
+| H1 | Optional: the second company's Industry Charter | Expansion is free, Stewardship costs 2 after Supply I and II, and the Industry Charter costs 3 after Supply II and Model Dwellings. Once it's bought, Supply III past the ring turns buyable | Industry Charter still locked with both nodes done: its needs failed. Supply III still locked after the charter: the charter doesn't open the gate |
+| H2 | Optional: open the second company's charters | The Industry Charter can be taken and costs no authority. Before the node it can't be taken | Industry Charter available before the node: the charter file patch didn't load. It costs 100 authority: the define didn't load |
+| E1 | error.log | No line naming `pmr_cc`, `pmr_cw` or `pmr_company_culture` | Any such line: that part never ran, and its rows above are not results |
+
+## Earlier: recipe and automation chosen as pairs, and the investment cards move to Private Owners' Methods (q25, test mod; a new game is needed)
 
 From the build thread (your 18:36Z "yeah i want to split it"): the 15 building types that folded automation into their
 recipes no longer do. Every recipe with every automation option is a retool target of its own, so new levels and

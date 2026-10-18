@@ -1891,6 +1891,10 @@ def patch_retool_ai(text, btype, parent, invest):
     return text, n
 
 
+# Set by generate.py in test builds: company types -> lines that end pmr_ai_value_<b> (company_culture.ai_value_tail).
+AI_TAIL = None
+
+
 def patch_ai_value(text, owners, invest):
     """A building file: each building type a company lists (owners) or the investment bars count (invest) gets
     ai_value = pmr_ai_value_<b>, whose body is the vanilla ai_value (number, block, or the 1000 default), plus
@@ -1937,6 +1941,8 @@ def patch_ai_value(text, owners, invest):
                       f'\t\tadd = {{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT // 2}\n\t\t}}\n\t}}\n')
         ladder = ''.join(f'\t\t{"else_if" if j else "if"} = {{\n\t\t\tlimit = {{ b:{k} = {{ earnings >= {e} }} }}\n'
                          f'\t\t\tvalue = {e}\n\t\t}}\n' for j, e in enumerate(EARNINGS_LADDER))
+        if AI_TAIL and k in owners:
+            extra += AI_TAIL(owners[k])
         values.append(f'pmr_ai_base_{b} = {{\n{inner}}}\n'
                       f'pmr_ai_earn_{b} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{ exists = b:{k} }}\n{ladder}\t}}\n}}\n'
                       f'{name} = {{\n\tvalue = pmr_ai_base_{b}\n{extra}}}\n')

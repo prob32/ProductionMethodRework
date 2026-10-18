@@ -1,261 +1,105 @@
-"""Company Culture: a HoI4-style trait tree on every company's panel (Pat, 2026-10-14).
+"""Company Culture: a wheel of company traits on every company's panel (Pat, 2026-10-14; reworked 2026-10-18).
 
-Pat 02:03Z asked for a company sub-panel like Hearts of Iron IV's military-industrial organisations: prosperity
-earns points, points buy a tree of bonuses, and a Methods list shows every recipe of the company's buildings. The
-plan is /mnt/project-files/pmr/mio/PLAN.md; Pat answered its questions at 04:00Z and this module builds them.
+Pat 02:03Z (10-14) asked for a company sub-panel like Hearts of Iron IV's military-industrial organisations: prosperity
+earns points, points buy bonuses. On 2026-10-18 Pat redesigned it as a wheel and sent it to build at 18:18Z ("ok submit
+this to the build agent to construct"). The single source is /mnt/project-files/pmr/mio/tree-ui/BUILD-SPEC.md; this
+module builds it, cc_wheel.py draws it. Test builds only until Pat ships it.
 
-How a bonus reaches the company's own levels and nobody else's (Pat 03:02Z, confirmed in game 03:51Z on the
-Hudson's Bay Company): each bonus is a character trait on the company's executive with an `executive_modifier`,
-which the engine "applies to building levels owned by the company that the character is the executive for"
-(common/character_traits/character_traits.md), in proportion on part-owned buildings (Pat 03:56Z: seen in vanilla).
+The wheel (BUILD-SPEC section 1): four arms round the company's seal, Engineering top right, Stewardship top left,
+Expansion bottom left, Providence bottom right. Engineering and Expansion are opposed, as are Stewardship and
+Providence: a company holds one arm of each pair at most. The first founding culture is free; a second, from the other
+pair, costs SECOND_COST points once REACH nodes are bought in the first. Each pair of neighbouring arms has a shared
+charter halfway out (it needs tier II of a line on each side and opens the outer half of both arms) and a synergy
+behind it.
 
-The tree, one fixed shape for every company (Pat 04:00Z):
-  - Equipment, Refined Process I-III: every level the company owns uses fewer input goods
-    (building_goods_input_mult, the key vanilla's trade_distance modifier uses on buildings).
-  - People, Skilled Workforce I-III: fewer laborer jobs, a few engineer jobs in their place (Pat: "trade off
-    laborers for engineers"). Net jobs -3 / -6 / -10%, one engineer for every four laborers cut.
-  - Equipment and People exclude each other: the first tier bought locks the company to its column (Pat: lock).
-  - Scale, Expanded Works I, II and Mass Production: +5 / +5 / +10% throughput on every level the company owns.
-  - No charter bonus (Pat: remove it).
-Node tiers cost 1, 2 and 3 points, so a finished tree is 12 points.
+How a bonus reaches the company's own levels and nobody else's (confirmed in game 2026-10-14 03:51Z): each bonus is a
+character trait on the company's executive with an `executive_modifier`, which the engine applies to the building
+levels the company owns, in proportion on part-owned buildings. Lines whose numbers depend on the company (Supply's
+goods, Up-skilling's engineers, Master Craftsmen's goods, the works markers) use one trait per good or value, picked
+by variables the company type sets at init, so the traits never need a chain over company types.
 
-Equipment is matched to People company by company (Pat: "rough math for each company") on productivity, vanilla's
-own measure of a building (value added per job) and the one that feeds company prosperity: People makes the same
-goods with fewer jobs, Equipment makes them from fewer inputs, and each Equipment tier raises a level's value added
-by as much as the People tier beside it raises its value added per job, at base prices. (Matched on profit instead,
-steel and shipbuilding firms got Equipment tiers of 0.2%: the engineers People adds cost about three laborers'
-wages each, so People saves little money, and an Equipment tier worth that little looked broken.) Where inputs are
-very cheap (plantations) the cut would pass INPUT_CUT_MAX, and the column is scaled down to it. The numbers are the
-average over the company's building types and each type's PMR recipes. calibrate() writes them, and the
-per-company table goes to the report (CALIBRATION_MD).
+Engineering's goods lines (section 4): each tier is a new production method for the building making one of the
+company's top two output goods. A trait cannot add a real input (works share probe, q19), so the method is a share in
+PMR's blend: generate.py gives each goods-line building two more blend members, `works out` (goods_output_<good>_mult)
+and `works in` (goods_input_<good>_mult), whose steps carry WORKS_OUT[-1] and WORKS_IN[-1] x n / WORKS_STEPS as
+unscaled building modifiers. Each completed tier's trait sets the script-only marker building_pmr_cw_<b>_t<tier> to
+1; the engine scales it by the company's share of the building (q19/q20: Krupp's 2 of 5 Westfalen steel levels read
+0.400), so the building reads the levels at each tier with no loop over companies, and PMR's tick (pmr_works_<b>,
+works_effect) sizes the two members from them. A company carries only its highest completed tier's trait for a
+building, so a level is never counted twice. While the variant's extra input is at the price cap those levels fall
+back to the base recipe (the members go to 0).
 
-Points (plan section 2): each month a company earns prosperity x (1 + employed levels / 50, capped at 2) funds; a
-full bar (100 x (level + 1)^1.8 + 700, HoI4's curve) is one point and one Culture level. Prosperity and employed
-levels are read with comparison ladders (company_prosperity, company_employed_levels; vanilla compares both).
+Research grants (section 5): buying a goods tier starts a grant that runs GRANT_MONTHS on the monthly company tick,
+one at a time per company, with GRANT_INPUT more input goods on the company's levels while it runs (a trait). The
+tier then unlocks: its marker trait goes on, and the building's next tick blends it in.
 
-State lives on the company (vanilla sets variables on companies, 05_prestige_goods.txt). The panel cannot be
-shown to read a company's variables (no vanilla GUI uses Company.MakeScope), so every value the tab shows is
-mirrored onto the executive, which it reads as Company.GetExecutive.MakeScope (vanilla uses Character.MakeScope),
-and the buttons are character-scope scripted GUIs (vanilla journal_entry_sguis.txt has one). The scripted GUI
-finds the company back as the owner's company whose executive is that character. A new executive is detected
-monthly by a variable holding the company (pmr_cc_of) and gets the traits then.
+Points (unchanged since 10-14): each month a company earns prosperity x (1 + employed levels / 50, capped at 2)
+funds; a full bar (100 x (level + 1)^1.8 + 700, HoI4's curve) is one point.
 
-Test builds also get a decision granting TEST_POINTS points to each of the player's companies (a first point takes
-a company about fifteen months); drop it when Company Culture moves into the release.
+State lives on the company; every value the tab shows is mirrored onto the executive (the panel reads
+Company.GetExecutive.MakeScope), and the clicks are character-scope scripted GUIs that find the company back as the
+owner's company whose executive is that character.
 
-Wiring into generate.py main(), test builds only until Pat ships it:
+Wiring into generate.py main(), test builds only:
 
     import company_culture
-    loc += company_culture.write_all(game, write, header, report)
+    cc_plan = company_culture.plan(game, {bk: plain recipes}, goods_cost)   # before the blend members are made
+    ... company_culture.works_members(cc_plan, bk) as extra blend members, works_effect() in the tick ...
+    loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
 """
 import glob
 import os
 import re
 
 import pdx
+import cc_wheel
 
 TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
 PANEL_GUI = 'gui/company_panel.gui'
-CALIBRATION_MD = '/mnt/project-files/pmr/mio/calibration.md'
-CAL_VERSION = 1                     # bump to make every company re-read its numbers (pmr_cc_on)
+CHARTER_FILE = 'common/company_charter_types/00_company_charter_types.txt'
+CAL_VERSION = 4                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel
 
-# The tree (Pat 04:00Z). Line code, key, column name, node names, trait icons.
-LINES = [
-    (1, 'eq', 'Equipment', ('Refined Process I', 'Refined Process II', 'Refined Process III'),
-     ('meticulous', 'engineer', 'innovative')),
-    (2, 'pp', 'People', ('Skilled Workforce I', 'Skilled Workforce II', 'Skilled Workforce III'),
-     ('tactful', 'erudite', 'charismatic')),
-    (3, 'sc', 'Scale', ('Expanded Works I', 'Expanded Works II', 'Mass Production'),
-     ('basic_entrepreneur', 'experienced_entrepreneur', 'expert_entrepreneur')),
-]
-EXCLUSIVE = {'eq': 'pp', 'pp': 'eq'}
-TIER_COST = (1, 2, 3)               # points per tier (Pat 12:37Z: no queue, a click spends points already earned)
-COLUMN_ICONS = {'eq': 'gfx/interface/icons/timed_modifier_icons/modifier_gear_positive.dds',
-                'pp': 'gfx/interface/icons/pops_icons/engineers.dds',
-                'sc': 'gfx/interface/icons/generic_icons/upgrade_arrow.dds'}
-TRAIT_ICON = 'gfx/interface/icons/character_trait_icons/{}.dds'
-EXCLUSIVE_ICON = 'gfx/interface/icons/generic_icons/warning.dds'
-WHITE = 'gfx/interface/backgrounds/white.dds'
+# ---------------------------------------------------------------------------------------------------------------
+# Numbers Pat hasn't confirmed (BUILD-SPEC section 5 and 7): named so they are easy to change.
+GRANT_MONTHS = 24
+GRANT_INPUT = 0.05                  # input goods on the company's levels while a grant runs
+WORKS_OUT = (0.15, 0.25, 0.40)      # a goods tier's main output over the base method it replaces
+WORKS_IN = (0.05, 0.10, 0.15)       # and its one extra input
+WORKS_STEPS = 40                    # blend steps of the two works members (2.5% of WORKS_*[-1] each)
+PRICE_CAP = 1.75                    # pmr_px_<good> at the price cap: the variant falls back (PM rework's veto rule)
+INPUT_CUT_CAP = 20                  # an input good never more than 20% cheaper in amount from all lines
+WAGE_CUT_CAP = 25                   # wage target never below -25% from all lines
+REACH = 2                           # nodes bought in the first arm before a second founding culture
+SECOND_COST = 2                     # points for the second founding culture
+UPSKILL_CUT = (0.06, 0.12, 0.20)    # Up-skilling: laborer jobs cut
+LABORERS_PER_ENGINEER = 4           # one engineer job per four laborer jobs cut
+SC_AI_MULT = (1.25, 1.5, 2)         # Expanded Works: ai_value of the company's building types
 
-JOB_CUT = (0.03, 0.06, 0.10)        # People: net share of jobs cut per tier (Pat 04:00Z: 3 / 6 / 10%)
-LABORERS_PER_ENGINEER = 4           # People: one engineer job added for every four laborer jobs cut
-LABORER_CUT_MAX = 0.6
-THROUGHPUT = (0.05, 0.10, 0.20)     # Scale: +5 / +5 / +10%, so 5, 10 and 20% in all
-INPUT_CUT_MAX = 0.20                # Equipment: the most input goods tier III may cut
-
-# Points (plan section 2)
+# Points
 PROSPERITY_LADDER = list(range(100, 0, -5))          # 100, 95 .. 5
 SIZE_LADDER = [(n, 1 + n / 50) for n in range(50, 0, -5)]
 MAX_LEVEL = 60
+TEST_POINTS = 6
+
+TRAIT_ICON = 'gfx/interface/icons/character_trait_icons/{}.dds'
+INVENTION = 'gfx/interface/icons/invention_icons/{}.dds'
+WORKERS = ('laborers', 'farmers', 'machinists', 'clerks', 'engineers', 'shopkeepers')
 
 
 def point_cost(level):
     return round(100 * (level + 1) ** 1.8 + 700)
 
 
-def short(company):
-    return company[len('company_'):] if company.startswith('company_') else company
+def short(key):
+    for p in ('company_', 'building_'):
+        if key.startswith(p):
+            return key[len(p):]
+    return key
 
 
 def fail(where, msg):
     raise SystemExit(f'company_culture: {where}: {msg}')
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# Reading the game
-
-def companies(game):
-    """company key -> building_types, in file order."""
-    out = {}
-    for path in sorted(glob.glob(os.path.join(game, 'common', 'company_types', '*.txt'))):
-        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
-            if n.is_block and n.key and n.key.startswith('company_'):
-                bt = pdx.get(n.value, 'building_types')
-                out[n.key] = pdx.items(bt) if bt else []
-    if len(out) < 100:
-        fail('common/company_types', f'only {len(out)} company types found')
-    return out
-
-
-def goods_cost(game):
-    cost = {}
-    for path in glob.glob(os.path.join(game, 'common', 'goods', '*.txt')):
-        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
-            if n.is_block and pdx.get(n.value, 'cost'):
-                cost[n.key] = float(pdx.get(n.value, 'cost').value)
-    return cost
-
-
-def pm_info(game):
-    """production method key -> (texture, unlocking technologies)."""
-    out = {}
-    for path in glob.glob(os.path.join(game, 'common', 'production_methods', '*.txt')):
-        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
-            if n.is_block and n.key:
-                tex = pdx.get(n.value, 'texture')
-                ut = pdx.get(n.value, 'unlocking_technologies')
-                out[n.key] = (tex.value if tex else None, pdx.items(ut) if ut else [])
-    return out
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# Rough productivity math (Pat 04:00Z)
-
-def building_stats(blended, cost):
-    """building type -> its recipes' average jobs, laborer jobs, input and output value per level."""
-    by_b = {}
-    for r in blended:
-        if r.get('kind', 'recipe') == 'recipe':   # with the automation split, an automation member is not a recipe
-            by_b.setdefault(r['building'], []).append(r)
-    out = {}
-    for b, rs in by_b.items():
-        tot = dict(W=0.0, Lab=0.0, I=0.0, O=0.0)
-        for r in rs:
-            emp = {k[len('building_employment_'):-len('_add')]: v for k, v in r['employment'].items()}
-            tot['W'] += sum(emp.values())
-            tot['Lab'] += emp.get('laborers', 0)
-            for k, v in r['blend'].get('building_modifiers', {}).items():
-                if k.startswith('goods_input_') and k.endswith('_add'):
-                    tot['I'] += v * cost.get(k[len('goods_input_'):-len('_add')], 0)
-                elif k.startswith('goods_output_') and k.endswith('_add'):
-                    tot['O'] += v * cost.get(k[len('goods_output_'):-len('_add')], 0)
-        out[b] = {k: v / len(rs) for k, v in tot.items()}
-    return out
-
-
-def tiers_for(m):
-    """People and Equipment numbers for one company's average level, or None without laborers, inputs or value
-    added. p: People's productivity gain (the same goods from fewer jobs); x: the Equipment input cut that adds as
-    much value added at base prices; e: Equipment's gain once INPUT_CUT_MAX scales the column (p where it doesn't)."""
-    if not m or m['Lab'] <= 0 or m['W'] <= 0 or m['I'] <= 0 or m['O'] <= m['I']:
-        return None
-    va = m['O'] - m['I']
-    rows = []
-    for c in JOB_CUT:
-        cut = min(c * m['W'] * LABORERS_PER_ENGINEER / (LABORERS_PER_ENGINEER - 1), LABORER_CUT_MAX * m['Lab'])
-        eng = cut / LABORERS_PER_ENGINEER
-        net = cut - eng
-        p = net / (m['W'] - net)
-        rows.append({'l': cut / m['Lab'], 'a': eng, 'p': p, 'x': p * va / m['I']})
-    scale = min(1.0, INPUT_CUT_MAX / rows[-1]['x'])
-    for r in rows:
-        r['x'] *= scale
-        r['e'] = r['x'] * m['I'] / va
-    return rows
-
-
-def rounded(rows):
-    out = []
-    for r in rows:
-        out.append({'l': max(round(r['l'], 2), 0.01), 'a': max(5 * round(r['a'] / 5), 5),
-                    'p': round(r['p'], 3), 'e': round(r['e'], 3),
-                    'x': min(max(round(r['x'], 3), 0.001), INPUT_CUT_MAX)})
-    return out
-
-
-def calibrate(comps, blended, cost):
-    stats = building_stats(blended, cost)
-    cal, fallback = {}, []
-    for c, bts in comps.items():
-        st = [stats[b] for b in bts if b in stats]
-        m = {k: sum(s[k] for s in st) / len(st) for k in ('W', 'Lab', 'I', 'O')} if st else None
-        rows = tiers_for(m)
-        cal[c] = {'m': m, 'rows': rows}
-        if rows is None:
-            fallback.append(c)
-    # Companies without laborers or recipe data (art academies, electrics) take the median company's numbers.
-    have = sorted((v for v in cal.values() if v['rows']), key=lambda v: v['rows'][2]['x'])
-    median = have[len(have) // 2]['rows']
-    for c in fallback:
-        cal[c]['rows'] = median
-        cal[c]['fallback'] = True
-    for c, v in cal.items():
-        v['tiers'] = rounded(v['rows'])
-        m = v['m']
-        # The AI's column: People where the input bill is small against value added, Equipment where it is large.
-        v['ai'] = 2 if (not m or m['O'] - m['I'] >= m['I']) else 1
-    return cal
-
-
-def calibration_md(cal, comps):
-    lines = ['# Company Culture calibration (generated by tools/pmr/company_culture.py)', '',
-             'Per company: the average level of its building types over their PMR recipes (jobs, laborer jobs, input '
-             'and output value at base prices per week), then each tier of People (laborer jobs cut, engineer jobs '
-             'added per level) with its productivity gain (the same goods from fewer jobs), and the Equipment input '
-             'cut that adds as much value added at base prices. Where that cut would pass '
-             f'{INPUT_CUT_MAX:.0%} at tier III, the Equipment column is scaled down and gains less ("Equipment gain"). '
-             '"AI" is the column AI companies take. Companies marked * have no laborers or no recipe data and use the '
-             'median company\'s numbers.', '',
-             '| Company | Building types | Jobs | Laborers | Inputs £ | Outputs £ | People I / II / III | '
-             'Equipment I / II / III | People gain | Equipment gain | AI |',
-             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
-    for c in sorted(cal):
-        v = cal[c]
-        m = v['m'] or {}
-        t = v['tiers']
-        people = ' / '.join(f"-{r['l']:.0%} lab +{r['a']} eng" for r in t)
-        equip = ' / '.join(f"-{r['x'] * 100:.1f}%" for r in t)
-        gain = ' / '.join(f"+{r['p'] * 100:.1f}%" for r in t)
-        egain = ' / '.join(f"+{r['e'] * 100:.1f}%" for r in t)
-        lines.append(f"| {c}{' *' if v.get('fallback') else ''} | {', '.join(b[len('building_'):] for b in comps[c])} | "
-                     f"{m.get('W', 0):.0f} | {m.get('Lab', 0):.0f} | {m.get('I', 0):.0f} | {m.get('O', 0):.0f} | "
-                     f"{people} | {equip} | {gain} | {egain} | {'Equipment' if v['ai'] == 1 else 'People'} |")
-    return '\n'.join(lines) + '\n'
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# Traits
-
-def trait_key(line, company, t):
-    return f'pmr_cc_sc_{t}' if line == 'sc' else f'pmr_cc_{line}_{short(company)}_{t}'
-
-
-def trait(key, icon, mods):
-    body = ''.join(f'\t\t{k} = {v}\n' for k, v in mods)
-    return (f'{key} = {{\n\ttype = condition\n\ttexture = "{TRAIT_ICON.format(icon)}"\n\n'
-            f'\texecutive_modifier = {{\n{body}\t}}\n\n'
-            '\tpossible = { always = no }\n\tweight = { value = 0 }\n\tvalue = 0\n}\n')
 
 
 def fmt(x):
@@ -263,37 +107,549 @@ def fmt(x):
     return s if s not in ('-0', '') else '0'
 
 
-def traits(cal):
+# ---------------------------------------------------------------------------------------------------------------
+# Names by good and building group (GOODS-BRANCHES.md tables)
+
+# Engineering: (goods, tier names, extra inputs)
+ENG_ROWS = [
+    (('steel',), ('Hot Blast Stoves', 'Steam Blowing Engines', 'Regenerative Furnaces'), ('coal', 'engines', 'tools')),
+    (('iron',), ('Ore Roasting', 'Steam Hoists', 'Rock Drills'), ('coal', 'engines', 'explosives')),
+    (('coal',), ('Steam Winding', 'Mechanical Cutters', 'Electric Haulage'), ('engines', 'tools', 'electricity')),
+    (('lead',), ('Ore Dressing', 'Steam Hoists', 'Flotation Cells'), ('engines', 'explosives', 'tools')),
+    (('gold',), ('Stamp Mills', 'Hydraulic Sluicing', 'Cyanide Process'), ('explosives', 'engines', 'tools')),
+    (('sulfur',), ('Steam Pumps', 'Ore Furnaces', 'Frasch Wells'), ('coal', 'engines', 'oil')),
+    (('oil',), ('Cable-Tool Rigs', 'Rotary Drilling', 'Gas Lift'), ('engines', 'steel', 'tools')),
+    (('wood', 'hardwood'), ('Steam Sawmills', 'Logging Railways', 'Band Saws'), ('engines', 'tools', 'transportation')),
+    (('rubber',), ('Tapping Panels', 'Smoke Houses', 'Budded Clones'), ('tools', 'sulfur', 'fertilizer')),
+    (('engines',), ('Precision Lathes', 'Machine Shops', 'Assembly Lines'), ('steel', 'tools', 'electricity')),
+    (('tools',), ('Machine Tools', 'Milling Machines', 'Interchangeable Parts'), ('steel', 'coal', 'electricity')),
+    (('clippers', 'manowars'), ('Composite Hulls', 'Steam Saws', 'Patent Rigging'), ('hardwood', 'fabric', 'tools')),
+    (('steamers', 'ironclads'), ('Iron Hulls', 'Compound Engines', 'Triple Expansion'), ('steel', 'engines', 'coal')),
+    (('clothes',), ('Sewing Machines', 'Cutting Tables', 'Electric Sewing'), ('fabric', 'tools', 'electricity')),
+    (('luxury_clothes',), ('Pattern Cutting', 'Jacquard Trims', 'Couture Ateliers'), ('silk', 'dye', 'tools')),
+    (('fabric',), ('Power Looms', 'Ring Spinning', 'Automatic Looms'), ('engines', 'dye', 'coal')),
+    (('silk',), ('Rearing Houses', 'Reeling Machines', 'Steam Filatures'), ('coal', 'tools', 'fertilizer')),
+    (('liquor',), ('Column Stills', 'Steam Distilling', 'Bottling Lines'), ('glass', 'coal', 'sugar')),
+    (('wine',), ('Press Machines', 'Cellar Cooling', 'Bottling Lines'), ('glass', 'tools', 'electricity')),
+    (('groceries',), ('Canning', 'Refrigeration', 'Mechanised Bakeries'), ('iron', 'glass', 'electricity')),
+    (('sugar',), ('Vacuum Pans', 'Centrifuges', 'Diffusion Batteries'), ('coal', 'engines', 'tools')),
+    (('grain',), ('Seed Drills', 'Reapers', 'Steam Threshers'), ('tools', 'engines', 'fertilizer')),
+    (('fruit',), ('Grafted Orchards', 'Irrigation', 'Cold Storage'), ('fertilizer', 'tools', 'electricity')),
+    (('meat',), ('Feedlots', 'Refrigerated Cars', 'Packing Lines'), ('grain', 'transportation', 'electricity')),
+    (('fish',), ('Steam Trawlers', 'Ice Holds', 'Cold Storage'), ('engines', 'coal', 'electricity')),
+    (('tobacco', 'tea', 'coffee', 'opium', 'dye'), ('Curing Barns', 'Rolling Machines', 'Fertilised Estates'),
+     ('coal', 'tools', 'fertilizer')),
+    (('artillery',), ('Rifled Barrels', 'Breech Blocks', 'Recoil Mechanisms'), ('steel', 'tools', 'explosives')),
+    (('small_arms',), ('Machine Rifling', 'Interchangeable Parts', 'Automatic Lathes'), ('steel', 'tools', 'hardwood')),
+    (('ammunition',), ('Brass Drawing', 'Smokeless Powder', 'Belt Loading'), ('lead', 'explosives', 'electricity')),
+    (('explosives',), ('Nitration Sheds', 'Contact Process', 'Continuous Nitration'), ('sulfur', 'coal', 'electricity')),
+    (('fertilizer',), ('Superphosphate Works', 'Lead Chambers', 'Nitrogen Fixation'), ('sulfur', 'coal', 'electricity')),
+    (('glass',), ('Tank Furnaces', 'Pressing Machines', 'Bottle Machines'), ('coal', 'tools', 'electricity')),
+    (('porcelain',), ('Tunnel Kilns', 'Jiggering', 'Transfer Printing'), ('coal', 'dye', 'tools')),
+    (('paper',), ('Fourdrinier Machines', 'Wood Pulping', 'Sulphite Process'), ('wood', 'sulfur', 'coal')),
+    (('furniture', 'luxury_furniture'), ('Steam Saws', 'Bentwood', 'Veneering'), ('hardwood', 'tools', 'fabric')),
+    (('transportation',), ('Steel Rails', 'Air Brakes', 'Block Signalling'), ('steel', 'engines', 'electricity')),
+    (('merchant_marine',), ('Steam Cranes', 'Dry Docks', 'Coaling Stations'), ('engines', 'coal', 'steel')),
+    (('electricity',), ('Compound Dynamos', 'Steam Turbines', 'AC Transmission'), ('coal', 'steel', 'engines')),
+    (('telephones', 'radios'), ('Switchboards', 'Loading Coils', 'Vacuum Tubes'), ('rubber', 'lead', 'electricity')),
+    (('automobiles',), ('Assembly Lines', 'Pressed Steel Bodies', 'Electric Starters'), ('steel', 'rubber', 'electricity')),
+    (('aeroplanes',), ('Metal Airframes', 'Wind Tunnels', 'Radial Engines'), ('engines', 'steel', 'electricity')),
+    (('tanks',), ('Welded Hulls', 'Diesel Engines', 'Torsion Bars'), ('steel', 'engines', 'oil')),
+]
+# Expansion's Supply: (goods, tier names); the last row is every other good's.
+EXP_ROWS = [
+    (('coal',), ('Coal Contracts', 'Fuel Economisers', 'Captive Collieries')),
+    (('tools',), ('Bulk Tool Orders', 'Tool Rooms', 'In-House Smithies')),
+    (('engines',), ('Maintenance Shops', 'Standard Patterns', 'Engine Pools')),
+    (('oil',), ('Lubricant Contracts', 'Oil Recovery', 'Pipeline Supply')),
+    (('electricity',), ('Load Scheduling', 'Own Dynamos', 'Grid Contracts')),
+    (('transportation',), ('Rail Sidings', 'Freight Contracts', 'Private Wagons')),
+    (('iron',), ('Ore Contracts', 'Scrap Recycling', 'Captive Mines')),
+    (('steel',), ('Steel Contracts', 'Scrap Reuse', 'Captive Mills')),
+    (('wood', 'hardwood'), ('Timber Concessions', 'Kiln Drying', 'Own Forests')),
+    (('fabric',), ('Bolt Contracts', 'Cutting Patterns', 'Remnant Reuse')),
+    (('explosives',), ('Bulk Powder', 'Blasting Schedules', 'Controlled Charges')),
+    (('rubber',), ('Latex Contracts', 'Reclaimed Rubber', 'Own Estates')),
+    (('dye',), ('Dye Contracts', 'Fast Mordants', 'Own Dyeworks')),
+    (('lead',), ('Lead Contracts', 'Scrap Lead', 'Captive Mines')),
+    (('fertilizer',), ('Guano Contracts', 'Manure Recycling', 'Own Works')),
+    (('silk',), ('Bale Contracts', 'Waste Silk Spinning', 'Own Filatures')),
+    (('grain', 'sugar', 'meat', 'fish', 'fruit', 'tobacco', 'tea', 'coffee', 'opium'),
+     ('Harvest Contracts', 'Waste Reduction', 'Own Estates')),
+    (('glass',), ('Glass Contracts', 'Cullet Recycling', 'Own Glassworks')),
+    (('sulfur',), ('Sulfur Contracts', 'Acid Recovery', 'Captive Mines')),
+    (('clippers', 'steamers', 'manowars', 'ironclads'), ('Charter Contracts', 'Fleet Pooling', 'Own Fleet')),
+    ((), ('Supply Contracts', 'Waste Reduction', 'Vertical Integration')),
+]
+# Stewardship's Up-skilling, by the company's main building group.
+UPSKILL_ROWS = [
+    ('mines', ('Mine Captains', 'Mining School', 'School of Mines')),
+    ('heavy', ('Apprenticeships', 'Technical Institute', 'Works Laboratory')),
+    ('light', ('Foremen Training', 'Trade School', 'Works Engineers')),
+    ('farms', ('Agronomists', 'Farm School', 'Agricultural College')),
+    ('logging', ('Forest Wardens', 'Forestry School', 'Silviculture')),
+    ('oil', ('Drillers\' Training', 'Petroleum Geologists', 'Research Station')),
+    ('shipyards', ('Shipwrights\' Guild', 'Naval Architects', 'Model Basin')),
+    ('rail', ('Railway Engineers', 'Signal School', 'Electrical Institute')),
+]
+GROUP_ROW = {'bg_mining': 'mines', 'bg_gold_fields': 'mines', 'bg_heavy_industry': 'heavy',
+             'bg_military_industry': 'heavy', 'bg_ship_construction': 'shipyards', 'bg_light_industry': 'light',
+             'bg_agriculture': 'farms', 'bg_ranching': 'farms', 'bg_plantations': 'farms', 'bg_fishing': 'farms',
+             'bg_whaling': 'farms', 'bg_logging': 'logging', 'bg_rubber': 'logging', 'bg_oil_extraction': 'oil',
+             'bg_infrastructure': 'rail', 'bg_power': 'rail', 'bg_trade': 'rail'}
+
+
+def eng_row(good):
+    for i, (goods, _n, _x) in enumerate(ENG_ROWS, 1):
+        if good in goods:
+            return i
+    return 0
+
+
+def exp_row(good):
+    for i, (goods, _n) in enumerate(EXP_ROWS, 1):
+        if good in goods:
+            return i
+    return len(EXP_ROWS)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The lines
+
+ARMS = ('eng', 'stw', 'exp', 'prv')
+OPP = {'eng': 'exp', 'exp': 'eng', 'stw': 'prv', 'prv': 'stw'}
+FOUND = {'eng': 'fe', 'exp': 'fx', 'stw': 'fs', 'prv': 'ft'}
+KINDS = ('pm', 'prod', 'input', 'work', 'charter')     # the node outline's legend, in its order
+
+
+class Line:
+    """A line of tiers bought in order; its tier is the company variable pmr_cc_<key>. code is the scope:line value a
+    click passes. arms: its arm, or the two arms of a shared node. needs: script conditions for tier 1 (and the links
+    drawn to it, `links`). outer: tiers past the gate orbit, waiting for a shared charter of the arm. goods: an
+    Engineering goods line (1 or 2), whose tiers are research grants."""
+    def __init__(self, code, key, arms, kind, names, icons, cost, needs=(), links=(), outer=(), goods=0,
+                 founding=False):
+        self.code, self.key, self.arms, self.kind = code, key, arms, kind
+        self.names, self.icons, self.cost = names, icons, cost
+        self.needs, self.links, self.outer, self.goods, self.founding = needs, links, set(outer), goods, founding
+        self.tiers = len(cost)
+        self.shared = len(arms) == 2
+
+    @property
+    def arm(self):
+        return self.arms[0]
+
+
+def _inv(*names):
+    return tuple(INVENTION.format(n) for n in names)
+
+
+T3 = (1, 2, 3)
+NEED_G1_II = ('OR = { AND = { var:pmr_cc_k_g1b > 0 var:pmr_cc_g1 >= 2 } '
+              'AND = { var:pmr_cc_k_g1b = 0 var:pmr_cc_sf >= 1 } }')
+NEED_G2_II = ('OR = { AND = { var:pmr_cc_k_g2b > 0 var:pmr_cc_g2 >= 2 } '
+              'AND = { var:pmr_cc_k_g2b = 0 var:pmr_cc_k_g1b > 0 var:pmr_cc_g1 >= 2 } '
+              'AND = { var:pmr_cc_k_g1b = 0 var:pmr_cc_sf >= 1 } }')
+LINES = [
+    Line(1, 'fe', ('eng',), 'prod', ('Engineering',), _inv('mechanical_tools'), (0,), founding=True),
+    Line(2, 'fs', ('stw',), 'work', ('Stewardship',), _inv('labor_movement'), (0,), founding=True),
+    Line(3, 'fx', ('exp',), 'input', ('Expansion',), _inv('manufacturies'), (0,), founding=True),
+    Line(4, 'ft', ('prv',), 'work', ('Providence',), _inv('currency_standards'), (0,), founding=True),
+    # Engineering
+    Line(5, 'g1', ('eng',), 'pm', ('Works Method I', 'Works Method II', 'Works Method III'),
+         _inv('steelworking', 'bessemer_process', 'open_hearth_process'), T3, outer=(3,), goods=1),
+    Line(6, 'g2', ('eng',), 'pm', ('Works Method I', 'Works Method II', 'Works Method III'),
+         _inv('rifling', 'breech_loading_artillery', 'lathe'), T3, outer=(3,), goods=2),
+    Line(7, 'sf', ('eng',), 'work', ('Safety Rules',), _inv('triage'), (2,)),
+    # Expansion
+    Line(8, 'xs', ('exp',), 'input', ('Supply I', 'Supply II', 'Supply III'),
+         _inv('shaft_mining', 'watertube_boiler', 'steam_donkey'), T3, outer=(3,)),
+    Line(9, 'sc', ('exp',), 'prod', ('Expanded Works I', 'Expanded Works II', 'Mass Production'),
+         _inv('mechanized_workshops', 'gantry_crane', 'conveyers'), T3, outer=(3,)),
+    Line(10, 'cz', ('exp',), 'charter', ('Colonization Charter',), _inv('colonization'), (3,),
+         needs=('var:pmr_cc_sc >= 3',), links=(('sc', 3),), outer=(1,)),
+    # Stewardship
+    Line(11, 'fw', ('stw',), 'work', ('Fair Wages', 'Living Wage', 'Profit Sharing'),
+         _inv('postal_savings', 'mutual_funds', 'joint_stock_companies'), T3, outer=(3,)),
+    Line(12, 'ho', ('stw',), 'work', ('Company Housing', 'Model Dwellings'), _inv('urbanization', 'urban_planning'),
+         (1, 2)),
+    Line(13, 'ct', ('stw',), 'work', ('Company Town',), _inv('modern_sewerage'), (3,),
+         needs=('var:pmr_cc_ho >= 2', 'var:pmr_cc_fw >= 2'), links=(('ho', 2), ('fw', 2)), outer=(1,)),
+    Line(14, 'au', ('stw',), 'work', ('Up-skilling I', 'Up-skilling II', 'Up-skilling III'),
+         _inv('academia', 'empiricism', 'rationalism'), T3, outer=(2, 3)),
+    Line(15, 'pg', ('stw',), 'charter', ('Hallmark Goods',), _inv('crystal_glass'), (3,),
+         needs=('var:pmr_cc_ct >= 1',), links=(('ct', 1),), outer=(1,)),
+    # Providence
+    Line(16, 'cl', ('prv',), 'work', ('Casual Labour I', 'Casual Labour II', 'Casual Labour III'),
+         _inv('shift_work', 'enclosure', 'identification_documents'), T3, outer=(3,)),
+    Line(17, 'tp', ('prv',), 'work', ('Tight Payroll I', 'Tight Payroll II'), _inv('bureaucracy', 'law_enforcement'),
+         (1, 2)),
+    # Shared charters, halfway out (Pat 17:17-17:21Z, 17:42Z)
+    Line(18, 'tr', ('eng', 'stw'), 'charter', ('Trade Charter',), _inv('international_trade'), (3,),
+         needs=(NEED_G2_II, 'var:pmr_cc_fw >= 2'), links=(('g2', 2), ('fw', 2))),
+    Line(19, 'iv', ('eng', 'prv'), 'charter', ('Investment Charter',), _inv('investment_banks'), (3,),
+         needs=(NEED_G1_II, 'var:pmr_cc_tp >= 2'), links=(('g1', 2), ('tp', 2))),
+    Line(20, 'ch', ('exp', 'stw'), 'charter', ('Industry Charter',), _inv('corporate_charters'), (3,),
+         needs=('var:pmr_cc_xs >= 2', 'var:pmr_cc_ho >= 2'), links=(('xs', 2), ('ho', 2))),
+    Line(21, 'mo', ('exp', 'prv'), 'charter', ('Monopoly Charter',), _inv('power_of_the_purse'), (3,),
+         needs=('var:pmr_cc_sc >= 2', 'var:pmr_cc_cl >= 2'), links=(('sc', 2), ('cl', 2))),
+    # Synergies, further out on the same boundaries
+    Line(22, 'ys', ('eng', 'stw'), 'prod', ('Master Craftsmen',), _inv('pneumatic_tools'), (3,),
+         needs=('var:pmr_cc_tr >= 1',), links=(('tr', 1),)),
+    Line(23, 'yi', ('eng', 'prv'), 'work', ('Labour-Saving Machinery',), _inv('steam_turbines'), (3,),
+         needs=('var:pmr_cc_iv >= 1',), links=(('iv', 1),)),
+    Line(24, 'yt', ('exp', 'stw'), 'input', ('Fair Supply Contracts',), _inv('international_exchange_standards'), (3,),
+         needs=('var:pmr_cc_ch >= 1',), links=(('ch', 1),)),
+    Line(25, 'ym', ('exp', 'prv'), 'input', ('Vertical Trust',), _inv('stock_exchanges'), (3,),
+         needs=('var:pmr_cc_mo >= 1',), links=(('mo', 1),)),
+]
+BY_KEY = {ln.key: ln for ln in LINES}
+KEYS = [ln.key for ln in LINES]
+CHARTERS = {'tr': 'trade_charter', 'iv': 'investment_charter', 'ch': 'industry_charter', 'mo': 'monopoly_charter',
+            'cz': 'colonization_charter'}
+SHARED_OF = {a: [ln.key for ln in LINES if ln.shared and a in ln.arms and ln.key in CHARTERS] for a in ARMS}
+# The lines in each arm, for the count that opens a second founding culture.
+ARM_LINES = {a: [ln.key for ln in LINES if not ln.shared and not ln.founding and ln.arm == a] for a in ARMS}
+# Company-specific names: these lines' node names come from custom localization (custom_loc()).
+NAMED_BY_COMPANY = {'g1', 'g2', 'xs', 'au'}
+
+# The order AI companies buy in (a step whose arm the company doesn't hold is passed over; the first open step is
+# bought when affordable, otherwise the company saves for it).
+AI_ORDER = [('g1', 1), ('xs', 1), ('fw', 1), ('cl', 1), ('sc', 1), ('au', 1), ('tp', 1), ('ho', 1), ('g2', 1),
+            ('sf', 1), ('g1', 2), ('xs', 2), ('sc', 2), ('fw', 2), ('cl', 2), ('ho', 2), ('tp', 2), ('g2', 2),
+            ('tr', 1), ('iv', 1), ('ch', 1), ('mo', 1), ('g1', 3), ('g2', 3), ('xs', 3), ('sc', 3), ('fw', 3),
+            ('cl', 3), ('au', 2), ('ct', 1), ('au', 3), ('cz', 1), ('pg', 1), ('ys', 1), ('yi', 1), ('yt', 1),
+            ('ym', 1)]
+
+# Traits of the lines whose numbers are the same for every company: (line, tier) -> executive modifiers. A tier's
+# trait replaces the one before (Profit Sharing keeps Living Wage's wage target and attractiveness).
+SOL = [(f'building_{p}_standard_of_living_add', 1) for p in WORKERS]
+GENERIC = {
+    ('fe', 1): [('building_throughput_add', 0.03)],
+    ('fx', 1): [('building_goods_input_mult', -0.02)],
+    ('fs', 1): [('building_job_attractiveness_mult', 0.10)],
+    ('ft', 1): [('building_minimum_wage_mult', -0.05)],
+    ('sf', 1): [('building_working_conditions_mult', -0.20)],
+    ('xs', 1): [('building_throughput_add', 0.05)],
+    ('xs', 2): [('building_throughput_add', 0.10)],
+    ('xs', 3): [('building_throughput_add', 0.15)],
+    ('sc', 1): [('building_throughput_add', 0.10)],
+    ('sc', 2): [('building_throughput_add', 0.15)],
+    ('sc', 3): [('building_throughput_add', 0.25)],
+    ('fw', 1): [('building_minimum_wage_mult', 0.10)],
+    ('fw', 2): [('building_minimum_wage_mult', 0.20), ('building_job_attractiveness_mult', 0.20)],
+    ('fw', 3): [('building_minimum_wage_mult', 0.20), ('building_job_attractiveness_mult', 0.20),
+                ('building_company_worker_dividends_add', 0.15)],
+    ('ho', 1): SOL,
+    ('ho', 2): [(k, 2) for k, _v in SOL],
+    ('ct', 1): SOL + [('building_job_attractiveness_mult', 0.15)],
+    ('au', 1): [('building_employment_laborers_mult', -UPSKILL_CUT[0])],
+    ('au', 2): [('building_employment_laborers_mult', -UPSKILL_CUT[1])],
+    ('au', 3): [('building_employment_laborers_mult', -UPSKILL_CUT[2])],
+    ('cl', 1): [('building_employment_laborers_mult', 0.05), ('building_minimum_wage_mult', -0.05)],
+    ('cl', 2): [('building_employment_laborers_mult', 0.10), ('building_minimum_wage_mult', -0.10)],
+    ('cl', 3): [('building_employment_laborers_mult', 0.15), ('building_minimum_wage_mult', -0.15)],
+    ('tp', 1): [('building_minimum_wage_mult', -0.10)],
+    ('tp', 2): [('building_minimum_wage_mult', -0.20)],
+    ('ys', 1): [('building_employment_engineers_mult', 0.05)],
+    ('yi', 1): [('building_employment_laborers_mult', -0.15), ('goods_input_tools_mult', 0.05)],
+    ('yt', 1): [('building_goods_input_mult', -0.05), ('building_job_attractiveness_mult', 0.10)],
+    ('ym', 1): [('building_goods_input_mult', -0.10), ('building_minimum_wage_mult', -0.05)],
+}
+# Supply's per-good cut, capped so an input good stays within INPUT_CUT_CAP from all lines: the general cuts beside
+# it are Expansion's founding 2 and Fair Supply Contracts 5 or Vertical Trust 10 (never both: opposed arms).
+SUPPLY_VALUES = sorted({min(5 * t, INPUT_CUT_CAP - g) for t in T3 for g in (2, 7, 12)})
+
+
+def trait_icon(k, t):
+    return BY_KEY[k].icons[t - 1]
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Reading the game
+
+def companies(game):
+    """company key -> (building_types, prestige variables its prestige_goods_trigger reads), in file order."""
+    out = {}
+    for path in sorted(glob.glob(os.path.join(game, 'common', 'company_types', '*.txt'))):
+        text = open(path, encoding='utf-8-sig').read()
+        for n in pdx.parse(text):
+            if n.is_block and n.key and n.key.startswith('company_'):
+                bt = pdx.get(n.value, 'building_types')
+                pt = pdx.get(n.value, 'prestige_goods_trigger')
+                pvars = []
+                if pt:
+                    def walk(nodes):
+                        for x in nodes:
+                            if x.key == 'has_variable' and not x.is_block and re.fullmatch(r'prestige_good_\w+_var', x.value):
+                                pvars.append(x.value)
+                            elif x.is_block:
+                                walk(x.value)
+                    walk(pt.value)
+                out[n.key] = (pdx.items(bt) if bt else [], sorted(set(pvars)))
+    if len(out) < 100:
+        fail('common/company_types', f'only {len(out)} company types found')
+    return out
+
+
+def building_groups(game):
+    """building key -> its building group and that group's parents, nearest first."""
+    parent = {}
+    for path in glob.glob(os.path.join(game, 'common', 'building_groups', '*.txt')):
+        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
+            if n.is_block and n.key:
+                p = pdx.get(n.value, 'parent_group')
+                parent[n.key] = p.value if p else None
+    out = {}
+    for path in glob.glob(os.path.join(game, 'common', 'buildings', '*.txt')):
+        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
+            if n.is_block and n.key:
+                g = pdx.get(n.value, 'building_group')
+                chain, x = [], g.value if g else None
+                while x and x not in chain:
+                    chain.append(x)
+                    x = parent.get(x)
+                out[n.key] = chain
+    return out
+
+
+class Plan:
+    """What the generator decides per building and per company type (plan())."""
+    def __init__(self):
+        self.works = {}        # building -> {'out', 'in', 'row', 'techs': [per tier], 'icons': [per tier], 'idx'}
+        self.comp = {}         # company -> dict of its numbers (see plan())
+        self.goods = []        # every good a company variable names, 1-based
+        self.ae_values = []    # every Up-skilling engineer count
+
+
+def plan(game, plain, goods_cost):
+    """plain: building -> its plain PMR recipes (generate.Recipe). Picks each company's goods lines (the building types
+    making its top two output goods by value), Supply goods (its top two input goods), Up-skilling names and engineer
+    counts, and the works spec of every goods-line building."""
+    comps = companies(game)
+    groups = building_groups(game)
+    p = Plan()
+
+    def avg(rs, attr):
+        tot = {}
+        for r in rs:
+            for g, q in getattr(r, attr).items():
+                tot[g] = tot.get(g, 0) + q * goods_cost.get(g, 0)
+        return {g: v / len(rs) for g, v in tot.items() if v > 0}
+
+    out_val = {bk: avg(rs, 'outputs') for bk, rs in plain.items() if rs}
+    in_val = {bk: avg(rs, 'inputs') for bk, rs in plain.items() if rs}
+    main = {bk: max(v.items(), key=lambda kv: kv[1]) for bk, v in out_val.items() if v}
+    lab = {bk: sum(r.employment.get('building_employment_laborers_add', 0) for r in rs) / len(rs)
+           for bk, rs in plain.items() if rs}
+
+    def works_spec(bk):
+        good = main[bk][0]
+        row = eng_row(good)
+        extra = ENG_ROWS[row - 1][2]
+        rs = plain[bk]
+        newest = rs[-1]
+        cand = ([g for g in extra if g in newest.inputs] + [g for g in extra if any(g in r.inputs for r in rs)])
+        if not cand:   # no extra input the recipes use: the building's own most valuable input
+            iv = in_val.get(bk, {})
+            cand = [max(iv, key=iv.get)] if iv else []
+        tier = [rs[min(t, len(rs)) - 1] for t in T3]
+        return {'out': good, 'in': cand[0] if cand else None, 'row': row,
+                'techs': [list(r.unlock_techs) for r in tier], 'icons': [r.texture for r in tier]}
+
+    for c, (bts, pvars) in comps.items():
+        own = [b for b in bts if b in main]
+        ranked = sorted((b for b in own if eng_row(main[b][0])), key=lambda b: -main[b][1])
+        g = ranked[:2]
+        for b in g:
+            if b not in p.works:
+                p.works[b] = works_spec(b)
+        ins = {}
+        for b in own:
+            for good, v in in_val.get(b, {}).items():
+                ins[good] = ins.get(good, 0) + v
+        xg = sorted(ins, key=lambda k: -ins[k])[:2]
+        top = (g[0] if g else (own[0] if own else (bts[0] if bts else None)))
+        row = 'light'
+        for grp in groups.get(top, []):
+            if grp in GROUP_ROW:
+                row = GROUP_ROW[grp]
+                break
+        if top and 'shipyard' in top:
+            row = 'shipyards'
+        labs = [lab[b] for b in own if lab.get(b)]
+        lb = sum(labs) / len(labs) if labs else 0
+        ae = [max(5, 5 * round(lb * cut / LABORERS_PER_ENGINEER / 5)) if lb else 0 for cut in UPSKILL_CUT]
+        p.comp[c] = {'g': g, 'gout': [main[b][0] for b in g], 'gin': [None] * len(g), 'xg': xg, 'xr': exp_row(xg[0]) if xg else len(EXP_ROWS),
+                     'ar': [r for r, _n in UPSKILL_ROWS].index(row) + 1, 'ae': ae, 'pvars': pvars,
+                     'grow': [eng_row(main[b][0]) for b in g]}
+    for i, b in enumerate(sorted(p.works), 1):
+        p.works[b]['idx'] = i
+    for c, v in p.comp.items():
+        v['gin'] = [p.works[b]['in'] for b in v['g']]
+    goods = set()
+    for v in p.comp.values():
+        goods.update(v['gout'] + [x for x in v['gin'] if x] + v['xg'])
+    p.goods = sorted(goods)
+    p.ae_values = sorted({a for v in p.comp.values() for a in v['ae'] if a})
+    return p
+
+
+def gi(p, good):
+    return p.goods.index(good) + 1 if good else 0
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The works members (generate.py) and their tick
+
+def works_marker(b, t):
+    return f'building_pmr_cw_{short(b)}_t{t}'
+
+
+class WorksMember:
+    """A blend member for generate.py's members list: a loc key and an icon, carrying unscaled modifiers."""
+    def __init__(self, key, texture):
+        self.key, self.texture = key, texture
+
+
+def works_members(p, bk, texture):
+    """[(kind, WorksMember, {modifier: value at the full share})] for a goods-line building, or []."""
+    w = p.works.get(bk)
+    if not w:
+        return []
+    b = short(bk)
+    out = [('out', WorksMember(f'pmr_cw_out_{b}', texture), {f'goods_output_{w["out"]}_mult': WORKS_OUT[-1]})]
+    if w['in']:
+        out.append(('in', WorksMember(f'pmr_cw_in_{b}', texture), {f'goods_input_{w["in"]}_mult': WORKS_IN[-1]}))
+    return out
+
+
+def works_effect(p, bk, jout, jin):
+    """State scope: pmr_wn_<j>_<b>, the steps of the two works members, from the company levels at each tier (the
+    markers), 0 while the variant's extra input is at the price cap (BUILD-SPEC section 4)."""
+    b = short(bk)
+    w = p.works[bk]
+
+    def v(name):
+        return f'{name}_{b}'
+    o = f'pmr_works_{b} = {{\n'
+    o += f'\tset_variable = {{ name = {v(f"pmr_wn_{jout}")} value = 0 }}\n'
+    if jin:
+        o += f'\tset_variable = {{ name = {v(f"pmr_wn_{jin}")} value = 0 }}\n'
+    # read as the works share probe did (q19/q20): the building as a saved scope, its modifier through it
+    body = f'\t\tb:{bk} = {{ save_temporary_scope_as = pmr_cw_b }}\n'
+    for t in T3:
+        body += (f'\t\tset_variable = {{ name = {v(f"pmr_cwl{t}")} value = scope:pmr_cw_b.modifier:{works_marker(bk, t)} }}\n'
+                 f'\t\tchange_variable = {{ name = {v(f"pmr_cwl{t}")} multiply = var:{v("pmr_level")} }}\n'
+                 f'\t\tround_variable = {{ name = {v(f"pmr_cwl{t}")} nearest = 1 }}\n')
+    # steps = sum(levels_t x share_t) / level / max x STEPS, with share_t / max per tier folded into one factor
+    for j, table in ((jout, WORKS_OUT), (jin, WORKS_IN)):
+        if not j:
+            continue
+        body += f'\t\tset_variable = {{ name = {v(f"pmr_wn_{j}")} value = 0 }}\n'
+        for t in T3:
+            body += (f'\t\tset_variable = {{ name = {v("pmr_cwt")} value = var:{v(f"pmr_cwl{t}")} }}\n'
+                     f'\t\tchange_variable = {{ name = {v("pmr_cwt")} multiply = {fmt(table[t - 1] / table[-1] * WORKS_STEPS)} }}\n'
+                     f'\t\tchange_variable = {{ name = {v(f"pmr_wn_{j}")} add = var:{v("pmr_cwt")} }}\n')
+        body += (f'\t\tchange_variable = {{ name = {v(f"pmr_wn_{j}")} divide = var:{v("pmr_level")} }}\n'
+                 f'\t\tround_variable = {{ name = {v(f"pmr_wn_{j}")} nearest = 1 }}\n'
+                 f'\t\tif = {{ limit = {{ var:{v(f"pmr_wn_{j}")} > {WORKS_STEPS} }} '
+                 f'set_variable = {{ name = {v(f"pmr_wn_{j}")} value = {WORKS_STEPS} }} }}\n')
+    cap = ''
+    if w['in']:
+        cap = (f'\t\tpmr_price_{w["in"]} = yes\n'
+               f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_px_{w["in"]} >= {fmt(PRICE_CAP)} }}\n'
+               f'\t\t\t# the variant\'s extra input is at the price cap: those levels run the base recipe\n'
+               f'\t\t\tset_variable = {{ name = {v(f"pmr_wn_{jout}")} value = 0 }}\n'
+               + (f'\t\t\tset_variable = {{ name = {v(f"pmr_wn_{jin}")} value = 0 }}\n' if jin else '')
+               + '\t\t}\n')
+
+    # a quiet building never logs a blend, so the share logs itself each month while a company holds a tier here
+    def g(name, f=0):
+        return f"[THIS.Var('{v(name)}').GetValue|{f}]"
+    held = ' '.join(f'var:{v(f"pmr_cwl{t}")} > 0' for t in T3)
+    log = (f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} OR = {{ {held} }} }} '
+           f'debug_log = "PMR;rec=WORKS;date=[TimeKeeper.GetCurrentDate.GetString];'
+           f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+           f'building={bk};level={g("pmr_level")};'
+           + ';'.join(f't{t}={g(f"pmr_cwl{t}")}' for t in T3)
+           + f';out={g(f"pmr_wn_{jout}")}'
+           + (f';in={g(f"pmr_wn_{jin}")};px_{w["in"]}=[THIS.Var(\'pmr_px_{w["in"]}\').GetValue|2]' if jin else '')
+           + '" }\n')
+    o += (f'\t# only once some company has completed a tier for this building type (pmr_cc_grant_done)\n'
+          f'\tif = {{\n\t\tlimit = {{ has_global_variable = pmr_cw_on_{b} exists = b:{bk} var:{v("pmr_level")} > 0 }}\n'
+          + body + cap + log + '\t}\n}\n\n')
+    return o
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Traits
+
+def trait(key, icon, mods):
+    body = ''.join(f'\t\t{k} = {fmt(v)}\n' for k, v in mods)
+    return (f'{key} = {{\n\ttype = condition\n\ttexture = "{icon}"\n\n'
+            f'\texecutive_modifier = {{\n{body}\t}}\n\n'
+            '\tpossible = { always = no }\n\tweight = { value = 0 }\n\tvalue = 0\n}\n')
+
+
+def generic_trait(k, t):
+    return f'pmr_cc_{k}_{t}'
+
+
+def keyed_traits(p):
+    """(trait key, icon, modifiers, condition on the company) for the traits picked by company variables."""
+    out = []
+    for g in p.goods:
+        n = gi(p, g)
+        for val in SUPPLY_VALUES:
+            out.append((f'pmr_cc_xs_{g}_{val}', trait_icon('xs', 1), [(f'goods_input_{g}_mult', -val / 100)],
+                        f'var:pmr_cc_xsv = {val} OR = {{ var:pmr_cc_k_xg1 = {n} var:pmr_cc_k_xg2 = {n} }}'))
+        out.append((f'pmr_cc_ys_{g}', trait_icon('ys', 1), [(f'goods_output_{g}_mult', 0.05)],
+                    f'var:pmr_cc_ys = 1 OR = {{ var:pmr_cc_k_g1g = {n} var:pmr_cc_k_g2g = {n} }}'))
+    for a in p.ae_values:
+        out.append((f'pmr_cc_ae_{a}', trait_icon('au', 1), [('building_employment_engineers_add', a)],
+                    f'var:pmr_cc_aev = {a}'))
+    for bk, w in sorted(p.works.items()):
+        for t in T3:
+            out.append((f'pmr_cc_cw_{short(bk)}_{t}', BY_KEY['g1'].icons[t - 1], [(works_marker(bk, t), 1)],
+                        f'OR = {{ AND = {{ var:pmr_cc_k_g1b = {w["idx"]} var:pmr_cc_g1 = {t} }} '
+                        f'AND = {{ var:pmr_cc_k_g2b = {w["idx"]} var:pmr_cc_g2 = {t} }} }}'))
+    for n in range(1, 5):
+        out.append((f'pmr_cc_wcap_{n}', trait_icon('ft', 1), [('building_minimum_wage_mult', 0.05 * n)],
+                    f'var:pmr_cc_wc = {n}'))
+    out.append(('pmr_cc_grant', trait_icon('g1', 1), [('building_goods_input_mult', GRANT_INPUT)], 'var:pmr_cc_gr > 0'))
+    return out
+
+
+def traits(p):
     out = ['# Company Culture traits (company_culture.py). Each sits on a company\'s executive; its executive_modifier\n'
            '# applies to the building levels that company owns. Never random (possible no, weight 0, value 0).\n\n']
-    icons = {key: icons for _c, key, _n, _names, icons in LINES}
-    for t in (1, 2, 3):
-        out.append(trait(trait_key('sc', None, t), icons['sc'][t - 1], [('building_throughput_add', fmt(THROUGHPUT[t - 1]))]))
-    for c in sorted(cal):
-        for t, r in enumerate(cal[c]['tiers'], 1):
-            out.append(trait(trait_key('eq', c, t), icons['eq'][t - 1], [('building_goods_input_mult', fmt(-r['x']))]))
-            out.append(trait(trait_key('pp', c, t), icons['pp'][t - 1],
-                             [('building_employment_laborers_mult', fmt(-r['l'])),
-                              ('building_employment_engineers_add', fmt(r['a']))]))
+    for (k, t), mods in GENERIC.items():
+        out.append(trait(generic_trait(k, t), trait_icon(k, t), mods))
+    for key, icon, mods, _w in keyed_traits(p):
+        out.append(trait(key, icon, mods))
     return '\n'.join(out)
 
 
-MODIFIER_TYPES = '''# Dynamic modifier types vanilla 1.14.5 does not define (the exe has the pattern building_employment_{}_mult; the
-# Hudson's Bay probe confirmed this one in game, 2026-10-14).
-building_employment_laborers_mult = {
-	decimals = 0
-	color = neutral
-	percent = yes
-	game_data = { ai_value = 0 }
-}
-'''
+def modifier_types(p):
+    out = ['# Dynamic modifier types vanilla 1.14.5 does not define (the exe has the pattern building_employment_{}_mult;\n'
+           '# the Hudson\'s Bay probe confirmed laborers in game, 2026-10-14).\n']
+    for pop in ('laborers', 'engineers'):
+        out.append(f'building_employment_{pop}_mult = {{\n\tdecimals = 0\n\tcolor = neutral\n\tpercent = yes\n'
+                   '\tgame_data = { ai_value = 0 }\n}\n')
+    out.append('# Works markers (BUILD-SPEC section 4): a company\'s goods-tier trait sets one to 1, and a building reads it\n'
+               '# as that company\'s share of its levels (the engine scales executive modifiers by share; q19/q20).\n')
+    for bk in sorted(p.works):
+        for t in T3:
+            out.append(f'{works_marker(bk, t)} = {{\n\tscript_only = yes\n\tdecimals = 2\n\tcolor = neutral\n'
+                       '\tgame_data = { ai_value = 0 }\n}\n')
+    return '\n'.join(out)
 
 
 # ---------------------------------------------------------------------------------------------------------------
 # Script
 
 def ladder(trigger, steps, var, ind):
-    """if/else_if chain setting local variable var to the first step whose trigger holds."""
     out = ''
     for i, (n, val) in enumerate(steps):
         kw = 'if' if i == 0 else 'else_if'
@@ -306,66 +662,106 @@ def log_line(rec, extra=''):
             'company=[THIS.GetCompany.GetNameNoFormatting];' + extra +
             "level=[THIS.Var('pmr_cc_level').GetValue|0];pts=[THIS.Var('pmr_cc_pts').GetValue|0];"
             "funds=[THIS.Var('pmr_cc_funds').GetValue|0];cost=[THIS.Var('pmr_cc_cost').GetValue|0];"
-            "rate=[THIS.Var('pmr_cc_rate').GetValue|1];eq=[THIS.Var('pmr_cc_eq').GetValue|0];"
-            "pp=[THIS.Var('pmr_cc_pp').GetValue|0];sc=[THIS.Var('pmr_cc_sc').GetValue|0]\"")
+            "rate=[THIS.Var('pmr_cc_rate').GetValue|1];"
+            "grant=[THIS.Var('pmr_cc_gr').GetValue|0]/[THIS.Var('pmr_cc_grt').GetValue|0]/[THIS.Var('pmr_cc_grm').GetValue|0];"
+            "g1b=[THIS.Var('pmr_cc_k_g1b').GetValue|0];g2b=[THIS.Var('pmr_cc_k_g2b').GetValue|0];"
+            + ';'.join(f"{k}=[THIS.Var('pmr_cc_{k}').GetValue|0]" for k in KEYS) + '"')
 
 
 def player_log(rec, extra=''):
-    return f'if = {{ limit = {{ owner = {{ is_player = yes }} }} {log_line(rec, extra)} }}'
+    return f'if = {{ limit = {{ owner ?= {{ is_player = yes }} }} {log_line(rec, extra)} }}'
 
 
-NUMBERS = ('x', 'l', 'a', 'p', 'e')     # per company and tier, from calibrate() (tiers_for)
+KVARS = ['pmr_cc_k_g1b', 'pmr_cc_k_g2b', 'pmr_cc_k_g1g', 'pmr_cc_k_g2g', 'pmr_cc_k_g1i', 'pmr_cc_k_g2i',
+         'pmr_cc_k_g1r', 'pmr_cc_k_g2r', 'pmr_cc_k_xg1', 'pmr_cc_k_xg2', 'pmr_cc_k_xr', 'pmr_cc_k_ar',
+         'pmr_cc_k_ae1', 'pmr_cc_k_ae2', 'pmr_cc_k_ae3', 'pmr_cc_k_pg']
+STATE_VARS = [f'pmr_cc_st_{ln.key}_{t}' for ln in LINES for t in range(1, ln.tiers + 1)]
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mo',
-             'pmr_cc_prosp', 'pmr_cc_size']
-            + [f'pmr_cc_{k}' for _c, k, *_r in LINES]
-            + [f'pmr_cc_pick_{k}' for _c, k, *_r in LINES]
-            + [f'pmr_cc_st_{k}_{t}' for _c, k, *_r in LINES for t in (1, 2, 3)]
-            + [f'pmr_cc_{n}{t}' for n in NUMBERS for t in (1, 2, 3)])
+             'pmr_cc_prosp', 'pmr_cc_size', 'pmr_cc_gr', 'pmr_cc_grt', 'pmr_cc_grm', 'pmr_cc_fcost', 'pmr_cc_nf',
+             'pmr_cc_xsv', 'pmr_cc_aev']
+            + [f'pmr_cc_{k}' for k in KEYS] + [f'pmr_cc_pick_{k}' for k in KEYS] + STATE_VARS + KVARS)
 
 
-def effects(cal):
+def reached(arm):
+    return f'var:pmr_cc_{FOUND[arm]} = 1'
+
+
+def ruled(arm):
+    return f'var:pmr_cc_{FOUND[OPP[arm]]} = 1'
+
+
+def outer_ok(arm):
+    return 'OR = { ' + ' '.join(f'var:pmr_cc_{s} = 1' for s in SHARED_OF[arm]) + ' }'
+
+
+def tier_conds(ln, t):
+    """What tier t of line ln needs beyond its arms and points: the tier before, its needs, the gate, technology."""
+    c = [f'var:pmr_cc_{ln.key} = {t - 1}']
+    if t == 1:
+        c += list(ln.needs)
+    if t in ln.outer:
+        c.append(outer_ok(ln.arm))
+    if ln.goods:
+        c.append(f'var:pmr_cc_g{ln.goods}tk >= {t}')
+    return c
+
+
+def arm_ok(ln):
+    return [reached(a) for a in ln.arms]
+
+
+def not_available(ln):
+    if ln.goods:
+        return f'var:pmr_cc_k_g{ln.goods}b = 0'
+    if ln.key == 'pg':
+        return 'var:pmr_cc_k_pg = 0'
+    return None
+
+
+def effects(p, comps):
     o = []
     o.append('# Company Culture (company_culture.py). Company scope unless said otherwise. Variables on the company:\n'
              '# pmr_cc_on (calibration version), pmr_cc_funds, pmr_cc_level, pmr_cc_pts (unspent), pmr_cc_cost (funds for\n'
-             '# the next point), pmr_cc_rate (funds last month), pmr_cc_eq / pp / sc (tier bought, 0-3),\n'
-             '# pmr_cc_x/l/a/p/e1..3 (this company\'s numbers, from calibrate()).\n'
+             '# the next point), pmr_cc_rate (funds last month), pmr_cc_<line> (tier completed), pmr_cc_k_* (the company\n'
+             '# type\'s numbers: goods-line buildings, goods, name rows, engineers), pmr_cc_gr / grt / grm (the research grant\n'
+             '# running: line code, tier, months), pmr_cc_n_<arm>, pmr_cc_nf, pmr_cc_nfirst (founding cultures and nodes),\n'
+             '# pmr_cc_g1tk / g2tk (the highest goods tier the owner\'s technology allows), pmr_cc_xsv (Supply\'s cut per good,\n'
+             '# capped), pmr_cc_wc (the wage target correction, in 5% steps), pmr_cc_aev (Up-skilling\'s engineer jobs).\n'
              '# Everything the tab shows is mirrored onto the executive (pmr_cc_mirror), which also holds pmr_cc_of, the\n'
              '# company its traits were set for.\n\n')
-    # Init: the company's own numbers, by company type.
+    # Init: the company type's numbers.
     chain = ''
-    for i, c in enumerate(sorted(cal)):
-        kw = 'if' if i == 0 else 'else_if'
-        sets = ''.join(f'set_variable = {{ name = pmr_cc_{n}{t} value = {fmt(r[k])} }} '
-                       for t, r in enumerate(cal[c]['tiers'], 1)
-                       for n in NUMBERS for k in (n,))
-        chain += (f'\t{kw} = {{\n\t\tlimit = {{ is_company_type = company_type:{c} }}\n'
-                  f'\t\t{sets}\n\t\tset_variable = {{ name = pmr_cc_ail value = {cal[c]["ai"]} }}\n\t}}\n')
-    median = sorted(cal.values(), key=lambda v: v['tiers'][2]['x'])[len(cal) // 2]['tiers']
-    dsets = ''.join(f'set_variable = {{ name = pmr_cc_{n}{t} value = {fmt(r[k])} }} '
-                    for t, r in enumerate(median, 1) for n in NUMBERS for k in (n,))
-    o.append('# A company seen for the first time, or after CAL_VERSION changed: zero state where missing, the\n'
-             '# company\'s numbers, its first cost. A company type PMR does not know (another mod) takes the median.\n'
+    for i, (c, v) in enumerate(sorted(p.comp.items())):
+        g = v['g']
+        vals = {'pmr_cc_k_g1b': p.works[g[0]]['idx'] if g else 0, 'pmr_cc_k_g2b': p.works[g[1]]['idx'] if len(g) > 1 else 0,
+                'pmr_cc_k_g1g': gi(p, v['gout'][0]) if g else 0, 'pmr_cc_k_g2g': gi(p, v['gout'][1]) if len(g) > 1 else 0,
+                'pmr_cc_k_g1i': gi(p, v['gin'][0]) if g else 0, 'pmr_cc_k_g2i': gi(p, v['gin'][1]) if len(g) > 1 else 0,
+                'pmr_cc_k_g1r': v['grow'][0] if g else 0, 'pmr_cc_k_g2r': v['grow'][1] if len(g) > 1 else 0,
+                'pmr_cc_k_xg1': gi(p, v['xg'][0]) if v['xg'] else 0,
+                'pmr_cc_k_xg2': gi(p, v['xg'][1]) if len(v['xg']) > 1 else 0,
+                'pmr_cc_k_xr': v['xr'], 'pmr_cc_k_ar': v['ar'], 'pmr_cc_k_ae1': v['ae'][0], 'pmr_cc_k_ae2': v['ae'][1],
+                'pmr_cc_k_ae3': v['ae'][2], 'pmr_cc_k_pg': 1 if v['pvars'] else 0}
+        sets = ' '.join(f'set_variable = {{ name = {k} value = {x} }}' for k, x in vals.items())
+        chain += f'\t{"if" if i == 0 else "else_if"} = {{\n\t\tlimit = {{ is_company_type = company_type:{c} }}\n\t\t{sets}\n\t}}\n'
+    dflt = ' '.join(f'set_variable = {{ name = {k} value = 0 }}' for k in KVARS if k != 'pmr_cc_k_xr')
+    dflt += f' set_variable = {{ name = pmr_cc_k_xr value = {len(EXP_ROWS)} }} set_variable = {{ name = pmr_cc_k_ar value = 3 }}'
+    zero = (['pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate', 'pmr_cc_gr', 'pmr_cc_grt', 'pmr_cc_grm']
+            + [f'pmr_cc_{k}' for k in KEYS])
+    o.append('# A company seen for the first time, or after CAL_VERSION changed: zero state where missing, the company\n'
+             '# type\'s numbers, its first cost. A company type PMR does not know (another mod) has no goods lines.\n'
              'pmr_cc_init = {\n'
-             + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = {v} }} }} set_variable = {{ name = {v} value = 0 }} }}\n'
-                       for v in ('pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate', 'pmr_cc_eq',
-                                 'pmr_cc_pp', 'pmr_cc_sc'))
-             + chain + f'\telse = {{\n\t\t{dsets}\n\t\tset_variable = {{ name = pmr_cc_ail value = 2 }}\n\t}}\n'
-             '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_cc_ai } }\n'
-             '\t\t# the AI\'s column, a quarter of the time the other one\n'
-             '\t\trandom_list = {\n\t\t\t3 = { set_variable = { name = pmr_cc_ai value = var:pmr_cc_ail } }\n'
-             '\t\t\t1 = {\n\t\t\t\tif = { limit = { var:pmr_cc_ail = 1 } set_variable = { name = pmr_cc_ai value = 2 } }\n'
-             '\t\t\t\telse = { set_variable = { name = pmr_cc_ai value = 1 } }\n\t\t\t}\n\t\t}\n\t}\n'
+             + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = {x} }} }} set_variable = {{ name = {x} value = 0 }} }}\n'
+                       for x in zero)
+             + chain + f'\telse = {{\n\t\t{dflt}\n\t}}\n'
              f'\tset_variable = {{ name = pmr_cc_on value = {CAL_VERSION} }}\n'
-             '\tpmr_cc_set_cost = yes\n}\n\n')
+             '\tpmr_cc_set_cost = yes\n\tpmr_cc_derive = yes\n}\n\n')
     # Cost of the next point.
     costs = ''.join(f'\t{"if" if L == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_level <= {L} }} '
                     f'set_variable = {{ name = pmr_cc_cost value = {point_cost(L)} }} }}\n' for L in range(MAX_LEVEL))
     o.append('# Funds for the next point: 100 x (level + 1)^1.8 + 700, HoI4\'s curve.\n'
              'pmr_cc_set_cost = {\n' + costs
              + f'\telse = {{ set_variable = {{ name = pmr_cc_cost value = {point_cost(MAX_LEVEL)} }} }}\n}}\n\n')
-    # Earning.
     o.append('# Monthly funds: prosperity x size, size = 1 + employed levels / 50 (at most 2), both read by ladder.\n'
-             '# One point a month at most: the cheapest point costs more than a month can earn (800 > 200).\n'
              'pmr_cc_earn = {\n\tset_local_variable = { name = pmr_cc_p value = 0 }\n'
              + ladder('company_prosperity', [(n, n) for n in PROSPERITY_LADDER], 'pmr_cc_p', '\t')
              + '\tset_local_variable = { name = pmr_cc_s value = 1 }\n'
@@ -381,99 +777,204 @@ def effects(cal):
              '\t\tchange_variable = { name = pmr_cc_pts add = 1 }\n'
              '\t\tpmr_cc_set_cost = yes\n'
              f'\t\t{player_log("CC_POINT")}\n\t}}\n}}\n\n')
-    # Triggers are in scripted triggers; buying.
-    o.append('# Buy the next tier of line $L$ (eq, pp, sc): its cost in points, the tier, the traits.\n'
-             'pmr_cc_buy = {\n'
-             '\tif = { limit = { var:pmr_cc_$L$ = 0 } change_variable = { name = pmr_cc_pts subtract = 1 } }\n'
-             '\telse_if = { limit = { var:pmr_cc_$L$ = 1 } change_variable = { name = pmr_cc_pts subtract = 2 } }\n'
-             '\telse = { change_variable = { name = pmr_cc_pts subtract = 3 } }\n'
-             '\tchange_variable = { name = pmr_cc_$L$ add = 1 }\n'
-             '\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n'
-             f'\t{player_log("CC_BUY", "line=$L$;")}\n}}\n\n')
-    # A click (scope:line from the GUI).
+    # Derived numbers.
+    d = ''
+    for a in ARMS:
+        ks = ARM_LINES[a]
+        d += f'\tset_variable = {{ name = pmr_cc_n_{a} value = var:pmr_cc_{ks[0]} }}\n'
+        d += ''.join(f'\tchange_variable = {{ name = pmr_cc_n_{a} add = var:pmr_cc_{k} }}\n' for k in ks[1:])
+    d += '\tset_variable = { name = pmr_cc_nf value = 0 }\n\tset_variable = { name = pmr_cc_nfirst value = 0 }\n'
+    for a in ARMS:
+        d += (f'\tif = {{ limit = {{ {reached(a)} }} change_variable = {{ name = pmr_cc_nf add = 1 }} '
+              f'change_variable = {{ name = pmr_cc_nfirst add = var:pmr_cc_n_{a} }} }}\n')
+    d += ('\t# the founding culture\'s cost on the tab: free for the first, then the second\'s\n'
+          '\tif = { limit = { var:pmr_cc_nf = 0 } set_variable = { name = pmr_cc_fcost value = 0 } }\n'
+          f'\telse = {{ set_variable = {{ name = pmr_cc_fcost value = {SECOND_COST} }} }}\n')
+    d += ('\t# Supply\'s cut per good: 5% a tier, never past ' + str(INPUT_CUT_CAP) + '% with the general cuts beside it\n'
+          '\tset_variable = { name = pmr_cc_xsv value = var:pmr_cc_xs }\n'
+          '\tchange_variable = { name = pmr_cc_xsv multiply = 5 }\n'
+          f'\tset_local_variable = {{ name = pmr_cc_cap value = {INPUT_CUT_CAP} }}\n'
+          '\tif = { limit = { var:pmr_cc_fx = 1 } change_local_variable = { name = pmr_cc_cap subtract = 2 } }\n'
+          '\tif = { limit = { var:pmr_cc_yt = 1 } change_local_variable = { name = pmr_cc_cap subtract = 5 } }\n'
+          '\tif = { limit = { var:pmr_cc_ym = 1 } change_local_variable = { name = pmr_cc_cap subtract = 10 } }\n'
+          '\tif = { limit = { var:pmr_cc_xsv > local_var:pmr_cc_cap } set_variable = { name = pmr_cc_xsv value = local_var:pmr_cc_cap } }\n'
+          f'\t# the wage target correction: never below -{WAGE_CUT_CAP}% from all lines (5% steps)\n'
+          '\tset_variable = { name = pmr_cc_wc value = var:pmr_cc_cl }\n'
+          '\tchange_variable = { name = pmr_cc_wc add = var:pmr_cc_ft }\n'
+          '\tchange_variable = { name = pmr_cc_wc add = var:pmr_cc_ym }\n'
+          '\tchange_variable = { name = pmr_cc_wc add = var:pmr_cc_tp }\n'
+          '\tchange_variable = { name = pmr_cc_wc add = var:pmr_cc_tp }\n'
+          f'\tchange_variable = {{ name = pmr_cc_wc subtract = {WAGE_CUT_CAP // 5} }}\n'
+          '\tif = { limit = { var:pmr_cc_wc < 0 } set_variable = { name = pmr_cc_wc value = 0 } }\n'
+          '\t# Up-skilling\'s engineer jobs at its tier\n'
+          '\tset_variable = { name = pmr_cc_aev value = 0 }\n'
+          + ''.join(f'\tif = {{ limit = {{ var:pmr_cc_au = {t} }} set_variable = {{ name = pmr_cc_aev value = var:pmr_cc_k_ae{t} }} }}\n'
+                    for t in T3))
+    # the highest goods tier the owner's technology allows
+    for gl in (1, 2):
+        d += f'\tset_variable = {{ name = pmr_cc_g{gl}tk value = 0 }}\n'
+        first = True
+        for bk, w in sorted(p.works.items(), key=lambda kv: kv[1]['idx']):
+            inner = ''
+            for n, t in enumerate((3, 2, 1)):
+                techs = w['techs'][t - 1]
+                kw = 'if' if n == 0 else 'else_if'
+                if not techs:
+                    inner += (f' {"else" if n else ""}' + (' = {' if n else '') + f' set_variable = {{ name = pmr_cc_g{gl}tk value = {t} }}'
+                              + (' }' if n else ''))
+                    break
+                lim = ' '.join(f'has_technology_researched = {x}' for x in techs)
+                inner += f' {kw} = {{ limit = {{ owner ?= {{ {lim} }} }} set_variable = {{ name = pmr_cc_g{gl}tk value = {t} }} }}'
+            d += f'\t{"if" if first else "else_if"} = {{ limit = {{ var:pmr_cc_k_g{gl}b = {w["idx"]} }}{inner} }}\n'
+            first = False
+    o.append('# Numbers derived from the tiers, and the goods tiers the owner\'s technology allows (each tier shows once the\n'
+             '# owner has the technology of the base recipe it modifies: tier t, recipe t or the newest).\n'
+             'pmr_cc_derive = {\n' + d + '}\n\n')
+    # Pay and buy, per line.
+    for ln in LINES:
+        k = ln.key
+        if ln.founding:
+            pay = f'\tif = {{ limit = {{ var:pmr_cc_nf > 0 }} change_variable = {{ name = pmr_cc_pts subtract = {SECOND_COST} }} }}\n'
+        else:
+            pay = ''.join(f'\t{"if" if t == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_{k} = {t} }} '
+                          f'change_variable = {{ name = pmr_cc_pts subtract = {c} }} }}\n' for t, c in enumerate(ln.cost))
+        if ln.goods:
+            take = (f'\t# a research grant: the tier unlocks after {GRANT_MONTHS} months (pmr_cc_grant_tick)\n'
+                    f'\tset_variable = {{ name = pmr_cc_gr value = {ln.code} }}\n'
+                    f'\tset_variable = {{ name = pmr_cc_grt value = var:pmr_cc_{k} }}\n'
+                    '\tchange_variable = { name = pmr_cc_grt add = 1 }\n'
+                    '\tset_variable = { name = pmr_cc_grm value = 0 }\n')
+        else:
+            take = f'\tchange_variable = {{ name = pmr_cc_{k} add = 1 }}\n'
+        if k == 'pg':
+            pchain = ''
+            n = 0
+            for c, v in sorted(p.comp.items()):
+                if v['pvars']:
+                    pchain += (f'\t{"if" if n == 0 else "else_if"} = {{ limit = {{ is_company_type = company_type:{c} }} '
+                               + ' '.join(f'set_variable = {x}' for x in v['pvars']) + ' }\n')
+                    n += 1
+            take += '\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods)\n' + pchain
+        o.append(f'pmr_cc_buy_{k} = {{\n{pay}{take}\tpmr_cc_after_buy = yes\n'
+                 f'\t{player_log("CC_BUY", f"line={k};")}\n}}\n\n')
+    o.append('pmr_cc_after_buy = {\n\tpmr_cc_derive = yes\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n}\n\n')
+    # Grants.
+    flag = ''.join(f'\t\t{"if" if n == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_k_g$G$b = {w["idx"]} }} '
+                   f'set_global_variable = pmr_cw_on_{short(bk)} }}\n'
+                   for n, (bk, w) in enumerate(sorted(p.works.items(), key=lambda kv: kv[1]['idx'])))
+    o.append('# Goods line $G$: its building\'s ticks blend the works members in from now on (works_effect).\n'
+             f'pmr_cc_works_on = {{\n{flag}}}\n\n'
+             f'# Monthly: a running grant fills its bar; after {GRANT_MONTHS} months the tier is the company\'s.\n'
+             'pmr_cc_grant_tick = {\n\tif = {\n\t\tlimit = { var:pmr_cc_gr > 0 }\n'
+             '\t\tchange_variable = { name = pmr_cc_grm add = 1 }\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_grm >= {GRANT_MONTHS} }}\n'
+             '\t\t\tif = { limit = { var:pmr_cc_gr = 5 } set_variable = { name = pmr_cc_g1 value = var:pmr_cc_grt } pmr_cc_works_on = { G = 1 } }\n'
+             '\t\t\telse = { set_variable = { name = pmr_cc_g2 value = var:pmr_cc_grt } pmr_cc_works_on = { G = 2 } }\n'
+             f'\t\t\t{player_log("CC_GRANT_DONE")}\n'
+             '\t\t\tset_variable = { name = pmr_cc_gr value = 0 }\n'
+             '\t\t\tset_variable = { name = pmr_cc_grt value = 0 }\n'
+             '\t\t\tset_variable = { name = pmr_cc_grm value = 0 }\n'
+             '\t\t\tpmr_cc_after_buy = yes\n\t\t}\n\t}\n}\n\n')
+    # A click.
     click = ''
-    for code, k, *_r in LINES:
-        click += (f'\t{"if" if code == 1 else "else_if"} = {{\n'
-                  f'\t\tlimit = {{\n\t\t\tscope:line = {code}\n\t\t\tpmr_cc_open_{k} = yes\n\t\t\tpmr_cc_afford = {{ L = {k} }}\n\t\t}}\n'
-                  f'\t\tpmr_cc_buy = {{ L = {k} }}\n\t}}\n')
-    o.append('# The player clicked the next node of line scope:line (1 Equipment, 2 People, 3 Scale): it is bought with\n'
+    for i, ln in enumerate(LINES):
+        click += (f'\t{"if" if i == 0 else "else_if"} = {{\n\t\tlimit = {{ scope:line = {ln.code} pmr_cc_open_{ln.key} = yes '
+                  f'pmr_cc_afford_{ln.key} = yes }}\n\t\tpmr_cc_buy_{ln.key} = yes\n\t}}\n')
+    o.append('# The player clicked the next node of line scope:line (Line.code in company_culture.py): it is bought with\n'
              '# points already earned, or nothing happens (Pat 12:37Z: no queue).\n'
-             'pmr_cc_click = {\n\tsave_scope_as = pmr_cc_co\n' + click + '\tpmr_cc_mirror = yes\n}\n\n')
+             'pmr_cc_click = {\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_derive = yes\n' + click + '\tpmr_cc_mirror = yes\n}\n\n')
     # AI.
-    ai_line = ('\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tpmr_cc_open_$L$ = yes\n\t\t\t\tpmr_cc_afford = { L = $L$ }\n'
-               '\t\t\t\tvar:pmr_cc_$L$ <= var:pmr_cc_sc\n\t\t\t}\n\t\t\tpmr_cc_buy = { L = $L$ }\n\t\t}\n'
-               '\t\telse_if = {\n\t\t\tlimit = { pmr_cc_open_sc = yes pmr_cc_afford = { L = sc } }\n'
-               '\t\t\tpmr_cc_buy = { L = sc }\n\t\t}\n'
-               '\t\telse_if = {\n\t\t\tlimit = { pmr_cc_open_$L$ = yes pmr_cc_afford = { L = $L$ } }\n'
-               '\t\t\tpmr_cc_buy = { L = $L$ }\n\t\t}\n')
-    o.append('# AI companies (Pat 04:00Z: yes) buy as soon as they can, their column (pmr_cc_ai) and Scale in turn.\n'
-             'pmr_cc_ai_line = {\n\tif = {\n\t\tlimit = { var:pmr_cc_pts >= 1 }\n' + ai_line + '\t}\n}\n\n'
-             'pmr_cc_ai_buy = {\n'
-             '\tif = { limit = { var:pmr_cc_ai = 1 } pmr_cc_ai_line = { L = eq } pmr_cc_ai_line = { L = eq } }\n'
-             '\telse = { pmr_cc_ai_line = { L = pp } pmr_cc_ai_line = { L = pp } }\n}\n\n')
-    # Traits.
-    line_fx = ('\tif = {\n\t\tlimit = { scope:pmr_cc_co = { var:pmr_cc_$L$ >= 3 } }\n'
-               '\t\tif = { limit = { has_trait = $T1$ } remove_trait = $T1$ }\n'
-               '\t\tif = { limit = { has_trait = $T2$ } remove_trait = $T2$ }\n'
-               '\t\tif = { limit = { NOT = { has_trait = $T3$ } } add_trait = $T3$ }\n\t}\n'
-               '\telse_if = {\n\t\tlimit = { scope:pmr_cc_co = { var:pmr_cc_$L$ = 2 } }\n'
-               '\t\tif = { limit = { has_trait = $T1$ } remove_trait = $T1$ }\n'
-               '\t\tif = { limit = { has_trait = $T3$ } remove_trait = $T3$ }\n'
-               '\t\tif = { limit = { NOT = { has_trait = $T2$ } } add_trait = $T2$ }\n\t}\n'
-               '\telse_if = {\n\t\tlimit = { scope:pmr_cc_co = { var:pmr_cc_$L$ = 1 } }\n'
-               '\t\tif = { limit = { has_trait = $T2$ } remove_trait = $T2$ }\n'
-               '\t\tif = { limit = { has_trait = $T3$ } remove_trait = $T3$ }\n'
-               '\t\tif = { limit = { NOT = { has_trait = $T1$ } } add_trait = $T1$ }\n\t}\n'
-               '\telse = {\n'
-               '\t\tif = { limit = { has_trait = $T1$ } remove_trait = $T1$ }\n'
-               '\t\tif = { limit = { has_trait = $T2$ } remove_trait = $T2$ }\n'
-               '\t\tif = { limit = { has_trait = $T3$ } remove_trait = $T3$ }\n\t}\n')
-    o.append('# Character scope (the executive), scope:pmr_cc_co the company: the trait of line $L$ for its tier, the\n'
-             '# other tiers removed.\npmr_cc_line = {\n' + line_fx + '}\n\n')
-    apply_chain = ''
-    for i, c in enumerate(sorted(cal)):
-        kw = 'if' if i == 0 else 'else_if'
-        t = {k: [trait_key(k, c, n) for n in (1, 2, 3)] for k in ('eq', 'pp')}
-        apply_chain += (f'\t\t{kw} = {{\n\t\t\tlimit = {{ scope:pmr_cc_co = {{ is_company_type = company_type:{c} }} }}\n'
-                        f'\t\t\tpmr_cc_line = {{ L = eq T1 = {t["eq"][0]} T2 = {t["eq"][1]} T3 = {t["eq"][2]} }}\n'
-                        f'\t\t\tpmr_cc_line = {{ L = pp T1 = {t["pp"][0]} T2 = {t["pp"][1]} T3 = {t["pp"][2]} }}\n\t\t}}\n')
-    o.append('# The executive\'s traits for the company\'s tiers. scope:pmr_cc_co is the company. An executive who came\n'
-             '# from another company with Culture traits loses them first (pmr_cc_strip).\n'
-             'pmr_cc_apply = {\n\texecutive ?= {\n'
+    steps = ('\tif = {\n\t\tlimit = { var:pmr_cc_nf = 0 }\n\t\trandom_list = {\n'
+             '\t\t\t3 = { pmr_cc_buy_fe = yes }\n\t\t\t3 = { pmr_cc_buy_fx = yes }\n'
+             '\t\t\t2 = { pmr_cc_buy_fs = yes }\n\t\t\t2 = { pmr_cc_buy_ft = yes }\n\t\t}\n\t}\n'
+             '\telse_if = {\n\t\tlimit = { var:pmr_cc_nf = 1 var:pmr_cc_nfirst >= ' + str(REACH) + ' }\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_pts >= {SECOND_COST} pmr_cc_open_fs = yes pmr_cc_open_ft = yes }}\n'
+             '\t\t\trandom_list = {\n\t\t\t\t1 = { pmr_cc_buy_fs = yes }\n\t\t\t\t1 = { pmr_cc_buy_ft = yes }\n\t\t\t}\n\t\t}\n'
+             f'\t\telse_if = {{\n\t\t\tlimit = {{ var:pmr_cc_pts >= {SECOND_COST} pmr_cc_open_fe = yes pmr_cc_open_fx = yes }}\n'
+             '\t\t\trandom_list = {\n\t\t\t\t1 = { pmr_cc_buy_fe = yes }\n\t\t\t\t1 = { pmr_cc_buy_fx = yes }\n\t\t\t}\n\t\t}\n\t}\n')
+    for k, t in AI_ORDER:
+        steps += (f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_{k} < {t} pmr_cc_open_{k} = yes }}\n'
+                  f'\t\tif = {{ limit = {{ pmr_cc_afford_{k} = yes }} pmr_cc_buy_{k} = yes }}\n\t}}\n')
+    o.append('# AI companies (Pat 04:00Z: yes): a founding culture at random, a second once allowed, then the first open\n'
+             '# step of AI_ORDER, bought when affordable, otherwise saved for.\n'
+             'pmr_cc_ai_step = {\n' + steps + '}\n\n'
+             'pmr_cc_ai_buy = {\n\tif = {\n\t\tlimit = { var:pmr_cc_pts >= 1 }\n\t\tpmr_cc_ai_step = yes\n'
+             '\t\tif = { limit = { var:pmr_cc_pts >= 1 } pmr_cc_ai_step = yes }\n\t}\n}\n\n')
+    # Traits on the executive.
+    def line_fx(k, n):
+        keys = [generic_trait(k, t) for t in range(1, n + 1)]
+        out = ''
+        for t in range(n, 0, -1):
+            kw = 'if' if t == n else 'else_if'
+            cond = f'var:pmr_cc_{k} >= {t}' if t == n else f'var:pmr_cc_{k} = {t}'
+            out += f'\t\t{kw} = {{\n\t\t\tlimit = {{ scope:pmr_cc_co = {{ {cond} }} }}\n'
+            out += ''.join(f'\t\t\tif = {{ limit = {{ has_trait = {x} }} remove_trait = {x} }}\n'
+                           for m, x in enumerate(keys, 1) if m != t)
+            out += f'\t\t\tif = {{ limit = {{ NOT = {{ has_trait = {keys[t - 1]} }} }} add_trait = {keys[t - 1]} }}\n\t\t}}\n'
+        out += '\t\telse = {\n' + ''.join(f'\t\t\tif = {{ limit = {{ has_trait = {x} }} remove_trait = {x} }}\n'
+                                          for x in keys) + '\t\t}\n'
+        return out
+    lines_fx = ''
+    for k in dict.fromkeys(k for k, _t in GENERIC):
+        lines_fx += f'\t\t# {k}\n' + line_fx(k, max(t for kk, t in GENERIC if kk == k))
+    keyed = ''.join(f'\t\tif = {{ limit = {{ has_trait = {key} NOT = {{ scope:pmr_cc_co = {{ {w} }} }} }} remove_trait = {key} }}\n'
+                    f'\t\tif = {{ limit = {{ NOT = {{ has_trait = {key} }} scope:pmr_cc_co = {{ {w} }} }} add_trait = {key} }}\n'
+                    for key, _i, _m, w in keyed_traits(p))
+    o.append('# The executive\'s traits for the company\'s tiers. An executive who came from another company with Culture\n'
+             '# traits loses them first (pmr_cc_strip). Company scope.\n'
+             'pmr_cc_apply = {\n\tsave_scope_as = pmr_cc_co\n\texecutive ?= {\n'
              '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\thas_variable = pmr_cc_of\n\t\t\t\tNOT = { var:pmr_cc_of ?= scope:pmr_cc_co }\n\t\t\t}\n'
              '\t\t\tpmr_cc_strip = yes\n\t\t}\n'
              '\t\tset_variable = { name = pmr_cc_of value = scope:pmr_cc_co }\n'
-             + apply_chain +
-             '\t\tpmr_cc_line = { L = sc T1 = pmr_cc_sc_1 T2 = pmr_cc_sc_2 T3 = pmr_cc_sc_3 }\n\t}\n}\n\n')
-    strip = ''.join(f'\tif = {{ limit = {{ has_trait = {trait_key(k, c, t)} }} remove_trait = {trait_key(k, c, t)} }}\n'
-                    for c in sorted(cal) for k in ('eq', 'pp') for t in (1, 2, 3))
-    strip += ''.join(f'\tif = {{ limit = {{ has_trait = pmr_cc_sc_{t} }} remove_trait = pmr_cc_sc_{t} }}\n' for t in (1, 2, 3))
-    o.append('# Character scope: every Company Culture trait off. Runs only when an executive changes company and on\n'
-             '# disbanding (Pat 04:00Z: a disbanded company loses its bonuses).\n'
-             'pmr_cc_strip = {\n' + strip + '\tremove_variable = pmr_cc_of\n}\n\n')
-    # Node states for the tab.
+             + lines_fx + keyed + '\t}\n}\n\n')
+    every = [generic_trait(k, t) for k, t in GENERIC] + [key for key, *_r in keyed_traits(p)]
+    o.append('# Character scope: every Company Culture trait off. When an executive changes company and on disbanding.\n'
+             'pmr_cc_strip = {\n' + ''.join(f'\tif = {{ limit = {{ has_trait = {x} }} remove_trait = {x} }}\n' for x in every)
+             + '\tremove_variable = pmr_cc_of\n}\n\n')
+    # Node states.
     states = ''
-    for code, k, *_r in LINES:
-        other = EXCLUSIVE.get(k)
-        excl = f'var:pmr_cc_{other} > 0' if other else 'always = no'
-        states += f'\tset_variable = {{ name = pmr_cc_pick_{k} value = 0 }}\n'
-        for t in (1, 2, 3):
+    for ln in LINES:
+        k = ln.key
+        states += f'\t# {k}\n\tset_variable = {{ name = pmr_cc_pick_{k} value = 0 }}\n'
+        for t in range(1, ln.tiers + 1):
             st = f'pmr_cc_st_{k}_{t}'
-            states += (f'\tif = {{ limit = {{ var:pmr_cc_{k} >= {t} }} set_variable = {{ name = {st} value = 4 }} }}\n'
-                       f'\telse_if = {{ limit = {{ {excl} }} set_variable = {{ name = {st} value = 5 }} }}\n'
-                       f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_{k} = {t - 1} }}\n'
-                       f'\t\tif = {{ limit = {{ var:pmr_cc_pts >= {TIER_COST[t - 1]} }} '
-                       f'set_variable = {{ name = {st} value = 1 }} set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n'
-                       f'\t\telse = {{ set_variable = {{ name = {st} value = 2 }} }}\n\t}}\n'
-                       f'\telse = {{ set_variable = {{ name = {st} value = 0 }} }}\n')
-    copies = ''.join(f'\t\tif = {{ limit = {{ scope:pmr_cc_co = {{ has_variable = {v} }} }} '
-                     f'set_variable = {{ name = {v} value = scope:pmr_cc_co.var:{v} }} }}\n'
-                     f'\t\telse_if = {{ limit = {{ has_variable = {v} }} remove_variable = {v} }}\n' for v in MIRRORED)
+
+            def s(n):
+                return f'set_variable = {{ name = {st} value = {n} }}'
+            states += f'\tif = {{ limit = {{ var:pmr_cc_{k} >= {t} }} {s(4)} }}\n'
+            if ln.founding:
+                states += (f'\telse_if = {{ limit = {{ {ruled(ln.arm)} }} {s(5)} }}\n'
+                           f'\telse_if = {{ limit = {{ var:pmr_cc_nf = 0 }} {s(1)} set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n'
+                           f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_nfirst >= {REACH} }}\n'
+                           f'\t\tif = {{ limit = {{ var:pmr_cc_pts >= {SECOND_COST} }} {s(1)} '
+                           f'set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n\t\telse = {{ {s(2)} }}\n\t}}\n'
+                           f'\telse = {{ {s(0)} }}\n')
+                continue
+            if ln.goods:
+                states += f'\telse_if = {{ limit = {{ var:pmr_cc_gr = {ln.code} var:pmr_cc_grt = {t} }} {s(6)} }}\n'
+            na = not_available(ln)
+            if na:
+                states += f'\telse_if = {{ limit = {{ {na} }} {s(7)} }}\n'
+            states += (f'\telse_if = {{ limit = {{ OR = {{ {" ".join(ruled(a) for a in ln.arms)} }} }} {s(5)} }}\n'
+                       f'\telse_if = {{ limit = {{ NOT = {{ AND = {{ {" ".join(arm_ok(ln))} }} }} }} {s(3)} }}\n')
+            conds = tier_conds(ln, t)
+            busy = 'var:pmr_cc_gr = 0 ' if ln.goods else ''
+            states += (f'\telse_if = {{\n\t\tlimit = {{ {" ".join(conds)} }}\n'
+                       f'\t\tif = {{ limit = {{ {busy}var:pmr_cc_pts >= {ln.cost[t - 1]} }} {s(1)} '
+                       f'set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n\t\telse = {{ {s(2)} }}\n\t}}\n')
+            if ln.goods:
+                states += (f'\telse_if = {{ limit = {{ {" ".join(c for c in conds if "tk >=" not in c)} }} {s(8)} }}\n')
+            states += f'\telse = {{ {s(0)} }}\n'
+    copies = ''.join(f'\t\tif = {{ limit = {{ scope:pmr_cc_co = {{ has_variable = {x} }} }} '
+                     f'set_variable = {{ name = {x} value = scope:pmr_cc_co.var:{x} }} }}\n'
+                     f'\t\telse_if = {{ limit = {{ has_variable = {x} }} remove_variable = {x} }}\n' for x in MIRRORED)
     o.append('# The tab\'s numbers, mirrored onto the executive (the panel reads Company.GetExecutive.MakeScope). Node states\n'
-             '# pmr_cc_st_<line>_<tier>: 0 a later tier, 1 next and affordable (a click buys it), 2 next but not enough\n'
-             '# points yet, 4 bought, 5 ruled out by the other column. pmr_cc_pick_<line>: the line\'s next node can be bought.\n'
-             'pmr_cc_mirror = {\n\tsave_scope_as = pmr_cc_co\n'
-             + states +
+             '# pmr_cc_st_<line>_<tier>: 0 locked (a tier before it, its needs or the gate), 1 next and affordable (a click\n'
+             '# buys it), 2 next but not enough points (or another grant running), 3 its arm not chosen, 4 completed,\n'
+             '# 5 ruled out by the opposed arm, 6 its research grant running, 7 not for this company, 8 waiting for the\n'
+             '# technology of its base recipe. pmr_cc_pick_<line>: the line\'s next node can be bought.\n'
+             'pmr_cc_states = {\n' + states + '}\n\n'
+             'pmr_cc_mirror = {\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_states = yes\n'
              '\tset_variable = { name = pmr_cc_pct value = var:pmr_cc_funds }\n'
              '\tchange_variable = { name = pmr_cc_pct multiply = 100 }\n'
              '\tchange_variable = { name = pmr_cc_pct divide = var:pmr_cc_cost }\n'
@@ -485,18 +986,19 @@ def effects(cal):
              '\t\tround_variable = { name = pmr_cc_mo nearest = 1 }\n\t}\n'
              '\telse = { set_variable = { name = pmr_cc_mo value = -1 } }\n'
              '\texecutive ?= {\n' + copies + '\t}\n}\n\n')
-    o.append('# Monthly, every company in the world (from each country\'s monthly pulse).\n'
+    o.append('# Monthly, every company in the world (from each country\'s monthly pulse). The tab\'s mirror only for the\n'
+             '# player\'s companies; an AI company\'s is brought up to date when its tab opens (pmr_cc_refresh_sgui).\n'
              'pmr_cc_tick = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
-             '\tpmr_cc_earn = yes\n'
-             '\tif = {\n\t\tlimit = { owner = { is_player = no } }\n\t\tpmr_cc_ai_buy = yes\n\t}\n'
-             '\tsave_scope_as = pmr_cc_co\n'
+             '\tpmr_cc_earn = yes\n\tpmr_cc_grant_tick = yes\n\tpmr_cc_derive = yes\n'
+             '\tif = {\n\t\tlimit = { owner ?= { is_player = no } }\n\t\tpmr_cc_ai_buy = yes\n\t}\n'
              '\tif = {\n\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\tpmr_cc_apply = yes\n\t}\n'
-             '\tpmr_cc_mirror = yes\n'
-             f'\t{player_log("CC")}\n}}\n\n')
+             '\tif = {\n\t\tlimit = { owner ?= { is_player = yes } }\n\t\tpmr_cc_mirror = yes\n'
+             f'\t\t{log_line("CC")}\n\t}}\n}}\n\n')
     o.append('# The tab was opened, a company was founded or the game started: bring it up to date without earning.\n'
              'pmr_cc_refresh = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
+             '\tpmr_cc_derive = yes\n'
              '\tif = {\n\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\tpmr_cc_apply = yes\n\t}\n'
              '\tpmr_cc_mirror = yes\n}\n\n')
     o.append('# Character scope (an executive, from the tab): the owner\'s company this character runs, scope:line kept.\n'
@@ -507,24 +1009,36 @@ def effects(cal):
 
 def triggers():
     o = ['# Company Culture (company_culture.py). Company scope.\n\n'
-         '# pmr_cc_open_<line>: the line has a tier left to buy and, for Equipment and People, the other column is\n'
-         '# untouched (Pat 04:00Z: the first tier bought locks the company to its column).\n']
-    for code, k, *_r in LINES:
-        other = EXCLUSIVE.get(k)
-        excl = f'\tvar:pmr_cc_{other} = 0\n' if other else ''
-        o.append(f'pmr_cc_open_{k} = {{\n\tvar:pmr_cc_{k} < 3\n{excl}}}\n\n')
-    o.append('# The points for line $L$\'s next tier (1, 2, 3).\n'
-             'pmr_cc_afford = {\n\tOR = {\n'
-             '\t\tAND = { var:pmr_cc_$L$ = 0 var:pmr_cc_pts >= 1 }\n'
-             '\t\tAND = { var:pmr_cc_$L$ = 1 var:pmr_cc_pts >= 2 }\n'
-             '\t\tAND = { var:pmr_cc_$L$ = 2 var:pmr_cc_pts >= 3 }\n\t}\n}\n\n')
+         '# pmr_cc_open_<line>: the line\'s next tier can be bought, points aside: its arms chosen (both, for a shared\n'
+         '# node), the tier before it, its needs, the gate (a shared charter of its arm, for the outer half), and for a\n'
+         '# goods line its technology and no grant running.\n']
+    for ln in LINES:
+        k = ln.key
+        if ln.founding:
+            body = (f'\tvar:pmr_cc_{k} = 0\n\tNOT = {{ {ruled(ln.arm)} }}\n'
+                    f'\tOR = {{ var:pmr_cc_nf = 0 var:pmr_cc_nfirst >= {REACH} }}\n')
+        else:
+            alts = ''.join(f'\t\tAND = {{ {" ".join(tier_conds(ln, t))} }}\n' for t in range(1, ln.tiers + 1))
+            na = not_available(ln)
+            body = (''.join(f'\t{c}\n' for c in arm_ok(ln))
+                    + (f'\tNOT = {{ {na} }}\n' if na else '')
+                    + ('\tvar:pmr_cc_gr = 0\n' if ln.goods else '')
+                    + f'\tOR = {{\n{alts}\t}}\n')
+        o.append(f'pmr_cc_open_{k} = {{\n{body}}}\n\n')
+    o.append('# The points for each line\'s next tier.\n')
+    for ln in LINES:
+        if ln.founding:
+            alts = f'\t\tvar:pmr_cc_nf = 0\n\t\tvar:pmr_cc_pts >= {SECOND_COST}\n'
+        else:
+            alts = ''.join(f'\t\tAND = {{ var:pmr_cc_{ln.key} = {t} var:pmr_cc_pts >= {c} }}\n' for t, c in enumerate(ln.cost))
+        o.append(f'pmr_cc_afford_{ln.key} = {{\n\tOR = {{\n{alts}\t}}\n}}\n\n')
     return ''.join(o)
 
 
 def sguis():
-    picks = ''.join(f'\t\t\tAND = {{ scope:line = {code} var:pmr_cc_pick_{k} ?= 1 }}\n' for code, k, *_r in LINES)
+    picks = ''.join(f'\t\t\tAND = {{ scope:line = {ln.code} var:pmr_cc_pick_{ln.key} ?= 1 }}\n' for ln in LINES)
     return ('# Company Culture tab (company_culture.py). Character scope: the company\'s executive, as the panel reads\n'
-            '# Company.GetExecutive.MakeScope. scope:line is the column clicked (1 Equipment, 2 People, 3 Scale).\n\n'
+            '# Company.GetExecutive.MakeScope. scope:line is the line clicked (Line.code in company_culture.py).\n\n'
             'pmr_cc_pick_sgui = {\n\tscope = character\n\tsaved_scopes = { line }\n'
             '\tis_valid = {\n\t\towner ?= { is_player = yes }\n\t\tOR = {\n' + picks + '\t\t}\n\t}\n'
             '\teffect = {\n\t\tpmr_cc_with_company = { EFFECT = pmr_cc_click }\n\t}\n}\n\n'
@@ -540,8 +1054,7 @@ on_monthly_pulse_country = { on_actions = { pmr_cc_monthly_country } }
 on_company_established = { on_actions = { pmr_cc_on_company_established } }
 on_company_disbanded = { on_actions = { pmr_cc_on_company_disbanded } }
 
-# No root. Every company's numbers and tab from the first day, before any monthly pulse (in game 12:37Z the Hudson's
-# Bay Company's tab read 0 / 0 with nothing to click until a month had passed).
+# No root. Every company's numbers and tab from the first day, before any monthly pulse.
 pmr_cc_game_started = {
 	effect = {
 		every_country = {
@@ -552,7 +1065,7 @@ pmr_cc_game_started = {
 	}
 }
 
-# Root = country. Every company earns, buys (AI companies) and keeps its executive's traits.
+# Root = country. Every company earns, runs its grant, buys (AI companies) and keeps its executive's traits.
 pmr_cc_monthly_country = {
 	effect = {
 		every_company = {
@@ -582,8 +1095,6 @@ pmr_cc_on_company_disbanded = {
 }
 '''
 
-# Test build only: a point takes a company of prosperity 50 about fifteen months, too slow to try the tree.
-TEST_POINTS = 6
 TEST_DECISION = f'''# Company Culture test decision (test builds only). The AI never takes it. Gives each of the player's companies
 # {TEST_POINTS} Culture points (not levels) and refreshes its tab. Writes PMR;rec=CC_TEST lines.
 pmr_cc_test_points_decision = {{
@@ -597,12 +1108,23 @@ pmr_cc_test_points_decision = {{
 				pmr_cc_init = yes
 			}}
 			change_variable = {{ name = pmr_cc_pts add = {TEST_POINTS} }}
-			if = {{
-				limit = {{ executive ?= {{ NOT = {{ var:pmr_cc_of ?= scope:pmr_cc_co }} }} }}
-				pmr_cc_apply = yes
-			}}
-			pmr_cc_mirror = yes
+			pmr_cc_refresh = yes
 			{{LOG}}
+		}}
+	}}
+	ai_chance = {{ value = 0 }}
+}}
+
+# Test builds only: every running research grant of the player's companies completes at the next monthly tick, so the
+# special method can be checked without waiting {GRANT_MONTHS} months. Writes PMR;rec=CC_TEST_GRANT lines.
+pmr_cc_test_grant_decision = {{
+	is_shown = {{ always = yes }}
+	possible = {{ always = yes }}
+	when_taken = {{
+		every_company = {{
+			limit = {{ has_variable = pmr_cc_gr var:pmr_cc_gr > 0 }}
+			set_variable = {{ name = pmr_cc_grm value = {GRANT_MONTHS - 1} }}
+			{{LOG_GRANT}}
 		}}
 	}}
 	ai_chance = {{ value = 0 }}
@@ -610,14 +1132,56 @@ pmr_cc_test_points_decision = {{
 '''
 
 
+def charters(game):
+    """The vanilla charter types, each possible only for a company holding its node (BUILD-SPEC section 3)."""
+    text = open(os.path.join(game, CHARTER_FILE), encoding='utf-8-sig').read()
+    var = {v: k for k, v in CHARTERS.items()}
+    edits = []
+    for n in pdx.parse(text):
+        if not (n.is_block and n.key in var):
+            continue
+        k = var[n.key]
+        check = f'var:pmr_cc_{k} ?= 1  # PMR Company Culture: the {BY_KEY[k].names[0]} node'
+        pos = pdx.get(n.value, 'possible')
+        if pos:
+            edits.append((pos.start + text[pos.start:].index('{') + 1, f'\n\t\t{check}'))
+        else:
+            edits.append((n.start + text[n.start:].index('{') + 1, f'\n\tpossible = {{\n\t\t{check}\n\t}}'))
+        aip = pdx.get(n.value, 'ai_possible')
+        if not aip:
+            fail(CHARTER_FILE, f'{n.key} has no ai_possible')
+        edits.append((aip.start + text[aip.start:].index('{') + 1, f'\n\t\t{check}'))
+    if len({e for e in edits}) != 2 * len(CHARTERS):
+        fail(CHARTER_FILE, f'found {len(edits) // 2} of the {len(CHARTERS)} charter types')
+    for at, ins in sorted(edits, reverse=True):
+        text = text[:at] + ins + text[at:]
+    return ('# PMR Company Culture (company_culture.py): vanilla\'s charter types, each possible only for a company that\n'
+            '# holds its node on the Company Culture wheel. The engine drops a charter whose possible fails.\n' + text)
+
+
+DEFINE = ('# PMR Company Culture: charters cost no authority (BUILD-SPEC section 3). Game-wide. Vanilla: 100.\n'
+          'NEconomy = {\n\tCOMPANY_CHARTER_AUTHORITY_COST = 0\n}\n')
+
+
+def ai_value_tail(company_types):
+    """Expanded Works for private_investment.py's pmr_ai_value_<b> (read in the state's scope): the building's ai_value
+    x SC_AI_MULT while the state's owner has a company that lists the type and holds that tier. Ends the value: it
+    multiplies everything added before it."""
+    types = ' '.join(f'is_company_type = company_type:{c}' for c in company_types)
+    out = ''
+    for t in range(3, 0, -1):
+        out += (f'\t{"if" if t == 3 else "else_if"} = {{\n\t\tlimit = {{ owner ?= {{ any_company = {{ var:pmr_cc_sc ?= {t} '
+                f'OR = {{ {types} }} }} }} }}\n\t\tmultiply = {fmt(SC_AI_MULT[t - 1])}\n\t}}\n')
+    return '\t# PMR Company Culture: Expanded Works (company_culture.py)\n' + out
+
+
 # ---------------------------------------------------------------------------------------------------------------
-# Methods sub-heading (plan 1b, Pat 02:05Z; 04:00Z: the company's own building types)
+# Methods sub-heading (kept from the 10-14 tab: every recipe of the company's buildings)
 
 def method_rows(report, pms, comps):
-    """building type -> [(recipe key, texture, technologies)] for every PMR-treated type a company lists."""
-    listed = {b for bts in comps.values() for b in bts}
+    listed = {b for bts, _pv in comps.values() for b in bts}
     elec = {a['building']: a['electric_recipe'] for a in report['automation'] if a.get('electric_recipe')}
-    split = {a['building'] for a in report['automation'] if a.get('split')}   # recipe + automation pairs: the plain recipes
+    split = {a['building'] for a in report['automation'] if a.get('split')}
     rows = {}
     for t in report['treated']:
         b = t['building']
@@ -638,8 +1202,18 @@ def method_rows(report, pms, comps):
                 fail('methods', f'{b}: no production method {key}')
             out.append((key, tex or 'gfx/interface/icons/generic_icons/mixed_icon_base.dds', techs))
         rows[b] = out
-    untreated = sorted(listed - set(rows))
-    return rows, untreated
+    return rows, sorted(listed - set(rows)), split
+
+
+def pm_info(game):
+    out = {}
+    for path in glob.glob(os.path.join(game, 'common', 'production_methods', '*.txt')):
+        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
+            if n.is_block and n.key:
+                tex = pdx.get(n.value, 'texture')
+                ut = pdx.get(n.value, 'unlocking_technologies')
+                out[n.key] = (tex.value if tex else None, pdx.items(ut) if ut else [])
+    return out
 
 
 def unlock_values(rows):
@@ -663,272 +1237,237 @@ def unlock_values(rows):
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# GUI
-
-def V(name):
-    return f"Character.MakeScope.Var('{name}').GetValue"
-
-
-def EQ(name, n):
-    return f"EqualTo_CFixedPoint({V(name)}, '(CFixedPoint){n}')"
-
-
-def GT(name, n):
-    return f"GreaterThan_CFixedPoint({V(name)}, '(CFixedPoint){n}')"
-
-
-SG_SCOPE = 'GuiScope.SetRoot(Character.MakeScope)'
-NODE_W, NODE_H, GAP = 168, 64, 18
-LOCAL = 'Company.GetCountry.IsLocalPlayer'
-
-
-def node(code, k, t, name, icon, ind):
-    st = f'pmr_cc_st_{k}_{t}'
-    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
-    sg = f"GetScriptedGui('pmr_cc_pick_sgui')"
-    scope = f"{SG_SCOPE}.AddScope('line', MakeScopeValue('(CFixedPoint){code}')).End"
-    can = f"And({LOCAL}, And({EQ(st, 1)}, {sg}.IsValid({scope})))"
-
-    def content(ii):
-        lines = [(1, f'PMR_CC_NODE_BUY_{t}'), (2, f'PMR_CC_NODE_NEED_{t}'), (4, 'PMR_CC_NODE_OWNED'),
-                 (5, f'PMR_CC_NODE_RULED_OUT_{k}'), (0, f'PMR_CC_COST_{t}')]
-        out = (f'{ii}icon = {{\n{ii}\tposition = {{ 8 0 }}\n{ii}\tparentanchor = vcenter\n{ii}\tsize = {{ 44 44 }}\n'
-               f'{ii}\ttexture = "{TRAIT_ICON.format(icon)}"\n{ii}\talwaystransparent = yes\n{ii}}}\n'
-               f'{ii}textbox = {{\n{ii}\tposition = {{ 58 8 }}\n{ii}\tsize = {{ {NODE_W - 64} 24 }}\n'
-               f'{ii}\tmultiline = no\n{ii}\talign = left|nobaseline\n{ii}\tfontsize_min = 12\n{ii}\telide = right\n'
-               f'{ii}\ttext = "PMR_CC_NAME_{k}_{t}"\n{ii}\talwaystransparent = yes\n{ii}}}\n')
-        for s, key in lines:
-            out += (f'{ii}textbox = {{\n{ii}\tvisible = "[{EQ(st, s)}]"\n{ii}\tposition = {{ 58 34 }}\n'
-                    f'{ii}\tsize = {{ {NODE_W - 64} 22 }}\n{ii}\talign = left|nobaseline\n{ii}\tusing = fontsize_small\n'
-                    f'{ii}\ttext = "{key}"\n{ii}\talwaystransparent = yes\n{ii}}}\n')
-        return out
-    return (f'{ind}widget = {{\n{i1}size = {{ {NODE_W} {NODE_H} }}\n'
-            # bought (Pat 12:37Z: the chosen tiers highlighted with a frame): a gold-tinted card inside the frame
-            # vanilla draws round a selected building type (companies_panel.gui, highlighted_selected_square_selection)
-            f'{i1}widget = {{\n{i2}visible = "[{EQ(st, 4)}]"\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "PMR_CC_TT_{k}_{t}"\n'
-            f'{i2}background = {{\n{i3}using = entry_bg\n{i2}}}\n'
-            f'{i2}icon = {{\n{i3}size = {{ 100% 100% }}\n{i3}texture = "{WHITE}"\n{i3}color = {{ 0.74 0.60 0.30 0.22 }}\n'
-            f'{i3}alwaystransparent = yes\n{i2}}}\n'
-            + content(i2) +
-            f'{i2}icon = {{\n{i3}using = highlighted_selected_square_selection\n{i3}alwaystransparent = yes\n{i2}}}\n'
-            f'{i1}}}\n'
-            # every other state: a button, live only when the next tier is affordable
-            f'{i1}button = {{\n{i2}visible = "[Not({EQ(st, 4)})]"\n{i2}using = default_button\n{i2}size = {{ 100% 100% }}\n'
-            f'{i2}alpha = "[TransparentIfFalse(Not({EQ(st, 5)}))]"\n'
-            f'{i2}enabled = "[{can}]"\n{i2}onclick = "[{sg}.Execute({scope})]"\n{i2}tooltip = "PMR_CC_TT_{k}_{t}"\n'
-            + content(i2) + f'{i1}}}\n'
-            f'{ind}}}\n')
-
-
-def connector(ind):
-    return (f'{ind}widget = {{\n{ind}\tsize = {{ {NODE_W} 12 }}\n{ind}\ticon = {{\n{ind}\t\tparentanchor = hcenter\n'
-            f'{ind}\t\tsize = {{ 2 12 }}\n{ind}\t\ttexture = "{WHITE}"\n{ind}\t\tcolor = {{ 0.74 0.60 0.30 0.6 }}\n'
-            f'{ind}\t\talwaystransparent = yes\n{ind}\t}}\n{ind}}}\n')
-
-
-def column(code, k, title, names, icons, ind):
-    i1 = ind + '\t'
-    out = (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}spacing = 0\n'
-           f'{i1}widget = {{\n{i1}\tsize = {{ {NODE_W} 40 }}\n{i1}\ttooltip = "PMR_CC_COLUMN_TT_{k}"\n'
-           f'{i1}\ticon = {{\n{i1}\t\tposition = {{ 4 0 }}\n{i1}\t\tparentanchor = vcenter\n{i1}\t\tsize = {{ 32 32 }}\n'
-           f'{i1}\t\ttexture = "{COLUMN_ICONS[k]}"\n{i1}\t}}\n'
-           f'{i1}\ttextbox = {{\n{i1}\t\tposition = {{ 42 0 }}\n{i1}\t\tparentanchor = vcenter\n{i1}\t\tautoresize = yes\n'
-           f'{i1}\t\talign = left|nobaseline\n{i1}\t\tusing = fontsize_large\n{i1}\t\ttext = "PMR_CC_COLUMN_{k}"\n{i1}\t}}\n{i1}}}\n')
-    for t in (1, 2, 3):
-        out += node(code, k, t, names[t - 1], icons[t - 1], i1)
-        if t < 3:
-            out += connector(i1)
-    return out + f'{ind}}}\n'
-
-
-def text_row(key, ind, visible=None, w=520, small=False):
-    vis = f'{ind}\tvisible = "[{visible}]"\n' if visible else ''
-    font = f'{ind}\tusing = fontsize_small\n' if small else ''
-    return (f'{ind}textbox = {{\n{vis}{ind}\tparentanchor = hcenter\n{ind}\tminimumsize = {{ {w} -1 }}\n'
-            f'{ind}\tmaximumsize = {{ {w} -1 }}\n{ind}\tautoresize = yes\n{ind}\tmultiline = yes\n'
-            f'{ind}\talign = left|nobaseline\n{font}{ind}\ttext = "{key}"\n{ind}}}\n')
-
-
-def methods_block(b, recipes, ind):
-    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
-    sb = b[len('building_'):]
-    country = 'Company.GetCountry.MakeScope'
-    out = (f'{ind}flowcontainer = {{\n{i1}visible = "[ObjectsEqual(BuildingType.Self, GetBuildingType(\'{b}\').Self)]"\n'
-           f'{i1}position = {{ 66 4 }}\n{i1}spacing = 6\n')
-    for i, (key, tex, techs) in enumerate(recipes, 1):
-        unl = (f"GreaterThan_CFixedPoint({country}.ScriptValue('pmr_cc_unl_{key}'), '(CFixedPoint)0')" if techs else None)
-        newest = f"EqualTo_CFixedPoint({country}.ScriptValue('pmr_cc_new_{sb}'), '(CFixedPoint){i}')"
-        share = f"GetPlayer.MakeScope.Var('pmr_c_sh_{i}_{sb}').GetValue"
-        alpha = f'{i2}alpha = "[TransparentIfFalse({unl})]"\n' if unl else ''
-        out += (f'{i1}widget = {{\n{i2}size = {{ 48 58 }}\n{i2}tooltip = "PMR_CC_PM_{key}"\n'
-                f'{i2}icon = {{\n{i3}visible = "[{newest}]"\n{i3}size = {{ 48 48 }}\n{i3}texture = "{WHITE}"\n'
-                f'{i3}color = {{ 0.74 0.60 0.30 0.55 }}\n{i3}alwaystransparent = yes\n{i2}}}\n'
-                f'{i2}icon = {{\n{i3}position = {{ 4 4 }}\n{i3}size = {{ 40 40 }}\n{i3}texture = "{tex}"\n'
-                + alpha.replace(i2, i3) + f'{i3}alwaystransparent = yes\n{i2}}}\n'
-                f'{i2}textbox = {{\n{i3}visible = "[And({LOCAL}, GreaterThan_CFixedPoint({share}, \'(CFixedPoint)0\'))]"\n'
-                f'{i3}position = {{ 0 46 }}\n{i3}size = {{ 48 14 }}\n{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n'
-                f'{i3}raw_text = "[{share}|%0]"\n{i3}alwaystransparent = yes\n{i2}}}\n{i1}}}\n')
-    return out + f'{ind}}}\n'
-
-
-def tab(rows, untreated):
-    i1, i2, i3, i4 = '\t\t', '\t\t\t', '\t\t\t\t', '\t\t\t\t\t'
-    cols = ''
-    for n, (code, k, title, names, icons) in enumerate(LINES):
-        cols += column(code, k, title, names, icons, i3)
-        if n == 0:
-            cols += (f'{i3}widget = {{\n{i4}size = {{ {GAP} 40 }}\n{i4}icon = {{\n{i4}\tparentanchor = center\n'
-                     f'{i4}\tsize = {{ 18 18 }}\n{i4}\ttexture = "{EXCLUSIVE_ICON}"\n{i4}\ttooltip = "PMR_CC_EXCLUSIVE_TT"\n{i4}}}\n{i3}}}\n')
-        elif n == 1:
-            cols += f'{i3}widget = {{\n{i4}size = {{ {GAP} 40 }}\n{i3}}}\n'
-    bar_value = f"FixedPointToFloat({V('pmr_cc_pct')})"
-    # Every mirrored executive holds a cost (800 and up). Without one (a new executive this month, a save from
-    # before Company Culture) the tab offers a button that reads the company in, instead of an empty tree.
-    ready = GT('pmr_cc_cost', 0)
-    refresh = "GetScriptedGui('pmr_cc_refresh_sgui')"
-    show = (f'{i1}button = {{\n{i2}visible = "[Not({ready})]"\n{i2}parentanchor = hcenter\n{i2}using = default_button\n'
-            f'{i2}size = {{ 300 40 }}\n{i2}text = "PMR_CC_SHOW"\n{i2}tooltip = "PMR_CC_SHOW_TT"\n'
-            f'{i2}onclick = "[{refresh}.Execute({SG_SCOPE}.End)]"\n{i1}}}\n')
-    header = (
-        f'{i1}widget = {{\n{i2}visible = "[{ready}]"\n{i2}parentanchor = hcenter\n{i2}size = {{ 540 82 }}\n'
-        f'{i2}background = {{\n{i3}using = entry_bg\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}position = {{ 16 10 }}\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n'
-        f'{i3}using = fontsize_xxl\n{i3}text = "PMR_CC_LEVEL"\n{i3}tooltip = "PMR_CC_LEVEL_TT"\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}position = {{ 16 48 }}\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n'
-        f'{i3}text = "PMR_CC_POINTS"\n{i3}tooltip = "PMR_CC_LEVEL_TT"\n{i2}}}\n'
-        f'{i2}widget = {{\n{i3}position = {{ 220 12 }}\n{i3}size = {{ 300 30 }}\n{i3}tooltip = "PMR_CC_BAR_TT"\n'
-        f'{i3}gold_progressbar_horizontal = {{\n{i4}size = {{ 100% 100% }}\n{i4}blockoverride "values" {{\n'
-        f'{i4}\tmin = 0\n{i4}\tmax = 100\n{i4}\tvalue = "[{bar_value}]"\n{i4}}}\n{i3}}}\n'
-        f'{i3}textbox = {{\n{i4}parentanchor = center\n{i4}autoresize = yes\n{i4}align = hcenter|nobaseline\n'
-        f'{i4}text = "PMR_CC_BAR"\n{i4}alwaystransparent = yes\n{i3}}}\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}visible = "[{GT("pmr_cc_mo", 0)}]"\n{i3}position = {{ 220 50 }}\n{i3}size = {{ 300 22 }}\n'
-        f'{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n{i3}text = "PMR_CC_RATE"\n{i3}tooltip = "PMR_CC_BAR_TT"\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}visible = "[Not({GT("pmr_cc_mo", 0)})]"\n{i3}position = {{ 220 50 }}\n{i3}size = {{ 300 22 }}\n'
-        f'{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n{i3}text = "PMR_CC_RATE_NONE"\n{i3}tooltip = "PMR_CC_BAR_TT"\n{i2}}}\n'
-        f'{i1}}}\n')
-    tree = (f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_TREE_HEADER"\n{i2}}}\n{i1}}}\n'
-            f'{i1}flowcontainer = {{\n{i2}visible = "[{ready}]"\n{i2}parentanchor = hcenter\n{i2}direction = horizontal\n'
-            f'{i2}spacing = 0\n' + cols + f'{i1}}}\n')
-    methods =(f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_METHODS_HEADER"\n{i2}}}\n{i1}}}\n'
-               + text_row('PMR_CC_METHODS_INTRO', i1, small=True) +
-               f'{i1}flowcontainer = {{\n{i2}parentanchor = hcenter\n{i2}direction = vertical\n{i2}spacing = 4\n'
-               f'{i2}datamodel = "[Company.GetBuildingTypes]"\n{i2}item = {{\n'
-               f'{i3}widget = {{\n{i4}size = {{ 540 66 }}\n{i4}background = {{\n{i4}\tusing = entry_bg\n{i4}}}\n'
-               f'{i4}icon = {{\n{i4}\tposition = {{ 6 0 }}\n{i4}\tparentanchor = vcenter\n{i4}\tsize = {{ 54 54 }}\n'
-               f'{i4}\ttexture = "[BuildingType.GetIcon]"\n{i4}\ttooltipwidget = {{\n{i4}\t\tFancyTooltip_BuildingType = {{}}\n{i4}\t}}\n{i4}}}\n'
-               + ''.join(methods_block(b, rec, i4) for b, rec in sorted(rows.items()))
-               + ''.join(f'{i4}textbox = {{\n{i4}\tvisible = "[ObjectsEqual(BuildingType.Self, GetBuildingType(\'{b}\').Self)]"\n'
-                         f'{i4}\tposition = {{ 70 0 }}\n{i4}\tparentanchor = vcenter\n{i4}\tautoresize = yes\n'
-                         f'{i4}\talign = left|nobaseline\n{i4}\ttext = "PMR_CC_METHODS_NONE"\n{i4}}}\n' for b in untreated)
-               + f'{i3}}}\n{i2}}}\n{i1}}}\n')
-    return ('# GENERATED by tools/pmr/company_culture.py\n'
-            'types pmr_company_culture {\n'
-            '\ttype company_panel_culture_tab = flowcontainer {\n'
-            '\t\tdirection = vertical\n\t\tusing = default_list_position\n\t\tusing = default_content_fade\n'
-            '\t\tspacing = 6\n\t\tmargin_bottom = 10\n\t\tminimumsize = { 540 -1 }\n'
-            '\t\tdatacontext = "[Company.GetExecutive]"\n\n'
-            + show + header + tree + methods +
-            '\t}\n}\n')
-
-
-def patch_panel(text):
-    """company_panel.gui: a fourth tab, Company Culture, after Statistics."""
-    where = PANEL_GUI
-    anchor = '\t\t\t\tblockoverride "third_button_selected"\n\t\t\t\t{\n\t\t\t\t\ttext = "COMPANY_TAB_STATISTICS"\n\t\t\t\t}\n'
-    if text.count(anchor) != 1:
-        fail(where, 'the Statistics tab button block moved')
-    refresh = f"GetScriptedGui('pmr_cc_refresh_sgui').Execute(GuiScope.SetRoot(Company.GetExecutive.MakeScope).End)"
-    four = (
-        '\n\t\t\t\t# PMR: Company Culture tab\n'
-        '\t\t\t\tblockoverride "fourth_button"\n\t\t\t\t{\n\t\t\t\t\ttext = "PMR_CC_TAB"\n\t\t\t\t}\n'
-        '\t\t\t\tblockoverride "fourth_button_tooltip"\n\t\t\t\t{\n\t\t\t\t\ttooltip = "PMR_CC_TAB_TT"\n\t\t\t\t}\n'
-        f'\t\t\t\tblockoverride "fourth_button_click"\n\t\t\t\t{{\n\t\t\t\t\tonclick = "[InformationPanel.SelectTab(\'{TAB}\')]"\n'
-        f'\t\t\t\t\tonclick = "[{refresh}]"\n\t\t\t\t}}\n'
-        f'\t\t\t\tblockoverride "fourth_button_visibility"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'{TAB}\')]"\n\t\t\t\t}}\n'
-        f'\t\t\t\tblockoverride "fourth_button_visibility_checked"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[Not( InformationPanel.IsTabSelected(\'{TAB}\') )]"\n\t\t\t\t}}\n'
-        '\t\t\t\tblockoverride "fourth_button_selected"\n\t\t\t\t{\n\t\t\t\t\ttext = "PMR_CC_TAB"\n\t\t\t\t}\n')
-    text = text.replace(anchor, anchor + four)
-    anchor2 = ('\t\t\t\tcompany_panel_statistics_tab = {\n'
-               '\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'statistics\')]"\n\t\t\t\t}\n')
-    if text.count(anchor2) != 1:
-        fail(where, 'the Statistics tab contents moved')
-    text = text.replace(anchor2, anchor2 + '\n\t\t\t\t# PMR: Company Culture tab\n\t\t\t\tcompany_panel_culture_tab = {\n'
-                        f'\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'{TAB}\')]"\n\t\t\t\t}}\n')
-    return text
-
-
-# ---------------------------------------------------------------------------------------------------------------
 # Text
 
-def localization(cal, rows, pms_techs):
-    def v(name, f):
-        return f"[{V(name)}|{f}]"
+def custom_loc(p):
+    """Character scope (the executive, mirrored numbers): the company-specific names and goods on the wheel."""
+    out = ['# Company Culture (company_culture.py). Character scope: a company\'s executive, which holds the company\'s\n'
+           '# numbers (pmr_cc_mirror).\n\n']
+
+    def entry(key, cases, default='PMR_EMPTY'):
+        body = ''.join(f'\ttext = {{\n\t\ttrigger = {{ {trig} }}\n\t\tlocalization_key = {lk}\n\t}}\n' for trig, lk in cases)
+        return (f'{key} = {{\n\ttype = character\n\trandom_valid = no\n{body}'
+                f'\ttext = {{\n\t\tlocalization_key = {default}\n\t}}\n}}\n')
+    for gl in (1, 2):
+        for t in T3:
+            out.append(entry(f'pmr_cc_n_g{gl}_{t}', [(f'var:pmr_cc_k_g{gl}r ?= {r}', f'PMR_CC_ENG_{r}_{t}')
+                                                     for r in range(1, len(ENG_ROWS) + 1)], f'PMR_CC_NAME_g1_{t}'))
+            out.append(entry(f'pmr_cc_net_g{gl}_{t}', [(f'var:pmr_cc_k_g{gl}i ?= 0', f'PMR_CC_NETOUT_g{gl}_{t}')],
+                             f'PMR_CC_NET_g{gl}_{t}'))
+        out.append(entry(f'pmr_cc_bn_g{gl}', [(f'var:pmr_cc_k_g{gl}b ?= {w["idx"]}', bk) for bk, w in sorted(p.works.items())]))
+    for t in T3:
+        out.append(entry(f'pmr_cc_n_xs_{t}', [(f'var:pmr_cc_k_xr ?= {r}', f'PMR_CC_EXP_{r}_{t}')
+                                              for r in range(1, len(EXP_ROWS) + 1)], f'PMR_CC_NAME_xs_{t}'))
+        out.append(entry(f'pmr_cc_n_au_{t}', [(f'var:pmr_cc_k_ar ?= {r}', f'PMR_CC_UPS_{r}_{t}')
+                                              for r in range(1, len(UPSKILL_ROWS) + 1)], f'PMR_CC_NAME_au_{t}'))
+    for slot in ('g1g', 'g2g', 'g1i', 'g2i', 'xg1', 'xg2'):
+        out.append(entry(f'pmr_cc_good_{slot}', [(f'var:pmr_cc_k_{slot} ?= {gi(p, g)}', g) for g in p.goods]))
+    out.append(entry('pmr_cc_fx_xs_2', [('var:pmr_cc_k_xg2 ?= 0', 'PMR_EMPTY')], 'PMR_CC_XS_GOOD2'))
+    out.append(entry('pmr_cc_fx_pg', [('var:pmr_cc_k_pg ?= 0', 'PMR_CC_FX_pg_NONE')], 'PMR_CC_FX_pg_1'))
+    return '\n'.join(out)
+
+
+def node_name(k, t):
+    """The loc key or text a node's title shows."""
+    if k in ('g1', 'g2', 'xs', 'au'):
+        return f"[Character.GetCustom('pmr_cc_n_{k}_{t}')]"
+    return f'$PMR_CC_NAME_{k}_{t}$'
+
+
+def V(name):
+    return f"[Character.MakeScope.Var('{name}').GetValue|0]"
+
+
+def fx_lines(k, t):
+    """The bullets a node shows (one per benefit, the value green for a gain and red for a cost; one per good, written
+    good, value, then input or output). Goods-line nodes are drawn by cc_wheel (name, logo, net line, note)."""
+    pct = lambda x: f'{x:+d}%'.replace('-', '−')   # noqa: E731
+    G = lambda label, val: f'• {label} #P {val}#!'     # noqa: E731
+    R = lambda label, val: f'• {label} #N {val}#!'     # noqa: E731
+    good = lambda slot: f"[Character.GetCustom('pmr_cc_good_{slot}')]"   # noqa: E731
+    sc = {1: 10, 2: 15, 3: 25}
+    out = {
+        ('fe', 1): [G('Output', '+3%'), R('Input goods', '+3%')],
+        ('fx', 1): [G('Input goods', '−2%')],
+        ('fs', 1): [G('Job attractiveness', '+10%')],
+        ('ft', 1): [G('Wage target', '−5%')],
+        ('sf', 1): [G('Dangerous conditions', '−20%')],
+        ('cz', 1): ['• $PMR_CC_CHARTER_cz$'],
+        ('fw', 1): [R('Wage target', '+10%')],
+        ('fw', 2): [R('Wage target', '+20%'), G('Job attractiveness', '+20%')],
+        ('fw', 3): [G('Worker dividends', '+15%')],
+        ('ho', 1): [G("Workers' standard of living", '+1')],
+        ('ho', 2): [G("Workers' standard of living", '+2')],
+        ('ct', 1): [G('Standard of living', '+1'), G('Job attractiveness', '+15%')],
+        ('pg', 1): ["[Character.GetCustom('pmr_cc_fx_pg')]"],
+        ('tp', 1): [G('Wage target', '−10%')],
+        ('tp', 2): [G('Wage target', '−20%')],
+        ('ys', 1): [G('Output', '+5%'), G('Engineers', '+5%')],
+        ('yi', 1): [G('Laborers', '−15%'), f'• $tools$ #N +5%#! input'],
+        ('yt', 1): [G('Input goods', '−5%'), G('Job attractiveness', '+10%')],
+        ('ym', 1): [G('Input goods', '−10%'), G('Wage target', '−5%')],
+    }
+    for c in ('tr', 'iv', 'ch', 'mo'):
+        out[(c, 1)] = [f'• $PMR_CC_CHARTER_{c}$', '• $PMR_CC_OPENS_OUTER$']
+    for tt in T3:
+        out[('xs', tt)] = [f'• {good("xg1")} #P {pct(-5 * tt)}#! input', f"[Character.GetCustom('pmr_cc_fx_xs_2')]",
+                           G('Throughput', pct(5 * tt))]
+        out[('sc', tt)] = [G('Throughput', pct(sc[tt])), G('New levels of its types', f'×{fmt(SC_AI_MULT[tt - 1])}')]
+        out[('au', tt)] = [G('Laborers', pct(-round(UPSKILL_CUT[tt - 1] * 100))),
+                           f'• Engineer jobs #P +{V(f"pmr_cc_k_ae{tt}")}#! per level']
+        out[('cl', tt)] = [G('Laborers', pct(5 * tt)), G('Wage target', pct(-5 * tt))]
+    return out.get((k, t), [])
+
+
+def localization(p, rows, kept_split):
     co = '[Company.GetNameNoFormatting]'
     loc = [
+        ' PMR_EMPTY:0 ""',
         ' PMR_CC_TAB:0 "Company Culture"',
         ' PMR_CC_TAB_TT:0 "#header Company Culture#!\\nWhat this company has learned to do better. Its prosperity earns Culture points, and points buy bonuses for every building level it owns."',
-        f' PMR_CC_LEVEL:0 "Culture Level #v {v("pmr_cc_level", 0)}#!"',
-        f' PMR_CC_POINTS:0 "#v {v("pmr_cc_pts", 0)}#! points to spend"',
-        ' PMR_CC_LEVEL_TT:0 "#header Culture points#!\\nA company earns Culture points from its prosperity. Each point buys one tier of a column below; a tier costs as many points as its number (1, 2 or 3). The bonuses apply to the building levels this company owns, in proportion where it owns part of a building."',
-        f' PMR_CC_BAR:0 "#v {v("pmr_cc_funds", 0)}#! / {v("pmr_cc_cost", 0)}"',
-        f' PMR_CC_BAR_TT:0 "#header Next Culture point#!\\nEach month this company earns its prosperity (#v {v("pmr_cc_prosp", 0)}#!) times its size (#v ×{v("pmr_cc_size", 1)}#!, from its employed levels: one more tenth per 5 levels, at most ×2), so #v +{v("pmr_cc_rate", 0)}#! a month.\\n\\nA full bar gives one point and one Culture level, and each level needs more than the last."',
-        f' PMR_CC_RATE:0 "+{v("pmr_cc_rate", 0)} a month, next point in about {v("pmr_cc_mo", 0)} months"',
+        f' PMR_CC_LEVEL:0 "Culture Level #v {V("pmr_cc_level")}#!"',
+        f' PMR_CC_POINTS:0 "#v {V("pmr_cc_pts")}#! points to spend"',
+        ' PMR_CC_LEVEL_TT:0 "#header Culture points#!\\nA company earns Culture points from its prosperity and spends them on the wheel below; each node shows its cost in points. The bonuses apply to the building levels this company owns, in proportion where it owns part of a building."',
+        f' PMR_CC_BAR:0 "#v {V("pmr_cc_funds")}#! / {V("pmr_cc_cost")}"',
+        f' PMR_CC_BAR_TT:0 "#header Next Culture point#!\\nEach month this company earns its prosperity (#v {V("pmr_cc_prosp")}#!) times its size (#v ×[Character.MakeScope.Var(\'pmr_cc_size\').GetValue|1]#!, from its employed levels: one more tenth per 5 levels, at most ×2), so #v +{V("pmr_cc_rate")}#! a month.\\n\\nA full bar gives one point and one Culture level, and each level needs more than the last."',
+        f' PMR_CC_RATE:0 "+{V("pmr_cc_rate")} a month, next point in about {V("pmr_cc_mo")} months"',
         ' PMR_CC_RATE_NONE:0 "Earning nothing while its prosperity is 0"',
-        ' PMR_CC_TREE_HEADER:0 "Culture"',
-        ' PMR_CC_EXCLUSIVE_TT:0 "#header Equipment or People#!\\nA company focuses on its machinery or on its people. The first Equipment or People tier it buys rules out the other column."',
         ' PMR_CC_SHOW:0 "Show Company Culture"',
         ' PMR_CC_SHOW_TT:0 "This company\'s Culture has not been read in yet (a new executive this month, or a game started before Company Culture). Click to bring it up to date; it also updates on its own at the start of each month."',
-        ' PMR_CC_COLUMN_eq:0 "Equipment"',
-        ' PMR_CC_COLUMN_pp:0 "People"',
-        ' PMR_CC_COLUMN_sc:0 "Scale"',
-        ' PMR_CC_COLUMN_TT_eq:0 "#header Equipment#!\\nThe company invests in its machinery: every level it owns needs fewer input goods.\\n\\nEach tier raises productivity about as much as the People tier beside it, at base prices for this company\'s buildings, or less where inputs are so cheap that the cut would pass 20%. Rules out People."',
-        ' PMR_CC_COLUMN_TT_pp:0 "#header People#!\\nThe company invests in its workforce: fewer laborer jobs on every level it owns, and a few engineer jobs in their place, so fewer jobs in all.\\n\\nEngineer jobs left empty lower output like any unfilled job. Rules out Equipment."',
-        ' PMR_CC_COLUMN_TT_sc:0 "#header Scale#!\\nMore throughput on every level the company owns."',
-        ' PMR_CC_NODE_OWNED:0 "#v Bought#!"',
-        ' PMR_CC_NODE_RULED_OUT_eq:0 "Ruled out by People"',
-        ' PMR_CC_NODE_RULED_OUT_pp:0 "Ruled out by Equipment"',
-        ' PMR_CC_NODE_RULED_OUT_sc:0 ""',
+        ' PMR_CC_WHEEL_HINT:0 "Drag to move, scroll to zoom"',
+        ' PMR_CC_HUB_CHOOSE:0 "Choose a founding culture"',
+        f' PMR_CC_HUB_TT:0 "#header Founding cultures#!\\nA company starts from one of the four cultures round its seal. Engineering and Expansion rule each other out, as do Stewardship and Providence. The first culture is free; once {REACH} nodes are bought in its arm, a culture from the other pair costs {SECOND_COST} points.\\n\\nHalfway out, each pair of neighbouring arms a company holds shares a charter node; buying one opens the outer half of both arms, past the dashed gold ring."',
+        ' PMR_CC_LEGEND:0 "Node outline"',
+        ' PMR_CC_KIND_pm:0 "New production methods"',
+        ' PMR_CC_KIND_prod:0 "Production"',
+        ' PMR_CC_KIND_input:0 "Input costs"',
+        ' PMR_CC_KIND_work:0 "Workforce"',
+        ' PMR_CC_KIND_charter:0 "Charters and prestige"',
+        ' PMR_CC_ARM_eng:0 "E N G I N E E R I N G"',
+        ' PMR_CC_ARM_stw:0 "S T E W A R D S H I P"',
+        ' PMR_CC_ARM_exp:0 "E X P A N S I O N"',
+        ' PMR_CC_ARM_prv:0 "P R O V I D E N C E"',
+        ' PMR_CC_CHARTER_tr:0 "Trade charter"',
+        ' PMR_CC_CHARTER_iv:0 "Investment charter"',
+        ' PMR_CC_CHARTER_ch:0 "Industry charter"',
+        ' PMR_CC_CHARTER_mo:0 "Monopoly charter"',
+        ' PMR_CC_CHARTER_cz:0 "Colonization charter"',
+        ' PMR_CC_OPENS_OUTER:0 "Opens the outer half"',
+        ' PMR_CC_FX_pg_1:0 "• Produces its prestige goods"',
+        ' PMR_CC_FX_pg_NONE:0 "• Its prestige goods need no node"',
+        f" PMR_CC_XS_GOOD2:0 \"• [Character.GetCustom('pmr_cc_good_xg2')] #P −5%#! input\"",
+        f' PMR_CC_GRANT_BAR:0 "Research grant #v {V("pmr_cc_grm")}#! / {GRANT_MONTHS} months"',
+        f' PMR_CC_GRANT_RUN:0 "• While running: inputs #N +{round(GRANT_INPUT * 100)}%#! on {co}\'s levels"',
+        ' PMR_CC_GRANT_THEN:0 "• Then: unlocked for retooling and new builds"',
+        f' PMR_CC_GRANT_TT:0 "#header Research grant#!\\nBuying this tier started a research grant. It runs {GRANT_MONTHS} months, one at a time for each company, and while it runs every level {co} owns uses #N {round(GRANT_INPUT * 100)}%#! more input goods.\\n\\nWhen it ends, the company\'s levels of this building run the new method, at the next retooling and for new levels."',
+        f' PMR_CC_COST_TT:0 "Costs this many Culture points."',
+        ' PMR_CC_EXCLUSIVE_TT:0 "#header Ruled out#!\\nThis company holds the opposed arm: Engineering rules out Expansion and Stewardship rules out Providence, with the shared nodes beside them."',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
         ' PMR_CC_METHODS_INTRO:0 "Every recipe of this company\'s buildings, oldest to newest. Greyed: not yet researched. Gold: the newest one the country can run, which its levels retool to. Under each, the share of your levels running it."',
         ' PMR_CC_METHODS_NONE:0 "No recipes to retool"',
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
-        f' pmr_cc_test_points_decision_desc:0 "Gives every company of yours {TEST_POINTS} Culture points to spend and refreshes its Company Culture tab, so the tree can be tried without waiting. Levels do not change."',
+        f' pmr_cc_test_points_decision_desc:0 "Gives every company of yours {TEST_POINTS} Culture points to spend and refreshes its Company Culture tab, so the wheel can be tried without waiting. Levels do not change."',
+        ' pmr_cc_test_grant_decision:0 "PMR test: finish your companies\' research grants"',
+        f' pmr_cc_test_grant_decision_desc:0 "Every research grant your companies are running completes at the start of next month, instead of after {GRANT_MONTHS} months, so the new production method can be checked without waiting."',
         ' building_employment_laborers_mult:0 "Laborer jobs"',
         ' building_employment_laborers_mult_desc:0 "Change to the laborer jobs of each building level."',
+        ' building_employment_engineers_mult:0 "Engineer jobs"',
+        ' building_employment_engineers_mult_desc:0 "Change to the engineer jobs of each building level."',
     ]
-    for t in (1, 2, 3):
-        pts = 'point' if t == 1 else 'points'
-        loc += [f' PMR_CC_COST_{t}:0 "{t} {pts}"',
-                f' PMR_CC_NODE_BUY_{t}:0 "#P Buy#!: {t} {pts}"',
-                f' PMR_CC_NODE_NEED_{t}:0 "Needs {t} {pts}"']
-    names = {k: n for _c, k, _col, n, _i in LINES}
-    roman = ('I', 'II', 'III')
-    for t in (1, 2, 3):
-        x, l, a, p, e = (v(f'pmr_cc_x{t}', '%1'), v(f'pmr_cc_l{t}', '%0'), v(f'pmr_cc_a{t}', 0),
-                         v(f'pmr_cc_p{t}', '%1'), v(f'pmr_cc_e{t}', '%1'))
-        cut = int(JOB_CUT[t - 1] * 100)
-        pts = 'point' if t == 1 else 'points'
-        thr = int(THROUGHPUT[t - 1] * 100)
-        loc += [
-            f' PMR_CC_NAME_eq_{t}:0 "{names["eq"][t - 1]}"',
-            f' PMR_CC_NAME_pp_{t}:0 "{names["pp"][t - 1]}"',
-            f' PMR_CC_NAME_sc_{t}:0 "{names["sc"][t - 1]}"',
-            f' PMR_CC_TT_eq_{t}:0 "#header {names["eq"][t - 1]}#!\\nEvery level {co} owns uses #v {x}#! fewer input goods.\\n\\n'
-            f'About #v +{e}#! productivity at base prices ({names["pp"][t - 1]}: +{p}).\\n\\n'
-            f'Costs #v {t}#! {pts}. Equipment rules out People for this company."',
-            f' PMR_CC_TT_pp_{t}:0 "#header {names["pp"][t - 1]}#!\\nEvery level {co} owns has #v {l}#! fewer laborer jobs and #v {a}#! more engineer jobs: about {cut}% fewer jobs in all, so about #v +{p}#! productivity ({names["eq"][t - 1]}: +{e} at base prices). Engineer jobs left empty lower output like any unfilled job.\\n\\n'
-            f'Costs #v {t}#! {pts}. People rules out Equipment for this company."',
-            f' PMR_CC_TT_sc_{t}:0 "#header {names["sc"][t - 1]}#!\\nEvery level {co} owns has #v +{thr}%#! throughput in all.\\n\\nCosts #v {t}#! {pts}."',
-        ]
-    desc = {'eq': 'Company Culture, Equipment: the levels this executive\'s company owns use fewer input goods.',
-            'pp': 'Company Culture, People: the levels this executive\'s company owns need fewer laborers and some engineers.',
-            'sc': 'Company Culture, Scale: the levels this executive\'s company owns produce more.'}
-    for t in (1, 2, 3):
-        loc += [f' pmr_cc_sc_{t}:0 "{names["sc"][t - 1]}"', f' pmr_cc_sc_{t}_desc:0 "{desc["sc"]}"']
-        for c in sorted(cal):
-            for k in ('eq', 'pp'):
-                key = trait_key(k, c, t)
-                loc += [f' {key}:0 "{names[k][t - 1]}"', f' {key}_desc:0 "{desc[k]}"']
+    for bk in sorted(p.works):
+        for t in T3:
+            loc += [f' {works_marker(bk, t)}:0 "Company works, tier {t} share"',
+                    f' {works_marker(bk, t)}_desc:0 "The share of this building\'s levels whose company has unlocked tier {t} of its works method."']
+        b = short(bk)
+        loc += [f' pmr_cw_out_{b}:0 "Company works output"', f' pmr_cw_in_{b}:0 "Company works input"']
+    # Names.
+    for ln in LINES:
+        for t in range(1, ln.tiers + 1):
+            loc.append(f' PMR_CC_NAME_{ln.key}_{t}:0 "{ln.names[t - 1]}"')
+    for r, (_g, names, _x) in enumerate(ENG_ROWS, 1):
+        loc += [f' PMR_CC_ENG_{r}_{t}:0 "{names[t - 1]}"' for t in T3]
+    for r, (_g, names) in enumerate(EXP_ROWS, 1):
+        loc += [f' PMR_CC_EXP_{r}_{t}:0 "{names[t - 1]}"' for t in T3]
+    for r, (_g, names) in enumerate(UPSKILL_ROWS, 1):
+        loc += [f' PMR_CC_UPS_{r}_{t}:0 "{names[t - 1]}"' for t in T3]
+    # Goods-line node text.
+    pct = lambda x: f'+{round(x * 100)}%'   # noqa: E731
+    for gl in (1, 2):
+        for t in T3:
+            out_g = f"[Character.GetCustom('pmr_cc_good_g{gl}g')]"
+            in_g = f"[Character.GetCustom('pmr_cc_good_g{gl}i')]"
+            loc += [f' PMR_CC_NET_g{gl}_{t}:0 "• #P {pct(WORKS_OUT[t - 1])} {out_g}#! for #N {pct(WORKS_IN[t - 1])} {in_g}#!"',
+                    f' PMR_CC_NETOUT_g{gl}_{t}:0 "• #P {pct(WORKS_OUT[t - 1])} {out_g}#!"']
+        loc += [f' PMR_CC_PMNAME_g{gl}_{t}:0 "• #yellow [Character.GetCustom(\'pmr_cc_n_g{gl}_{t}\')]#!"' for t in T3]
+        loc.append(f" PMR_CC_OVER_g{gl}:0 \"#grey over the base [Character.GetCustom('pmr_cc_bn_g{gl}')] method#!\"")
+    # Bullets and tooltips.
+    arm_title = {'eng': 'Engineering', 'stw': 'Stewardship', 'exp': 'Expansion', 'prv': 'Providence'}
+    for ln in LINES:
+        k = ln.key
+        for t in range(1, ln.tiers + 1):
+            fx = fx_lines(k, t)
+            if not ln.goods:
+                loc.append(f' PMR_CC_FX_{k}_{t}:0 "' + '\\n'.join(fx) + '"')
+            name = node_name(k, t)
+            if ln.goods:
+                what = (f"$PMR_CC_PMNAME_g{ln.goods}_{t}$\\n[Character.GetCustom('pmr_cc_net_g{ln.goods}_{t}')]\\n"
+                        f"$PMR_CC_OVER_g{ln.goods}$\\n\\nA new production method for {co}'s levels of this building, "
+                        f"unlocked by a {GRANT_MONTHS}-month research grant that starts when the tier is bought. It shows once "
+                        "your technology has the base recipe it improves.")
+            else:
+                what = '\\n'.join(fx)
+                if k == 'fe':
+                    what += '\\n\\nThroughput +3%: output and input goods both rise by 3%.'
+                elif k == 'xs':
+                    what += f'\\n\\nOn the company\'s two most valuable input goods. An input good never gets more than {INPUT_CUT_CAP}% cheaper from all lines together.'
+                elif k in ('ft', 'cl', 'tp', 'ym'):
+                    what += f'\\n\\nWage target never drops below −{WAGE_CUT_CAP}% from all lines together.'
+                elif k == 'ys':
+                    what += '\\n\\nOutput of the goods of its two goods lines.'
+                elif k == 'sc':
+                    what += '\\n\\nYour country\'s builders and investors weigh new levels of every building type this company lists at that much more.'
+                elif k in CHARTERS:
+                    what += '\\n\\nThe company may take this charter only while it holds this node. Charters cost no authority.'
+            if ln.founding:
+                cost = (f'Free as the first founding culture; {SECOND_COST} points as the second, once {REACH} nodes are '
+                        'bought in the first arm.')
+            else:
+                c = ln.cost[t - 1]
+                cost = f'Costs #v {c}#! {"point" if c == 1 else "points"}.'
+            gates = []
+            if ln.shared:
+                gates.append(f'Shared by {arm_title[ln.arms[0]]} and {arm_title[ln.arms[1]]}: a company holding both arms can buy it.')
+            elif not ln.founding:
+                gates.append(f'In the {arm_title[ln.arm]} arm.')
+            if t == 1 and ln.links:
+                gates.append('Needs ' + ' and '.join(node_name(nk, nt) for nk, nt in ln.links) + '.')
+            if t in ln.outer:
+                gates.append('Past the gold ring: waits for a shared charter of its arm.')
+            opp = [arm_title[OPP[a]] for a in ln.arms]
+            gates.append('Ruled out by ' + ' or '.join(opp) + '.')
+            loc.append(f' PMR_CC_TT_{k}_{t}:0 "#header {name}#!\\n{what}\\n\\n{cost} ' + ' '.join(gates) + '"')
+    # Traits.
+    for (k, t), _mods in GENERIC.items():
+        loc += [f' {generic_trait(k, t)}:0 "{BY_KEY[k].names[t - 1]}"',
+                f' {generic_trait(k, t)}_desc:0 "Company Culture: applies to the building levels this executive\'s company owns."']
+    for key, _i, mods, _w in keyed_traits(p):
+        if key.startswith('pmr_cc_xs_'):
+            g = mods[0][0][len('goods_input_'):-len('_mult')]
+            nm = f'Supply: ${g}$'
+        elif key.startswith('pmr_cc_ys_'):
+            nm = f'Master Craftsmen: ${mods[0][0][len("goods_output_"):-len("_mult")]}$'
+        elif key.startswith('pmr_cc_ae_'):
+            nm = 'Up-skilling: engineers'
+        elif key.startswith('pmr_cc_cw_'):
+            b = key[len('pmr_cc_cw_'):].rsplit('_', 1)
+            nm = f'Works method {b[1]}: $building_{b[0]}$'
+        elif key.startswith('pmr_cc_wcap_'):
+            nm = 'Wage floor'
+        else:
+            nm = 'Research grant'
+        loc += [f' {key}:0 "{nm}"',
+                f' {key}_desc:0 "Company Culture: applies to the building levels this executive\'s company owns."']
+    # Methods list.
     done = set()
     for b, recipes in rows.items():
         for key, _tex, techs in recipes:
@@ -942,29 +1481,36 @@ def localization(cal, rows, pms_techs):
     return loc
 
 
-def write_all(game, write, header_text, report):
+# ---------------------------------------------------------------------------------------------------------------
+
+def write_all(game, write, header_text, report, p, out_dir):
     """Writes every file of the feature (test builds for now) and returns its loc lines."""
     comps = companies(game)
-    cost = goods_cost(game)
     pms = pm_info(game)
-    cal = calibrate(comps, report['blended'], cost)
-    rows, untreated = method_rows(report, pms, comps)
-    write('common/character_traits/pmr_cc_traits.txt', header_text + traits(cal))
-    write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + MODIFIER_TYPES)
-    write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(cal))
+    rows, untreated, split = method_rows(report, pms, comps)
+    write('common/character_traits/pmr_cc_traits.txt', header_text + traits(p))
+    write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + modifier_types(p))
+    write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(p, comps))
     write('common/scripted_triggers/pmr_cc_triggers.txt', header_text + triggers())
     write('common/scripted_guis/pmr_cc_sguis.txt', header_text + sguis())
     write('common/on_actions/pmr_cc_on_actions.txt', header_text + ON_ACTIONS)
     write('common/script_values/pmr_cc_values.txt', header_text + unlock_values(rows))
-    write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST')))
-    write(PANEL_GUI, patch_panel(open(os.path.join(game, PANEL_GUI), encoding='utf-8-sig').read()), bom=False)
-    write(OWN_GUI, tab(rows, untreated), bom=False)
-    if os.path.isdir(os.path.dirname(CALIBRATION_MD)):
-        with open(CALIBRATION_MD, 'w', encoding='utf-8') as f:
-            f.write(calibration_md(cal, comps))
-    report['company_culture'] = {'companies': len(cal), 'traits': 3 + 6 * len(cal),
-                                 'fallback': sorted(c for c, v in cal.items() if v.get('fallback')),
-                                 'method_rows': len(rows), 'untreated': untreated}
-    print(f'company culture: {len(cal)} companies, {3 + 6 * len(cal)} traits, {len(rows)} building types in Methods '
-          f'({len(untreated)} without recipes)')
-    return localization(cal, rows, pms)
+    write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST'))
+          .replace('{LOG_GRANT}', log_line('CC_TEST_GRANT')))
+    write('common/customizable_localization/pmr_cc_custom_loc.txt', header_text + custom_loc(p))
+    write(CHARTER_FILE, charters(game))
+    write('common/defines/zz_pmr_cc.txt', header_text + DEFINE)
+    write(PANEL_GUI, cc_wheel.patch_panel(open(os.path.join(game, PANEL_GUI), encoding='utf-8-sig').read(), TAB), bom=False)
+    write(OWN_GUI, cc_wheel.tab(p, rows, untreated, split), bom=False)
+    n_tex = cc_wheel.textures(out_dir)
+    n_traits = len(GENERIC) + len(keyed_traits(p))
+    report['company_culture'] = {
+        'companies': len(p.comp), 'traits': n_traits, 'textures': n_tex, 'works_buildings': sorted(p.works),
+        'goods_lines': {c: v['g'] for c, v in sorted(p.comp.items())},
+        'supply': {c: v['xg'] for c, v in sorted(p.comp.items())},
+        'no_goods_line': sorted(c for c, v in p.comp.items() if not v['g']),
+        'works': {bk: {k: w[k] for k in ('out', 'in', 'row', 'techs')} for bk, w in sorted(p.works.items())},
+        'method_rows': len(rows), 'untreated': untreated}
+    print(f'company culture: {len(p.comp)} companies, {n_traits} traits, {len(p.works)} goods-line buildings '
+          f'({sum(1 for v in p.comp.values() if not v["g"])} companies without a goods line), {n_tex} textures')
+    return localization(p, rows, split)

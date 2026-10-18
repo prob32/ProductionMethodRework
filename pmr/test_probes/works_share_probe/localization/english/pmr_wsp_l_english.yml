@@ -1,9 +1,0 @@
-﻿l_english:
- pmr_wsp_probe_decision:0 "PMR probe: company share marker (on/off)"
- pmr_wsp_probe_decision_desc:0 "Test only. Gives every company of yours two hidden traits: one marks its share of each building, the other adds 5 engines a week as an input to its buildings. It logs what each building reads at every monthly pulse (debug.log, PMR;rec=WSP). Take it again to switch it off."
- pmr_wsp_marker_trait:0 "Share Marker (probe)"
- pmr_wsp_marker_trait_desc:0 "PMR test probe. Marks the share of each building this company owns."
- building_pmr_works_probe_marker:0 "PMR probe: company share marker"
- building_pmr_works_probe_marker_desc:0 "Should equal the share of this building owned by companies of yours while the probe is on."
- pmr_wsp_input_trait:0 "Engine Input (probe)"
- pmr_wsp_input_trait_desc:0 "PMR test probe. Tries to add engines as an input to this company's buildings."

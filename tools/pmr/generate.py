@@ -1063,6 +1063,36 @@ def main():
             f'\tpmg_pmr_key_{short(bk)}_{i}  # PMR: lock for that share\n\t'
             for i, key in blend_of)))
 
+    goods_tex, goods_cost = {}, {}
+    for gsrc in load_dir(game, 'goods'):
+        for gk, gn in gsrc.objects().items():
+            t = pdx.get(gn.value, 'texture')
+            if t:
+                goods_tex[gk] = t.value
+            c = pdx.get(gn.value, 'cost')
+            if c is not None:
+                goods_cost[gk] = num(c.value, f'{gk} cost')
+
+    # Company Culture (test builds until Pat ships it): each building type making one of a company's top two output
+    # goods gets two more blend members, the works members (company_culture.works_members), whose share is the
+    # company levels that hold a completed goods tier there. Listed last in the building's production method groups.
+    cc_plan, works_of = None, {}
+    if not args.release:
+        cc_plan = company_culture.plan(game, {bk: (split_info[bk]['plain'] if bk in split_info else
+                                                   [r for r in recipes if not isinstance(r, ElectricRecipe)])
+                                              for bk, _bn, _s, recipes, _g0, _pg in treated}, goods_cost)
+        for bk, _bn, s_, recipes, _g0, pg in treated:
+            if bk not in cc_plan.works:
+                continue
+            j0 = len(split_info[bk]['members']) if bk in split_info else len(recipes)
+            plain_ = split_info[bk]['plain'] if bk in split_info else recipes
+            works_of[bk] = [(j0 + n, kind, wm, mods) for n, (kind, wm, mods)
+                            in enumerate(company_culture.works_members(cc_plan, bk, plain_[-1].texture), 1)]
+            s_.inserts.append((pg.end - 1, ''.join(
+                f'\tpmg_pmr_share_{short(bk)}_{j}  # PMR: Company Culture works {kind}\n\t'
+                f'\tpmg_pmr_key_{short(bk)}_{j}  # PMR: lock for that share\n\t'
+                for j, kind, _wm, _m in works_of[bk])))
+
     # A method another method needs (unlocking_production_methods: pm_elastics needs a sewing machines recipe) is
     # also met by every pair built on it: with the split, the recipe group's marker on such a building is the pair.
     pair_of = {}
@@ -1236,15 +1266,6 @@ def main():
             except ValueError:
                 pass
 
-    goods_tex, goods_cost = {}, {}
-    for gsrc in load_dir(game, 'goods'):
-        for gk, gn in gsrc.objects().items():
-            t = pdx.get(gn.value, 'texture')
-            if t:
-                goods_tex[gk] = t.value
-            c = pdx.get(gn.value, 'cost')
-            if c is not None:
-                goods_cost[gk] = num(c.value, f'{gk} cost')
     gfx_root = game
     custom_new = []
     recipe_keys, recipe_tex, recipe_elec = {}, {}, {}
@@ -1400,13 +1421,25 @@ def main():
             members = [(i, r, blend, emp, SHARE_STEPS if i == 1 else 0,
                         {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
                        for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
+        # Company Culture's works members: unscaled goods mults (a goods tier's output and its extra input over the
+        # base recipe), in WORKS_STEPS steps of the full share, on the company levels that hold a tier (works_effect).
+        for j, kind, wm, mods in works_of.get(bk, []):
+            members.append((j, wm, {'building_modifiers': mods}, {}, 0,
+                            {'member': j, 'kind': 'works', 'works': kind, 'steps': company_culture.WORKS_STEPS}))
+        if bk in works_of and cc_plan.works[bk]['in']:
+            profit_goods.add(cc_plan.works[bk]['in'])   # works_effect reads its price (pmr_px_<good>)
         for i, r, blend, emp, default_n, rep in members:
             shares, keys = [], []
             any_key = f'pm_pmr_key_{b}_{i}_any'
             secs = list(dict.fromkeys(list(blend) + (['building_modifiers'] if emp else [])))
-            for n in range(SHARE_STEPS + 1):
-                f = n / SHARE_STEPS
-                body = ''.join(
+            steps = rep.get('steps', SHARE_STEPS)
+            works = rep.get('kind') == 'works'
+            for n in range(steps + 1):
+                f = n / steps
+                body = (''.join(
+                    f'\t{sec} = {{\n\t\tunscaled = {{\n'
+                    + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in blend[sec].items())
+                    + '\t\t}\n\t}\n' for sec in secs if n > 0) if works else ''.join(
                     f'\t{sec} = {{\n'
                     + (f'\t\tworkforce_scaled = {{\n'
                        + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in blend[sec].items())
@@ -1415,7 +1448,7 @@ def main():
                        + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in emp.items())
                        + '\t\t}\n' if sec == 'building_modifiers' and emp else '')
                     + '\t}\n'
-                    for sec in secs if n > 0)
+                    for sec in secs if n > 0))
                 dflt = '\tis_default = yes\n' if n == default_n else ''
                 blend_pms.append(
                     f'pm_pmr_share_{b}_{i}_{n} = {{\n\ttexture = "{r.texture}"\n{dflt}'
@@ -1427,8 +1460,10 @@ def main():
                 shares.append(f'pm_pmr_share_{b}_{i}_{n}')
                 keys.append(f'pm_pmr_key_{b}_{i}_{n}')
                 pct = round(100 * f)
-                loc += [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
-                        f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"']
+                loc += ([f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({n}/{steps})"',
+                         f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({n}/{steps})"'] if works else
+                        [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
+                         f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"'])
             blend_pms.append(f'{any_key} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n')
             keys.insert(0, any_key)   # first: see LOCK_ANY_FIRST above
             loc.append(f' {any_key}:0 "${r.key}$ share lock (switching)"')
@@ -1481,7 +1516,10 @@ def main():
             profit_goods.update(g for gd, _ in pair_ui[bk]['econ'].values() for g in gd if goods_cost.get(g))
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, plain)
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
-                                          econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk)))
+                                          econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk),
+                                          [(j, company_culture.WORKS_STEPS) for j, *_r in works_of.get(bk, [])])
+                            + (company_culture.works_effect(cc_plan, bk, *[j for j, *_r in works_of[bk]], *([None] * (2 - len(works_of[bk]))))
+                               if bk in works_of else ''))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
@@ -1683,7 +1721,8 @@ def main():
                         for lang in OTHER_LANGUAGES:
                             write(f'localization/{lang}/{fn[:-len("english.yml")]}{lang}.yml', f'l_{lang}:\n' + body)
         # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, in the test build until Pat ships it.
-        loc += company_culture.write_all(game, write, header, report)
+        loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
+        private_investment.AI_TAIL = company_culture.ai_value_tail   # Expanded Works (company_culture.py)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     loc += private_investment.write_all(game, write, header, args.out)
@@ -2412,7 +2451,7 @@ def highest(ns, cond, leaf, ind='\t'):
 
 
 def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None, auto_tiers=(),
-                pair=None):
+                pair=None, works=()):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -2430,6 +2469,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     split = pair if pair and pair.get('split') else None
     bm = split['members'] if split else [(i, [i], 'recipe') for i in range(1, k + 1)]
     nb = len(bm)
+    # Company Culture's works members (company_culture.works_members), after bm: their steps come from
+    # pmr_works_<b> (pmr_wn_<j>_<b>), WORKS_STEPS of them, not from the levels' recipes.
+    hi_of = {j: n for j, n in works}
+    nb_all = nb + len(works)
     rec_of = {i: j for j, idxs, grp in bm if grp == 'recipe' for i in idxs}   # target -> its recipe member
     sv = 'pmr_rs' if split else 'pmr_sh'   # a member's share of the levels
 
@@ -2507,15 +2550,16 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # pmr_a_<i>: the step the tick wants (pmr_n_<i>) if that share method runs, else -1. Read before
     # the blend to see what must change, and after it for the log.
     o.append(f'pmr_read_blend_{b} = {{\n')
-    for i in range(1, nb + 1):
+    for i in range(1, nb_all + 1):
         o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
-                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}', '\t'))
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}', '\t',
+                          hi=hi_of.get(i, SHARE_STEPS)))
     o.append('}\n\n')
 
     # pmr_lock_<i>_<b>: member i's lock onto the step the tick wants.
-    for i in range(1, nb + 1):
+    for i in range(1, nb_all + 1):
         o.append(f'pmr_lock_{i}_{b} = {{\n'
-                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("key", i, n), '\t') + '}\n\n')
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("key", i, n), '\t', hi=hi_of.get(i, SHARE_STEPS)) + '}\n\n')
 
     def step(i, cum):
         # member i's share in steps, never past what is left of the whole (SHARE_STEPS less cum)
@@ -2539,13 +2583,15 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     for grp in dict.fromkeys(grp for _, _, grp in bm if grp != 'recipe'):
         o.append(f'\t# {grp}\n\t{setv("pmr_gcum", 0)}\n'
                  + ''.join(step(i, 'pmr_gcum') for i, _, g2 in bm if g2 == grp))
+    for j, _n in works:
+        o.append(f'\t# Company Culture works member (pmr_works_{b})\n\t{setv(f"pmr_n_{j}", "var:" + v(f"pmr_wn_{j}"))}\n')
     o.append(f'\tpmr_read_blend_{b} = yes\n')
-    for i in range(1, nb + 1):
+    for i in range(1, nb_all + 1):
         o.append(f'\t# recipe {i}: if its share is not the one wanted, unlock every share, switch, lock again;\n'
                  '\t# if only the lock moved (the AI took the switching lock), lock again\n'
                  f'\tif = {{\n\t\tlimit = {{ var:{v(f"pmr_a_{i}")} = -1 }}\n'
                  f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, "any")} }} }} {act("key", i, "any")} }}\n'
-                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("share", i, n), '\t\t')
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("share", i, n), '\t\t', hi=hi_of.get(i, SHARE_STEPS))
                  + f'\t\tpmr_lock_{i}_{b} = yes\n\t}}\n'
                  f'\telse_if = {{ limit = {{ {pm_active("key", i, "any")} }} pmr_lock_{i}_{b} = yes }}\n')
     o.append('}\n\n')
@@ -2956,8 +3002,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         return f"[THIS.Var('{v(name)}').GetValue|{d}]"
     # blend: each recipe's share of the levels in steps of 1/SHARE_STEPS, as the tick set it;
     # active: the step each recipe's share group runs as the game reports it, -1 if none
-    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, nb + 1))
-           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, nb + 1)))
+    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, nb_all + 1))
+           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, nb_all + 1)))
     best = f";best={f('pmr_best_now')}" + mix
     split = mix + (f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}"
              f";share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}"
@@ -3070,6 +3116,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\tpmr_sync_gov_{b} = yes\n'
              f'\tpmr_progress_{b} = yes\n'
              f'\tpmr_mix_{b} = yes\n'
+             + (f'\tpmr_works_{b} = yes\n' if works else '') +
              f'\tpmr_blend_{b} = yes\n'
              + ('' if RELEASE else
                 '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
