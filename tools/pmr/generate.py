@@ -1339,17 +1339,16 @@ def main():
 
         for rbx in priv_slots(b):
             loc += [f' {rbx}:0 "Retooling: ${bk}$"',
-                    f' {rbx}_desc:0 "Privately funded construction that switches one level of ${bk}$ to its newest recipe. Investors from countries that own part of the building fund the privately owned share. ' + (f'Each level employs a crew of {RETOOL_CREW}, paid from a little ${RETOOL_CREW_GOOD}$ they make, so investors can add levels to it while it is staffed.' if RETOOL_CREW else
-       'Investors may queue several levels on it at once; it goes once they are all done.' if RETOOL_STACK else 'It goes once its level is done.') + '"']
+                    f' {rbx}_desc:0 "Switches one level of ${bk}$ to its newest recipe."']
         for r in recipes:
             if isinstance(r, (ElectricRecipe, PairRecipe)):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
         loc += [f' pmg_pmr_labour_{b}:0 "Recipes"',
                 f' pm_pmr_labour_{b}:0 "Blended Recipes"',
                 f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
-                f' building_pmr_retool_gov_{b}_desc:0 "Government construction that switches the government-owned share of ${bk}$ to a new recipe. Each completed level moves the old recipe\'s output closer to the new one."',
+                f' building_pmr_retool_gov_{b}_desc:0 "Switches the government\'s levels of ${bk}$ to the new recipe."',
                 f' building_pmr_retool_gova_{b}:0 "Retooling (Government): ${bk}$"',
-                f' building_pmr_retool_gova_{b}_desc:0 "Your government\'s construction that switches its own levels of ${bk}$ in another country\'s state to a new recipe. One level stands while there is retooling to do, so the upgrade button can add more."']
+                f' building_pmr_retool_gova_{b}_desc:0 "Switches your government\'s levels of ${bk}$ here to the new recipe."']
 
         # Blended recipe: per recipe i, a share group of SHARE_STEPS + 1 methods carrying recipe i's
         # workforce-scaled modifiers x n / SHARE_STEPS, so the building's goods are the level-weighted
@@ -4399,8 +4398,8 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
             continue   # no recipe row (methods_view_gui)
         for i, key in enumerate(keys, 1):
             lines = methods_row.recipe_tip_lines(bk, i, key, mv_read, f"[{MV_COUNTRY}.GetCustom('pmr_mvnote_{b}_{i}')]")
-            lines += [f"Picked in states holding #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#! of your levels",
-                      f"Running on #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#! of your levels"]
+            lines += [f"Picked: #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#!",
+                      f"Running: #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#!"]
             loc.append(f' PMR_MV_TIP_{b}_{i}:0 "' + '\\n'.join(lines) + '"')
     for bk, group in (ai or {}).items():
         if bk not in recipe_keys:
@@ -4408,14 +4407,14 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
         b = short(bk)
         mult = f"{MV_COUNTRY}.MakeScope.ScriptValue('{private_investment.VAR.format(group)}')"
         aiv, aib = mv_read(f'pmr_mv_aiv_{b}'), mv_read(f'pmr_mv_aib_{b}')
-        term, avg = mv_read(f'pmr_pterm_{b}'), mv_read(f'pmr_pavg_{b}')
+        term = mv_read(f'pmr_pterm_{b}')
         policy = f'Subtract_CFixedPoint(Subtract_CFixedPoint({aiv}, {aib}), {term})'
         # Pat 21:53Z: less text, on the card and in the tooltip
         loc.append(f' PMR_MV_AI_{b}:0 "#bold [{aiv}|0]#! ×[{mult}|2]"')
-        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold AI weight for ${bk}$#!\\n'
+        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold AI weight#!\\n'
                    f'Base: [{aib}|0]\\n'
-                   f'Policy and Foreign/Domestic bar: [{policy}|=+0]\\n'
-                   f'Profit and output: [{term}|=+0] (@money![{avg}|0] a week on average)\\n'
+                   f'Policy: [{policy}|=+0]\\n'
+                   f'Profit and output: [{term}|=+0]\\n'
                    f'Priority: ×[{mult}|2] from $PMR_IPW_GROUP_{group}$"')
     for bk, pr in (pair_ui or {}).items():
         b = short(bk)
@@ -4425,8 +4424,8 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
         names = pr.get('keys') or recipe_keys[bk]
         for i, a in sorted(pr['econ']):
             # with the split each cell is a retool target: how much of the country picks it, and runs it
-            more = (f"\\nPicked in states holding #bold [{mv_read(f'pmr_mv_ps_{pr['index'][(i, a)]}_{b}')}|%0]#! of your levels"
-                    f"\\nRunning on #bold [{mv_read(f'pmr_c_sh_{pr['index'][(i, a)]}_{b}')}|%0]#! of your levels"
+            more = (f"\\nPicked: #bold [{mv_read(f'pmr_mv_ps_{pr['index'][(i, a)]}_{b}')}|%0]#!"
+                    f"\\nRunning: #bold [{mv_read(f'pmr_c_sh_{pr['index'][(i, a)]}_{b}')}|%0]#!"
                     if pr.get('split') else '')
             loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${names[i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!\\n'
                        f"@money![{mv_read(f'pmr_cp_{i}_{a}_{b}')}|0] per level a week"
@@ -4455,7 +4454,7 @@ def pick_custom_loc(pick_ui):
 def pick_loc(pick_ui):
     """The pick row and its tooltip."""
     loc = [' PMR_PICK_NOTE_BEST:0 " (most profitable)"', ' PMR_PICK_NOTE_LOCKED:0 " (not available)"',
-           ' PMR_PICK_NOTE_VETO:0 " (skipped: an input is at the +75% price cap)"']
+           ' PMR_PICK_NOTE_VETO:0 " (input at price cap)"']
     for bk, keys in pick_ui.items():
         b = short(bk)
 
@@ -4463,11 +4462,9 @@ def pick_loc(pick_ui):
             return f"[Building.GetState.MakeScope.Var('{name}').GetValue|{f}]"
         loc.append(f' PMR_PICK_ROW_{b}:0 "Most profitable: #bold [Building.GetState.GetCustom(\'pmr_pick_{b}\')]#!, '
                    f'@money!{var(f"pmr_prm_{b}")} per level a week"')
-        lines = [f"${key}$: @money!{var(f'pmr_rm_{i}_{b}')} per level a week"
+        lines = [f"${key}$: @money!{var(f'pmr_rm_{i}_{b}')}"
                  f"[Building.GetState.GetCustom('pmr_pnote_{b}_{i}')]" for i, key in enumerate(keys, 1)]
-        loc.append(f' PMR_PICK_TOOLTIP_{b}:0 "' + '\\n'.join(lines)
-                   + '\\n\\nProfit per level a week at this state\'s prices, wages included. '
-                   'New levels and retooling follow the most profitable recipe."')
+        loc.append(f' PMR_PICK_TOOLTIP_{b}:0 "' + '\\n'.join(lines) + '"')
     return loc
 
 
@@ -4582,7 +4579,6 @@ def owners_cell(bk, textures):
     levels are counted together, the player's investors leave them alone (Pat 20:54Z) and the player's
     government retools its own with the upgrade button (Pat 21:26Z); private rows show pmr_lvp_*."""
     b = short(bk)
-    abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
     lvg, lvp = ('pmr_rlvg', 'pmr_rlvp') if b in SPLIT_BARS else ('pmr_lvg', 'pmr_lvp')   # by plain recipe with the split
     rows = []
     for side, gov in (('gov', True), ('priv', False)):
@@ -4597,8 +4593,7 @@ def owners_cell(bk, textures):
             f'\t\t\t\t\t\t\t\t\t\tvisible = "[{shown(i)}]"\n'
             f'\t\t\t\t\t\t\t\t\t\tsize = {{ 26 26 }}\n\t\t\t\t\t\t\t\t\t\ttexture = "{tex}"\n'
             '\t\t\t\t\t\t\t\t\t}\n' for i, tex in enumerate(textures, 1))
-        tooltip = (f"[SelectLocalization({abroad}, 'PMR_OWNERS_ABROAD_TOOLTIP_{b}', 'PMR_OWNERS_GOV_TOOLTIP_{b}')]"
-                   if gov else f'PMR_OWNERS_PRIV_TOOLTIP_{b}')
+        tooltip = f'PMR_OWNERS_GOV_TOOLTIP_{b}' if gov else f'PMR_OWNERS_PRIV_TOOLTIP_{b}'
         rows.append('\t\t\t\t\t\t\t\tflowcontainer = {\n'
                     f'\t\t\t\t\t\t\t\t\tvisible = "[And({is_type(bk)}, {who})]"\n'
                     '\t\t\t\t\t\t\t\t\tparentanchor = center\n\t\t\t\t\t\t\t\t\tspacing = 2\n'
@@ -4699,8 +4694,9 @@ def patch_browser_tabs(text, types):
     (compact_building_browser_panel) gets the construction panel's tab row, Buildings (vanilla's list) and Investments:
     the economic law, policy and investment priorities (private_investment.policy_block, Pat 18:40Z), then Production
     Methods, a card per building type (Pat 21:53Z), recounted by pmr_mv_refresh_sgui as the tab is clicked. The cards
-    are the list's own items (types: the building types with a card), so the search, filters and sort buttons, which
-    both tabs keep, order and filter them as they do the vanilla rows. The tabs are vanilla's tab_buttons switched by a
+    are the list's own items (types: the building types with a card), so the search, filters and sort buttons order
+    and filter them as they do the vanilla rows; on Investments they sit under the Production Methods header (Pat
+    22:28Z), on Buildings in the panel's fixed top as in vanilla. The tabs are vanilla's tab_buttons switched by a
     GetVariableSystem flag (MV_TAB), which the panel's closing clears, so it reopens on Buildings as the construction
     panel does. The full-screen Building Registry stays vanilla."""
     if not types:
@@ -4718,7 +4714,7 @@ def patch_browser_tabs(text, types):
 
     def tab(n, key, click, sel):
         return (f'{t}blockoverride "{n}_button" {{\n{t}\ttext = "{key}"\n{t}}}\n'
-                f'{t}blockoverride "{n}_button_tooltip" {{\n{t}\ttooltip = "{key}"\n{t}}}\n'
+                f'{t}blockoverride "{n}_button_tooltip" {{}}\n'   # no tooltip: it only repeated the tab name
                 f'{t}blockoverride "{n}_button_click" {{\n' + ''.join(f'{t}\tonclick = "[{c}]"\n' for c in click) + f'{t}}}\n'
                 f'{t}blockoverride "{n}_button_visibility" {{\n{t}\tvisible = "[{sel}]"\n{t}}}\n'
                 f'{t}blockoverride "{n}_button_visibility_checked" {{\n{t}\tvisible = "[Not({sel})]"\n{t}}}\n'
@@ -4731,10 +4727,27 @@ def patch_browser_tabs(text, types):
          + tab('second', 'PMR_BB_TAB_INVEST', [f"GetVariableSystem.Set('{MV_TAB}', 'yes')", refresh, pick_off], shown)
          + '\t\t\t}\n\t\t\twidget = { size = { 1 10 } }\n\n'
          '\t\t\tflowcontainer = {\n\t\t\t\tdirection = vertical\n')
+    # Pat 22:28Z: on Investments the search, filters and sort buttons sit under the Production Methods header; the
+    # fixed top keeps them for Buildings only and the Investments head below gets its own copy
+    gap = '\t\t\twidget = { size = { 1 10 } }\n\n'
+    f0 = text.index(gap) + len(gap)
+    f1 = block_end(text, f0)
+    s0 = text.index('\t\t\t# SORT BUTTONS\n', f1)
+    s1 = block_end(text, s0)
+    if s1 > text.index('blockoverride "scrollarea_content"', f0):
+        raise SystemExit('building_browser_panel.gui: sort buttons not in fixed_top; update patch_browser_tabs')
+    filters, sorts = text[f0:f1], text[s0:s1]
+
+    def on_buildings(block):
+        i = block.index('{\n') + 2
+        return block[:i] + f'\t\t\t\tvisible = "[{hidden}]"  # PMR\n' + block[i:]
+    text = text[:s0] + on_buildings(sorts) + text[s1:]
+    text = text[:f0] + on_buildings(filters) + text[f1:]
     # the list's items: vanilla's row on Buildings, PMR's card on Investments (pmr_methods_cards, gui/pmr_methods_view.gui)
     has_rows = 'Not(IsDataModelEmpty(BuildingBrowserBuildingTypeItem.GetBuildings))'
-    carded = any_of([f"ObjectsEqual(BuildingBrowserBuildingTypeItem.GetBuildingType, GetBuildingType('{bk}').Self)"
-                     for bk in types])
+    # q30's ObjectsEqual(BuildingBrowserBuildingTypeItem.GetBuildingType, ...) matched nothing (Pat 22:28Z: blank);
+    # vanilla's own form reads the item's BuildingType context (production_methods.gui)
+    carded = any_of([f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)" for bk in types])
     items = ('\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n\t\t\t\t\tspacing = 5\n\n'
              '\t\t\t\t\tdatamodel = "[BuildingBrowserPanel.GetBuildingBrowserBuildingTypeItems]"\n\n'
              '\t\t\t\t\titem = {\n\t\t\t\t\t\tcontainer = {\n\t\t\t\t\t\t\tbuildings_production_method_item = {\n')
@@ -4742,10 +4755,10 @@ def patch_browser_tabs(text, types):
          '\t\t\t\t\tignoreinvisible = yes  # PMR\n\n'
          '\t\t\t\t\tdatamodel = "[BuildingBrowserPanel.GetBuildingBrowserBuildingTypeItems]"\n\n'
          '\t\t\t\t\titem = {\n\t\t\t\t\t\tcontainer = {\n'
+         '\t\t\t\t\t\t\tdatacontext = "[BuildingBrowserBuildingTypeItem.GetBuildingType]"  # PMR\n'
          f'\t\t\t\t\t\t\tvisible = "[Or({hidden}, And({has_rows}, {carded}))]"  # PMR\n'
          '\t\t\t\t\t\t\t# PMR: a card per building type on Investments\n'
-         f'\t\t\t\t\t\t\tpmr_methods_cards = {{\n\t\t\t\t\t\t\t\tvisible = "[{shown}]"\n'
-         '\t\t\t\t\t\t\t\tdatacontext = "[BuildingBrowserBuildingTypeItem.GetBuildingType]"\n\t\t\t\t\t\t\t}\n'
+         f'\t\t\t\t\t\t\tpmr_methods_cards = {{\n\t\t\t\t\t\t\t\tvisible = "[{shown}]"\n\t\t\t\t\t\t\t}}\n'
          '\t\t\t\t\t\t\tbuildings_production_method_item = {\n'
          f'\t\t\t\t\t\t\t\tblockoverride "visible" {{\n\t\t\t\t\t\t\t\t\tvisible = "[And({has_rows}, {hidden})]"  # PMR\n'
          '\t\t\t\t\t\t\t\t}\n')
@@ -4763,7 +4776,7 @@ def patch_browser_tabs(text, types):
          '\t\t\t\tdirection = vertical\n\t\t\t\tignoreinvisible = yes\n\t\t\t\tspacing = 8\n\t\t\t\tmargin_bottom = 8\n'
          '\t\t\t\tpmr_policy_block = {}\n'
          '\t\t\t\tdefault_header = {\n\t\t\t\t\tblockoverride "text" {\n\t\t\t\t\t\ttext = "PMR_MV_HEADER"\n'
-         '\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n' + '@@PMR_LIST@@' + lst)
+         '\t\t\t\t\t}\n\t\t\t\t}\n' + filters + '\n' + sorts + '\n\t\t\t}\n' + '@@PMR_LIST@@' + lst)
     at = text.index('@@PMR_LIST@@')
     end = block_end(text, at + len('@@PMR_LIST@@'))
     text = text[:at] + text[at + len('@@PMR_LIST@@'):end] + '\n\t\t\t}  # PMR' + text[end:]
@@ -4932,9 +4945,9 @@ def panel_loc(recipe_keys):
     loc = [
         ' PMR_RECIPE_BAR_TITLE:0 "#bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
         ' PMR_OWNERS_PM_HEADER:0 "Production Method"',
-        ' PMR_LABOUR_ICON_TOOLTIP:0 "#bold Blended recipes#!\\nGoods and workforce here are the mix of the recipes the levels run, as the recipe bar shows. Recipes from the third on include full automation."',
+        ' PMR_LABOUR_ICON_TOOLTIP:0 "#bold Blended recipes#!\\nThe mix of recipes its levels run"',
         ' PMR_BAR_FULL_TOOLTIP:0 "Every level runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!."',
-        ' PMR_RECIPE_BAR_TOOLTIP:0 "This building runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!. When your country researches a newer recipe it switches automatically, and the change takes effect as retooling construction completes. A recipe that needs electricity waits until this state produces it."',
+        ' PMR_RECIPE_BAR_TOOLTIP:0 "Switches to newer recipes by retooling"',
     ]
     for bk, keys in recipe_keys.items():
         b = short(bk)
@@ -4944,41 +4957,31 @@ def panel_loc(recipe_keys):
         # Pat, 2026-10-13: no colour names, and short. With the split, by plain recipe (SPLIT_BARS).
         sh, lvg, lvp = ('pmr_rs', 'pmr_rlvg', 'pmr_rlvp') if b in SPLIT_BARS else ('pmr_sh', 'pmr_lvg', 'pmr_lvp')
         tiers = ''.join(f'\\n${key}$: #bold {var(f"{sh}_{i}", "%0")}#!' for i, key in enumerate(keys, 1))
-        gov = (f'Government: #bold {var("pmr_pending_gov", "0")}#! queued, room for #bold {var("pmr_room_gov", "0")}#!.')
+        gov = f'Government: #bold {var("pmr_pending_gov", "0")}#! queued, #bold {var("pmr_room_gov", "0")}#! room'
         loc += [
             f' PMR_RECIPE_BAR_TITLE_RETOOLING_{b}:0 "#bold {var("pmr_p", "%0")}#! on #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
             f' PMR_BAR_TOOLTIP_{b}:0 "#bold Levels by recipe#!{tiers}'
-            f'\\n\\n#bold {var("pmr_need", "0")}#! levels still to retool to [Building.GetCustom(\'pmr_new_recipe\')].'
-            f'\\nPrivate: #bold {var("pmr_pending_priv", "0")}#! queued, room for #bold {var("pmr_room_priv", "0")}#!, funded by investors who own part of the building.'
-            f'\\n{gov} The upgrade button queues them all."',
+            f'\\n\\nTo retool: #bold {var("pmr_need", "0")}#!'
+            f'\\nPrivate: #bold {var("pmr_pending_priv", "0")}#! queued, #bold {var("pmr_room_priv", "0")}#! room'
+            f'\\n{gov}"',
             f' PMR_GOV_RETOOL_TOOLTIP_{b}:0 "#bold Retool the government\'s levels#!'
-            f'\\nQueues every government retooling level this building still needs in your government construction queue: #bold {var("pmr_room_gov", "0")}#! now.'
-            f'\\n\\n{gov} Privately owned levels are retooled by their investors.'
-            f'\\n\\nUnavailable when the government\'s own levels already run the new recipe, it has already queued them all, or the new recipe needs electricity and this state produces none."',
+            f'\\nQueues #bold {var("pmr_room_gov", "0")}#! levels"',
             f' PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}:0 "#bold Retool your government\'s levels#!'
-            f'\\nQueues your government\'s retooling levels in this state in your government construction queue: #bold {var("pmr_room_gov", "0")}#! now, up to {GOV_ABROAD_CLICKS} a click.'
-            f'\\n\\nOnly the levels your own government owns here. Another government\'s levels are not retooled, and privately owned levels are retooled by their investors.'
-            f'\\n\\nUnavailable when your government\'s levels here already run the new recipe or are all queued, the new recipe needs electricity and this state produces none, or you may not build in this country."',
+            f'\\nQueues #bold {var("pmr_room_gov", "0")}#! levels, up to {GOV_ABROAD_CLICKS} a click"',
             f' PMR_OWNERS_GOV_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
             + ''.join(f'\\n${key}$: #bold {var(f"{lvg}_{i}", "0")}#!' for i, key in enumerate(keys, 1)) + '"',
             f' PMR_OWNERS_PRIV_TOOLTIP_{b}:0 "#bold Privately owned levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"{lvp}_{i}", "0")}#!' for i, key in enumerate(keys, 1))
-            + '\\n\\nAll private owners together: retooling is tracked for the government and for private owners, not owner by owner."',
-            f' PMR_OWNERS_ABROAD_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"{lvg}_{i}", "0")}#!' for i, key in enumerate(keys, 1))
-            + '\\n\\nAbroad every government\'s levels are counted together. Your government retools its own levels here with the upgrade button; another government\'s levels are not retooled, and your investors retool only privately owned levels."',
+            + ''.join(f'\\n${key}$: #bold {var(f"{lvp}_{i}", "0")}#!' for i, key in enumerate(keys, 1)) + '"',
         ]
 
         def cvar(name, f):
             return f"[GetPlayer.MakeScope.Var('{name}_{b}').GetValue|{f}]"
         ctiers = ''.join(f'\\n${key}$: #bold {cvar(c_name(f"{sh}_{i}"), "%0")}#!' for i, key in enumerate(keys, 1))
         loc += [
-            f' PMR_CBAR_TOOLTIP_{b}:0 "#bold Levels by recipe, at home and abroad#!{ctiers}'
-            f'\\n\\n#bold {cvar("pmr_c_level", "0")}#! levels at home and in buildings abroad your investors own part of, #bold {cvar("pmr_c_need", "0")}#! still to retool.'
-            f'\\nThe upgrade button would queue #bold {cvar("pmr_c_room_gov", "0")}#! government levels."',
+            f' PMR_CBAR_TOOLTIP_{b}:0 "#bold Levels by recipe#!{ctiers}'
+            f'\\n\\nLevels: #bold {cvar("pmr_c_level", "0")}#!, to retool: #bold {cvar("pmr_c_need", "0")}#!"',
             f' PMR_GOV_RETOOL_C_TOOLTIP_{b}:0 "#bold Retool the government\'s levels everywhere#!'
-            f'\\nQueues every government retooling level your ${bk}$ still need, in every state, in your government construction queue: #bold {cvar("pmr_c_room_gov", "0")}#! now.'
-            f'\\n\\nUnavailable when no state has government-owned levels left to queue (or its new recipe is waiting for electricity)."',
+            f'\\nQueues #bold {cvar("pmr_c_room_gov", "0")}#! levels"',
         ]
     return loc
 
@@ -4997,14 +5000,12 @@ def option_loc(opt_ui):
                 note = f"[Building.GetState.GetCustom('pmr_xlk_{b}_{o.j}')]"
                 worth = f', @money!{var(f"pmr_xw_{o.j}")}' if mode == 'market' else ''
                 lines.append(f'${o.key}$: #bold {var(f"pmr_x_{o.j}")}%#!{worth}{note}')
-            if mode == 'market':
-                foot = (f'Earnings per level per week over ${none}$, at local prices. Each month the best earner '
-                        f'gains up to {TRADE_STEP_MAX} points, more the further ahead it is.')
-            else:
+            foot = ''
+            if mode != 'market':
                 lo, hi = TREAT_BANDS
-                foot = (f'Workforce acceptance under {lo}: #bold {var(f"pmr_xbv_{gi}")}%#!, {lo} to {hi - 1}: '
-                        f'#bold {var(f"pmr_xbh_{gi}")}%#!. A barred treatment\'s share goes to the next milder one.')
-            loc.append(f' PMR_OPT_TOOLTIP_{b}_{gi}:0 "#bold ${os_[0].group}$#!\\n' + '\\n'.join(lines) + f'\\n\\n{foot}"')
+                foot = (f'\\n\\nAcceptance under {lo}: #bold {var(f"pmr_xbv_{gi}")}%#!, {lo} to {hi - 1}: '
+                        f'#bold {var(f"pmr_xbh_{gi}")}%#!')
+            loc.append(f' PMR_OPT_TOOLTIP_{b}_{gi}:0 "#bold ${os_[0].group}$#!\\n' + '\\n'.join(lines) + f'{foot}"')
     return loc
 
 
@@ -5181,7 +5182,7 @@ pmr_test_pause_ticks_decision = {
 
 DECISION_LOC = [
     ' pmr_test_pause_ticks_decision:0 "PMR test: pause or resume the monthly ticks"',
-    ' pmr_test_pause_ticks_decision_desc:0 "Stops PMR\'s monthly and research ticks for every country, or starts them again, so the game\'s speed can be timed with and without them in the same save. Shares hold still while paused."',
+    ' pmr_test_pause_ticks_decision_desc:0 "Pauses or resumes PMR\'s ticks."',
 ]
 
 

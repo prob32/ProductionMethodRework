@@ -30,8 +30,8 @@ building, so a level is never counted twice. While the variant's extra input is 
 back to the base recipe (the members go to 0).
 
 Research grants (section 5): buying a goods tier starts a grant that runs GRANT_MONTHS on the monthly company tick,
-one at a time per company, with GRANT_INPUT more input goods on the company's levels while it runs (a trait). The
-tier then unlocks: its marker trait goes on, and the building's next tick blends it in.
+one at a time per company, paid as it starts from the owner's investment pool: GRANT_COST per level the company
+employs (it can't start while the pool holds less). The tier then unlocks: its marker trait goes on, and the building's next tick blends it in.
 
 Points (unchanged since 10-14): each month a company earns prosperity x (1 + employed levels / 50, capped at 2)
 funds; a full bar (100 x (level + 1)^1.8 + 700, HoI4's curve) is one point.
@@ -52,6 +52,7 @@ import os
 import re
 
 import pdx
+import cc_icons
 import cc_wheel
 
 TAB = 'pmr_culture'                 # InformationPanel tab id
@@ -63,7 +64,8 @@ CAL_VERSION = 4                     # bump to make every company re-read its num
 # ---------------------------------------------------------------------------------------------------------------
 # Numbers Pat hasn't confirmed (BUILD-SPEC section 5 and 7): named so they are easy to change.
 GRANT_MONTHS = 12                       # Pat 21:53Z: 12 months, not 24
-GRANT_INPUT = 0.05                  # input goods on the company's levels while a grant runs
+GRANT_COST = (500, 1000, 1500)      # £ per level the company employs, paid from its country's investment pool as a
+                                    # grant starts (Pat 22:28Z: money from the investment pool, not input goods)
 WORKS_OUT = (0.15, 0.25, 0.40)      # a goods tier's main output over the base method it replaces
 WORKS_IN = (0.05, 0.10, 0.15)       # and its one extra input
 WORKS_STEPS = 40                    # blend steps of the two works members (2.5% of WORKS_*[-1] each)
@@ -79,6 +81,7 @@ SC_AI_MULT = (1.25, 1.5, 2)         # Expanded Works: ai_value of the company's 
 # Points
 PROSPERITY_LADDER = list(range(100, 0, -5))          # 100, 95 .. 5
 SIZE_LADDER = [(n, 1 + n / 50) for n in range(50, 0, -5)]
+LV_LADDER = list(range(100, 20, -5)) + list(range(20, 0, -1))   # employed levels, for a grant's cost
 MAX_LEVEL = 60
 TEST_POINTS = 6
 
@@ -213,6 +216,20 @@ def exp_row(good):
     return len(EXP_ROWS)
 
 
+# A company-named line's node picture follows its name row (Pat 22:28Z: "we can't have a rifle barrel representing
+# steam winding"): line -> (the company variable holding its row, the pictures per row and tier, cc_icons.py).
+ROW_ICONS = {'g1': ('pmr_cc_k_g1r', cc_icons.ENG_ICONS), 'g2': ('pmr_cc_k_g2r', cc_icons.ENG_ICONS),
+             'xs': ('pmr_cc_k_xr', cc_icons.EXP_ICONS), 'au': ('pmr_cc_k_ar', cc_icons.UPS_ICONS)}
+
+
+def rows_used(p, k):
+    """The name rows of line k some company has (plus the default rows of a company type PMR doesn't know)."""
+    row = {'g1': lambda v: v['grow'][0] if v['g'] else 0, 'g2': lambda v: v['grow'][1] if len(v['g']) > 1 else 0,
+           'xs': lambda v: v['xr'], 'au': lambda v: v['ar']}[k]
+    dflt = {'xs': {len(EXP_ROWS)}, 'au': {3}}.get(k, set())
+    return sorted(({row(v) for v in p.comp.values()} | dflt) - {0})
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # The lines
 
@@ -253,7 +270,7 @@ LINES = [
     Line(1, 'fe', ('eng',), 'prod', ('Engineering',), _inv('mechanical_tools'), (0,), founding=True),
     Line(2, 'fs', ('stw',), 'work', ('Stewardship',), _inv('labor_movement'), (0,), founding=True),
     Line(3, 'fx', ('exp',), 'input', ('Expansion',), _inv('manufacturies'), (0,), founding=True),
-    Line(4, 'ft', ('prv',), 'work', ('Providence',), _inv('currency_standards'), (0,), founding=True),
+    Line(4, 'ft', ('prv',), 'labour', ('Providence',), _inv('currency_standards'), (0,), founding=True),
     # Engineering
     Line(5, 'g1', ('eng',), 'pm', ('Works Method I', 'Works Method II', 'Works Method III'),
          _inv('steelworking', 'bessemer_process', 'open_hearth_process'), T3, outer=(3,), goods=1),
@@ -279,9 +296,9 @@ LINES = [
     Line(15, 'pg', ('stw',), 'charter', ('Hallmark Goods',), _inv('crystal_glass'), (3,),
          needs=('var:pmr_cc_ct >= 1',), links=(('ct', 1),), outer=(1,)),
     # Providence
-    Line(16, 'cl', ('prv',), 'work', ('Casual Labour I', 'Casual Labour II', 'Casual Labour III'),
+    Line(16, 'cl', ('prv',), 'labour', ('Casual Labour I', 'Casual Labour II', 'Casual Labour III'),
          _inv('shift_work', 'enclosure', 'identification_documents'), T3, outer=(3,)),
-    Line(17, 'tp', ('prv',), 'work', ('Tight Payroll I', 'Tight Payroll II'), _inv('bureaucracy', 'law_enforcement'),
+    Line(17, 'tp', ('prv',), 'labour', ('Tight Payroll I', 'Tight Payroll II'), _inv('bureaucracy', 'law_enforcement'),
          (1, 2)),
     # Shared charters, halfway out (Pat 17:17-17:21Z, 17:42Z)
     Line(18, 'tr', ('eng', 'stw'), 'charter', ('Trade Charter',), _inv('international_trade'), (3,),
@@ -295,7 +312,7 @@ LINES = [
     # Synergies, further out on the same boundaries
     Line(22, 'ys', ('eng', 'stw'), 'prod', ('Master Craftsmen',), _inv('pneumatic_tools'), (3,),
          needs=('var:pmr_cc_tr >= 1',), links=(('tr', 1),)),
-    Line(23, 'yi', ('eng', 'prv'), 'work', ('Labour-Saving Machinery',), _inv('steam_turbines'), (3,),
+    Line(23, 'yi', ('eng', 'prv'), 'labour', ('Labour-Saving Machinery',), _inv('steam_turbines'), (3,),
          needs=('var:pmr_cc_iv >= 1',), links=(('iv', 1),)),
     Line(24, 'yt', ('exp', 'stw'), 'input', ('Fair Supply Contracts',), _inv('international_exchange_standards'), (3,),
          needs=('var:pmr_cc_ch >= 1',), links=(('ch', 1),)),
@@ -303,6 +320,8 @@ LINES = [
          needs=('var:pmr_cc_mo >= 1',), links=(('mo', 1),)),
 ]
 BY_KEY = {ln.key: ln for ln in LINES}
+for _k, _icons in cc_icons.LINE_ICONS.items():   # Pat 22:28Z: pictures that show the node (cc_icons.py)
+    BY_KEY[_k].icons = _icons
 KEYS = [ln.key for ln in LINES]
 CHARTERS = {'tr': 'trade_charter', 'iv': 'investment_charter', 'ch': 'industry_charter', 'mo': 'monopoly_charter',
             'cz': 'colonization_charter'}
@@ -618,7 +637,6 @@ def keyed_traits(p):
     for n in range(1, 5):
         out.append((f'pmr_cc_wcap_{n}', trait_icon('ft', 1), [('building_minimum_wage_mult', 0.05 * n)],
                     f'var:pmr_cc_wc = {n}'))
-    out.append(('pmr_cc_grant', trait_icon('g1', 1), [('building_goods_input_mult', GRANT_INPUT)], 'var:pmr_cc_gr > 0'))
     return out
 
 
@@ -728,7 +746,7 @@ KVARS = ['pmr_cc_k_g1b', 'pmr_cc_k_g2b', 'pmr_cc_k_g1g', 'pmr_cc_k_g2g', 'pmr_cc
 STATE_VARS = [f'pmr_cc_st_{ln.key}_{t}' for ln in LINES for t in range(1, ln.tiers + 1)]
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mth',
              'pmr_cc_prosp', 'pmr_cc_size', 'pmr_cc_gr', 'pmr_cc_grt', 'pmr_cc_grm', 'pmr_cc_fcost', 'pmr_cc_nf',
-             'pmr_cc_xsv', 'pmr_cc_aev']
+             'pmr_cc_xsv', 'pmr_cc_aev', 'pmr_cc_gc1', 'pmr_cc_gc2', 'pmr_cc_gok1', 'pmr_cc_gok2']
             + [f'pmr_cc_{k}' for k in KEYS] + [f'pmr_cc_pick_{k}' for k in KEYS] + STATE_VARS + KVARS)
 
 
@@ -833,6 +851,10 @@ def effects(p, comps):
         ks = ARM_LINES[a]
         d += f'\tset_variable = {{ name = pmr_cc_n_{a} value = var:pmr_cc_{ks[0]} }}\n'
         d += ''.join(f'\tchange_variable = {{ name = pmr_cc_n_{a} add = var:pmr_cc_{k} }}\n' for k in ks[1:])
+    # a tier whose research grant is running is bought (Pat 22:28Z: Stewardship stayed locked with Safety Rules
+    # bought and the Sewing Machines grant running)
+    d += ''.join(f'\tif = {{ limit = {{ var:pmr_cc_gr = {ln.code} }} change_variable = {{ name = pmr_cc_n_{ln.arm} add = 1 }} }}\n'
+                 for ln in LINES if ln.goods)
     d += '\tset_variable = { name = pmr_cc_nf value = 0 }\n\tset_variable = { name = pmr_cc_nfirst value = 0 }\n'
     for a in ARMS:
         d += (f'\tif = {{ limit = {{ {reached(a)} }} change_variable = {{ name = pmr_cc_nf add = 1 }} '
@@ -877,6 +899,19 @@ def effects(p, comps):
                 inner += f' {kw} = {{ limit = {{ owner ?= {{ {lim} }} }} set_variable = {{ name = pmr_cc_g{gl}tk value = {t} }} }}'
             d += f'\t{"if" if first else "else_if"} = {{ limit = {{ var:pmr_cc_k_g{gl}b = {w["idx"]} }}{inner} }}\n'
             first = False
+    # a research grant's cost (Pat 22:28Z): GRANT_COST per employed level for each goods line's next tier
+    # (pmr_cc_gc<gl>), and whether the owner's investment pool holds it (pmr_cc_gok<gl>)
+    d += ('\tset_local_variable = { name = pmr_cc_lv value = 0 }\n'
+          + ladder('company_employed_levels', [(n, n) for n in LV_LADDER], 'pmr_cc_lv', '\t')
+          + '\tsave_scope_as = pmr_cc_gco\n')
+    for gl in (1, 2):
+        d += (f'\tset_variable = {{ name = pmr_cc_gc{gl} value = 0 }}\n'
+              + ''.join(f'\t{"if" if t == 1 else "else_if"} = {{ limit = {{ var:pmr_cc_g{gl} = {t - 1} }} '
+                        f'set_variable = {{ name = pmr_cc_gc{gl} value = local_var:pmr_cc_lv }} '
+                        f'change_variable = {{ name = pmr_cc_gc{gl} multiply = {GRANT_COST[t - 1]} }} }}\n' for t in T3)
+              + f'\tset_variable = {{ name = pmr_cc_gok{gl} value = 0 }}\n'
+              f'\tif = {{ limit = {{ owner ?= {{ investment_pool >= scope:pmr_cc_gco.var:pmr_cc_gc{gl} }} }} '
+              f'set_variable = {{ name = pmr_cc_gok{gl} value = 1 }} }}\n')
     o.append('# Numbers derived from the tiers, and the goods tiers the owner\'s technology allows (each tier shows once the\n'
              '# owner has the technology of the base recipe it modifies: tier t, recipe t or the newest).\n'
              'pmr_cc_derive = {\n' + d + '}\n\n')
@@ -889,7 +924,14 @@ def effects(p, comps):
             pay = ''.join(f'\t{"if" if t == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_{k} = {t} }} '
                           f'change_variable = {{ name = pmr_cc_pts subtract = {c} }} }}\n' for t, c in enumerate(ln.cost))
         if ln.goods:
-            take = (f'\t# a research grant: the tier unlocks after {GRANT_MONTHS} months (pmr_cc_grant_tick)\n'
+            gc = f'pmr_cc_gc{ln.goods}'
+            take = (f'\t# a research grant, paid from the owner\'s investment pool; the tier unlocks after {GRANT_MONTHS}\n'
+                    '\t# months (pmr_cc_grant_tick)\n'
+                    f'\t{player_log("CC_GRANT_COST", f"gcost=[THIS.Var({chr(39)}{gc}{chr(39)}).GetValue|0];pool=[GetPlayer.GetInvestmentPool|0];")}\n'
+                    f'\tset_variable = {{ name = pmr_cc_gpay value = var:{gc} }}\n'
+                    '\tchange_variable = { name = pmr_cc_gpay multiply = -1 }\n'
+                    '\tsave_scope_as = pmr_cc_gco\n'
+                    '\towner ?= { add_investment_pool = scope:pmr_cc_gco.var:pmr_cc_gpay }\n'
                     f'\tset_variable = {{ name = pmr_cc_gr value = {ln.code} }}\n'
                     f'\tset_variable = {{ name = pmr_cc_grt value = var:pmr_cc_{k} }}\n'
                     '\tchange_variable = { name = pmr_cc_grt add = 1 }\n'
@@ -905,8 +947,9 @@ def effects(p, comps):
                                + ' '.join(f'set_variable = {x}' for x in v['pvars']) + ' }\n')
                     n += 1
             take += '\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods)\n' + pchain
+        pool = 'pool=[GetPlayer.GetInvestmentPool|0];' if ln.goods else ''
         o.append(f'pmr_cc_buy_{k} = {{\n{pay}{take}\tpmr_cc_after_buy = yes\n'
-                 f'\t{player_log("CC_BUY", f"line={k};")}\n}}\n\n')
+                 f'\t{player_log("CC_BUY", f"line={k};{pool}")}\n}}\n\n')
     o.append('pmr_cc_after_buy = {\n\tpmr_cc_derive = yes\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n}\n\n')
     # Grants.
     flag = ''.join(f'\t\t{"if" if n == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_k_g$G$b = {w["idx"]} }} '
@@ -943,7 +986,8 @@ def effects(p, comps):
              f'\t\telse_if = {{\n\t\t\tlimit = {{ var:pmr_cc_pts >= {SECOND_COST} pmr_cc_open_fe = yes pmr_cc_open_fx = yes }}\n'
              '\t\t\trandom_list = {\n\t\t\t\t1 = { pmr_cc_buy_fe = yes }\n\t\t\t\t1 = { pmr_cc_buy_fx = yes }\n\t\t\t}\n\t\t}\n\t}\n')
     for k, t in AI_ORDER:
-        steps += (f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_{k} < {t} pmr_cc_open_{k} = yes }}\n'
+        pool = f' var:pmr_cc_gok{BY_KEY[k].goods} = 1' if BY_KEY[k].goods else ''
+        steps += (f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_{k} < {t} pmr_cc_open_{k} = yes{pool} }}\n'
                   f'\t\tif = {{ limit = {{ pmr_cc_afford_{k} = yes }} pmr_cc_buy_{k} = yes }}\n\t}}\n')
     o.append('# AI companies (Pat 04:00Z: yes): a founding culture at random, a second once allowed, then the first open\n'
              '# step of AI_ORDER, bought when affordable, otherwise saved for.\n'
@@ -1008,7 +1052,7 @@ def effects(p, comps):
             states += (f'\telse_if = {{ limit = {{ OR = {{ {" ".join(ruled(a) for a in ln.arms)} }} }} {s(5)} }}\n'
                        f'\telse_if = {{ limit = {{ NOT = {{ AND = {{ {" ".join(arm_ok(ln))} }} }} }} {s(3)} }}\n')
             conds = tier_conds(ln, t)
-            busy = 'var:pmr_cc_gr = 0 ' if ln.goods else ''
+            busy = f'var:pmr_cc_gr = 0 var:pmr_cc_gok{ln.goods} = 1 ' if ln.goods else ''
             states += (f'\telse_if = {{\n\t\tlimit = {{ {" ".join(conds)} }}\n'
                        f'\t\tif = {{ limit = {{ {busy}var:pmr_cc_pts >= {ln.cost[t - 1]} }} {s(1)} '
                        f'set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n\t\telse = {{ {s(2)} }}\n\t}}\n')
@@ -1081,7 +1125,8 @@ def triggers():
             alts = f'\t\tvar:pmr_cc_nf = 0\n\t\tvar:pmr_cc_pts >= {SECOND_COST}\n'
         else:
             alts = ''.join(f'\t\tAND = {{ var:pmr_cc_{ln.key} = {t} var:pmr_cc_pts >= {c} }}\n' for t, c in enumerate(ln.cost))
-        o.append(f'pmr_cc_afford_{ln.key} = {{\n\tOR = {{\n{alts}\t}}\n}}\n\n')
+        pool = f'\tvar:pmr_cc_gok{ln.goods} = 1\n' if ln.goods else ''
+        o.append(f'pmr_cc_afford_{ln.key} = {{\n{pool}\tOR = {{\n{alts}\t}}\n}}\n\n')
     return ''.join(o)
 
 
@@ -1309,8 +1354,6 @@ def custom_loc(p):
         for t in T3:
             out.append(entry(f'pmr_cc_n_g{gl}_{t}', [(f'var:pmr_cc_k_g{gl}r ?= {r}', f'PMR_CC_ENG_{r}_{t}')
                                                      for r in range(1, len(ENG_ROWS) + 1)], f'PMR_CC_NAME_g1_{t}'))
-            out.append(entry(f'pmr_cc_cost_g{gl}_{t}', [(f'var:pmr_cc_k_g{gl}i ?= 0', 'PMR_EMPTY')],
-                             f'PMR_CC_COST_NL_g{gl}_{t}'))
     for t in T3:
         out.append(entry(f'pmr_cc_n_xs_{t}', [(f'var:pmr_cc_k_xr ?= {r}', f'PMR_CC_EXP_{r}_{t}')
                                               for r in range(1, len(EXP_ROWS) + 1)], f'PMR_CC_NAME_xs_{t}'))
@@ -1326,7 +1369,7 @@ def custom_loc(p):
         for t in range(1, ln.tiers + 1):
             out.append(entry(f'pmr_cc_why_{ln.key}_{t}', why_cases(ln, t), 'PMR_CC_WHY_LOCKED'))
     out.append(entry('pmr_cc_fx_xs_2', [('var:pmr_cc_k_xg2 ?= 0', 'PMR_EMPTY')], 'PMR_CC_XS_GOOD2'))
-    out.append(entry('pmr_cc_fx_pg', [('var:pmr_cc_k_pg ?= 0', 'PMR_CC_FX_pg_NONE')], 'PMR_CC_FX_pg_YES'))
+    out.append(entry('pmr_cc_fx_pg', [('var:pmr_cc_k_pg ?= 0', 'PMR_EMPTY')], 'PMR_CC_FX_pg_YES'))
     return '\n'.join(out)
 
 
@@ -1338,6 +1381,7 @@ def why_cases(ln, t):
     cases = [(f'{st} ?= 1', 'PMR_CC_WHY_BUY'), (f'{st} ?= 4', 'PMR_CC_WHY_DONE'), (f'{st} ?= 6', 'PMR_CC_WHY_GRANT')]
     if ln.goods:
         cases += [(f'{st} ?= 2 var:pmr_cc_gr > 0', 'PMR_CC_WHY_BUSY'),
+                  (f'{st} ?= 2 var:pmr_cc_gok{ln.goods} ?= 0', f'PMR_CC_WHY_POOL_g{ln.goods}'),
                   (f'{st} ?= 8', f'PMR_CC_WHY_TECH_g{ln.goods}_{t}')]
     cases.append((f'{st} ?= 2', 'PMR_CC_WHY_POINTS'))
     if not ln.founding:   # a founding node is never waiting for its arm (q29 error.log: no PMR_CC_WHY_ARM_fe)
@@ -1367,6 +1411,10 @@ def V(name):
     return f"[Character.MakeScope.Var('{name}').GetValue|0]"
 
 
+def money(name):
+    return f"[Character.MakeScope.Var('{name}').GetValue|D]"
+
+
 def fx_lines(k, t):
     """The bullets a node shows (one per benefit, the value green for a gain and red for a cost; one per good, written
     good, value, then input or output). Goods-line nodes are drawn by cc_wheel (name, logo, net line, note)."""
@@ -1381,12 +1429,11 @@ def fx_lines(k, t):
         ('fs', 1): [G('Job attractiveness', '+10%')],
         ('ft', 1): [G('Wage target', '−5%')],
         ('sf', 1): [G('Dangerous conditions', '−20%')],
-        ('cz', 1): ['• $PMR_CC_CHARTER_cz$'],
         ('fw', 1): [R('Wage target', '+10%')],
         ('fw', 2): [R('Wage target', '+20%'), G('Job attractiveness', '+20%')],
         ('fw', 3): [G('Worker dividends', '+15%')],
-        ('ho', 1): [G("Workers' standard of living", '+1')],
-        ('ho', 2): [G("Workers' standard of living", '+2')],
+        ('ho', 1): [G('Standard of living', '+1')],
+        ('ho', 2): [G('Standard of living', '+2')],
         ('ct', 1): [G('Standard of living', '+1'), G('Job attractiveness', '+15%')],
         ('pg', 1): ["[Character.GetCustom('pmr_cc_fx_pg')]"],
         ('tp', 1): [G('Wage target', '−10%')],
@@ -1396,14 +1443,12 @@ def fx_lines(k, t):
         ('yt', 1): [G('Input goods', '−5%'), G('Job attractiveness', '+10%')],
         ('ym', 1): [G('Input goods', '−10%'), G('Wage target', '−5%')],
     }
-    for c in ('tr', 'iv', 'ch', 'mo'):
-        out[(c, 1)] = [f'• $PMR_CC_CHARTER_{c}$', '• $PMR_CC_OPENS_OUTER$']
     for tt in T3:
         out[('xs', tt)] = [f'• {good("xg1")} #P {pct(-5 * tt)}#! input', f"[Character.GetCustom('pmr_cc_fx_xs_2')]",
                            G('Throughput', pct(5 * tt))]
-        out[('sc', tt)] = [G('Throughput', pct(sc[tt])), G('New levels of its types', f'×{fmt(SC_AI_MULT[tt - 1])}')]
+        out[('sc', tt)] = [G('Throughput', pct(sc[tt])), G('AI build weight', f'×{fmt(SC_AI_MULT[tt - 1])}')]
         out[('au', tt)] = [G('Laborers', pct(-round(UPSKILL_CUT[tt - 1] * 100))),
-                           f'• Engineer jobs #P +{V(f"pmr_cc_k_ae{tt}")}#! per level']
+                           f'• Engineers #P +{V(f"pmr_cc_k_ae{tt}")}#! per level']
         out[('cl', tt)] = [G('Laborers', pct(5 * tt)), G('Wage target', pct(-5 * tt))]
     return out.get((k, t), [])
 
@@ -1412,62 +1457,47 @@ def localization(p, rows, kept_split):
     co = '[Company.GetNameNoFormatting]'
     loc = [
         ' PMR_CC_TAB:0 "Company Culture"',
-        ' PMR_CC_TAB_TT:0 "#header Company Culture#!\\nWhat this company has learned to do better. Its prosperity earns Culture points, and points buy bonuses for every building level it owns."',
+        ' PMR_CC_TAB_TT:0 "Prosperity earns points; points buy bonuses."',
         f' PMR_CC_LEVEL:0 "Culture Level #v {V("pmr_cc_level")}#!"',
-        f' PMR_CC_POINTS:0 "#v {V("pmr_cc_pts")}#! points to spend"',
-        ' PMR_CC_LEVEL_TT:0 "#header Culture points#!\\nA company earns Culture points from its prosperity and spends them on its Company Culture wheel; each node shows its cost in points. The bonuses apply to the building levels this company owns, in proportion where it owns part of a building."',
+        f' PMR_CC_POINTS:0 "#v {V("pmr_cc_pts")}#! points"',
+        ' PMR_CC_LEVEL_TT:0 "#header Culture points#!\\nEarned from prosperity, spent on nodes."',
         f' PMR_CC_BAR:0 "#v {V("pmr_cc_funds")}#! / {V("pmr_cc_cost")}"',
-        f' PMR_CC_BAR_TT:0 "#header Next Culture point#!\\nEach month this company earns its prosperity (#v {V("pmr_cc_prosp")}#!) times its size (#v ×[Character.MakeScope.Var(\'pmr_cc_size\').GetValue|1]#!, from its employed levels: one more tenth per 5 levels, at most ×2), so #v +{V("pmr_cc_rate")}#! a month.\\n\\nA full bar gives one point and one Culture level, and each level needs more than the last."',
-        f' PMR_CC_RATE:0 "+{V("pmr_cc_rate")} a month, next point in about {V("pmr_cc_mth")} months"',
-        ' PMR_CC_RATE_NONE:0 "Earning nothing while its prosperity is 0"',
+        f' PMR_CC_BAR_TT:0 "#header Next point#!\\nProsperity #v {V("pmr_cc_prosp")}#! × size #v ×[Character.MakeScope.Var(\'pmr_cc_size\').GetValue|1]#! = #v +{V("pmr_cc_rate")}#! a month"',
         ' PMR_CC_SHOW:0 "Show Company Culture"',
-        ' PMR_CC_SHOW_TT:0 "This company\'s Culture has not been read in yet (a new executive this month, or a game started before Company Culture). Click to bring it up to date; it also updates on its own at the start of each month."',
-        ' PMR_CC_HUB_CHOOSE:0 "Choose a founding culture"',
-        f' PMR_CC_HUB_TT:0 "#header Founding cultures#!\\nA company starts from one of the four cultures round its seal. Engineering and Expansion rule each other out, as do Stewardship and Providence. The first culture is free; once {REACH} nodes are bought in its arm, a culture from the other pair costs {SECOND_COST} points.\\n\\nHalfway out, each pair of neighbouring arms a company holds shares a charter node; buying one opens the outer tiers of both arms."',
+        ' PMR_CC_SHOW_TT:0 "Not read in yet; updates monthly."',
+        f' PMR_CC_HUB_TT:0 "#header Founding cultures#!\\nFirst is free; a second costs {SECOND_COST} points after {REACH} nodes.\\nEngineering excludes Expansion; Stewardship excludes Providence."',
         ' PMR_CC_OPEN:0 "Open Company Culture"',
-        ' PMR_CC_OPEN_TT:0 "Opens this company\'s Company Culture wheel full-screen, like the technology tree."',
         ' PMR_CC_FULL_TITLE:0 "Company Culture: [Company.GetNameNoFormatting]"',
         ' PMR_CC_BACK_TT:0 "Back to the company panel"',
         ' PMR_CC_WHY_BUY:0 "#P Ready to buy#!"',
         ' PMR_CC_WHY_DONE:0 "#P Bought.#!"',
-        ' PMR_CC_WHY_GRANT:0 "#v Its research grant is running.#!"',
-        ' PMR_CC_WHY_BUSY:0 "#N Locked: another research grant is running.#!"',
-        ' PMR_CC_WHY_POINTS:0 "#N Locked: not enough Culture points yet.#!"',
+        ' PMR_CC_WHY_GRANT:0 "#v Grant running#!"',
+        ' PMR_CC_WHY_BUSY:0 "#N Another grant running#!"',
+        *[f' PMR_CC_WHY_POOL_g{gl}:0 "#N Investment pool needs @money!{money(f"pmr_cc_gc{gl}")}#!"'
+          for gl in (1, 2)],
+        ' PMR_CC_WHY_POINTS:0 "#N Not enough points#!"',
         ' PMR_CC_WHY_NA:0 "#N Not open to this company.#!"',
-        ' PMR_CC_WHY_NA_pg:0 "#N Locked: this company has no prestige goods.#!"',
-        f' PMR_CC_WHY_REACH:0 "#N Locked: needs {REACH} nodes bought in the first culture\'s arm.#!"',
+        ' PMR_CC_WHY_NA_pg:0 "#N No prestige goods#!"',
+        f' PMR_CC_WHY_REACH:0 "#N Needs {REACH} nodes in the first arm#!"',
         ' PMR_CC_WHY_LOCKED:0 "#N Locked.#!"',
         ' PMR_CC_ARM_eng:0 "E N G I N E E R I N G"',
         ' PMR_CC_ARM_stw:0 "S T E W A R D S H I P"',
         ' PMR_CC_ARM_exp:0 "E X P A N S I O N"',
         ' PMR_CC_ARM_prv:0 "P R O V I D E N C E"',
-        ' PMR_CC_CHARTER_tr:0 "Trade charter"',
-        ' PMR_CC_CHARTER_iv:0 "Investment charter"',
-        ' PMR_CC_CHARTER_ch:0 "Industry charter"',
-        ' PMR_CC_CHARTER_mo:0 "Monopoly charter"',
-        ' PMR_CC_CHARTER_cz:0 "Colonization charter"',
-        ' PMR_CC_OPENS_OUTER:0 "Opens the outer half"',
         ' PMR_CC_FX_pg_YES:0 "• Produces its prestige goods"',
-        ' PMR_CC_FX_pg_NONE:0 "• Its prestige goods need no node"',
         f" PMR_CC_XS_GOOD2:0 \"• [Character.GetCustom('pmr_cc_good_xg2')] #P −5%#! input\"",
-        f' PMR_CC_GRANT_BAR:0 "Research grant #v {V("pmr_cc_grm")}#! / {GRANT_MONTHS} months"',
-        f' PMR_CC_GRANT_RUN:0 "• While running: inputs #N +{round(GRANT_INPUT * 100)}%#! on {co}\'s levels"',
-        ' PMR_CC_GRANT_THEN:0 "• Then: unlocked for retooling and new builds"',
-        f' PMR_CC_GRANT_TT:0 "#header Research grant#!\\nBuying this tier started a research grant. It runs {GRANT_MONTHS} months, one at a time for each company, and while it runs every level {co} owns uses #N {round(GRANT_INPUT * 100)}%#! more input goods.\\n\\nWhen it ends, the company\'s levels of this building run the new method, at the next retooling and for new levels."',
-        f' PMR_CC_COST_TT:0 "Costs this many Culture points."',
-        ' PMR_CC_EXCLUSIVE_TT:0 "#header Ruled out#!\\nThis company holds the opposed arm: Engineering rules out Expansion and Stewardship rules out Providence, with the shared nodes beside them."',
+        f' PMR_CC_GRANT_BAR:0 "Grant #v {V("pmr_cc_grm")}#! / {GRANT_MONTHS} months"',
+        ' PMR_CC_COST_TT:0 "Culture points"',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
-        ' PMR_CC_METHODS_INTRO:0 "Every recipe of this company\'s buildings, oldest to newest. Greyed: not yet researched. Gold: the newest one the country can run, which its levels retool to. Under each, the share of your levels running it."',
         ' PMR_CC_METHODS_NONE:0 "No recipes to retool"',
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
-        f' pmr_cc_test_points_decision_desc:0 "Gives every company of yours {TEST_POINTS} Culture points to spend and refreshes its Company Culture tab, so the wheel can be tried without waiting. Levels do not change."',
+        f' pmr_cc_test_points_decision_desc:0 "Each of your companies gets {TEST_POINTS} Culture points."',
         ' pmr_cc_test_grant_decision:0 "PMR test: finish your companies\' research grants"',
-        f' pmr_cc_test_grant_decision_desc:0 "Every research grant your companies are running completes at the start of next month, instead of after {GRANT_MONTHS} months, so the new production method can be checked without waiting."',
+        ' pmr_cc_test_grant_decision_desc:0 "Running grants finish next month."',
     ]
     for bk in sorted(p.works):
         for t in T3:
-            loc += [f' {works_marker(bk, t)}:0 "Company works, tier {t} share"',
-                    f' {works_marker(bk, t)}_desc:0 "The share of this building\'s levels whose company has unlocked tier {t} of its works method."']
+            loc.append(f' {works_marker(bk, t)}:0 "Company works, tier {t} share"')
         b = short(bk)
         loc += [f' pmr_cw_out_{b}:0 "Company works output"', f' pmr_cw_in_{b}:0 "Company works input"']
     # Names.
@@ -1488,19 +1518,17 @@ def localization(p, rows, kept_split):
             in_g = f"[Character.GetCustom('pmr_cc_good_g{gl}i')]"
             # Pat 21:53Z: the output gain and the input cost on lines of their own
             loc += [f' PMR_CC_GAIN_g{gl}_{t}:0 "• #P {pct(WORKS_OUT[t - 1])} {out_g}#!"',
-                    f' PMR_CC_COST_g{gl}_{t}:0 "• #N {pct(WORKS_IN[t - 1])} {in_g}#!"',
-                    f' PMR_CC_COST_NL_g{gl}_{t}:0 "\\n$PMR_CC_COST_g{gl}_{t}$"']
+                    f' PMR_CC_COST_g{gl}_{t}:0 "• #N {pct(WORKS_IN[t - 1])} {in_g}#!"']
         loc += [f' PMR_CC_PMNAME_g{gl}_{t}:0 "• #yellow [Character.GetCustom(\'pmr_cc_n_g{gl}_{t}\')]#!"' for t in T3]
     # Bullets and tooltips.
     arm_title = {'eng': 'Engineering', 'stw': 'Stewardship', 'exp': 'Expansion', 'prv': 'Providence'}
     opens = {a: ' or '.join(BY_KEY[c].names[0] for c in SHARED_OF[a]) for a in ARMS}
     for a in ARMS:
-        loc += [f' PMR_CC_WHY_RULED_{a}:0 "#N Ruled out: this company holds {arm_title[a]}.#!"',
-                f' PMR_CC_WHY_GATE_{a}:0 "#N Locked: opens once the {opens[a]} is bought.#!"']
+        loc += [f' PMR_CC_WHY_RULED_{a}:0 "#N Ruled out by {arm_title[a]}#!"',
+                f' PMR_CC_WHY_GATE_{a}:0 "#N Needs {opens[a]}#!"']
     for gl in (1, 2):
         for t in T3:
-            loc.append(f" PMR_CC_WHY_TECH_g{gl}_{t}:0 \"#N Locked: waits for the technology "
-                       f"[Character.GetCustom('pmr_cc_tech_g{gl}_{t}')].#!\"")
+            loc.append(f" PMR_CC_WHY_TECH_g{gl}_{t}:0 \"#N Needs [Character.GetCustom('pmr_cc_tech_g{gl}_{t}')]#!\"")
     for bk, w in sorted(p.works.items()):
         for t in T3:
             if w['techs'][t - 1]:
@@ -1508,38 +1536,28 @@ def localization(p, rows, kept_split):
     for ln in LINES:
         k = ln.key
         if ln.shared:
-            loc.append(f' PMR_CC_WHY_ARM_{k}:0 "#N Locked: needs both the {arm_title[ln.arms[0]]} and '
-                       f'{arm_title[ln.arms[1]]} founding cultures.#!"')
+            loc.append(f' PMR_CC_WHY_ARM_{k}:0 "#N Needs {arm_title[ln.arms[0]]} and {arm_title[ln.arms[1]]}#!"')
         elif not ln.founding:
-            loc.append(f' PMR_CC_WHY_ARM_{k}:0 "#N Locked: needs the {arm_title[ln.arm]} founding culture.#!"')
+            loc.append(f' PMR_CC_WHY_ARM_{k}:0 "#N Needs {arm_title[ln.arm]}#!"')
         for t in range(2, ln.tiers + 1):
-            loc.append(f' PMR_CC_WHY_PREV_{k}_{t}:0 "#N Locked: needs {node_name(k, t - 1)} first.#!"')
+            loc.append(f' PMR_CC_WHY_PREV_{k}_{t}:0 "#N Needs {node_name(k, t - 1)}#!"')
         if ln.links:
-            loc.append(f' PMR_CC_WHY_NEEDS_{k}:0 "#N Locked: needs '
-                       + ' and '.join(node_name(nk, nt) for nk, nt in ln.links) + '.#!"')
+            loc.append(f' PMR_CC_WHY_NEEDS_{k}:0 "#N Needs '
+                       + ' and '.join(node_name(nk, nt) for nk, nt in ln.links) + '#!"')
     for ln in LINES:
         k = ln.key
         for t in range(1, ln.tiers + 1):
             fx = fx_lines(k, t)
-            if not ln.goods:
+            if fx and not ln.goods:   # charters have no bullets, so no key and no textbox (cc_wheel.node)
                 loc.append(f' PMR_CC_FX_{k}_{t}:0 "' + '\\n'.join(fx) + '"')
-            name = node_name(k, t)
-            # Pat 21:53Z: shorter, and no closing line on cost, arm and what rules it out
-            if ln.goods:
-                what = (f"$PMR_CC_PMNAME_g{ln.goods}_{t}$\\n$PMR_CC_GAIN_g{ln.goods}_{t}$"
-                        f"[Character.GetCustom('pmr_cc_cost_g{ln.goods}_{t}')]\\n\\n"
-                        f"Unlocks after a {GRANT_MONTHS}-month research grant.")
-            else:
-                what = '\\n'.join(fx)
-                if k == 'xs':
-                    what += f'\\n\\nInput cuts stop at −{INPUT_CUT_CAP}%.'
-                elif k in ('ft', 'cl', 'tp', 'ym'):
-                    what += f'\\n\\nWage target cuts stop at −{WAGE_CUT_CAP}%.'
-            loc.append(f' PMR_CC_TT_{k}_{t}:0 "#header {name}#!\\n[Character.GetCustom(\'pmr_cc_why_{k}_{t}\')]\\n\\n{what}"')
+            # The tooltip is the lock reason only: the card already shows the name and the bullets
+            grant = (f"\\nGrant: {GRANT_MONTHS} months, @money!#v {money(f'pmr_cc_gc{ln.goods}')}#!"
+                     if ln.goods else '')
+            loc.append(f' PMR_CC_TT_{k}_{t}:0 "[Character.GetCustom(\'pmr_cc_why_{k}_{t}\')]{grant}"')
     # Traits.
     for (k, t), _mods in GENERIC.items():
         loc += [f' {generic_trait(k, t)}:0 "{BY_KEY[k].names[t - 1]}"',
-                f' {generic_trait(k, t)}_desc:0 "Company Culture: applies to the building levels this executive\'s company owns."']
+                f' {generic_trait(k, t)}_desc:0 "Company Culture"']
     for key, _i, mods, _w in keyed_traits(p):
         if key.startswith('pmr_cc_xs_'):
             g = mods[0][0][len('goods_input_'):-len('_mult')]
@@ -1551,12 +1569,10 @@ def localization(p, rows, kept_split):
         elif key.startswith('pmr_cc_cw_'):
             b = key[len('pmr_cc_cw_'):].rsplit('_', 1)
             nm = f'Works method {b[1]}: $building_{b[0]}$'
-        elif key.startswith('pmr_cc_wcap_'):
-            nm = 'Wage floor'
         else:
-            nm = 'Research grant'
+            nm = 'Wage floor'
         loc += [f' {key}:0 "{nm}"',
-                f' {key}_desc:0 "Company Culture: applies to the building levels this executive\'s company owns."']
+                f' {key}_desc:0 "Company Culture"']
     # Methods list.
     done = set()
     for b, recipes in rows.items():
@@ -1564,10 +1580,11 @@ def localization(p, rows, kept_split):
             if key in done:
                 continue
             done.add(key)
-            need = (('Needs ' + ', '.join(f'${tk}$' for tk in techs) + '.') if techs else 'Available from the start.')
+            need = ['Needs ' + ', '.join(f'${tk}$' for tk in techs) + '.'] if techs else []
             if key.startswith('pm_pmr_elec_'):
-                need += ' Runs only where the state produces electricity.'
-            loc.append(f' PMR_CC_PM_{key}:0 "#header ${key}$#!\\n{need}"')
+                need.append('Runs only where the state produces electricity.')
+            need = ('\\n' + ' '.join(need)) if need else ''
+            loc.append(f' PMR_CC_PM_{key}:0 "#header ${key}$#!{need}"')
     return loc
 
 

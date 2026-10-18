@@ -144,8 +144,8 @@ TITANS_INSTITUTIONS = ('institution_health_system', 'institution_schools')
 EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)   # as generate.py's RETOOL_EARNINGS_LADDER
 BASE_AI_VALUE = 1000       # PRODUCTION_BUILDING_BASE_VALUE, when a building has no ai_value
 
-# key, name, icon, modifiers, the card's first benefit (what PMR's script does, short), how that works (hover),
-# details (hover). Pat 14:28Z: the cards show benefits only, the explanation goes in the hover; construction and
+# key, name, icon, modifiers, the card's first benefit (what PMR's script does, short), and the hover: one short line,
+# or None for no tooltip where the card already says it all (text audit, 2026-10-18). Pat 14:28Z: the cards show benefits only, the explanation goes in the hover; construction and
 # investment efficiency belong to Laissez-faire. Pat 15:33Z: Favour Large Corporations drops the extra company and
 # takes benefits for the companies themselves (he named output prices and lower wages; 1.14.5 has no company price or
 # wage modifier, so it took the Company Throughput Bonus and kept the free charter and the state's cut; Pat 16:42Z
@@ -156,28 +156,18 @@ POLICIES = [
     ('steer', 'Steer the Economy', 'gfx/interface/icons/law_icons/command_economy.dds',
      {},
      f'#P +{CAP_STEER * 100:.0f}%#! Investment Priority Cap',
-     f'Each investment priority can add up to #P +{CAP_STEER * 100:.0f}%#! to its group instead of '
-     f'#v +{CAP * 100:.0f}%#!.',
-     'The state sets investment targets and leans on banks and boards to meet them. Investors still choose what to '
-     'build, but within the priorities you set.'),
+     f'Priority cap #v +{CAP * 100:.0f}%#! to #P +{CAP_STEER * 100:.0f}%#!'),
     ('corporations', 'Favour Large Corporations', 'gfx/interface/icons/law_icons/corporate_state.dds',
      {'country_free_charters_add': 1},     # Pat 16:42Z: throughput bonus and government dividends removed
      '#P Higher#! Investment Weight for Company Industries',
-     'Investors weigh building types your companies own as if each earned #P @money!10#! more per worker. A monopoly '
-     'is a company charter, so the free charter lets one more of your companies hold one without spending authority.',
-     'National champions get licences, contracts and charters ahead of their smaller rivals.'),
+     'As if each worker earned #P @money!10#! more'),
     ('reinvest', 'Focus on Infrastructure', 'gfx/interface/icons/ai_strategy_icons/unused/infrastructure_expansion.dds',
      {'building_railway_throughput_add': 0.1, 'building_port_throughput_add': 0.1},
      f'#P Up to {REINVEST_MAX}×#! Investment Weight for Retooling',
-     'Investors favour retooling a building by its group\'s investment priority: up to '
-     f'#P {REINVEST_MAX}×#! at a full priority.',
-     'Rails, docks and new machinery come before new sites: the state guarantees the loans and the works are '
-     'brought up to date.'),
+     'Scales with the group\'s priority'),
     ('small', 'Favour Small Businesses', 'gfx/interface/icons/law_icons/cooperative_ownership.dds',
      {'state_shopkeepers_investment_pool_efficiency_mult': 0.25, 'building_self_investment_chance_add': 0.1},
-     None, None,
-     'Shopkeepers get easier credit and lighter paperwork, so more of their savings reach the pool and more new '
-     'levels stay with the people who work them.'),
+     None, None),
     # Pat 16:06Z: two Laissez-faire cards. Bulls & Bears needs Investment Banks. Its profitability weight and Market
     # Titans' company weight are added to ai_value (pmr_ai_value_<b>), from the building's earnings per employee
     # in the state (pmr_ai_earn_<b>); Market Liberals appear more often through the ideology's own leader weights
@@ -188,33 +178,25 @@ POLICIES = [
       'state_market_access_price_impact': 0.025, 'interest_group_ig_trade_unions_approval_add': -2,
       'interest_group_ig_trade_unions_pop_attraction_mult': 0.1},
      f'#P +50%#! Investment Weight from Profitability\\n#P +{(LIBERAL_WEIGHT - 1) * 100:.0f}%#! Market Liberal Leaders',
-     f'Investors weigh each building in your states by half as much again of its earnings per employee as the game '
-     f'does. Leaders with the Market Liberal ideology are #P {(LIBERAL_WEIGHT - 1) * 100:.0f}%#! more likely to come '
-     f'forward. Requires $investment_banks$.',
-     'The exchange never sleeps: capital goes wherever the returns are highest, and the state keeps out of its way.'),
+     None),
     ('titans', 'Market Titans', 'gfx/interface/icons/law_icons/corporate_state.dds',
      {'country_max_companies_add': 1, 'country_free_charters_add': 4, 'country_company_throughput_bonus_add': 0.2,
       'country_company_construction_efficiency_bonus_add': 0.2},
-     f'#P +50%#! Investment Weight for Company Industries\\n#N {TITANS_APPROVAL}#! Industrialists Approval for each of '
-     f'$institution_health_system$ and $institution_schools$',
-     'Investors weigh building types your companies own by half as much again of their usual weight. The '
-     'Industrialists resent paying for public health and schooling while the giants run the economy.',
-     'A handful of great houses own the railways, the mills and the banks, and the state lets them.'),
+     f'#P +50%#! Investment Weight for Company Industries\\n#N {TITANS_APPROVAL}#! Industrialists Approval per '
+     f'$institution_health_system$/$institution_schools$',
+     None),
     # Pat 19:34Z: Agrarianism's cards, one for the land and one for the mines and forests, the two priority groups
     # Agrarianism leaves open (LAW_ROWS).
     ('landed', 'Landed Credit', 'gfx/interface/icons/law_icons/agrarianism.dds',
      {'state_aristocrats_investment_pool_efficiency_mult': 0.25, 'building_group_bg_agriculture_throughput_add': 0.1,
       'interest_group_ig_landowners_approval_add': 2, 'interest_group_ig_industrialists_approval_add': -2},
-     None, None,
-     'Land banks lend against estates and the coming harvest. The landowners drain, fence and manure their fields '
-     'with the credit, and the rents go back into the land.'),
+     None, None),
     ('concessions', 'Crown Concessions', 'gfx/interface/icons/law_icons/extraction_economy.dds',
      {'building_group_bg_mining_throughput_add': 0.1, 'building_group_bg_logging_throughput_add': 0.1,
       'country_government_dividends_efficiency_add': 0.1, 'interest_group_ig_rural_folk_approval_add': -2},
-     None, None,
-     'The crown leases its mines and forests to whoever will work them, for a share of the yield, and the villages '
-     'lose their commons to the lessees.'),
+     None, None),
 ]
+POLICY_TT = {k: tt for k, _n, _i, _m, _c, tt in POLICIES}   # None: the card has no tooltip (policy_tt)
 # Pat 16:06Z: each policy belongs to one economic system law, and some need a technology.
 POLICY_LAWS = {'steer': 'law_interventionism', 'corporations': 'law_interventionism', 'reinvest': 'law_interventionism',
                'small': 'law_interventionism', 'bulls': 'law_laissez_faire', 'titans': 'law_laissez_faire',
@@ -232,10 +214,6 @@ LAW_ROWS = {'law_laissez_faire': (), 'law_agrarianism': ('agriculture', 'resourc
 # straight lines between. It is fixed when the policy is adopted and used while the policy is held, as vanilla
 # charges authority for patronage (an add_modifier of country_authority_cost_add x the cost, 00_ep2_04_modifiers.txt).
 POLICY_COST_LOW, POLICY_COST_MID, POLICY_COST_HIGH = 200, 100, 50
-# How the policy window works, now in the Add Policy and Change Policy tooltips (Pat 20:06Z: no text in the window).
-POLICY_HOW = ('One can be held at a time, and it lapses if your economic system law changes. It uses @aut! authority '
-              f'while held, set by your legitimacy when you adopt it: {POLICY_COST_LOW} at 25 or less, {POLICY_COST_MID} '
-              f'at 50, {POLICY_COST_HIGH} at 75 or more.')
 # Pat 20:06Z: a policy is kept for 5 years once adopted; then it can be swapped, or cancelled with the card's X (20:08Z).
 # pmr_policy_lock_m counts the months left, down on each monthly pulse.
 POLICY_LOCK_MONTHS = 60
@@ -266,7 +244,6 @@ TRANSPARENT = 'gfx/interface/icons/generic_icons/transparent.dds'
 # ai_value plus PROFIT_WEIGHT x its earnings (as a retool site's), by adding (multiplier - 1) x that estimate. The
 # estimate reads earnings by a floor ladder, so toward Foreign the subtraction never exceeds the real score.
 FD_NOTCHES = 7
-SINCE = 'Counted since this version of the mod was loaded.'
 FD_MULT = {1: 1 / 3, 2: 1 / 2, 3: 2 / 3, 4: 1, 5: 3 / 2, 6: 2, 7: 3}
 FD_ICONS = ('max_subvention', 'high_subvention', 'low_subvention', 'no_tariffs_no_subvention', 'low_tariffs',
             'high_tariffs', 'max_tariffs')
@@ -1168,12 +1145,12 @@ def patch_panel(text):
         fail(where, 'the tab_buttons block no longer has three tabs of six blocks each')
     if tabs.count('"CONSTRUCTION_TAB_DOMESTIC"') != 3:
         fail(where, 'expected the first tab to name CONSTRUCTION_TAB_DOMESTIC three times')
-    tabs = tabs.replace('tooltip = "CONSTRUCTION_TAB_DOMESTIC"', 'tooltip = "PMR_TAB_GOVERNMENT_TT"')
+    tabs = re.sub(r'[ \t]*tooltip = "CONSTRUCTION_TAB_DOMESTIC"\n', '', tabs)   # no tooltip: it repeated the name
     tabs = tabs.replace('"CONSTRUCTION_TAB_DOMESTIC"', '"PMR_TAB_GOVERNMENT"')
     private = (
         '\t\t\t\t# PMR: Private tab\n'
         '\t\t\t\tblockoverride "second_button" {\n\t\t\t\t\ttext = "PMR_TAB_PRIVATE"\n\t\t\t\t}\n'
-        '\t\t\t\tblockoverride "second_button_tooltip" {\n\t\t\t\t\ttooltip = "PMR_TAB_PRIVATE_TT"\n\t\t\t\t}\n'
+        '\t\t\t\tblockoverride "second_button_tooltip" {}\n'
         f'\t\t\t\tblockoverride "second_button_click" {{\n\t\t\t\t\tonclick = "[InformationPanel.SelectTab(\'{TAB}\')]"\n'
         f'\t\t\t\t\tonclick = "[{REFRESH}]"\n'
         f'\t\t\t\t\tonclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n\t\t\t\t}}\n'
@@ -1616,7 +1593,7 @@ def policy_card(ind):
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
     inner = ''
     for i, (k, _n, icon, *_r) in enumerate(POLICIES, 1):
-        inner += card_column(i1, f'{i2}tooltip = "PMR_POLICY_{k}_TT"\n' + card_title(icon, f'PMR_POLICY_{k}', i2)
+        inner += card_column(i1, policy_tt(k, i2) + card_title(icon, f'PMR_POLICY_{k}', i2)
                              + card_text(f'PMR_POLICY_{k}_BENEFITS', i2), held(i))
     inner += (f'{i1}button = {{\n{i2}visible = "[{held_any}]"\n{i2}using = default_button\n'
               f'{i2}size = {{ 160 32 }}\n{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -12 }}\n'
@@ -1667,6 +1644,11 @@ def policy_content(k, icon, ind, w, cost, foots):
             f'{i2}alwaystransparent = yes\n{i2}text = "PMR_POLICY_{k}_BENEFITS"\n{i1}}}\n' + status + f'{ind}}}\n')
 
 
+def policy_tt(k, ind):
+    """The tooltip line of policy k's card, or nothing where the card already says it all (POLICIES)."""
+    return f'{ind}tooltip = "PMR_POLICY_{k}_TT"\n' if POLICY_TT[k] else ''
+
+
 def policy_choice(k, i, icon, ind, h):
     """One policy in the policy window (Pat 14:28Z): a blue card, as vanilla's law options, that adopts the
     policy when clicked; the explanation is its tooltip. The policy held shows as a selected card. h is its row's
@@ -1686,9 +1668,9 @@ def policy_choice(k, i, icon, ind, h):
             f'{i2}enabled = "[{sg}.IsValid({scope})]"\n'
             f'{i2}onclick = "[{sg}.Execute({scope})]"\n'
             f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n'
-            f'{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
+            + policy_tt(k, i2)
             + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_COST', foots) + f'{i1}}}\n'
-            f'{i1}widget = {{\n{i2}visible = "[{held}]"\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "PMR_POLICY_{k}_TT"\n'
+            f'{i1}widget = {{\n{i2}visible = "[{held}]"\n{i2}size = {{ 100% 100% }}\n' + policy_tt(k, i2) +
             f'{i2}background = {{\n{i2}\tusing = entry_bg\n{i2}}}\n'
             f'{i2}background = {{\n{i2}\tusing = highlighted_selected_square_selection\n{i2}}}\n'
             + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_PAID', [(None, 'PMR_POLICY_CURRENT')]) +
@@ -2016,67 +1998,49 @@ def localization(types):
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     loc = [
         ' PMR_TAB_GOVERNMENT:0 "Government"',
-        ' PMR_TAB_GOVERNMENT_TT:0 "The construction sector and the government construction queue"',
         ' PMR_TAB_PRIVATE:0 "Private"',
-        ' PMR_TAB_PRIVATE_TT:0 "The investment pool, economic policy, investment priorities and private construction"',
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
         ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
         ' PMR_RW_EMPTY:0 "No historical data"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
         ' PMR_PI_SOURCES_HEADER:0 "Buildings Adding to the Pool"',
-        ' PMR_PC_CAPTION:0 "Privately owned building levels"',
-        ' PMR_PC_EMPTY:0 "Counted when you open this tab and every week"',
-        ' PMR_PC_TT:0 "#header Buildings Adding to the Pool#!\\nThe chart shows the privately owned building levels in each '
-        'investment priority group, the capital whose profits feed the pool. The game reports what each building type adds '
-        'only as this list:\\n$TOOLTIP_DELIMITER$\\n[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
+        ' PMR_PC_CAPTION:0 "Private levels"',
+        ' PMR_PC_EMPTY:0 "No data yet"',
+        ' PMR_PC_TT:0 "[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
         ' PMR_PI_QUEUE_HEADER:0 "Private Construction"',
         ' PMR_PI_QUEUE_COUNT:0 ""',
         ' PMR_PI_QUEUE_EMPTY:0 "No private construction is queued"',
         ' PMR_PI_RECENT_HEADER:0 "Recent Investments and Privatizations"',
-        ' PMR_IV_EMPTY:0 "Construction completed in your states, and what you build abroad, is counted here from now on '
-        'by construction points."',
+        ' PMR_IV_EMPTY:0 "No data yet"',
         ' PMR_IV_HOME:0 "Domestic"',
         ' PMR_IV_ABROAD:0 "Foreign"',
-        f' PMR_IV_HOME_TT:0 "#header Domestic#!\\nConstruction points completed in your states, by anyone, retooling '
-        f'included: #v [{var("pmr_iv_dom")}|0]#! (#v [{var("pmr_iv_dsh")}|0%]#!).\\n{SINCE}"',
-        f' PMR_IV_ABROAD_TT:0 "#header Foreign#!\\nConstruction points your government and investors completed abroad, '
-        f'retooling included: #v [{var("pmr_iv_for")}|0]#! (#v [{var("pmr_iv_fsh")}|0%]#!).\\n{SINCE}"',
+        f' PMR_IV_HOME_TT:0 "#header Domestic#!\\n#v [{var("pmr_iv_dom")}|0]#! points (#v [{var("pmr_iv_dsh")}|0%]#!)"',
+        f' PMR_IV_ABROAD_TT:0 "#header Foreign#!\\n#v [{var("pmr_iv_for")}|0]#! points (#v [{var("pmr_iv_fsh")}|0%]#!)"',
         ' PMR_IV_NONE:0 ""',
         ' PMR_POLICY_ADD:0 "Add Policy"',
-        f' PMR_POLICY_ADD_TT:0 "Choose an economic policy. {POLICY_HOW} Once adopted it is kept for 5 years."',
+        ' PMR_POLICY_ADD_TT:0 "One policy at a time, kept 5 years."',
         f' PMR_POLICY_LOCKED:0 "Requires {law}, {lf} or [GetLawType(\'law_agrarianism\').GetName]"',
         ' PMR_POLICY_CHANGE:0 "Change Policy"',
         f' PMR_POLICY_CHANGE_SEL_TT:0 "[SelectLocalization({sv_on("pmr_policy_locked")}, \'PMR_POLICY_CHANGE_LOCK_TT\', '
         '\'PMR_POLICY_CHANGE_TT\')]"',
-        f' PMR_POLICY_CHANGE_TT:0 "See every policy and swap this one for another. {POLICY_HOW} A new policy is kept for '
-        '5 years. The X on this card cancels the policy."',
-        ' PMR_POLICY_CHANGE_LOCK_TT:0 "See every policy. A policy is kept for 5 years once adopted: this one can be '
-        f'swapped or cancelled in #v [{var("pmr_policy_lock_m")}|0]#! months."',
+        ' PMR_POLICY_CHANGE_TT:0 "Swap for another policy."',
+        f' PMR_POLICY_CHANGE_LOCK_TT:0 "#N Locked for [{var("pmr_policy_lock_m")}|0] months#!"',
         f' PMR_POLICY_LOCKED_FOR:0 "#N Locked, [{var("pmr_policy_lock_m")}|0] months#!"',
-        ' PMR_POLICY_CANCEL_TT:0 "#header Cancel Policy#!\\nEnds this policy and the authority it uses. You can adopt '
-        'another at once."',
+        ' PMR_POLICY_CANCEL_TT:0 "Cancel policy"',
         ' PMR_POLICY_WINDOW_TITLE:0 "Economic Policies"',
         f' PMR_POLICY_COST:0 "@aut! #v [{COUNTRY}.MakeScope.ScriptValue(\'pmr_policy_cost\')|0]#! Authority"',
         f' PMR_POLICY_PAID:0 "@aut! #v [{var("pmr_policy_paid")}|0]#! Authority"',
         ' pmr_policy_authority:0 "Economic Policy"',
         ' PMR_POLICY_CURRENT:0 "#v Current Policy#!"',
         ' PMR_IPW_HEADER:0 "Investment Priorities"',
-        ' PMR_PO_CAPTION:0 "Building levels by owner"',
-        ' PMR_PO_TT:0 "#header Building Levels by Owner#!\\nWho owns the building levels of the five investment priority '
-        'groups in your states, each building counted to the nearest eighth. Companies are the levels your companies own '
-        'wherever they are; Manor Houses and Financial Districts are the rest, as script cannot tell those two apart. The '
-        'game reports what each owner adds to the pool only as this list:\\n$TOOLTIP_DELIMITER$\\n'
-        '[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
+        ' PMR_PO_CAPTION:0 "By owner"',
+        ' PMR_PO_TT:0 "[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
         ' PMR_FD_TITLE:0 "Foreign or Domestic Investment"',
         ' PMR_FD_FOREIGN:0 "Foreign"',
         ' PMR_FD_DOMESTIC:0 "Domestic"',
-        ' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\nTilts where investors build. Toward Domestic, '
-        f'investors weigh every building in your states up to {FD_MULT[FD_NOTCHES]:g} times as much; toward Foreign, as '
-        'little as a third, so your investors look abroad. Foreign investors weigh your states the same way. Toward '
-        'Foreign, your investors need investment rights abroad, or the pool waits for something at home worth it.\\n'
-        f'Like a tariff, after a change you have {GRACE_DAYS} days to change it again, then it stays for 3 months."',
-        f' PMR_FD_COOLDOWN:0 "#N Changed recently#!\\nLike a tariff, this can be changed for {GRACE_DAYS} days after a '
-        f'change, then not until 3 months have passed. About #v [{var("pmr_fd_wk")}|0]#! weeks left."',
+        ' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\nYour states weigh a third (Foreign) to '
+        f'{FD_MULT[FD_NOTCHES]:g} times (Domestic)\\nLike a tariff: {GRACE_DAYS} days to change, then 3 months"',
+        f' PMR_FD_COOLDOWN:0 "#N Locked: #v [{var("pmr_fd_wk")}|0]#! weeks left#!"',
     ]
     mid = (FD_NOTCHES + 1) // 2
     names = {1: 'Strongly Foreign', 2: 'Foreign', 3: 'Leaning Foreign', 4: 'No Preference', 5: 'Leaning Domestic',
@@ -2085,69 +2049,54 @@ def localization(types):
     assert all(abs(FD_MULT[n] - {1: 1 / 3, 2: 0.5, 3: 2 / 3, 5: 1.5, 6: 2, 7: 3}[n]) < 1e-9 for n in times)
     cooling = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.ScriptValue('pmr_fd_cooling'), '(CFixedPoint)0')"
     for n in range(1, FD_NOTCHES + 1):
-        what = ('the game\'s own weighting' if n == mid else
-                f'investors weigh buildings in your states {"#P" if n > mid else "#N"} {times[n]}#! as much')
+        what = '' if n == mid else f': your states {"#P" if n > mid else "#N"} {times[n]}#!'
         loc.append(f' PMR_FD_NOTCH_{n}:0 "[SelectLocalization({cooling}, \'PMR_FD_COOLDOWN\', \'PMR_FD_OPEN_{n}\')]"')
-        loc.append(f' PMR_FD_OPEN_{n}:0 "#bold {names[n]}#!: {what}\\nAfter a change you have {GRACE_DAYS} days to change '
-                   'it again, then it stays for 3 months, as a tariff does."')
+        loc.append(f' PMR_FD_OPEN_{n}:0 "#bold {names[n]}#!{what}"')
     for i, (k, name, _p) in enumerate(OWNERS):
         loc.append(f' PMR_PO_NAME_{k}:0 "{name}"')
-        loc.append(f' PMR_PO_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_po_{i}")}|0]#! building levels, '
-                   f'#v [{var(f"pmr_po_share_{i}")}|0%]#! of them."')
-    who_tt = {
-        'gov': 'Construction points your government completed, at home and abroad, retooling included',
-        'investors': 'Construction points your investors completed, at home and abroad, retooling included',
-        'local': 'Construction points of levels in your states that went to the building\'s own local owners',
-        'foreign': 'Construction points foreign investors or governments completed in your states',
-    }
+        loc.append(f' PMR_PO_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_po_{i}")}|0]#! levels"')
     for i, (k, name, _c) in enumerate(WHO):
         loc.append(f' PMR_IV_WHO_{k}:0 "{name}"')
-        loc.append(f' PMR_IV_WHO_{k}_TT:0 "#header {name}#!\\n{who_tt[k]}: #v [{var(f"pmr_iv_w_{i}")}|0]#! '
-                   f'(#v [{var(f"pmr_iv_ws_{i}")}|0%]#!).\\n{SINCE}"')
+        loc.append(f' PMR_IV_WHO_{k}_TT:0 "#header {name}#!\\n#v [{var(f"pmr_iv_w_{i}")}|0]#! points '
+                   f'(#v [{var(f"pmr_iv_ws_{i}")}|0%]#!)"')
     short = {'gov': 'Government', 'investors': 'Investors', 'local': 'Local Owners', 'foreign': 'Foreign'}
     loc += [f' PMR_IV_WHO_SHORT_{k}:0 "{short[k]}"' for k, *_r in WHO]
     pts = lambda name, share: f'#v [{var(name)}|0]#! (#v [{var(share)}|0%]#!)'
     loc += [' PMR_IV_PLACE_TITLE:0 "Domestic and Foreign"',
             ' PMR_IV_WHO_TITLE:0 "Built By"',
             ' PMR_IV_GROUPS_TITLE:0 "Priority Groups"',
-            ' PMR_IV_PLACE_TT:0 "#header Domestic and Foreign#!\\nConstruction points completed, retooling included:\\n'
+            ' PMR_IV_PLACE_TT:0 "#header Domestic and Foreign#!\\nConstruction points:\\n'
             f'Domestic, in your states: {pts("pmr_iv_dom", "pmr_iv_dsh")}\\n'
-            f'Foreign, your government and investors abroad: {pts("pmr_iv_for", "pmr_iv_fsh")}\\n{SINCE}"',
-            ' PMR_IV_WHOS_TT:0 "#header Built By#!\\nConstruction points completed, retooling included:'
+            f'Foreign, your government and investors abroad: {pts("pmr_iv_for", "pmr_iv_fsh")}"',
+            ' PMR_IV_WHOS_TT:0 "#header Built By#!\\nConstruction points:'
             + ''.join(f'\\n{name}: {pts(f"pmr_iv_w_{i}", f"pmr_iv_ws_{i}")}' for i, (k, name, _p) in enumerate(WHO))
-            + f'\\n{SINCE}"',
-            ' PMR_IV_GROUPS_TT:0 "#header Priority Groups#!\\nConstruction points completed, retooling counted under the '
-            'building it retools:'
+            + '"',
+            ' PMR_IV_GROUPS_TT:0 "#header Priority Groups#!\\nConstruction points:'
             + ''.join(f'\\n{name}: {pts(f"pmr_iv_pts_{i}", f"pmr_iv_gs_{i}")}' for i, (g, name, *_r) in enumerate(GROUPS))
-            + f'\\nHover a group below the chart for its buildings. {SINCE}"']
+            + '"']
     for gi, (g, name, *_r) in enumerate(GROUPS):
         lines = ''.join(f"[SelectLocalization(GreaterThan_CFixedPoint({var(f'pmr_iv_bt_{t}')}, '(CFixedPoint)0'), "
                         f"'PMR_IV_BT_{t}', 'PMR_IV_NONE')]" for t, tg, _c in types if tg == gi)
         loc.append(f' PMR_IV_GROUP_{g}_TT:0 "#header {name}#!\\nConstruction points completed: '
-                   f'#v [{var(f"pmr_iv_pts_{gi}")}|0]#! (#v [{var(f"pmr_iv_gs_{gi}")}|0%]#!), by building:{lines}\\n'
-                   f'Retooling counts under the building it retools. {SINCE}"')
+                   f'#v [{var(f"pmr_iv_pts_{gi}")}|0]#! (#v [{var(f"pmr_iv_gs_{gi}")}|0%]#!), by building:{lines}"')
     for t, _g, _c in types:
         loc.append(f' PMR_IV_BT_{t}:0 "\\n$building_{t}$: #v [{var(f"pmr_iv_bt_{t}")}|0]#! points, '
                    f'#v [{var(f"pmr_iv_bl_{t}")}|0]#! levels"')
-    for k, name, _i, mods, core, core_tt, details in POLICIES:
-        how = f'{core_tt}\\n' if core_tt else ''
+    for k, name, _i, mods, core, tt in POLICIES:
         loc += [f' pmr_policy_{k}:0 "{name}"', f' PMR_POLICY_{k}:0 "{name}"',
-                f' PMR_POLICY_{k}_BENEFITS:0 "{benefit_lines(core, mods)}"',
-                f' PMR_POLICY_{k}_TT:0 "#header {name}#!\\n{how}$TOOLTIP_DELIMITER$\\n#italic {details}#!"']
+                f' PMR_POLICY_{k}_BENEFITS:0 "{benefit_lines(core, mods)}"']
+        if tt:
+            loc.append(f' PMR_POLICY_{k}_TT:0 "{tt}"')
         if k in POLICY_TECH:
             loc.append(f' PMR_POLICY_{k}_REQ:0 "#N Requires ${POLICY_TECH[k]}$#!"')
     for inst in TITANS_INSTITUTIONS:
         loc.append(f' pmr_titans_{inst}:0 "Market Titans: ${inst}$"')
     sv = lambda name: f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.ScriptValue('{name}'), '(CFixedPoint)0')"  # noqa: E731
-    loc += [f' PMR_IPW_LOCK_LF:0 "#N Locked#! under {lf}: investors choose for themselves, so every priority counts '
-            'as +0%. The coin you set is kept and counts again under another law."',
-            ' PMR_IPW_LOCK_AGR:0 "#N Locked#! under [GetLawType(\'law_agrarianism\').GetName]: only Agriculture and '
-            'Resources can be given priority. The coin you set here is kept and counts again under another law."']
+    loc += [f' PMR_IPW_LOCK_LF:0 "#N Locked under {lf}#!"',
+            ' PMR_IPW_LOCK_AGR:0 "#N Locked under [GetLawType(\'law_agrarianism\').GetName]#!"']
     for g, *_r in GROUPS:
         loc += [f' PMR_IPW_LOCK_{g}:0 "[SelectLocalization({sv("pmr_ipw_lf")}, \'PMR_IPW_LOCK_LF\', \'PMR_IPW_LOCK_AGR\')]"',
-                f' PMR_IPW_COOLDOWN_{g}:0 "#N Changed recently#!\\nLike a tariff, a priority can be changed for '
-                f'{GRACE_DAYS} days after a change, then not until 3 months have passed. About '
-                f'#v [{var(f"pmr_ipw_wk_{g}")}|0]#! weeks left."']
+                f' PMR_IPW_COOLDOWN_{g}:0 "#N Locked: #v [{var(f"pmr_ipw_wk_{g}")}|0]#! weeks left#!"']
         for st in STEPS:
             loc += [f' PMR_IPW_COIN_{g}_{st}:0 "[SelectLocalization({sv(f"pmr_ipw_locked_{g}")}, '
                     f'\'PMR_IPW_LOCK_{g}\', \'PMR_IPW_OPEN_{g}_{st}\')]"',
@@ -2156,23 +2105,17 @@ def localization(types):
     for s in STEPS:
         loc.append(f' PMR_IPW_NOTCH_{s}:0 "' + ('No priority' if s == 0 else
                    f'{s}% of the cap: #P +[FixedPointToInt(Multiply_CFixedPoint({COUNTRY}.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint){s}\'))]%#!')
-                   + f'\\nAfter a change you have {GRACE_DAYS} days to change it again, then it stays for 3 months, as a '
-                   'tariff does."')
+                   + '"')
     for i in range(RI_WEEKS):
         when = 'This week' if i == 0 else ('1 week ago' if i == 1 else f'{i} weeks ago')
-        loc.append(f' PMR_RW_COLUMN_{i}:0 "{when}: #v @money![{var(f"pmr_rw_{i}")}|D]#! re-invested\\n'
-                   'The column splits it by the privately owned levels of each priority group that week, as the tree '
-                   'chart below."')
+        loc.append(f' PMR_RW_COLUMN_{i}:0 "{when}: #v @money![{var(f"pmr_rw_{i}")}|D]#! re-invested"')
     for i, (g, name, _d, _c, bgs) in enumerate(GROUPS):
         v = VAR.format(g)
         covers = ', '.join(f'${bg}$' for bg in bgs)
         loc.append(f' PMR_IPW_GROUP_{g}:0 "{name}"')
-        loc.append(f' PMR_IPW_ROW_{g}:0 "#header {name}#!\\nCovers {covers}.\\nYour investors weigh these at '
-                   f'#v ×[{COUNTRY}.MakeScope.ScriptValue(\'{v}\')|2]#! their usual weight. Only the differences between '
-                   'priorities matter: the highest priority\'s group stays at ×1.00."')
-        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! privately '
-                   f'owned building levels, #v [{var(f"pmr_pc_share_{i}")}|0%]#! of the five groups. '
-                   f'Covers {covers}."')
+        loc.append(f' PMR_IPW_ROW_{g}:0 "#header {name}#!\\n{covers}\\n'
+                   f'Weight #v ×[{COUNTRY}.MakeScope.ScriptValue(\'{v}\')|2]#!"')
+        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels\\n{covers}"')
     return loc
 
 

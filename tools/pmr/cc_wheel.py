@@ -74,7 +74,7 @@ LABEL_TEXT_W = 1150                     # the widest title's letters at its size
 
 # Pat 17:08Z: the outline colour by the kind of benefit (BUILD-SPEC section 1; the legend went in q27, Pat 20:37Z)
 KIND_COL = {'pm': (150, 44, 56), 'prod': (206, 124, 80), 'input': (98, 156, 214), 'work': (170, 136, 216),
-            'charter': (238, 202, 106)}
+            'labour': (86, 184, 150), 'charter': (238, 202, 106)}   # Pat 22:28Z: Providence's labour not Stewardship's purple
 CARD_COL = {'active': (30, 63, 77), 'pending': (20, 40, 48), 'bought': (55, 50, 44), 'locked': (12, 24, 30)}
 DOT_COL = {    # border, core: the colours of vanilla's tech_line_border_<x>.dds and tech_line_<x>.dds
     'done': ((239, 203, 154), (128, 104, 71)),
@@ -361,9 +361,11 @@ def node(p, ln, t, x, y, cands):
         title = (prestige(f'flowcontainer = {{\nposition = {{ {TX0} 18 }}\n{{DM}}item = {{\n'
                           + _textbox(0, 0, TXW, 50, '[Goods.GetName]', 36, raw=True) + '}\n}\n')
                  + f'container = {{\n{_vis(PG_NONE)}{title}}}\n')
+    # charters have no bullets: no textbox, and no PMR_CC_FX key (company_culture.localization)
     body = (goods_body(p, ln, t, *cands[ln.goods]) if ln.goods else
             f'textbox = {{\nposition = {{ {TX0} 82 }}\nautoresize = yes\nmaximumsize = {{ {TXW} 150 }}\nmultiline = yes\n'
-            f'align = left|nobaseline\nfontsize = 26\nelide = right\ntext = "PMR_CC_FX_{k}_{t}"\nalwaystransparent = yes\n}}\n')
+            f'align = left|nobaseline\nfontsize = 26\nelide = right\ntext = "PMR_CC_FX_{k}_{t}"\nalwaystransparent = yes\n}}\n'
+            if cc.fx_lines(k, t) else '')
     text = (title + f'icon = {{\nposition = {{ {TX0} 72 }}\nsize = {{ {TXW} 2 }}\ntexture = "{WHITE}"\n'
             f'{_rgb((200, 185, 150), 0.35)}alwaystransparent = yes\n}}\n' + body)
     out += (f'widget = {{\n{_vis(f"Not({locked})")}size = {{ 100% 100% }}\nalwaystransparent = yes\n{text}}}\n'
@@ -371,10 +373,19 @@ def node(p, ln, t, x, y, cands):
     # the round frame and the picture, greyed while locked
     fy, iy = (NODE_H - FRAME) // 2, (NODE_H - ICON) // 2
     frame = f'position = {{ 0 {fy} }}\nsize = {{ {FRAME} {FRAME} }}\ntexture = "{FRAME_TEX}"\nalwaystransparent = yes\n'
-    pic = f'position = {{ 20 {iy} }}\nsize = {{ {ICON} {ICON} }}\ntexture = "{ln.icons[t - 1]}"\n'
-    pics = (f'button = {{\n{_vis(cls["active"])}{pic}using = technology_confirm_button_sound\n{click}{tt}}}\n'
-            f'icon = {{\n{_vis(OR(cls["pending"], cls["bought"]))}{pic}{tt}}}\n'
-            f'icon = {{\n{_vis(locked)}{pic}color = {{ 0.4 0.4 0.4 1 }}\n{tt}}}\n')
+
+    def pic_set(tex, row=None):
+        pic = f'position = {{ 20 {iy} }}\nsize = {{ {ICON} {ICON} }}\ntexture = "{tex}"\n'
+        vis = (lambda c: _vis(AND(row, c))) if row else _vis
+        return (f'button = {{\n{vis(cls["active"])}{pic}using = technology_confirm_button_sound\n{click}{tt}}}\n'
+                f'icon = {{\n{vis(OR(cls["pending"], cls["bought"]))}{pic}{tt}}}\n'
+                f'icon = {{\n{vis(locked)}{pic}color = {{ 0.4 0.4 0.4 1 }}\n{tt}}}\n')
+    if k in cc.ROW_ICONS:
+        # Pat 22:28Z: the picture of the company's own method (Steam Winding, Cutting Tables), not the line's
+        var, table = cc.ROW_ICONS[k]
+        pics = ''.join(pic_set(table[r - 1][t - 1], EQ(var, r)) for r in cc.rows_used(p, k))
+    else:
+        pics = pic_set(ln.icons[t - 1])
     if k == 'pg':
         pics = (prestige('flowcontainer = {\n{DM}item = {\ncontainer = {\n'
                          + pics.replace(f'texture = "{ln.icons[t - 1]}"', 'texture = "[Goods.GetTexture]"') + '}\n}\n}\n')
@@ -401,7 +412,7 @@ def node(p, ln, t, x, y, cands):
     out += (f'button_icon_plus_action = {{\n{_vis(cls["active"])}position = {{ 0 {fy} }}\nsize = {{ 50 50 }}\n'
             f'using = tooltip_ne\n{click}{tt}}}\n'
             f'icon = {{\n{_vis(ST(k, t, 5))}position = {{ 5 {fy + 5} }}\nsize = {{ 40 40 }}\ntexture = "{WARNING}"\n'
-            'tooltip = "PMR_CC_EXCLUSIVE_TT"\n}\n')
+            'alwaystransparent = yes\n}\n')
     # a goods line's good, in a round badge on the card's top right corner
     if ln.goods:
         goods = ''.join(f'icon = {{\n{_vis(EQ(f"pmr_cc_k_g{ln.goods}g", cc.gi(p, g)))}position = {{ 4 4 }}\nsize = {{ 44 44 }}\n'
@@ -460,20 +471,17 @@ def charter_plate(k):
 
 def grant_gui(ln, t, x, y):
     """A goods tier's research grant while it runs (state 6): the vanilla green bar under the card, filling month by
-    month, and what it costs and gives (BUILD-SPEC section 5). Drawn over everything, on a dark plate."""
+    month (BUILD-SPEC section 5; Pat 22:28Z: the bar alone). Drawn over everything, on a dark plate."""
     bw = CW - 20
     bar_value = f'FixedPointToFloat({V("pmr_cc_grm")})'
     return (f'widget = {{\n{_vis(ST(ln.key, t, 6))}position = {{ {x + NODE_W - CW - 2} {y + NODE_H + 8} }}\n'
-            f'size = {{ {bw + 24} 158 }}\ntooltip = "PMR_CC_GRANT_TT"\n'
+            f'size = {{ {bw + 24} 70 }}\n'
             f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{TEX}/cc_card.dds"\n{_rgb((20, 24, 26), 0.92)}alwaystransparent = yes\n}}\n'
             f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{TEX}/cc_outline.dds"\n{_rgb((120, 108, 84), 0.8)}alwaystransparent = yes\n}}\n'
             f'green_progressbar_horizontal = {{\nposition = {{ 12 12 }}\nsize = {{ {bw} 46 }}\n'
             f'blockoverride "values" {{\nmin = 0\nmax = {cc.GRANT_MONTHS}\nvalue = "[{bar_value}]"\n}}\n}}\n'
             f'textbox = {{\nposition = {{ 12 12 }}\nsize = {{ {bw} 46 }}\nalign = center|nobaseline\nfontsize = 23\n'
-            'text = "PMR_CC_GRANT_BAR"\nalwaystransparent = yes\n}\n'
-            + _textbox(14, 70, bw, 34, 'PMR_CC_GRANT_RUN', 22)
-            + _textbox(14, 108, bw, 34, 'PMR_CC_GRANT_THEN', 22)
-            + '}\n')
+            'text = "PMR_CC_GRANT_BAR"\nalwaystransparent = yes\n}\n}\n')
 
 
 def hub_gui(ox, oy):
@@ -484,9 +492,7 @@ def hub_gui(ox, oy):
             'alwaystransparent = yes\n}\n'
             f'icon = {{\ntexture = "{FRAME_TEX}"\nsize = {{ 100% 100% }}\nalwaystransparent = yes\n}}\n'
             'icon = {\ntexture = "[Company.AccessCompanyType.GetIcon]"\nparentanchor = center\nsize = { 240 240 }\n'
-            'alwaystransparent = yes\n}\n}\n'
-            f'textbox = {{\n{_vis(unfounded)}position = {{ {ox - 300} {oy + HUB_R + 14} }}\nsize = {{ 600 56 }}\n'
-            'align = center|nobaseline\nfontsize = 34\nusing = header_font\ntext = "PMR_CC_HUB_CHOOSE"\nalwaystransparent = yes\n}\n')
+            'alwaystransparent = yes\n}\n}\n')
 
 
 def arm_title(a, c, ox, oy):
@@ -579,9 +585,9 @@ STATS = {}
 
 
 def header_gui(ready):
-    """Culture level, points, the bar to the next point and the monthly rate (the tab and the full-screen window)."""
+    """Culture level, points and the bar to the next point (the tab and the full-screen window; the monthly rate is in
+    the bar's tooltip, Pat 22:28Z)."""
     bar_value = f"FixedPointToFloat({V('pmr_cc_pct')})"
-    earning = GT('pmr_cc_mth', 0)
     return (
         f'widget = {{\n{_vis(ready)}parentanchor = hcenter\nsize = {{ 540 82 }}\nbackground = {{\nusing = entry_bg\n}}\n'
         'textbox = {\nposition = { 16 10 }\nautoresize = yes\nalign = left|nobaseline\nusing = fontsize_xxl\n'
@@ -592,11 +598,7 @@ def header_gui(ready):
         'gold_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
         f'min = 0\nmax = 100\nvalue = "[{bar_value}]"\n}}\n}}\n'
         'textbox = {\nparentanchor = center\nautoresize = yes\nalign = hcenter|nobaseline\ntext = "PMR_CC_BAR"\n'
-        'alwaystransparent = yes\n}\n}\n'
-        f'textbox = {{\n{_vis(earning)}position = {{ 220 50 }}\nsize = {{ 300 22 }}\nalign = hcenter|nobaseline\n'
-        'using = fontsize_small\ntext = "PMR_CC_RATE"\ntooltip = "PMR_CC_BAR_TT"\n}\n'
-        f'textbox = {{\n{_vis(f"Not({earning})")}position = {{ 220 50 }}\nsize = {{ 300 22 }}\n'
-        'align = hcenter|nobaseline\nusing = fontsize_small\ntext = "PMR_CC_RATE_NONE"\ntooltip = "PMR_CC_BAR_TT"\n}\n}\n')
+        'alwaystransparent = yes\n}\n}\n}\n')
 
 
 def show_button(ready):
@@ -616,10 +618,9 @@ def tab(p, rows, untreated, split):
     STATS.clear()
     STATS.update(stats)
     open_button = (f'button = {{\n{_vis(ready)}parentanchor = hcenter\nusing = default_button_primary_big\n'
-                   'size = { 400 50 }\ntext = "PMR_CC_OPEN"\ntooltip = "PMR_CC_OPEN_TT"\n'
+                   'size = { 400 50 }\ntext = "PMR_CC_OPEN"\n'
                    f'onclick = "[{VIEW}]"\nonclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n}}\n')
     methods = (f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_METHODS_HEADER"\n{i2}}}\n{i1}}}\n'
-               + text_row('PMR_CC_METHODS_INTRO', i1, small=True) +
                f'{i1}flowcontainer = {{\n{i2}parentanchor = hcenter\n{i2}direction = vertical\n{i2}spacing = 4\n'
                f'{i2}datamodel = "[Company.GetBuildingTypes]"\n{i2}item = {{\n'
                f'{i3}widget = {{\n{i4}size = {{ 540 66 }}\n{i4}background = {{\n{i4}\tusing = entry_bg\n{i4}}}\n'
