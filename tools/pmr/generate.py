@@ -267,6 +267,10 @@ TRADE_DEAD_BAND = 0.05
 OPTION_COLORS = [('Sand', (0.74, 0.66, 0.48)), ('Dusk blue', (0.42, 0.52, 0.66)),
                  ('Mauve', (0.60, 0.46, 0.56)), ('Umber', (0.52, 0.41, 0.31))]
 OPTION_NONE_COLOR = (0.36, 0.36, 0.36)
+# Pat, 2026-10-18 17:15Z: an automation bar under the recipe bar, the levels by how automated their recipe is,
+# in shades of green, the darkest the most automated: none (recipes below AUTOMATION_FROM_TIER), the folded
+# automation, electric automation (ElectricRecipe). Only on buildings that fold automation.
+AUTO_COLORS = [('Pale green', (0.66, 0.76, 0.58)), ('Green', (0.38, 0.58, 0.36)), ('Dark green', (0.17, 0.37, 0.21))]
 # Log-only probes (Pat approved both 2026-10-13), both answered by 2026-10-13 (TREAT w = wv+wh+ws; PRICE
 # reads fractions), so off since the performance review. They change nothing in game; each
 # writes one line a month per player-owned state where it applies.
@@ -1103,6 +1107,7 @@ def main():
     custom_new = []
     recipe_keys, recipe_tex, recipe_elec = {}, {}, {}
     weight = wage_weights(game)
+    auto_ui = {}           # building -> (its first automation group, auto_tiers), for the automation bar
     profit_goods = set()   # every good a recipe's profit is read at (pmr_price_<good>)
 
     for bk, bn, s, recipes, g0, pg in treated:
@@ -1189,6 +1194,17 @@ def main():
         elec_tiers = []
         fold_techs = {}   # tier -> the technologies of the methods folded into it (pmr_best_<b> asks the owner)
         econ = []         # per recipe: (goods per level, wage units per level), for pmr_profit_<b>
+        auto_tiers = []   # the automation bar's levels: [(name key, texture or None, [tiers])], least automated first
+        if automation.get(bk):
+            plain = [i for i, r in enumerate(recipes, 1) if not isinstance(r, ElectricRecipe)]
+            er = [(i, r) for i, r in enumerate(recipes, 1) if isinstance(r, ElectricRecipe)]
+            auto_tiers.append((groups[auto_groups_of[bk][0]][0], None, [i for i in plain if i < AUTOMATION_FROM_TIER]))
+            auto_tiers.append((automation[bk][0].key, automation[bk][0].texture,
+                               [i for i in plain if i >= AUTOMATION_FROM_TIER]))
+            for i, r in er:
+                elec_auto = [a for a in r.autos if a.needs(ELECTRICITY)] or r.autos
+                auto_tiers.append((elec_auto[0].key, r.texture, [i]))
+            auto_ui[bk] = (auto_groups_of[bk][0], auto_tiers)
         for i, r in enumerate(recipes, 1):
             if isinstance(r, ElectricRecipe):
                 autos = r.autos
@@ -1277,7 +1293,7 @@ def main():
 
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, recipes)
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
-                                          econ, goods_cost))
+                                          econ, goods_cost, [t for _, _, t in auto_tiers]))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
@@ -1419,7 +1435,7 @@ def main():
     also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
         recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(),
-        opt_ui, also), bom=False)
+        opt_ui, also, auto_ui), bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     # The Buildings tab: the building type row's grid (the first of three) becomes the country recipe
@@ -1445,7 +1461,7 @@ def main():
           bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
-    loc += panel_loc(recipe_keys) + option_loc(opt_ui)
+    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
@@ -2195,7 +2211,7 @@ def highest(ns, cond, leaf, ind='\t'):
     return find(0, len(ns) - 1, ind)
 
 
-def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None):
+def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None, auto_tiers=()):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -2518,6 +2534,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                        f'\t{chg(f"pmr_sh_{i}", "divide", "var:" + v("pmr_level"))}\n'
                        f'\t{chg("pmr_cum", "add", "var:" + v(f"pmr_sh_{i}"))}\n'
                        f'\t{setv(f"pmr_cum_{i}", "var:" + v("pmr_cum"))}\n' for i in range(1, k + 1))
+             + ''.join(f'\t{setv(f"pmr_ash_{a}", 0)}\n'
+                       + ''.join(f'\t{chg(f"pmr_ash_{a}", "add", "var:" + v(f"pmr_sh_{i}"))}\n' for i in tiers)
+                       for a, tiers in enumerate(auto_tiers, 1))
              + '\t# privately owned levels per recipe, for the Owners list\n'
              + ''.join(f'\t{setv(f"pmr_lvp_{i}", "var:" + lv(i))}\n\t{chg(f"pmr_lvp_{i}", "subtract", "var:" + lvg(i))}\n'
                        for i in range(1, k + 1))
@@ -3776,10 +3795,48 @@ def option_bars(bk, groups, ind):
             + ''.join(rows) + f'{ind}}}\n')
 
 
-def patch_option_bars(text, opt_ui):
+def automation_bar(bk, group, levels, ind):
+    """The details panel's automation row for one building type (AUTO_COLORS), laid out as an option row."""
+    b = short(bk)
+    x = lambda name: state_var(b, name)    # noqa: E731
+    i2, i3 = ind + '\t\t', ind + '\t\t\t'
+    slices = []
+    for a, (key, tex, _) in enumerate(levels, 1):
+        # the least automated level is always the palest and the most automated the darkest
+        name, rgb = AUTO_COLORS[round((a - 1) * (len(AUTO_COLORS) - 1) / max(1, len(levels) - 1))]
+        sh = x(f'pmr_ash_{a}')
+        slices.append((f'{key}, {name.lower()}', f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint)0')",
+                       f"FixedPointToInt(Multiply_CFixedPoint({sh}, '(CFixedPoint)100'))",
+                       f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint){RECIPE_ICON_SHARE}')", rgb, tex))
+    tip = f'PMR_AUTO_TOOLTIP_{b}'
+    return (f'{ind}# PMR: automation bar of {bk}\n'
+            f'{ind}widget = {{\n{ind}\tvisible = "[{is_type(bk)}]"\n{ind}\tsize = {{ @panel_width {OPTION_ROW_H} }}\n'
+            f'{ind}\twidget = {{\n{i2}position = {{ {ROW_X} {(OPTION_ROW_H - OPTION_BAR_H) // 2} }}\n'
+            f'{i2}size = {{ {ROW_W} {OPTION_BAR_H} }}\n'
+            + slice_bar(slices, ('100%', '100%'), OPTION_BAR_ICON, i2, [(None, tip)])
+            + f'{ind}\t}}\n'
+            f'{ind}\ttextbox = {{\n{i2}position = {{ {ROW_X + ROW_W + 12} 0 }}\n{i2}size = {{ 223 {OPTION_ROW_H} }}\n'
+            f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "{group}"\n{i2}tooltip = "{tip}"\n'
+            f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
+
+
+def automation_loc(auto_ui):
+    """The automation bar's tooltips, from vanilla's own names, so every language has them."""
+    loc = []
+    for bk, (group, levels) in auto_ui.items():
+        b = short(bk)
+        lines = [f"${key}$: #bold [Building.GetState.MakeScope.Var('pmr_ash_{a}_{b}').GetValue|%0]#!"
+                 for a, (key, _, _) in enumerate(levels, 1)]
+        loc.append(f' PMR_AUTO_TOOLTIP_{b}:0 "#bold ${group}$#!\\n' + '\\n'.join(lines) + '"')
+    return loc
+
+
+def patch_option_bars(text, opt_ui, auto_ui=None):
     """building_details_panel.gui: an empty block at the end of condensed_building_information,
-    filled only by the details panel's own instance, so the Buildings tab rows stay as they are."""
-    if not opt_ui:
+    filled only by the details panel's own instance, so the Buildings tab rows stay as they are.
+    The automation bars come first, right under the recipe bar."""
+    auto_ui = auto_ui or {}
+    if not opt_ui and not auto_ui:
         return text
     end = '\t\t\t}\n\t\t}\n\t}\n\n\ttype building_type_nationalize_button = '
     if text.count(end) != 1:
@@ -3795,6 +3852,7 @@ def patch_option_bars(text, opt_ui):
     return (text[:at] + '\n\t\t\tblockoverride "pmr_option_bars" {\n'
             '\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n\t\t\t\t\tignoreinvisible = yes\n'
             '\t\t\t\t\tmargin_bottom = 4\n'
+            + ''.join(automation_bar(bk, group, levels, '\t\t\t\t\t') for bk, (group, levels) in auto_ui.items())
             + ''.join(option_bars(bk, groups, '\t\t\t\t\t') for bk, groups in opt_ui.items())
             + '\t\t\t\t}\n\t\t\t}\n' + text[at:])
 
@@ -3830,7 +3888,7 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extr
     return hide + text[at:end] + labour + text[end:]
 
 
-def patch_building_panel(recipe_tex, text, opt_ui=None, also=()):
+def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None):
     buildings = list(recipe_tex)
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
@@ -3855,7 +3913,7 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=()):
         raise SystemExit(f'building_details_panel.gui: expected one {anchor.strip()!r}, found '
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
     text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk]) for bk in buildings))
-    return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {})
+    return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {}, auto_ui or {})
 
 
 # Pat, 2026-10-13: a Production Method column in the Owners list, with the icons of the recipes each
