@@ -1,4 +1,4 @@
-# PMR run sheet: each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,27 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: each building shows its most profitable recipe (q22, test mod; your current save works)
+## Latest: the profit pick logs itself, and private owners' methods on the Private tab (q23, test mod; a new game is best)
+
+From the PM rework thread (dev 0bda5cf and f031724, your 17:59Z and 18:00Z messages).
+
+- **The profit log needs no console step.** Each of your buildings writes a `PMR;rec=PROFIT` line on its first
+  monthly pulse (`why=first_month`) and again whenever its pick is recomputed (`why=recompute`): after research, a
+  new building, or the yearly re-check.
+- **"Private Owners' Methods" on the Private tab**, under the priorities: one row per building type you have, the
+  £ per level a week under each recipe, and a gold square on the recipe the manor houses and financial districts
+  pick.
+
+1. Start a new game on the PMR Test playset and play past 1 February 1836.
+2. Open the Private tab and scroll below the priorities.
+3. Tell the build thread; it reads debug.log (`PMR;rec=PROFIT`).
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| A1 | Play past 1 February 1836 | `PMR;rec=PROFIT` lines with `why=first_month`, one per building of yours, each with `to=`, `newest=`, `pick=` and an `rm=` per recipe | No PROFIT lines by 1 February 1836: the pick isn't computed or logged |
+| M1 | Private tab, below the priorities | "Private Owners' Methods": a row per building type you have, £ under each recipe, a gold square on the pick | Section empty: the view isn't refreshed when the tab opens (`pmr_mv_refresh`). Every £ reads 0: the per-state values (`pmr_level_<b>`, `pmr_rm`) weren't found |
+
+## Earlier: each building shows its most profitable recipe (q22, test mod; your current save works)
 
 From the PM rework thread (dev 8cea159, your 17:49Z question): a row under the recipe bar on every PMR building's
 details panel reads "Most profitable: <recipe>, £ per level a week", with a tooltip listing every recipe's profit.
@@ -28,19 +48,13 @@ the +75% price cap is ruled out. Like vanilla, a newer recipe has to beat the cu
 older one by 25%, so the target can step back down. It is worked out only at game start, when research or a new
 building changes what can run, and on a staggered yearly re-check; every other tick reads the stored pick.
 
-The first pick is worked out during game setup, before logging starts, so a new game shows no `PMR;rec=PROFIT`
-lines at the start; that is not a null. To force a recompute and see the lines:
-
-1. Open the console and run
-   `effect every_scope_state = { limit = { has_variable = pmr_pchk_textile_mill } remove_variable = pmr_pchk_textile_mill }`
-2. Let the next monthly pulse pass, then tell the build thread; it reads debug.log (`PMR;rec=PROFIT`, your own
-   states only).
+From q23 the `PMR;rec=PROFIT` lines log on their own (see Latest above); the console step is gone.
 
 | Result | Meaning (decided before the run) |
 | --- | --- |
-| One `PMR;rec=PROFIT` line per textile mill of yours, each with `to=`, `newest=`, `pick=` and an `rm=` margin per recipe; `pick` is the recipe with the best `rm` among those with `can=1` and `veto=0`, allowing for the stickiness | **Works.** The profit pick is computed and stored |
-| No `PMR;rec=PROFIT` line after the console command and a monthly pulse | A real bug: the re-check never recomputes the pick |
-| `pick=0` on mills that clearly run | No recipe counted as runnable or every one was vetoed; send the line |
+| `PMR;rec=PROFIT` lines for your buildings, each with `to=`, `newest=`, `pick=` and an `rm=` margin per recipe; `pick` is the recipe with the best `rm` among those with `can=1` and `veto=0`, allowing for the stickiness | **Works.** The profit pick is computed and stored |
+| No `PMR;rec=PROFIT` line by 1 February 1836 (q23 on) | A real bug: the pick isn't computed or logged |
+| `pick=0` on buildings that clearly run | No recipe counted as runnable or every one was vetoed; send the line |
 
 **Also in q21: a green automation bar** (dev f860857, your 17:15Z ask). On the 15 building types whose recipes fold in
 automation, a second bar sits under the recipe bar in the building's details panel: pale green for levels on recipes
