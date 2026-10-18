@@ -63,6 +63,8 @@ import colorsys
 import os
 import re
 
+import localise
+
 STEPS = (0, 25, 50, 75, 100)       # priority levels, percent of the cap (Pat 04:50Z: the budget page's five coins)
 VAR = 'pmr_ipw_{}'                 # country variable per priority group, 0..100; also the score multiplier's name
 ON = 'pmr_ipw_on'                  # set once the player touches any slider
@@ -277,8 +279,14 @@ PCARD_W = 300                             # a policy in the policy window: benef
 # character and 24 px a line, and a name in the large font 13.3 px a character and 29 px a line, so a long name
 # takes two lines beside the 48 px icon (Pat's Chinese screenshot of 2026-10-18, where Focus on Infrastructure's
 # cost spilled under its card, #3). Rows are sized for that font, the widest the game uses, so no language spills
-# a card; in English the cards keep some room at the bottom.
+# a card; in English the cards keep some room at the bottom. Since the text is translated (#3), each language's own
+# text is measured too: Latin and Cyrillic at the English font's 6.9 px plus a tenth (Cyrillic and accents run wider;
+# not measured), and in Chinese, Japanese and Korean an ideograph or syllable as two Latin characters, wrapping
+# anywhere (not measured either). A row takes the tallest any language needs.
 PCARD_CHAR_W, PCARD_LINE_H = 9.1, 24
+PCARD_LATIN_CHAR_W = 6.9 * 1.1
+CJK = ('simp_chinese', 'japanese', 'korean')
+WIDE = re.compile(r'[\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]')
 PCARD_TITLE_CHAR_W, PCARD_TITLE_LINE_H, PCARD_TITLE_W, PCARD_ICON = 13.3, 29, PCARD_W - 84, 48
 PCARD_FOOT = 6 + 20 + 10    # spacing, status line, margin
 PCARD_LOC = {'institution_health_system': 'Health System', 'institution_schools': 'Education',
@@ -326,25 +334,39 @@ def benefit_lines(core, mods):
 
 
 def text_lines(text, width, char_w=PCARD_CHAR_W):
-    """How many lines a policy card's text takes at width px: each \\n starts a line, words wrap."""
+    """How many lines a policy card's text takes at width px: each \\n starts a line, words wrap, and a wide
+    (CJK) character, two Latin characters wide, wraps on its own."""
     text = re.sub(r'#[A-Za-z]+ |#!', '', text)
     text = re.sub(r'\$(\w+)\$', lambda m: PCARD_LOC.get(m.group(1), m.group(1)), text)
     n = 0
     for para in text.split('\\n'):
-        line, n = '', n + 1
-        for word in para.split():
-            if line and len(line) + 1 + len(word) > width / char_w:
-                line, n = word, n + 1
+        x, gap, n = 0, False, n + 1
+        for tok in re.findall(r'\s+|' + WIDE.pattern + r'|(?:(?!' + WIDE.pattern + r')\S)+', para):
+            if tok.isspace():
+                gap = True
+                continue
+            w = (2 if WIDE.match(tok) else len(tok)) * char_w
+            sep = char_w if gap and x else 0
+            if x and x + sep + w > width:
+                x, n = w, n + 1
             else:
-                line = f'{line} {word}' if line else word
+                x += sep + w
+            gap = False
     return n
 
 
 def policy_card_h(keys):
-    """The height of a row of policy cards: room for the longest card's name, benefits and status line."""
+    """The height of a row of policy cards: room for the longest card's name, benefits and status line, in the
+    language that needs the most."""
     by_key = {k: (n, core, mods) for k, n, _i, mods, core, *_x in POLICIES}
-    names = max(text_lines(by_key[k][0], PCARD_TITLE_W, PCARD_TITLE_CHAR_W) for k in keys)
-    lines = max(text_lines(benefit_lines(*by_key[k][1:]), PCARD_W - 24) for k in keys)
+    texts = [(by_key[k][0], benefit_lines(*by_key[k][1:])) for k in keys]
+    names = max(text_lines(n, PCARD_TITLE_W, PCARD_TITLE_CHAR_W) for n, _b in texts)
+    lines = max(text_lines(b, PCARD_W - 24) for _n, b in texts)
+    for lang, table in localise.tables().items():
+        scale = 1 if lang in CJK else PCARD_LATIN_CHAR_W / PCARD_CHAR_W
+        for n, b in texts:
+            names = max(names, text_lines(localise.translate_text(n, table), PCARD_TITLE_W, PCARD_TITLE_CHAR_W * scale))
+            lines = max(lines, text_lines(localise.translate_text(b, table), PCARD_W - 24, PCARD_CHAR_W * scale))
     top = 10 + max(PCARD_ICON, names * PCARD_TITLE_LINE_H) + 6    # margin, icon row, spacing
     return top + lines * PCARD_LINE_H + PCARD_FOOT
 

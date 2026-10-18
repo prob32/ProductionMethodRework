@@ -8,7 +8,8 @@ testing; it rewrites the mod folder in place.
 
 With ``--release`` it writes the build players get, to pmr/release/ProductionMethodRework: no "PMR test:"
 decision, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED.
-The default build keeps the test tools. Both copy the English text to every other game language.
+The default build keeps the test tools. Both write every game language: localise.py translates the English text
+from tools/pmr/translations/, and a line no table has yet stays English.
 
 What it does, building by building (see pmr/README.md for the design):
 
@@ -54,6 +55,7 @@ only the employment lines and the extra group inserted; every other byte is the 
 """
 
 import argparse
+import collections
 import glob
 import json
 import re
@@ -66,6 +68,7 @@ import icons  # noqa: E402
 import pdx  # noqa: E402
 import private_investment  # noqa: E402
 import company_culture  # noqa: E402
+import localise  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Tunables. Change here and regenerate; nothing below hard-codes them.
@@ -333,7 +336,8 @@ THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the preview, 1024 x 1
 TEST_PROBES = os.path.join(ROOT, 'pmr', 'test_probes')
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')
-# The game's other languages (1.14.5 game/localization). Every build gives each the English text.
+# The game's other languages (1.14.5 game/localization), translated by localise.py, English where a line has no
+# translation yet.
 OTHER_LANGUAGES = ('braz_por', 'french', 'german', 'japanese', 'korean', 'polish', 'russian', 'simp_chinese',
                    'spanish', 'turkish')
 # The release build keeps only these log lines: the loop breaker's, and the one saying the mod loaded.
@@ -1279,10 +1283,14 @@ def main():
     if args.trace_from:
         write('common/scripted_effects/pmr_trace_effects.txt', header + trace_pm_effects(game, args.out, args.trace_from))
     write('localization/english/pmr_l_english.yml', 'l_english:\n' + '\n'.join(loc) + '\n')
-    # A game set to another language shows raw keys where it has no text: give it the English. Test builds too, or a
-    # tester playing in another language sees every PMR key raw.
+    # Every other language, translated (Pat 2026-10-18 14:37Z, #3). A game set to a language shows raw keys where it
+    # has no text, so a line its table lacks stays English, test builds included.
+    report['untranslated'] = {}
     for lang in OTHER_LANGUAGES:
-        write(f'localization/{lang}/pmr_l_{lang}.yml', f'l_{lang}:\n' + '\n'.join(loc) + '\n')
+        missing = collections.Counter()
+        write(f'localization/{lang}/pmr_l_{lang}.yml',
+              f'l_{lang}:\n' + '\n'.join(localise.translate(loc, lang, missing)) + '\n')
+        report['untranslated'][lang] = sorted(missing)
 
     # A test build for its own mod folder (--test-name) carries its own name and id, so the launcher lists it
     # beside the published mod and a playset holds one or the other.
@@ -1305,6 +1313,9 @@ def main():
     print(f"treated {len(report['treated'])} buildings, skipped {len(report['skipped'])}, "
           f"{len(report['blended'])} recipes blended by share ({len(blend_pms)} methods), "
           f"{len(report['company_types'])} company types may own retooling")
+    lacking = {lang: len(v) for lang, v in report['untranslated'].items() if v}
+    print('every language translated' if not lacking else
+          'lines left in English: ' + ', '.join(f'{lang} {n}' for lang, n in lacking.items()))
 
 
 # ---------------------------------------------------------------------------------------------

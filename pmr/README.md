@@ -23,6 +23,12 @@ workforce are the mix of the recipes its levels run.
   an `:out` line last means PMR had finished and the engine froze. A building below level 1 whose methods
   change also logs every active method (`PMR;rec=PM`), and on its 20th change in a day every share lock
   (key and xk groups) moves to `_any` with a flushed `L0_TRIP` line. Never combined with `--release`.
+- PMR's text is written in English and translated into the game's ten other languages from
+  `tools/pmr/translations/<language>.json` (2026-10-18, #3), one entry per distinct line of text with its numbers
+  and game names masked as `{0}`, `{1}`, ... (`tools/pmr/localise.py`). A line no table has yet stays English, and
+  the generator prints which languages have lines left in English. After changing any English text, run
+  `python tools/pmr/localise.py --game <game folder> --missing <language>` for the lines to translate. The tables
+  were drafted from the game's own translation of every vanilla term; a native speaker's corrections are welcome.
 
 The mod output is not committed. It is generated locally from the installed game's script and copied
 into the mod folder; only the generator, the design notes and the run sheet live in the repo. Target:
