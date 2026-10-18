@@ -14,3 +14,19 @@ pmr_wsp_marker_trait = {
 	weight = { value = 0 }
 	value = 0
 }
+
+# Second question (Pat 15:42Z): can an executive trait add an input the building's methods don't use? Engines, 5 a
+# week, on every level a company of yours owns. Earlier tests found a building static modifier's goods_*_add ignored by
+# the economy (vic3-1-14-script-findings), so a tooltip line with no real engines input is the expected null.
+pmr_wsp_input_trait = {
+	type = condition
+	texture = "gfx/interface/icons/character_trait_icons/ambitious.dds"
+
+	executive_modifier = {
+		goods_input_engines_add = 5
+	}
+
+	possible = { always = no }
+	weight = { value = 0 }
+	value = 0
+}

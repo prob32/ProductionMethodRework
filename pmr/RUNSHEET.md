@@ -12,16 +12,20 @@ error there means the mechanism below never ran, and a missing log line is then 
 
 ## Latest: Company Works share probe (q19, test mod; any save)
 
-One addition since q18, asked for in the Company Culture thread (2026-10-18 15:35Z). It is a log-only probe: it
-changes no gameplay. It asks whether a building can read how much of it your companies own, through an executive
-trait. If it can, Company Works can blend a company's special method in proportion to that company's own levels.
+One addition since q18, asked for in the Company Culture thread (2026-10-18 15:35Z and 15:42Z). It is a test-only
+probe with two questions. First, can a building read how much of it your companies own, through an executive trait?
+If it can, Company Works can blend a company's special method in proportion to that company's own levels. Second,
+can an executive trait add an input the building's methods don't use? If it can, the special method could sit on
+the trait itself. While it is on, your companies' buildings may take 5 engines a week as an extra input.
 
 - A new building modifier, `building_pmr_works_probe_marker`, that nothing else uses, set to 1 by a hidden
   executive trait ("Share Marker (probe)").
-- A decision, **PMR probe: company share marker (on/off)**, gives the trait to every company of yours (English
-  text in every language).
+- A second hidden executive trait, "Engine Input (probe)", carries `goods_input_engines_add = 5`.
+- A decision, **PMR probe: company share marker (on/off)**, gives both traits to every company of yours (English
+  text in every language). Taking it again removes both.
 - Each monthly pulse, every building of yours reads the marker: a `PMR;rec=WSP` line for each building that reads
-  non-zero, and one `PMR;rec=WSP_SUM` line that always prints.
+  non-zero, and one `PMR;rec=WSP_SUM` line that always prints, counting `executives` (share trait),
+  `input_executives` (engine trait), `buildings` and `nonzero`.
 
 Steps (PMR Test playset, new game or any save):
 
@@ -46,6 +50,23 @@ Steps (PMR Test playset, new game or any save):
 
 If two companies of yours share one building, its marker is their combined share; use a building with a single
 company owner for the clean check.
+
+**Second question: can an executive trait add a new input?** Do these after step 3, in the same month:
+
+1. Pick a company-owned building whose production methods use no engines, such as a farm, a logging camp, or a mine
+   on its first method.
+2. Open its goods breakdown (inputs) and its modifier tooltip.
+3. Open the engines market and look at where its demand comes from.
+
+| Result | Meaning (decided before the run) |
+| --- | --- |
+| Engines appear as a real input of the building, sized to the company's share (or levels), and show in engines demand | **Works.** A trait can add an input, so the special method can be a trait. Note the number to see how it scales: 5 × share, 5 per level, or a flat 5 |
+| The modifier tooltip shows "+5 engines input", but the building's inputs and engines demand don't change | The modifier lands but the economy ignores it (the expected null: a building static modifier behaved the same in earlier tests). The special method then has to be a real production method, a blend share |
+| Nothing anywhere, while `input_executives` > 0 in `WSP_SUM` | executive_modifier doesn't carry `goods_input_<g>_add`; same consequence as the row above |
+| `input_executives=0` | The trait wasn't added: a probe bug, not an answer |
+
+On a building that already uses engines the input rises by the same amount; read the clean case on a building with
+none. If both fail, the fallback is to count the levels the company's retool site converted.
 
 ## Still to check from q18: automation pays for itself (a new game shows it from the start)
 

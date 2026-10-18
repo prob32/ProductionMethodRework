@@ -2,11 +2,12 @@
 # Question: does a building read its company owners' share through an executive trait? Run sheet:
 # /mnt/project-files/pmr/mio/works-share-probe/RUN.md
 
-# Country scope (the player): every company's executive carries the probe trait.
+# Country scope (the player): every company's executive carries both probe traits.
 pmr_wsp_apply = {
 	every_company = {
 		executive ?= {
 			if = { limit = { NOT = { has_trait = pmr_wsp_marker_trait } } add_trait = pmr_wsp_marker_trait }
+			if = { limit = { NOT = { has_trait = pmr_wsp_input_trait } } add_trait = pmr_wsp_input_trait }
 		}
 	}
 }
@@ -15,6 +16,7 @@ pmr_wsp_strip = {
 	every_company = {
 		executive ?= {
 			if = { limit = { has_trait = pmr_wsp_marker_trait } remove_trait = pmr_wsp_marker_trait }
+			if = { limit = { has_trait = pmr_wsp_input_trait } remove_trait = pmr_wsp_input_trait }
 		}
 	}
 }
@@ -23,12 +25,17 @@ pmr_wsp_strip = {
 # always prints, so a silent probe can't be mistaken for a zero.
 pmr_wsp_log = {
 	set_variable = { name = pmr_wsp_execs value = 0 }
+	set_variable = { name = pmr_wsp_inexecs value = 0 }
 	set_variable = { name = pmr_wsp_seen value = 0 }
 	set_variable = { name = pmr_wsp_hit value = 0 }
 	every_company = {
 		if = {
 			limit = { executive ?= { has_trait = pmr_wsp_marker_trait } }
 			root = { change_variable = { name = pmr_wsp_execs add = 1 } }
+		}
+		if = {
+			limit = { executive ?= { has_trait = pmr_wsp_input_trait } }
+			root = { change_variable = { name = pmr_wsp_inexecs add = 1 } }
 		}
 	}
 	every_scope_state = {
@@ -50,8 +57,9 @@ pmr_wsp_log = {
 	}
 	capital = {
 		set_variable = { name = pmr_wsp_execs value = root.var:pmr_wsp_execs }
+		set_variable = { name = pmr_wsp_inexecs value = root.var:pmr_wsp_inexecs }
 		set_variable = { name = pmr_wsp_seen value = root.var:pmr_wsp_seen }
 		set_variable = { name = pmr_wsp_hit value = root.var:pmr_wsp_hit }
-		debug_log = "PMR;rec=WSP_SUM;date=[TimeKeeper.GetCurrentDate.GetString];executives=[THIS.Var('pmr_wsp_execs').GetValue|0];buildings=[THIS.Var('pmr_wsp_seen').GetValue|0];nonzero=[THIS.Var('pmr_wsp_hit').GetValue|0]"
+		debug_log = "PMR;rec=WSP_SUM;date=[TimeKeeper.GetCurrentDate.GetString];executives=[THIS.Var('pmr_wsp_execs').GetValue|0];input_executives=[THIS.Var('pmr_wsp_inexecs').GetValue|0];buildings=[THIS.Var('pmr_wsp_seen').GetValue|0];nonzero=[THIS.Var('pmr_wsp_hit').GetValue|0]"
 	}
 }
