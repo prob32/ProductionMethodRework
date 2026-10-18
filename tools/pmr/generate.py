@@ -1004,6 +1004,7 @@ def main():
         # another's lock, switched methods without end and the game froze. With _any first the lock
         # becomes _any and the share the old lock's step, both available, and the next tick relocks.
         elec_tiers = []
+        fold_techs = {}   # tier -> the technologies of the methods folded into it (pmr_best_<b> asks the owner)
         for i, r in enumerate(recipes, 1):
             if isinstance(r, ElectricRecipe):
                 autos = r.autos
@@ -1011,6 +1012,7 @@ def main():
             else:
                 autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER else []
                 blend, emp, elec, clamped = effective(r, autos)
+            fold_techs[i] = list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
             if elec:
                 elec_tiers.append(i)
             if clamped:
@@ -1088,7 +1090,7 @@ def main():
                     loc.append(f' {grp}:0 "${o.key}$ {label}"')
 
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, recipes)
-                            + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, [])))
+                            + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
@@ -1991,7 +1993,7 @@ def highest(ns, cond, leaf, ind='\t'):
     return find(0, len(ns) - 1, ind)
 
 
-def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
+def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -2002,6 +2004,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     Each recipe's share of the levels picks the method active in that recipe's share group, so the
     building's goods are the level-weighted mix of its recipes in its own production figures."""
     k = len(recipes)
+    fold_techs = fold_techs or {}
     slots = list(enumerate(priv_slots(b), 1))
 
     def slot_here(j):
@@ -2449,8 +2452,15 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
     # player has its technologies, as the levels the player owns there run on the player's know-how.
     # The host's own reach (pmr_hbest_now, the same without that) says whether the recipe's marker can
     # be activated there; a recipe gated by anything besides technology stays the host's call.
-    def abroad(r):
-        techs = getattr(r, 'techs', None) or getattr(r, 'unlock_techs', [])
+    # A recipe from AUTOMATION_FROM_TIER also needs its folded automation's technologies (fold_techs): its
+    # marker only knows its own, so without them an era 2 Baking Powder brought the era 5 Automated
+    # Bakery with it (PM balance review, 2026-10-18).
+    def techs_of(r, i):
+        return list(dict.fromkeys(list(getattr(r, 'techs', None) or getattr(r, 'unlock_techs', []))
+                                  + fold_techs.get(i, [])))
+
+    def abroad(r, i):
+        techs = techs_of(r, i)
         if not techs or getattr(r, 'gated_otherwise', False):
             return None
         return (f'AND = {{ has_variable = pmr_abroad_{b} global_var:pmr_player ?= {{ '
@@ -2462,12 +2472,14 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=()):
             r = recipes[i - 1]
             kw = 'if' if i == k else 'else_if'
             can = f'can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}'
-            if getattr(r, 'techs', None):
-                # the electric recipe: its newest recipe's and its automation's technologies, all of them
+            # the electric recipe: its newest recipe's and its automation's technologies, all of them; any
+            # recipe: its folded automation's
+            owner_techs = list(dict.fromkeys(list(getattr(r, 'techs', None) or []) + fold_techs.get(i, [])))
+            if owner_techs:
                 can = (f'AND = {{ {can} owner = {{ '
-                       + ' '.join(f'has_technology_researched = {t}' for t in r.techs) + ' } }')
-            if with_abroad and abroad(r):
-                can = f'OR = {{ {can} {abroad(r)} }}'
+                       + ' '.join(f'has_technology_researched = {t}' for t in owner_techs) + ' } }')
+            if with_abroad and abroad(r, i):
+                can = f'OR = {{ {can} {abroad(r, i)} }}'
             if i in elec_tiers:
                 can = f'AND = {{ {can} var:pmr_elec = 1 }}'
             out.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{\n\t\t\t{active(r)}\n'
