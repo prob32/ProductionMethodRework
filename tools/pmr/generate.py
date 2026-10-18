@@ -190,6 +190,19 @@ AUTOMATION_PRICE_CAP = 1.75    # the game clamps prices to +75% (PRICE_LADDER)
 AUTOMATION_LABOUR_MULT = 1.5   # workforce removed, x vanilla's, to the nearest AUTOMATION_JOBS_STEP
 AUTOMATION_JOBS_STEP = 250
 AUTOMATION_GOODS_STEP = 0.1    # goods rounded down to this, never below it, so a method keeps its demand
+# The profit calculation (Pat, 2026-10-18 17:06Z, for Company Culture's best-methods window; SUMMARY.md §3 of
+# /mnt/project-files/pmr/retool-profitability): each recipe's weekly profit per level at the state's prices,
+# wages at pmr_wage (AUTOMATION_WAGE until a measured local wage replaces it), the best one in pmr_pbest_<b>.
+# A recipe other than the current pick must beat it by PROFIT_STICK_UP of its margin when newer and
+# PROFIT_STICK_DOWN when older (vanilla's x0.95 and x0.75 stickiness, ai:1010-1011), and a recipe needing more
+# of an input whose price is at the +75% cap is vetoed (vanilla's x0.01 for shortages, ai:1001).
+# Pat, 17:14Z: the pick decides how new builds and retooling go (PROFIT_TARGET; False puts back the newest
+# runnable recipe), computed only when something changed or on a re-check about once a year (profit_effect).
+PROFIT_TARGET = True
+PROFIT_RECHECK_DAYS = 365
+PROFIT_RECHECK_SPREAD = 120    # re-checks fall 60 days either side, in 7 steps
+PROFIT_STICK_UP = 0.05
+PROFIT_STICK_DOWN = 0.25
 # Pat, 2026-10-13: a recipe that needs electricity (its own goods, its folded automation, or vanilla's
 # required_input_goods) can't become a building's target unless its state produces electricity, and
 # retooling towards it pauses while the state has none. One rule for government and private retooling.
@@ -543,6 +556,28 @@ def effective(r, autos):
     return {sec: mods for sec, mods in blend.items() if mods}, emp, elec, clamped
 
 
+def wage_weights(game):
+    weight = {}
+    for s in load_dir(game, 'pop_types'):
+        for k, n in s.objects().items():
+            w = pdx.get(n.value, 'wage_weight')
+            weight[k] = num(w.value, f'{k} wage_weight') if w else 1.0
+    return weight
+
+
+def recipe_econ(blend, emp, weight):
+    """goods per level ({good: amount}, outputs positive, inputs negative) and wage units per level of
+    an effective() blend, at full staffing and throughput 1."""
+    goods = {}
+    for mk, mv in blend.get('building_modifiers', {}).items():
+        for pre, sign in (('goods_output_', 1), ('goods_input_', -1)):
+            if mk.startswith(pre) and mk.endswith('_add'):
+                g = mk[len(pre):-len('_add')]
+                goods[g] = goods.get(g, 0) + sign * mv
+    wu = sum(v * weight.get(k[len('building_employment_'):-len('_add')], 1.0) for k, v in emp.items())
+    return {g: q for g, q in goods.items() if q}, wu
+
+
 def buff_automation(game, p_srcs, groups, b_srcs):
     """Pat, 2026-10-18 14:48Z (AUTOMATION_WAGE): rewrite every automation method in its vanilla file, before
     anything reads it, so the folded, electric and kept automation all carry the buff. Each method's
@@ -553,11 +588,7 @@ def buff_automation(game, p_srcs, groups, b_srcs):
     pms = {k: (n, s) for s in p_srcs for k, n in s.objects().items()}
     cost = {k: num(pdx.get(n.value, 'cost').value, f'{k} cost')
             for s in load_dir(game, 'goods') for k, n in s.objects().items() if pdx.get(n.value, 'cost')}
-    weight = {}
-    for s in load_dir(game, 'pop_types'):
-        for k, n in s.objects().items():
-            w = pdx.get(n.value, 'wage_weight')
-            weight[k] = num(w.value, f'{k} wage_weight') if w else 1.0
+    weight = wage_weights(game)
 
     def rec(p):
         return Recipe(p, *pms[p])
@@ -1071,6 +1102,8 @@ def main():
     gfx_root = game
     custom_new = []
     recipe_keys, recipe_tex, recipe_elec = {}, {}, {}
+    weight = wage_weights(game)
+    profit_goods = set()   # every good a recipe's profit is read at (pmr_price_<good>)
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
@@ -1155,6 +1188,7 @@ def main():
         # becomes _any and the share the old lock's step, both available, and the next tick relocks.
         elec_tiers = []
         fold_techs = {}   # tier -> the technologies of the methods folded into it (pmr_best_<b> asks the owner)
+        econ = []         # per recipe: (goods per level, wage units per level), for pmr_profit_<b>
         for i, r in enumerate(recipes, 1):
             if isinstance(r, ElectricRecipe):
                 autos = r.autos
@@ -1163,6 +1197,8 @@ def main():
                 autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER else []
                 blend, emp, elec, clamped = effective(r, autos)
             fold_techs[i] = list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
+            econ.append(recipe_econ(blend, emp, weight))
+            profit_goods.update(g for g in econ[-1][0] if goods_cost.get(g))
             if elec:
                 elec_tiers.append(i)
             if clamped:
@@ -1240,7 +1276,8 @@ def main():
                     loc.append(f' {grp}:0 "${o.key}$ {label}"')
 
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, recipes)
-                            + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs))
+                            + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
+                                          econ, goods_cost))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
@@ -1337,7 +1374,7 @@ def main():
           '# or the switching lock pm_pmr_key_<b>_<recipe>_any is active.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
-    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(option_goods(options)) + '\n'.join(tick_effects)
+    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-')))
     write('events/pmr_events.txt', header + EVENTS)
@@ -2158,7 +2195,7 @@ def highest(ns, cond, leaf, ind='\t'):
     return find(0, len(ns) - 1, ind)
 
 
-def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None):
+def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -2631,29 +2668,36 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None):
         return (f'AND = {{ has_variable = pmr_abroad_{b} global_var:pmr_player ?= {{ '
                 + ' '.join(f'has_technology_researched = {t}' for t in techs) + ' } }')
 
+    def reach(i, with_abroad):
+        """recipe i can become the target here: its marker can activate, the owner has its folded automation's
+        technologies, abroad the player's know-how counts (with_abroad), and an electric recipe has electricity."""
+        r = recipes[i - 1]
+        can = f'can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}'
+        # the electric recipe: its newest recipe's and its automation's technologies, all of them; any
+        # recipe: its folded automation's
+        owner_techs = list(dict.fromkeys(list(getattr(r, 'techs', None) or []) + fold_techs.get(i, [])))
+        if owner_techs:
+            can = (f'AND = {{ {can} owner = {{ '
+                   + ' '.join(f'has_technology_researched = {t}' for t in owner_techs) + ' } }')
+        if with_abroad and abroad(r, i):
+            can = f'OR = {{ {can} {abroad(r, i)} }}'
+        if i in elec_tiers:
+            can = f'AND = {{ {can} var:pmr_elec = 1 }}'
+        return can
+
     def best_effect(name, var, with_abroad):
         out = [f'{name} = {{\n\t{setv(var, 0)}\n']
         for i in range(k, 0, -1):
             r = recipes[i - 1]
             kw = 'if' if i == k else 'else_if'
-            can = f'can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }}'
-            # the electric recipe: its newest recipe's and its automation's technologies, all of them; any
-            # recipe: its folded automation's
-            owner_techs = list(dict.fromkeys(list(getattr(r, 'techs', None) or []) + fold_techs.get(i, [])))
-            if owner_techs:
-                can = (f'AND = {{ {can} owner = {{ '
-                       + ' '.join(f'has_technology_researched = {t}' for t in owner_techs) + ' } }')
-            if with_abroad and abroad(r, i):
-                can = f'OR = {{ {can} {abroad(r, i)} }}'
-            if i in elec_tiers:
-                can = f'AND = {{ {can} var:pmr_elec = 1 }}'
             out.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{\n\t\t\t{active(r)}\n'
-                       f'\t\t\t{can}\n'
+                       f'\t\t\t{reach(i, with_abroad)}\n'
                        f'\t\t}} }}\n\t\t{setv(var, i)}\n\t}}\n')
         out.append('}\n\n')
         return ''.join(out)
-    o.append(best_effect(f"pmr_best_{b}", "pmr_best_now", True))
+    o.append(best_effect(f"pmr_newest_{b}", "pmr_new_now", True))
     o.append(best_effect(f"pmr_hbest_{b}", "pmr_hbest_now", False))
+    o.append(profit_effect(bk, b, recipes, econ, goods_cost or {}, active, reach, setv, v))
 
     o.append(f'pmr_activate_{b} = {{\n')
     for i, r in enumerate(recipes, 1):
@@ -2681,6 +2725,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None):
              + f";earn={f('pmr_earn')};ai_w={f('pmr_ai_w')}"
              + ";unemp=[THIS.Var('pmr_unemp').GetValue|0]")
     done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
+
 
     # Every method change, including the tick's own, fires on_production_method_changed, and its tick
     # runs inside the change (seen in 1.14.5: a SWITCH line logged before the line of the tick that
@@ -2738,7 +2783,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None):
              '\t# a building used to keep its game-start recipe as the target until the next recipe was researched, so\n'
              '\t# new levels arrived on it and the government had nothing to retool). Switch to it; the switch below\n'
              '\t# then opens retooling like any other.\n'
-             f'\tif = {{\n\t\tlimit = {{ OR = {{ var:{v("pmr_best_now")} > var:{v("pmr_best")} var:{v("pmr_best_now")} > var:{v("pmr_to")} }} }}\n'
+             + (f'\t# The profit pick (PROFIT_TARGET) can also step down: any pick other than the target moves it.\n'
+                f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_best_now")} > 0 OR = {{ NOT = {{ var:{v("pmr_best_now")} = var:{v("pmr_best")} }} '
+                f'NOT = {{ var:{v("pmr_best_now")} = var:{v("pmr_to")} }} }} }}\n' if PROFIT_TARGET else
+                f'\tif = {{\n\t\tlimit = {{ OR = {{ var:{v("pmr_best_now")} > var:{v("pmr_best")} var:{v("pmr_best_now")} > var:{v("pmr_to")} }} }}\n') +
              f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
              f'\t\t{log("RESEARCH", bk, b, k, extra=best)}\n'
              '\t\t# Abroad, beyond what the host can run: the marker cannot follow, so the target moves\n'
@@ -2878,6 +2926,115 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None):
     return ''.join(o)
 
 
+def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
+    """State scope: pmr_profit_<b>, the profit calculation, and pmr_best_<b>, which makes its pick the target.
+    The interface Company Culture reads (fixed 2026-10-18; the best-methods windows), recipe index i as everywhere:
+      pmr_rg_<i>_<b>     goods margin per level per week at the state's prices (outputs minus inputs, GBP)
+      pmr_rw_<i>_<b>     wages per level per week: wage units x pmr_wage / 10,000
+      pmr_rm_<i>_<b>     pmr_rg - pmr_rw, the profit per level per week
+      pmr_rav_<i>_<b>    1 while recipe i can become the target here (pmr_newest_<b>'s rule)
+      pmr_rveto_<i>_<b>  1 while recipe i needs more of an input than the current pick and its price is at the cap
+      pmr_pbest_<b>      the pick: best pmr_rm of the runnable, unvetoed recipes, sticky (PROFIT_STICK_*); 0 if none
+    Throughput and the building's modifiers are left out: they scale every recipe alike.
+    Pat, 2026-10-18 17:14Z: the pick decides new builds and retooling, and must not cost the game speed. So the
+    calculation runs only when pmr_best_<b> finds a reason: no pick yet, the newest runnable recipe changed
+    (research, electricity, the player's know-how abroad), a new building, or its re-check timer ran out
+    (pmr_pchk_<b>, PROFIT_RECHECK_DAYS, spread over PROFIT_RECHECK_SPREAD so states don't all check on one day).
+    Every other tick reads the cached pick."""
+    k = len(recipes)
+    newest = (f'\tpmr_newest_{b} = yes\n')
+    if not econ or not PROFIT_TARGET:
+        return f'pmr_best_{b} = {{\n{newest}\t{setv("pmr_best_now", "var:" + v("pmr_new_now"))}\n}}\n\n'
+    xv = lambda name, i: f'{name}_{i}_{b}'   # noqa: E731
+    top = fmt(1 + PRICE_LADDER[-1] / 100)
+    goods = sorted({g for gd, _ in econ for g in gd if goods_cost.get(g)})
+    o = [f'pmr_profit_{b} = {{\n'
+         '\t# a good\'s price is read once a day per state (pmr_pxd_<good>), as for the trade-offs\n'
+         + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
+                   f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
+         + f'\tset_variable = {{ name = pmr_wage value = {AUTOMATION_WAGE} }}\n']
+    for i, (gd, wu) in enumerate(econ, 1):
+        o.append(f'\tset_variable = {{ name = {xv("pmr_rg", i)} value = 0 }}\n')
+        for g, q in sorted(gd.items()):
+            if goods_cost.get(g):
+                o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{g} }}\n'
+                         f'\tchange_variable = {{ name = pmr_t multiply = {fmt(q * goods_cost[g])} }}\n'
+                         f'\tchange_variable = {{ name = {xv("pmr_rg", i)} add = var:pmr_t }}\n')
+        o.append(f'\tset_variable = {{ name = {xv("pmr_rw", i)} value = var:pmr_wage }}\n'
+                 f'\tchange_variable = {{ name = {xv("pmr_rw", i)} multiply = {fmt(wu / 10000)} }}\n'
+                 f'\tset_variable = {{ name = {xv("pmr_rm", i)} value = var:{xv("pmr_rg", i)} }}\n'
+                 f'\tchange_variable = {{ name = {xv("pmr_rm", i)} subtract = var:{xv("pmr_rw", i)} }}\n'
+                 f'\tset_variable = {{ name = {xv("pmr_rav", i)} value = 0 }}\n'
+                 f'\tif = {{ limit = {{ OR = {{ {active(recipes[i - 1])} {reach(i, True)} }} }} '
+                 f'set_variable = {{ name = {xv("pmr_rav", i)} value = 1 }} }}\n')
+    # the current pick: the last one, else PMR's target, else the recipe the building runs, else the oldest
+    o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_pbest")} }} }}\n\t\t{setv("pmr_pbest", 1)}\n'
+             f'\t\tif = {{ limit = {{ has_variable = {v("pmr_to")} var:{v("pmr_to")} > 0 }} '
+             f'{setv("pmr_pbest", "var:" + v("pmr_to"))} }}\n'
+             + ''.join(f'\t\telse_if = {{ limit = {{ {active(r)} }} {setv("pmr_pbest", i)} }}\n'
+                       for i, r in enumerate(recipes, 1) if i > 1)
+             + '\t}\n')
+    # the veto: an input recipe i needs more of than the pick c, at the price cap
+    inputs = [{g: -q for g, q in gd.items() if q < 0 and goods_cost.get(g)} for gd, _ in econ]
+    for i in range(1, k + 1):
+        o.append(f'\tset_variable = {{ name = {xv("pmr_rveto", i)} value = 0 }}\n')
+        for c in range(1, k + 1):
+            more = [g for g, q in sorted(inputs[i - 1].items()) if q > inputs[c - 1].get(g, 0) + 1e-9]
+            if c != i and more:
+                o.append(f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {c} OR = {{ '
+                         + ' '.join(f'var:pmr_px_{g} >= {top}' for g in more)
+                         + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
+    # the pick, against the current one's hurdles (pmr_hu newer, pmr_hd older); a pick that can't run sets none
+    o.append('\tset_variable = { name = pmr_hu value = 0 }\n\tset_variable = { name = pmr_hd value = 0 }\n'
+             '\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
+    for c in range(1, k + 1):
+        o.append(f'\t{"if" if c == 1 else "else_if"} = {{ limit = {{ var:{v("pmr_pbest")} = {c} var:{xv("pmr_rav", c)} = 1 }} '
+                 f'set_variable = {{ name = pmr_hu value = var:{xv("pmr_rm", c)} }} }}\n')
+    o.append('\tif = { limit = { var:pmr_hu < 0 } change_variable = { name = pmr_hu multiply = -1 } }\n'
+             '\tset_variable = { name = pmr_hd value = var:pmr_hu }\n'
+             f'\tchange_variable = {{ name = pmr_hu multiply = {fmt(PROFIT_STICK_UP)} }}\n'
+             f'\tchange_variable = {{ name = pmr_hd multiply = {fmt(PROFIT_STICK_DOWN)} }}\n')
+    for i in range(1, k + 1):
+        o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_rav", i)} = 1 var:{xv("pmr_rveto", i)} = 0 }}\n'
+                 f'\t\tset_variable = {{ name = pmr_t value = var:{xv("pmr_rm", i)} }}\n'
+                 f'\t\tif = {{ limit = {{ var:{v("pmr_pbest")} < {i} }} change_variable = {{ name = pmr_t subtract = var:pmr_hu }} }}\n'
+                 f'\t\telse_if = {{ limit = {{ var:{v("pmr_pbest")} > {i} }} change_variable = {{ name = pmr_t subtract = var:pmr_hd }} }}\n'
+                 f'\t\tif = {{ limit = {{ var:pmr_t > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:pmr_t }} '
+                 f'set_variable = {{ name = pmr_pk value = {i} }} }}\n\t}}\n')
+    o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n}}\n\n')
+
+    # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
+    def var(name, d=0):
+        return f"[THIS.Var('{name}').GetValue|{d}]"
+    per = lambda name, d=0: '/'.join(var(xv(name, i), d) for i in range(1, k + 1))   # noqa: E731
+    line = (f'PMR;rec=PROFIT;date=[TimeKeeper.GetCurrentDate.GetString];'
+            f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+            f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
+            f"wage={var('pmr_wage')};rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
+            f"can={per('pmr_rav')};veto={per('pmr_rveto')};px="
+            + ','.join(f"{g}:{var('pmr_px_' + g, 2)}" for g in goods))
+    spread = ' '.join(f'1 = {{ set_variable = {{ name = pmr_pchk_{b} value = yes days = {d} }} }}'
+                      for d in range(PROFIT_RECHECK_DAYS - PROFIT_RECHECK_SPREAD // 2,
+                                     PROFIT_RECHECK_DAYS + PROFIT_RECHECK_SPREAD // 2 + 1, PROFIT_RECHECK_SPREAD // 6))
+    o.append(f'pmr_best_{b} = {{\n{newest}'
+             f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pchk_{b} }} '
+             f'NOT = {{ has_variable = {v("pmr_new")} }} NOT = {{ var:{v("pmr_new")} = var:{v("pmr_new_now")} }} '
+             f'has_variable = {v("pmr_new_build")} }} }}\n'
+             f'\t\tpmr_profit_{b} = yes\n\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
+             f'\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
+             f'\t\trandom_list = {{ {spread} }}\n'
+             f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line}" }}\n\t}}\n'
+             f'\t{setv("pmr_best_now", "var:" + v("pmr_pbest"))}\n}}\n\n')
+    return ''.join(o)
+
+
+def moved(b):
+    """the research changed the building's target candidate (pmr_best_<b> has just run)"""
+    if PROFIT_TARGET:
+        return f'NOT = {{ var:pmr_best_now_{b} = var:pmr_best_{b} }}'
+    return f'var:pmr_best_now_{b} > var:pmr_best_{b}'
+
+
 def shared_effects(price_goods=()):
     return ''.join(price_effect(g) for g in price_goods) + '''# State scope. pmr_elec: 1 while the state produces electricity (a local good, so only the state's
 # own power plants count). pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp:
@@ -2949,7 +3106,7 @@ def dispatch_effects(buildings):
         o.append(f'\tif = {{\n\t\tlimit = {{ {live(bk)} }}\n'
                  f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_mix_{b} }} }} pmr_tick_{b} = yes }}\n'
                  f'\t\telse = {{\n\t\t\tpmr_best_{b} = yes\n'
-                 f'\t\t\tif = {{ limit = {{ var:pmr_best_now_{b} > var:pmr_best_{b} }} pmr_tick_{b} = yes }}\n'
+                 f'\t\t\tif = {{ limit = {{ {moved(b)} }} pmr_tick_{b} = yes }}\n'
                  '\t\t}\n\t}\n')
     o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
              '# State scope, another country\'s state where the player owns levels (pmr_abroad_any), when the\n'
@@ -2959,7 +3116,7 @@ def dispatch_effects(buildings):
         b = short(bk)
         o.append(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} has_variable = pmr_mix_{b} {live(bk)} }}\n'
                  f'\t\tpmr_best_{b} = yes\n'
-                 f'\t\tif = {{ limit = {{ var:pmr_best_now_{b} > var:pmr_best_{b} }} pmr_tick_{b} = yes }}\n'
+                 f'\t\tif = {{ limit = {{ {moved(b)} }} pmr_tick_{b} = yes }}\n'
                  '\t}\n')
     o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
              '# Country scope: the country\'s totals for every PMR building type (Buildings tab rows).\n'
