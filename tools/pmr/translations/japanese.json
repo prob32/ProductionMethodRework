@@ -327,5 +327,10 @@
  " (skipped: an input is at the +{0}% price cap)": " (除外: 投入物の価格が +{0}% の上限)",
  "Most profitable: #bold {0}#!, @money!{1} per level a week": "最も収益性が高い: #bold {0}#!、レベルあたり週 @money!{1}",
  "{0}: @money!{1} per level a week{2}": "{0}: レベルあたり週 @money!{1}{2}",
- "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "この州の価格での、賃金を含むレベルあたりの週間利益。新しいレベルと改修は最も収益性の高い方式に従います。"
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "この州の価格での、賃金を含むレベルあたりの週間利益。新しいレベルと改修は最も収益性の高い方式に従います。",
+ "Private Owners' Methods": "民間所有者の方式",
+ "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "金融街と荘園は、各州で最も収益性の高い方式で建設・改修します。各行は、その建物のレベルが最も多いあなたの州の価格(最終確認時点)での建物の種類です。",
+ "@money!{0} per level a week{1}": "レベルあたり週 @money!{0}{1}",
+ "Picked in states holding #bold {0}#! of your levels": "あなたのレベルの #bold {0}#! を持つ州で選択",
+ "Running on #bold {0}#! of your levels": "あなたのレベルの #bold {0}#! で稼働中"
 }

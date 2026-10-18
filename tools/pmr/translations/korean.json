@@ -327,5 +327,10 @@
  " (skipped: an input is at the +{0}% price cap)": " (제외됨: 투입물 가격이 +{0}% 상한에 도달)",
  "Most profitable: #bold {0}#!, @money!{1} per level a week": "가장 수익성 높음: #bold {0}#!, 레벨당 주간 @money!{1}",
  "{0}: @money!{1} per level a week{2}": "{0}: 레벨당 주간 @money!{1}{2}",
- "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "이 주의 가격 기준, 임금을 포함한 레벨당 주간 이익입니다. 새 레벨과 개조는 가장 수익성 높은 방식을 따릅니다."
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "이 주의 가격 기준, 임금을 포함한 레벨당 주간 이익입니다. 새 레벨과 개조는 가장 수익성 높은 방식을 따릅니다.",
+ "Private Owners' Methods": "민간 소유주의 방식",
+ "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "금융 지구와 장원은 각 주에서 가장 수익성 높은 방식으로 건설하고 개조합니다. 각 행은 해당 건물 레벨이 가장 많은 주의 가격(마지막 확인 기준)으로 본 건물 유형입니다.",
+ "@money!{0} per level a week{1}": "레벨당 주간 @money!{0}{1}",
+ "Picked in states holding #bold {0}#! of your levels": "전체 레벨의 #bold {0}#!를 보유한 주에서 선택됨",
+ "Running on #bold {0}#! of your levels": "전체 레벨의 #bold {0}#!에서 가동 중"
 }

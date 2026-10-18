@@ -627,7 +627,9 @@ def sguis():
             '# starts the weekly clock if it is not running.\n'
             'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n\t\tpmr_pi_v2 = yes\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n\t\t}\n'
-            '\t\tpmr_pi_start_clock = yes\n\t}\n}\n\n')
+            '\t\tpmr_pi_start_clock = yes\n'
+            '\t\t# the Methods view (generate.py methods_view_effects), from the cached profit picks\n'
+            '\t\tpmr_mv_refresh = yes\n\t}\n}\n\n')
     laws = sorted(set(POLICY_LAWS.values()))
     any_law = 'OR = { ' + ' '.join(f'has_law_or_variant = law_type:{law}' for law in laws) + ' }'
     out += ('# Policy cards. is_shown: the country may hold a policy at all (Interventionism or Laissez-faire, Pat\n'
@@ -1767,6 +1769,12 @@ def private_tab():
         # the law's lock on the rows is in each coin's tooltip only (Pat 20:25Z: no line under the header)
         f'{i1}widget = {{\n{i1}\tsize = {{ 540 6 }}\n{i1}}}\n'
         + ''.join(priority_row(g, i1) for g, *_r in GROUPS) +
+        # 5b. what private owners build and retool to (Pat 2026-10-18 18:00Z; rows by generate.py's methods view)
+        header('PMR_MV_HEADER', i1) +
+        f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 14 6 }}\n'
+        f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = nobaseline\n{i1}\tusing = fontsize_small\n'
+        f'{i1}\ttext = "PMR_MV_INTRO"\n{i1}}}\n'
+        f'{i1}pmr_methods_view = {{}}\n' +
         # 6. private construction, then recent investments
         f'{i1}default_header_2texts = {{\n{i1}\tblockoverride "text1" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_HEADER"\n{i1}\t}}\n'
         f'{i1}\tblockoverride "text2" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_COUNT"\n{i1}\t}}\n{i1}}}\n'

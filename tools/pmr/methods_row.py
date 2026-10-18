@@ -1,0 +1,62 @@
+"""The profit Methods row, shared by every window that shows what a building type's owners would run.
+
+Pat, 2026-10-18 18:00Z: the financial district / manor house view in the Private tab first, the company window in the
+Company Culture tab reusing the same row (one layout, one set of variables). A row is one building type: its icon, then
+each recipe's icon with the profit per level a week under it, a gold square behind the most profitable recipe (the
+pick), and a faded icon for a recipe that can't run here or is skipped for an input at the +75% price cap.
+
+The row reads the profit calculation's interface variables (generate.py profit_effect) from whatever scope the caller
+names, so the caller decides where the prices come from:
+    pmr_rm_<i>_<b>     profit per level a week          pmr_rav_<i>_<b>    1 while recipe i can run
+    pmr_rveto_<i>_<b>  1 while recipe i is skipped      pmr_pbest_<b>      the pick (recipe index, 0 if none)
+read(name) returns the GUI expression for one of them, e.g. lambda n: f"GetPlayer.MakeScope.Var('{n}').GetValue" for
+country copies, or f"<a state>.MakeScope.Var('{n}').GetValue" for a state's own.
+
+    methods_row(bk, recipes, read, tip, ind, visible=None) -> GUI text
+        recipes: [(recipe key, icon texture)], oldest first, as PMR numbers them
+        tip(i):  the tooltip key of recipe i's icon (the caller writes the loc; recipe_tip_lines helps)
+"""
+
+WHITE = 'gfx/interface/backgrounds/white.dds'
+GOLD = '0.74 0.60 0.30 0.55'   # the Methods list's highlight (company_culture.py), here on the pick
+ROW_W, ROW_H, CELL_W = 540, 70, 58
+
+
+def gt(expr, n):
+    return f"GreaterThan_CFixedPoint({expr}, '(CFixedPoint){n}')"
+
+
+def eq(expr, n):
+    return f"EqualTo_CFixedPoint({expr}, '(CFixedPoint){n}')"
+
+
+def methods_row(bk, recipes, read, tip, ind, visible=None):
+    b = bk[len('building_'):]
+    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
+    vis = f'{i1}visible = "[{visible}]"\n' if visible else ''
+    out = (f'{ind}widget = {{\n{vis}{i1}size = {{ {ROW_W} {ROW_H} }}\n{i1}parentanchor = hcenter\n'
+           f'{i1}background = {{\n{i1}\tusing = entry_bg\n{i1}}}\n'
+           f'{i1}icon = {{\n{i2}position = {{ 6 0 }}\n{i2}parentanchor = vcenter\n{i2}size = {{ 54 54 }}\n'
+           f'{i2}datacontext = "[GetBuildingType(\'{bk}\')]"\n{i2}texture = "[BuildingType.GetIcon]"\n'
+           f'{i2}tooltipwidget = {{\n{i2}\tFancyTooltip_BuildingType = {{}}\n{i2}}}\n{i1}}}\n'
+           f'{i1}flowcontainer = {{\n{i2}position = {{ 66 4 }}\n{i2}spacing = 2\n')
+    for i, (key, tex) in enumerate(recipes, 1):
+        pick = eq(read(f'pmr_pbest_{b}'), i)
+        usable = f"And({eq(read(f'pmr_rav_{i}_{b}'), 1)}, Not({eq(read(f'pmr_rveto_{i}_{b}'), 1)}))"
+        out += (f'{i2}widget = {{\n{i3}size = {{ {CELL_W} 62 }}\n{i3}tooltip = "{tip(i)}"\n'
+                f'{i3}icon = {{\n{i3}\tvisible = "[{pick}]"\n{i3}\tposition = {{ 5 0 }}\n{i3}\tsize = {{ 48 48 }}\n'
+                f'{i3}\ttexture = "{WHITE}"\n{i3}\tcolor = {{ {GOLD} }}\n{i3}\talwaystransparent = yes\n{i3}}}\n'
+                f'{i3}icon = {{\n{i3}\tposition = {{ 9 4 }}\n{i3}\tsize = {{ 40 40 }}\n{i3}\ttexture = "{tex}"\n'
+                f'{i3}\talpha = "[TransparentIfFalse({usable})]"\n{i3}\talwaystransparent = yes\n{i3}}}\n'
+                f'{i3}textbox = {{\n{i3}\tposition = {{ 0 47 }}\n{i3}\tsize = {{ {CELL_W} 15 }}\n'
+                f'{i3}\talign = hcenter|nobaseline\n{i3}\tusing = fontsize_small\n'
+                f'{i3}\traw_text = "@money![{read(f"pmr_rm_{i}_{b}")}|0]"\n{i3}\talwaystransparent = yes\n{i3}}}\n'
+                f'{i2}}}\n')
+    return out + f'{i1}}}\n{ind}}}\n'
+
+
+def recipe_tip_lines(bk, i, key, read, note):
+    """The first lines of recipe i's tooltip: its name, and its profit with the caller's note (a [GetCustom(...)]
+    fragment naming the pick, a recipe that can't run, or one skipped at the price cap)."""
+    b = bk[len('building_'):]
+    return [f'#bold ${key}$#!', f"@money![{read(f'pmr_rm_{i}_{b}')}|0] per level a week{note}"]

@@ -327,5 +327,10 @@
  " (skipped: an input is at the +{0}% price cap)": " （已跳过：某项投入品价格已达 +{0}% 上限）",
  "Most profitable: #bold {0}#!, @money!{1} per level a week": "最赚钱：#bold {0}#!，每级每周 @money!{1}",
  "{0}: @money!{1} per level a week{2}": "{0}：每级每周 @money!{1}{2}",
- "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "按本州价格计算的每级每周利润，已计入工资。新等级和改造都会采用最赚钱的方法。"
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "按本州价格计算的每级每周利润，已计入工资。新等级和改造都会采用最赚钱的方法。",
+ "Private Owners' Methods": "私人业主的生产方式",
+ "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "金融区和庄园会按各州最赚钱的方法建造和改造。每一行是一种建筑类型，按你拥有其等级最多的州的价格计算（以上次检查为准）。",
+ "@money!{0} per level a week{1}": "每级每周 @money!{0}{1}",
+ "Picked in states holding #bold {0}#! of your levels": "在拥有你 #bold {0}#! 等级的州中被选中",
+ "Running on #bold {0}#! of your levels": "在你 #bold {0}#! 的等级上运行"
 }

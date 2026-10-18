@@ -327,5 +327,10 @@
  " (skipped: an input is at the +{0}% price cap)": " (atlandı: bir girdi +%{0} fiyat sınırında)",
  "Most profitable: #bold {0}#!, @money!{1} per level a week": "En kârlı: #bold {0}#!, seviye başına haftada @money!{1}",
  "{0}: @money!{1} per level a week{2}": "{0}: seviye başına haftada @money!{1}{2}",
- "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Bu eyaletin fiyatlarıyla, ücretler dahil, seviye başına haftalık kâr. Yeni seviyeler ve yeniden donatım en kârlı yöntemi izler."
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Bu eyaletin fiyatlarıyla, ücretler dahil, seviye başına haftalık kâr. Yeni seviyeler ve yeniden donatım en kârlı yöntemi izler.",
+ "Private Owners' Methods": "Özel Sahiplerin Yöntemleri",
+ "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "Finans bölgeleri ve malikâneler her eyaletin en kârlı yöntemine göre inşa eder ve yeniden donatır. Her satır, son kontrolüne göre, o binadan en çok seviyeye sahip eyaletinizin fiyatlarıyla bir bina türüdür.",
+ "@money!{0} per level a week{1}": "Seviye başına haftada @money!{0}{1}",
+ "Picked in states holding #bold {0}#! of your levels": "Seviyelerinizin #bold {0}#! kadarını tutan eyaletlerde seçildi",
+ "Running on #bold {0}#! of your levels": "Seviyelerinizin #bold {0}#! kadarında çalışıyor"
 }

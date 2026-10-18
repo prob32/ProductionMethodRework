@@ -327,5 +327,10 @@
  " (skipped: an input is at the +{0}% price cap)": " (пропущен: цена одного из ресурсов на пределе +{0}%)",
  "Most profitable: #bold {0}#!, @money!{1} per level a week": "Самый прибыльный: #bold {0}#!, @money!{1} за уровень в неделю",
  "{0}: @money!{1} per level a week{2}": "{0}: @money!{1} за уровень в неделю{2}",
- "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Прибыль за уровень в неделю по ценам этой области с учётом зарплат. Новые уровни и переоснащение следуют самому прибыльному методу."
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Прибыль за уровень в неделю по ценам этой области с учётом зарплат. Новые уровни и переоснащение следуют самому прибыльному методу.",
+ "Private Owners' Methods": "Методы частных владельцев",
+ "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "Финансовые кварталы и поместья строят и переоснащают на самый прибыльный метод каждой области. Каждая строка — тип здания по ценам вашей области с наибольшим числом его уровней, на момент последней проверки.",
+ "@money!{0} per level a week{1}": "@money!{0} за уровень в неделю{1}",
+ "Picked in states holding #bold {0}#! of your levels": "Выбран в областях с #bold {0}#! ваших уровней",
+ "Running on #bold {0}#! of your levels": "Работает на #bold {0}#! ваших уровней"
 }

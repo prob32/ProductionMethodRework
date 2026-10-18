@@ -327,5 +327,10 @@
  " (skipped: an input is at the +{0}% price cap)": " (pominięta: jeden z surowców jest na limicie ceny +{0}%)",
  "Most profitable: #bold {0}#!, @money!{1} per level a week": "Najbardziej opłacalna: #bold {0}#!, @money!{1} na poziom tygodniowo",
  "{0}: @money!{1} per level a week{2}": "{0}: @money!{1} na poziom tygodniowo{2}",
- "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Zysk na poziom tygodniowo po cenach tego stanu, z płacami. Nowe poziomy i przezbrajanie podążają za najbardziej opłacalną metodą."
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Zysk na poziom tygodniowo po cenach tego stanu, z płacami. Nowe poziomy i przezbrajanie podążają za najbardziej opłacalną metodą.",
+ "Private Owners' Methods": "Metody prywatnych właścicieli",
+ "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "Dzielnice finansowe i dwory budują i przezbrajają na najbardziej opłacalną metodę danego stanu. Każdy wiersz to typ budynku po cenach Twojego stanu z największą liczbą jego poziomów, według ostatniego sprawdzenia.",
+ "@money!{0} per level a week{1}": "@money!{0} na poziom tygodniowo{1}",
+ "Picked in states holding #bold {0}#! of your levels": "Wybrana w stanach z #bold {0}#! Twoich poziomów",
+ "Running on #bold {0}#! of your levels": "Działa na #bold {0}#! Twoich poziomów"
 }

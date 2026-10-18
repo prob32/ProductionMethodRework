@@ -69,6 +69,7 @@ import icons  # noqa: E402
 import pdx  # noqa: E402
 import private_investment  # noqa: E402
 import company_culture  # noqa: E402
+import methods_row  # noqa: E402
 import localise  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
@@ -1424,6 +1425,7 @@ def main():
               for bk, conv in options.items() if conv}
     # the pick row, on every type the profit calculation covers (PROFIT_TARGET)
     pick_ui = {bk: recipe_keys[bk] for bk in dispatch} if PROFIT_TARGET else {}
+    mv_keys = pick_ui   # the Private tab's Methods view covers the same types
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
@@ -1434,7 +1436,10 @@ def main():
                     '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
                     for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_)
           + '\n# State scope. The profit pick\'s name and each recipe\'s note on the pick row (pick_row).\n'
-          + pick_custom_loc(pick_ui))
+          + pick_custom_loc(pick_ui) + (methods_view_custom_loc(mv_keys) if mv_keys else ''))
+    if mv_keys:
+        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys))
+        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex), bom=False)
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
@@ -1465,7 +1470,7 @@ def main():
           bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
-    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui)
+    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
@@ -3848,6 +3853,88 @@ def pick_row(bk, ind):
             f'{ind}\ttextbox = {{\n{i2}position = {{ {ROW_X} 0 }}\n{i2}size = {{ {ROW_W + 235} {OPTION_ROW_H} }}\n'
             f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "PMR_PICK_ROW_{b}"\n{i2}tooltip = "PMR_PICK_TOOLTIP_{b}"\n'
             f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
+
+
+# The Private tab's Methods view (Pat, 2026-10-18 18:00Z): what financial districts and manor houses build and
+# retool to. They follow each state's profit pick (pmr_pbest_<b>); script can't tell the two apart within a
+# building, so the view is the country's private side. Each row is one building type the country has, at the prices
+# of its state with the most levels of the type (the interface variables copied onto the country under the same
+# names), and each recipe's tooltip adds how much of the country picks it (pmr_mv_ps_<i>_<b>, a share of the
+# levels) and runs it (pmr_c_sh_<i>_<b>). Recounted only when the tab opens (pmr_pc_refresh_sgui runs
+# pmr_mv_refresh), from the cached picks: opening it never recalculates or moves a target.
+MV_COUNTRY = 'GetPlayer'
+
+
+def mv_read(name):
+    return f"{MV_COUNTRY}.MakeScope.Var('{name}').GetValue"
+
+
+def methods_view_effects(recipe_keys):
+    """Country scope: pmr_mv_<b> per building type and pmr_mv_refresh for all of them."""
+    o = ['# Country scope. The Private tab\'s Methods view (methods_view_effects in generate.py).\n\n']
+    for bk, keys in recipe_keys.items():
+        b, k = short(bk), len(keys)
+        per = [f'pmr_rm_{i}_{b}' for i in range(1, k + 1)] + [f'pmr_rav_{i}_{b}' for i in range(1, k + 1)] \
+            + [f'pmr_rveto_{i}_{b}' for i in range(1, k + 1)] + [f'pmr_pbest_{b}']
+        o.append(f'pmr_mv_{b} = {{\n\tsave_temporary_scope_as = pmr_ctry\n'
+                 f'\tset_variable = {{ name = pmr_mv_lv_{b} value = 0 }}\n\tset_variable = {{ name = pmr_mv_max_{b} value = 0 }}\n'
+                 f'\tset_variable = {{ name = pmr_pbest_{b} value = 0 }}\n'
+                 + ''.join(f'\tset_variable = {{ name = pmr_mv_ps_{i}_{b} value = 0 }}\n' for i in range(1, k + 1))
+                 + f'\tevery_scope_state = {{\n\t\tlimit = {{ has_variable = pmr_level_{b} var:pmr_level_{b} > 0 '
+                 f'has_variable = pmr_pbest_{b} has_variable = pmr_rm_1_{b} }}\n'
+                 '\t\tsave_temporary_scope_as = pmr_st\n'
+                 f'\t\towner = {{ change_variable = {{ name = pmr_mv_lv_{b} add = scope:pmr_st.var:pmr_level_{b} }} }}\n'
+                 + ''.join(f'\t\tif = {{ limit = {{ var:pmr_pbest_{b} = {i} }} '
+                           f'owner = {{ change_variable = {{ name = pmr_mv_ps_{i}_{b} add = scope:pmr_st.var:pmr_level_{b} }} }} }}\n'
+                           for i in range(1, k + 1))
+                 + f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_level_{b} > scope:pmr_ctry.var:pmr_mv_max_{b} }}\n\t\t\towner = {{\n'
+                 f'\t\t\t\tset_variable = {{ name = pmr_mv_max_{b} value = scope:pmr_st.var:pmr_level_{b} }}\n'
+                 + ''.join(f'\t\t\t\tset_variable = {{ name = {n} value = scope:pmr_st.var:{n} }}\n' for n in per)
+                 + '\t\t\t}\n\t\t}\n\t}\n'
+                 f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 }}\n'
+                 + ''.join(f'\t\tchange_variable = {{ name = pmr_mv_ps_{i}_{b} divide = var:pmr_mv_lv_{b} }}\n'
+                           for i in range(1, k + 1))
+                 + '\t}\n}\n\n')
+    o.append('pmr_mv_refresh = {\n' + ''.join(f'\tpmr_mv_{short(bk)} = yes\n' for bk in recipe_keys) + '}\n')
+    return ''.join(o)
+
+
+def methods_view_gui(recipe_keys, recipe_tex):
+    rows = ''.join(methods_row.methods_row(
+        bk, list(zip(keys, recipe_tex[bk])), mv_read, lambda i, b=short(bk): f'PMR_MV_TIP_{b}_{i}', '\t\t',
+        visible=methods_row.gt(mv_read(f'pmr_mv_lv_{short(bk)}'), 0)) for bk, keys in recipe_keys.items())
+    return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The Private tab\'s Methods view; rows by\n'
+            '# tools/pmr/methods_row.py, shared with the Company Culture tab.\n'
+            'types pmr_methods_view {\n\ttype pmr_methods_view = flowcontainer {\n\t\tdirection = vertical\n'
+            '\t\tparentanchor = hcenter\n\t\tspacing = 4\n\t\tignoreinvisible = yes\n'
+            + rows + '\t}\n}\n')
+
+
+def methods_view_custom_loc(recipe_keys):
+    out = ['\n# Country scope. A note after each recipe\'s profit in the Private tab\'s Methods view.\n']
+    for bk, keys in recipe_keys.items():
+        b = short(bk)
+        for i in range(1, len(keys) + 1):
+            out.append(f'pmr_mvnote_{b}_{i} = {{\n\ttype = country\n\trandom_valid = no\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = PMR_PICK_NOTE_BEST\n\t}}\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rav_{i}_{b} = 0 }}\n\t\tlocalization_key = PMR_PICK_NOTE_LOCKED\n\t}}\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rveto_{i}_{b} = 1 }}\n\t\tlocalization_key = PMR_PICK_NOTE_VETO\n\t}}\n'
+                       '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
+    return ''.join(out)
+
+
+def methods_view_loc(recipe_keys):
+    loc = [' PMR_MV_HEADER:0 "Private Owners\' Methods"',
+           ' PMR_MV_INTRO:0 "Financial districts and manor houses build and retool to the most profitable recipe of each '
+           'state. Each row is a building type at the prices of your state with the most levels of it, as of its last check."']
+    for bk, keys in recipe_keys.items():
+        b = short(bk)
+        for i, key in enumerate(keys, 1):
+            lines = methods_row.recipe_tip_lines(bk, i, key, mv_read, f"[{MV_COUNTRY}.GetCustom('pmr_mvnote_{b}_{i}')]")
+            lines += [f"Picked in states holding #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#! of your levels",
+                      f"Running on #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#! of your levels"]
+            loc.append(f' PMR_MV_TIP_{b}_{i}:0 "' + '\\n'.join(lines) + '"')
+    return loc
 
 
 def pick_custom_loc(pick_ui):
