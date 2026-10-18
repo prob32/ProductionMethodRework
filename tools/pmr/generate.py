@@ -4693,7 +4693,21 @@ def patch_browser_tabs(text, on):
     if text[end:end + 10] != '\n\t\t\t}\n\t\t}\n':
         raise SystemExit('building_browser_panel.gui: the scroll area no longer ends after its second row; '
                          'update patch_browser_tabs')
-    return text[:end] + '\n' + view + text[end + 1:]
+    text = text[:end] + '\n' + view + text[end + 1:]
+    # The side Buildings list (compact_building_browser_panel, Pat 20:37Z: "where is our second tab under buildings"):
+    # its Building Registry button opens the Buildings tab, and a second button opens Private Owners' Methods.
+    reg = ('\t\t\t\tbutton = {\n\t\t\t\t\tparentanchor = hcenter\n\t\t\t\t\tusing = default_button_primary_big \n'
+           '\t\t\t\t\ttext = "BUILDING_BROWSER"\n\t\t\t\t\talign = hcenter|nobaseline\n\t\t\t\t\tsize = { @panel_width 50 }\n'
+           '\t\t\t\t\tusing = fontsize_large\n'
+           '\t\t\t\t\tonclick = "[InformationPanelBar.OpenBuildingBrowserPanel( GetPlayer.Self )]"\n\t\t\t\t}\n')
+    open_ = '\t\t\t\t\tonclick = "[InformationPanelBar.OpenBuildingBrowserPanel( GetPlayer.Self )]"\n'
+    once(reg, reg.replace(open_, f'\t\t\t\t\tonclick = "[GetVariableSystem.Clear(\'{MV_TAB}\')]"  # PMR\n' + open_)
+         + '\t\t\t\t# PMR: straight to Private Owners\' Methods\n'
+         '\t\t\t\tbutton = {\n\t\t\t\t\tparentanchor = hcenter\n\t\t\t\t\tusing = default_button\n'
+         '\t\t\t\t\ttext = "PMR_MV_HEADER"\n\t\t\t\t\talign = hcenter|nobaseline\n\t\t\t\t\tsize = { @panel_width 40 }\n'
+         f'\t\t\t\t\tonclick = "[GetVariableSystem.Set(\'{MV_TAB}\', \'yes\')]"\n\t\t\t\t\tonclick = "[{refresh}]"\n'
+         f'\t\t\t\t\tonclick = "[{pick_off}]"\n' + open_ + '\t\t\t\t}\n')
+    return text
 
 
 def block_end(text, start):

@@ -1,4 +1,4 @@
-# PMR run sheet: the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,51 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the Company Culture wheel, research grants and the companies' special methods (q26, test mod; a new game is needed)
+## Latest: Company Culture full-screen, lock reasons, charter buttons on the nodes (q27, test mod; a new game is needed)
+
+From the build thread, after your 20:37Z feedback on q26:
+
+- Clicking a company's Company Culture tab opens the wheel full-screen, like the tech tree: title, back arrow, close
+  button, the Culture level and points under the title, and the wheel filling the screen (a tenth tighter than q26).
+  The back arrow returns to the company panel, whose Company Culture tab now holds the level, an "Open Company
+  Culture" button and the Methods list.
+- The dashed gold ring and the "Node outline" legend are gone.
+- Every node's tooltip opens with a red or green line saying why it is in its state: the technology it waits for, the
+  tier before it, the charter node that opens it, its founding culture, Culture points, another research grant
+  running, or ruled out by the opposed arm.
+- The charter row at the foot of the company panel is gone. A bought charter node (Trade, Investment, Industry,
+  Monopoly, Colonization) carries vanilla's charter button instead.
+- The side Buildings list has a "Private Owners' Methods" button under Building Registry.
+- Fixed: the months-to-next-point number was written into the Monopoly Charter's variable (`mo=-1` in your q26 log).
+  q26 saves keep the wrong value, hence the new game.
+
+1. Start a new game on the PMR Test playset as Prussia and unpause.
+2. Take "PMR test: 6 Culture points for each of your companies" twice.
+3. Open Krupp's company panel and click its Company Culture tab.
+4. Hover Expansion and the steel mill's Works Method II. Click Engineering, then hover them again.
+5. Buy the steel mill's Works Method I, take "PMR test: finish your companies' research grants", play two months, then
+   hover the steel mill's Works Method II once more.
+6. Click the back arrow, then the X. Open any other company.
+7. Open the Buildings list from the left sidebar and click "Private Owners' Methods" under Building Registry.
+8. Optional, for the charter buttons: establish a second company, take the points decision twice more, and on its
+   wheel buy Expansion, Supply I and II, Stewardship, Company Housing, Model Dwellings and the Industry Charter.
+9. Close the game and tell the build thread; it reads debug.log and error.log.
+
+Rows C3 to C7, W1, W2 and H0 to H2 of the q26 section below still apply on this run; F1 and L1 replace C1 and G1.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| F1 | Click Krupp's Company Culture tab | A full-screen window over the map like the tech tree: "Company Culture: Friedrich Krupp" at the top, a back arrow top left, the X top right, the Culture level, points and bar under the title, and the wheel filling the rest with Krupp's seal in the middle. No gold ring, no legend. Drag pans, the mouse wheel zooms | Only the company panel's tab with the "Open Company Culture" button, and clicking it does nothing: the window isn't drawn. Either another enabled mod replaces `ingame_hud.gui`, or the game doesn't know the panel id `company_panel` (error.log "invalid panel type"). Tell the build thread which |
+| F2 | Back arrow, then the X, then open another company | The back arrow shows Krupp's company panel on its Company Culture tab (level, "Open Company Culture", Methods). The X closes the window and the company panel together. The next company opens on its normal tab without the wheel | The wheel opens over every company panel afterwards: closing doesn't clear the window's switch (its `_hide`), a nuisance but not a blocker |
+| L1 | Step 4: hover Expansion and Works Method II, before and after Engineering | Before: Works Method II reads "Locked: needs the Engineering founding culture." After: Expansion reads "Ruled out: this company holds Engineering." and Works Method II "Locked: needs (its tier I name) first." | A blank first line under the name: the reason's custom localisation didn't resolve (error.log names `pmr_cc_why`). "Locked." alone: no specific reason matched (tell the build thread which node) |
+| L2 | Step 5: hover the steel mill's Works Method II after the grant | "Locked: waits for the technology Bessemer Process." | "needs (tier I) first" still: the grant hasn't completed (see C6). A blank technology name: the technology lookup didn't resolve |
+| K1 | Look at the foot of Krupp's company panel | No charter row | The row still shows: the company panel patch didn't load (then F1 fails too) |
+| K2 | Optional: the second company's bought Industry Charter node | A vanilla "Industry Rights" button inside the node card; clicking it opens vanilla's menu of buildings to target | No button on the bought node: the charter list or its Industry filter doesn't work inside the wheel. Charters then can't be taken anywhere in this build; tell the build thread |
+| B1 | Step 7 | The Buildings panel opens on "Private Owners' Methods". Building Registry still opens on the normal Buildings tab | No second button: the side list patch didn't load. It opens the normal tab: the tab switch isn't read on opening |
+| M1 | debug.log `PMR;rec=CC` lines | `mo=0` on every line until a Monopoly Charter is bought | `mo=-1` or any other number: the old months variable is still being written there |
+| E2 | error.log | No line naming `pmr_cc`, `pmr_cw`, `pmr_company_culture` or `ingame_hud` | Any such line: that part never ran, and its rows above are not results |
+
+## Earlier: the Company Culture wheel, research grants and the companies' special methods (q26, test mod; a new game is needed)
 
 From the build thread (your 18:18Z "ok submit this to the build agent to construct", BUILD-SPEC.md). Each company's
 Company Culture tab is now a wheel on the tech tree's backdrop: drag to pan, mouse wheel to zoom. Four arms sit on the

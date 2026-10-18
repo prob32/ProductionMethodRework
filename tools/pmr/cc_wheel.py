@@ -1,19 +1,22 @@
-"""Company Culture: the wheel on the company panel's Company Culture tab (BUILD-SPEC.md section 1).
+"""Company Culture: the wheel, full-screen like the tech tree, opened from the company panel's Company Culture tab
+(BUILD-SPEC.md section 1; Pat 20:37Z: "open a full new panel like tech").
 
 company_culture.py builds the lines, their script and their text; this module draws them. The layout is the one in
 /mnt/project-files/pmr/mio/tree-ui/wheel-preview.png (render_wheel_preview.py there): four arms on the diagonals,
 Engineering top right, Stewardship top left, Expansion bottom left and Providence bottom right, each tier one orbit
 further out, each orbit turned SWIRL degrees further round so the arms curl. The shared charters sit halfway out on the
-boundary between two arms, on the dashed gold gate orbit, and their synergies further out behind them.
+boundary between two arms, between the inner and outer tiers they open, and their synergies further out behind them.
 
 Every piece is a vanilla GUI part or a small texture this module writes (textures()): the node card is the tech
 node's (round_frame_dec behind an invention picture, cost badge, ticks, the add button and the event glow), on a
-rounded card whose outline colour says the kind of benefit (KIND_COL, the legend "Node outline"). The wheel sits on a
-canvas in a zoomarea, the tech tree's pan-and-zoom widget, over the tech tree's backdrop painting.
+rounded card whose outline colour says the kind of benefit (KIND_COL). The wheel sits on a canvas in a zoomarea, the
+tech tree's pan-and-zoom widget, over the tech tree's backdrop painting, in a fullscreen_block_window that ingame_hud.gui
+holds beside the side panels (pmr_cc_fullscreen, open while the 'pmr_cc_full' GUI variable is set and the company panel
+is). A bought charter node carries the vanilla charter button, which the company panel's charter row had (Pat 20:37Z).
 
 Links are dotted. A drawn curve would be one uncompressed texture per link (megabytes each), so each link is a row of
 small dot icons along its curve, in three colourings (done, open, locked) of which one shows. The orbits are faint
-dots; the gate orbit gold dashes.
+dots.
 
 A node reads its state from the executive's mirror, pmr_cc_st_<line>_<tier> (company_culture.effects, pmr_cc_states):
 0 locked, 1 can be bought now, 2 next but short of points (or another grant running), 3 its arm not chosen,
@@ -45,12 +48,12 @@ TX0 = FRAME + 14                        # the text column
 TXW = NODE_W - TX0 - 22
 HUB_R = 170                             # the company's seal
 
-# The orbits (render_wheel_preview.py)
-RINGS = (620, 1220, 1820, 2420, 3020, 3620)
+# The orbits (render_wheel_preview.py; q27 a tenth tighter)
+RINGS = (520, 1040, 1560, 2080, 2600, 3120)
 SWIRL = 6                               # degrees each orbit turns further round
-LANE_ARC = 700                          # lanes of an arm sit this far apart along an orbit
+LANE_ARC = 640                          # lanes of an arm sit this far apart along an orbit
 OUTER = 3                               # the orbit from which nodes wait for a shared charter
-GATE_R = (RINGS[OUTER - 1] + RINGS[OUTER]) / 2
+GATE_R = (RINGS[OUTER - 1] + RINGS[OUTER]) / 2   # the shared charters' radius: inner tiers inside it, outer beyond
 ANGLE = {'eng': 45, 'stw': 135, 'exp': 225, 'prv': 315}     # arm centres, degrees counter-clockwise from east
 # (line, lane, orbit of tier 1). A negative lane turns clockwise.
 LANES = {
@@ -65,10 +68,10 @@ SYNERGY_OF = {'ys': 'tr', 'yi': 'iv', 'yt': 'ch', 'ym': 'mo'}
 OPENS = {'tr': [('g2', 3), ('fw', 3)], 'iv': [('g1', 3), ('cl', 3)], 'ch': [('xs', 3), ('ct', 1)],
          'mo': [('sc', 3), ('cl', 3)]}
 MARGIN = 260
-LABEL_OUT = 520                         # arm titles, this far beyond the arm's outermost node
+LABEL_OUT = 380                         # arm titles, this far beyond the arm's outermost node
 LABEL_W, LABEL_H = 1500, 150
 
-# Pat 17:08Z: the outline colour by the kind of benefit, with a legend (BUILD-SPEC section 1)
+# Pat 17:08Z: the outline colour by the kind of benefit (BUILD-SPEC section 1; the legend went in q27, Pat 20:37Z)
 KIND_COL = {'pm': (150, 44, 56), 'prod': (206, 124, 80), 'input': (98, 156, 214), 'work': (170, 136, 216),
             'charter': (238, 202, 106)}
 CARD_COL = {'active': (30, 63, 77), 'pending': (20, 40, 48), 'bought': (55, 50, 44), 'locked': (12, 24, 30)}
@@ -79,12 +82,14 @@ DOT_COL = {    # border, core: the colours of vanilla's tech_line_border_<x>.dds
 }
 DOT, DOT_STEP = 18, 30                  # link dots: size and spacing along the curve
 ORBIT_DOT, ORBIT_STEP = 10, 64
-GATE_DOT, GATE_EVERY, GATE_DASH = 18, 4, 3   # gold dashes: one every 4 degrees, 3 dots long
 PM_C = (246, 204, 52)                   # Pat 17:45Z: new methods in yellow
 LOGO_W, LOGO_H = 64, 40
 
-VIEW_W, VIEW_H = 540, 660               # the zoomarea in the tab
-ZOOM, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.22, 0.06, 1, 0.04
+# The zoomarea fills the full-screen window below its header: 1825 x 810 at 1920 x 1080 (the seal starts centred
+# there; larger screens show it up and left of centre). Zoom as the tech tree's (TECH_TREE_INITIAL_ZOOM 0.3).
+VIEW_W, VIEW_H = 1825, 810
+ZOOM, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.3, 0.08, 1, 0.05
+FULL = 'pmr_cc_full'                    # the GUI variable that opens the full-screen wheel
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -278,7 +283,7 @@ def link_gui(pos, a, b, ox, oy):
 
 
 def orbits_gui(ox, oy, rmax):
-    """The faint orbits, one per tier out to the last used, and the dashed gold gate orbit."""
+    """The faint orbits, one per tier out to the last used."""
     out = 'container = {\n'
     for r in RINGS:
         if r > rmax + NODE_H:
@@ -286,10 +291,6 @@ def orbits_gui(ox, oy, rmax):
         n = int(2 * math.pi * r // ORBIT_STEP)
         pts = [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n)) for i in range(n)]
         out += dots(pts, ox, oy, ORBIT_DOT + (4 if r == RINGS[0] else 0), f'{TEX}/cc_dot_orbit.dds')
-    step = math.degrees(GATE_DOT * 1.4 / GATE_R)
-    pts = [(GATE_R * math.cos(math.radians(a0 + j * step)), GATE_R * math.sin(math.radians(a0 + j * step)))
-           for a0 in range(0, 360, GATE_EVERY) for j in range(GATE_DASH)]
-    out += dots(pts, ox, oy, GATE_DOT, f'{TEX}/cc_dot_gate.dds')
     return out + '}\n'
 
 
@@ -403,7 +404,43 @@ def node(p, ln, t, x, y, cands):
                         for g in cands[ln.goods][1])
         out += (f'widget = {{\nposition = {{ {NODE_W - 64} -26 }}\nsize = {{ 52 52 }}\n'
                 f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\nalwaystransparent = yes\n}}\n{goods}}}\n')
+    if k in CHARTER_TEST:
+        out += charter_plate(k)
     return out + '}\n'
+
+
+CHARTER_TEST = {'tr': 'IsTradeCharter', 'iv': 'IsInvestmentCharter', 'ch': 'IsIndustryCharter',
+                'mo': 'IsMonopolyCharter', 'cz': 'IsColonizationCharter'}
+TARGETS = 'Or(CompanyCharterType.IsTargettingRegions, CompanyCharterType.IsTargettingBuildings)'
+ACTIVE = ('Or(And(CompanyCharterType.IsTradeCharter, Company.HasAnyTradeCharterActive), '
+          'And(CompanyCharterType.IsInvestmentCharter, Company.HasAnyInvestmentCharterActive))')
+TOGGLE = 'Company.ToggleCharter(CompanyCharterType.Self)'
+
+
+def charter_plate(k):
+    """A bought charter node's vanilla charter button, as the company panel's charter row drew it (company_panel.gui,
+    "COMPANY CHARTER BUTTONS - DO NOT OWN DLC"), which q27 hides (Pat 20:37Z). It sits in the card under the bullets.
+    A charter aimed at regions or buildings opens vanilla's target menu; the others ask to confirm."""
+    size = f'size = {{ {NODE_W - TX0 - 6} 56 }}\n'
+    return (f'flowcontainer = {{\n{_vis(AND(LOCAL, ST(k, 1, 4)))}position = {{ {TX0 - 8} {NODE_H - 72} }}\n'
+            'direction = vertical\nignoreinvisible = yes\ndatamodel = "[GetCompanyCharterTypes]"\nitem = {\n'
+            f'container = {{\n{_vis(f"CompanyCharterType.{CHARTER_TEST[k]}")}'
+            f'company_charter_button_horizontal = {{\n{_vis(TARGETS)}{size}'
+            'blockoverride "onclick" {\nonclick = "[RightClickMenuManager.ToggleCompanyCharterType(CompanyCharterType.AccessSelf, '
+            'Company.AccessSelf, PdxGuiWidget.AccessSelf)]"\n}\n'
+            'blockoverride "button_style" {\nusing = default_button\n}\n}\n'
+            f'container = {{\n{_vis(f"Not({TARGETS})")}'
+            f'company_charter_active_widget_horizontal = {{\n{_vis(ACTIVE)}{size}}}\n'
+            f'company_charter_button_horizontal = {{\n{_vis(f"Not({ACTIVE})")}{size}enabled = "[IsValid({TOGGLE})]"\n'
+            f'blockoverride "onclick" {{\nonclick = "[PopupManager.AskConfirmationWithSound({TOGGLE}, '
+            "'event:/SFX/UI/CompanyCharters/company_charter_grant')]\"\nusing = icon_toggle_single_on_sound\n}\n"
+            'blockoverride "charter_tooltip" {\ntooltipwidget = {\nFancyTooltip_CompanyCharterType = {\n'
+            'blockoverride "tooltip_content_before" {\n'
+            f'custom_tooltip_textbox = {{\nvisible = "[StringIsEmpty(GetDesc({TOGGLE}))]"\ntext = "GRANT_COMPANY_CHARTER_GENERIC_TOOLTIP"\n}}\n'
+            f'custom_tooltip_textbox_with_empty_line = {{\nvisible = "[StringIsEmpty(GetDesc({TOGGLE}))]"\ntext = "COMPANY_CHARTER_AUTHORITY_COST"\n}}\n'
+            f'custom_tooltip_textbox_with_empty_line = {{\nvisible = "[Not(StringIsEmpty(GetDesc({TOGGLE})))]"\ntext = "[GetDesc({TOGGLE})]"\n}}\n'
+            'custom_tooltip_textbox_with_empty_line = {\ndatacontext = "[Company.GetCountry]"\ntext = "USING_X_FREE_CHARTERS"\n}\n'
+            '}\n}\n}\n}\n}\n}\n}\n}\n}\n')
 
 
 def grant_gui(ln, t, x, y):
@@ -447,26 +484,9 @@ def arm_title(a, c, ox, oy):
             f'textbox = {{\n{_vis(ruled)}alpha = 0.3\n{box}}}\n')
 
 
-def legend_gui():
-    """Bottom left of the view, over the wheel: "Node outline" and the five kinds (BUILD-SPEC section 1)."""
-    rows = ''
-    for n, kind in enumerate(cc.KINDS):
-        y = 30 + 21 * n
-        rows += (f'icon = {{\nposition = {{ 10 {y + 2} }}\nsize = {{ 30 15 }}\ntexture = "{WHITE}"\n'
-                 f'{_rgb((30, 40, 44))}alwaystransparent = yes\n}}\n'
-                 f'icon = {{\nposition = {{ 10 {y + 2} }}\nsize = {{ 30 15 }}\ntexture = "{TEX}/cc_swatch.dds"\n'
-                 f'{_rgb(KIND_COL[kind])}alwaystransparent = yes\n}}\n'
-                 f'textbox = {{\nposition = {{ 48 {y} }}\nsize = {{ 180 20 }}\nalign = left|nobaseline\n'
-                 f'using = fontsize_small\nelide = right\ntext = "PMR_CC_KIND_{kind}"\nalwaystransparent = yes\n}}\n')
-    return (f'widget = {{\nparentanchor = bottom|left\nposition = {{ 6 -6 }}\nsize = {{ 236 {38 + 21 * len(cc.KINDS)} }}\n'
-            f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{WHITE}"\n{_rgb((20, 24, 26), 0.85)}alwaystransparent = yes\n}}\n'
-            f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{TEX}/cc_swatch.dds"\n{_rgb((200, 185, 150), 0.6)}alwaystransparent = yes\n}}\n'
-            'textbox = {\nposition = { 10 6 }\nsize = { 216 22 }\nalign = left|nobaseline\nusing = header_font\nfontsize = 15\n'
-            'text = "PMR_CC_LEGEND"\nalwaystransparent = yes\n}\n' + rows + '}\n')
-
-
 def wheel(p, ready):
-    """The zoomarea: orbits, links, the seal, arm titles, nodes, grant bars; the legend over it."""
+    """The zoomarea, filling the full-screen window's content area: orbits, links, the seal, arm titles, nodes, grant
+    bars."""
     pos, links, labels = layout()
     w, h, ox, oy = canvas(pos, labels)
     rmax = max(float(np.hypot(*q)) for q in pos.values())
@@ -491,7 +511,8 @@ def wheel(p, ready):
         if cc.BY_KEY[k].goods:
             out += grant_gui(cc.BY_KEY[k], t, x, y)
     pan_x, pan_y = round(VIEW_W / 2 - ox * ZOOM), round(VIEW_H / 2 - oy * ZOOM)
-    gui = (f'widget = {{\n{_vis(ready)}parentanchor = hcenter\nsize = {{ {VIEW_W} {VIEW_H} }}\nscissor = yes\n'
+    gui = (f'widget = {{\n{_vis(ready)}layoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\n'
+           'scissor = yes\n'
            # the tech tree's backdrop painting, under its zoomarea's header background
            'background = {\nusing = illu_alpha\nfittype = center\n'
            'texture = "gfx/interface/illustrations/tech_tree/illustration_tech_production.dds"\n}\n'
@@ -503,8 +524,7 @@ def wheel(p, ready):
            f'pan_position = {{ {pan_x} {pan_y} }}\n'
            f'zoomwidget = {{\ncontainer = {{\nwidget = {{\nsize = {{ {w} {h} }}\n}}\n{out}}}\n}}\n}}\n'
            'textbox = {\nposition = { 8 4 }\nautoresize = yes\nalign = left|nobaseline\nusing = fontsize_small\n'
-           'text = "PMR_CC_WHEEL_HINT"\nalwaystransparent = yes\n}\n'
-           + legend_gui() + '}\n')
+           'text = "PMR_CC_WHEEL_HINT"\nalwaystransparent = yes\n}\n}\n')
     return gui, {'canvas': (w, h), 'nodes': len(pos), 'links': len(links), 'link_dots': n_dots}
 
 
@@ -547,36 +567,46 @@ def methods_block(b, recipes, ind, split):
 STATS = {}
 
 
-def tab(p, rows, untreated, split):
-    i1, i2, i3, i4 = '\t\t', '\t\t\t', '\t\t\t\t', '\t\t\t\t\t'
+def header_gui(ready):
+    """Culture level, points, the bar to the next point and the monthly rate (the tab and the full-screen window)."""
     bar_value = f"FixedPointToFloat({V('pmr_cc_pct')})"
-    # Every mirrored executive holds a cost (800 and up). Without one (a new executive this month, a save from
-    # before Company Culture) the tab offers a button that reads the company in, instead of an empty wheel.
+    earning = GT('pmr_cc_mth', 0)
+    return (
+        f'widget = {{\n{_vis(ready)}parentanchor = hcenter\nsize = {{ 540 82 }}\nbackground = {{\nusing = entry_bg\n}}\n'
+        'textbox = {\nposition = { 16 10 }\nautoresize = yes\nalign = left|nobaseline\nusing = fontsize_xxl\n'
+        'text = "PMR_CC_LEVEL"\ntooltip = "PMR_CC_LEVEL_TT"\n}\n'
+        'textbox = {\nposition = { 16 48 }\nautoresize = yes\nalign = left|nobaseline\ntext = "PMR_CC_POINTS"\n'
+        'tooltip = "PMR_CC_LEVEL_TT"\n}\n'
+        'widget = {\nposition = { 220 12 }\nsize = { 300 30 }\ntooltip = "PMR_CC_BAR_TT"\n'
+        'gold_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
+        f'min = 0\nmax = 100\nvalue = "[{bar_value}]"\n}}\n}}\n'
+        'textbox = {\nparentanchor = center\nautoresize = yes\nalign = hcenter|nobaseline\ntext = "PMR_CC_BAR"\n'
+        'alwaystransparent = yes\n}\n}\n'
+        f'textbox = {{\n{_vis(earning)}position = {{ 220 50 }}\nsize = {{ 300 22 }}\nalign = hcenter|nobaseline\n'
+        'using = fontsize_small\ntext = "PMR_CC_RATE"\ntooltip = "PMR_CC_BAR_TT"\n}\n'
+        f'textbox = {{\n{_vis(f"Not({earning})")}position = {{ 220 50 }}\nsize = {{ 300 22 }}\n'
+        'align = hcenter|nobaseline\nusing = fontsize_small\ntext = "PMR_CC_RATE_NONE"\ntooltip = "PMR_CC_BAR_TT"\n}\n}\n')
+
+
+def show_button(ready):
+    """Every mirrored executive holds a cost (800 and up). Without one (a new executive this month, a save from before
+    Company Culture) a button reads the company in, instead of an empty wheel."""
+    return (f'button = {{\n{_vis(f"Not({ready})")}parentanchor = hcenter\nusing = default_button\nsize = {{ 300 40 }}\n'
+            'text = "PMR_CC_SHOW"\ntooltip = "PMR_CC_SHOW_TT"\n'
+            f'onclick = "[GetScriptedGui(\'pmr_cc_refresh_sgui\').Execute({SG_SCOPE}.End)]"\n}}\n')
+
+
+def tab(p, rows, untreated, split):
+    """The company panel's Company Culture tab: the summary, the button to the full-screen wheel, and the Methods list.
+    Returns the gui file with both types (the tab and pmr_cc_fullscreen)."""
+    i1, i2, i3, i4 = '\t\t', '\t\t\t', '\t\t\t\t', '\t\t\t\t\t'
     ready = GT('pmr_cc_cost', 0)
-    refresh = "GetScriptedGui('pmr_cc_refresh_sgui')"
-    show = (f'{i1}button = {{\n{i2}visible = "[Not({ready})]"\n{i2}parentanchor = hcenter\n{i2}using = default_button\n'
-            f'{i2}size = {{ 300 40 }}\n{i2}text = "PMR_CC_SHOW"\n{i2}tooltip = "PMR_CC_SHOW_TT"\n'
-            f'{i2}onclick = "[{refresh}.Execute({SG_SCOPE}.End)]"\n{i1}}}\n')
-    header = (
-        f'{i1}widget = {{\n{i2}visible = "[{ready}]"\n{i2}parentanchor = hcenter\n{i2}size = {{ 540 82 }}\n'
-        f'{i2}background = {{\n{i3}using = entry_bg\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}position = {{ 16 10 }}\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n'
-        f'{i3}using = fontsize_xxl\n{i3}text = "PMR_CC_LEVEL"\n{i3}tooltip = "PMR_CC_LEVEL_TT"\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}position = {{ 16 48 }}\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n'
-        f'{i3}text = "PMR_CC_POINTS"\n{i3}tooltip = "PMR_CC_LEVEL_TT"\n{i2}}}\n'
-        f'{i2}widget = {{\n{i3}position = {{ 220 12 }}\n{i3}size = {{ 300 30 }}\n{i3}tooltip = "PMR_CC_BAR_TT"\n'
-        f'{i3}gold_progressbar_horizontal = {{\n{i4}size = {{ 100% 100% }}\n{i4}blockoverride "values" {{\n'
-        f'{i4}\tmin = 0\n{i4}\tmax = 100\n{i4}\tvalue = "[{bar_value}]"\n{i4}}}\n{i3}}}\n'
-        f'{i3}textbox = {{\n{i4}parentanchor = center\n{i4}autoresize = yes\n{i4}align = hcenter|nobaseline\n'
-        f'{i4}text = "PMR_CC_BAR"\n{i4}alwaystransparent = yes\n{i3}}}\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}visible = "[{GT("pmr_cc_mo", 0)}]"\n{i3}position = {{ 220 50 }}\n{i3}size = {{ 300 22 }}\n'
-        f'{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n{i3}text = "PMR_CC_RATE"\n{i3}tooltip = "PMR_CC_BAR_TT"\n{i2}}}\n'
-        f'{i2}textbox = {{\n{i3}visible = "[Not({GT("pmr_cc_mo", 0)})]"\n{i3}position = {{ 220 50 }}\n{i3}size = {{ 300 22 }}\n'
-        f'{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n{i3}text = "PMR_CC_RATE_NONE"\n{i3}tooltip = "PMR_CC_BAR_TT"\n{i2}}}\n'
-        f'{i1}}}\n')
     gui, stats = wheel(p, ready)
     STATS.clear()
     STATS.update(stats)
+    open_button = (f'button = {{\n{_vis(ready)}parentanchor = hcenter\nusing = default_button_primary_big\n'
+                   'size = { 400 50 }\ntext = "PMR_CC_OPEN"\ntooltip = "PMR_CC_OPEN_TT"\n'
+                   f'onclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n}}\n')
     methods = (f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_METHODS_HEADER"\n{i2}}}\n{i1}}}\n'
                + text_row('PMR_CC_METHODS_INTRO', i1, small=True) +
                f'{i1}flowcontainer = {{\n{i2}parentanchor = hcenter\n{i2}direction = vertical\n{i2}spacing = 4\n'
@@ -595,12 +625,38 @@ def tab(p, rows, untreated, split):
             '\t\tdirection = vertical\n\t\tusing = default_list_position\n\t\tusing = default_content_fade\n'
             '\t\tspacing = 6\n\t\tmargin_bottom = 10\n\t\tminimumsize = { 540 -1 }\n'
             '\t\tdatacontext = "[Company.GetExecutive]"\n\n'
-            + show + header + _reindent(gui, i1) + methods +
-            '\t}\n}\n')
+            + _reindent(show_button(ready) + header_gui(ready) + 'widget = {\nsize = { 10 6 }\n}\n' + open_button
+                        + 'widget = {\nsize = { 10 10 }\n}\n', i1)
+            + methods + '\t}\n\n'
+            + _reindent(fullscreen(gui, ready), '\t') + '}\n')
+
+
+def fullscreen(gui, ready):
+    """The full-screen wheel (Pat 20:37Z): vanilla's fullscreen_block_window, as the tech tree, over the side panels
+    (ingame_hud.gui, patch_hud). It shows while the company panel is open and the 'pmr_cc_full' GUI variable is set (the
+    tab sets it); the back arrow clears it, back to the panel. Closing it, or the company panel closing under it,
+    clears it too (its _hide), so the next company panel opens on its own tabs."""
+    return (f'type pmr_cc_fullscreen = fullscreen_block_window {{\nname = "pmr_cc_fullscreen"\n'
+            f'visible = "[And(GetVariableSystem.Exists(\'{FULL}\'), InformationPanelBar.IsPanelOpen(\'company_panel\'))]"\n'
+            'datacontext = "[CompanyPanel.GetCompany]"\ndatacontext = "[Company.GetExecutive]"\n'
+            'blockoverride "animation_state_block" {\n'
+            'state = {\nname = _show\nstart_sound = {\nsoundeffect = "event:/SFX/UI/SideBar/technology"\n}\n}\n'
+            f'state = {{\nname = _hide\non_start = "[GetVariableSystem.Clear(\'{FULL}\')]"\n'
+            'start_sound = {\nsoundeffect = "event:/SFX/UI/SideBar/technology_stop"\n}\n}\n}\n'
+            'blockoverride "window_header_name" {\ntext = "PMR_CC_FULL_TITLE"\n}\n'
+            'blockoverride "back_button_fullscreen" {\nback_button_large = {\nposition = { 11 15 }\nparentanchor = top|left\n'
+            f'onclick = "[GetVariableSystem.Clear(\'{FULL}\')]"\ninput_action = "back"\ntooltip = "PMR_CC_BACK_TT"\n}}\n}}\n'
+            'blockoverride "fixed_top" {\nwidget = {\nlayoutpolicy_horizontal = expanding\nsize = { 0 98 }\n'
+            + header_gui(ready).replace('parentanchor = hcenter\n', 'parentanchor = hcenter\nposition = { 0 4 }\n', 1)
+            + show_button(ready).replace('parentanchor = hcenter\n', 'parentanchor = center\n', 1)
+            + '}\n}\n'
+            'blockoverride "entire_content_area" {\n' + gui + '}\n}\n')
 
 
 def patch_panel(text, tab_id):
-    """company_panel.gui: a fourth tab, Company Culture, after Statistics."""
+    """company_panel.gui: a fourth tab, Company Culture, after Statistics, which opens the full-screen wheel; the charter
+    row off the panel's foot (its buttons are on the charter nodes, Pat 20:37Z); and the panel's closing clears the
+    full-screen wheel's variable."""
     where = cc.PANEL_GUI
     anchor = '\t\t\t\tblockoverride "third_button_selected"\n\t\t\t\t{\n\t\t\t\t\ttext = "COMPANY_TAB_STATISTICS"\n\t\t\t\t}\n'
     if text.count(anchor) != 1:
@@ -611,7 +667,8 @@ def patch_panel(text, tab_id):
         '\t\t\t\tblockoverride "fourth_button"\n\t\t\t\t{\n\t\t\t\t\ttext = "PMR_CC_TAB"\n\t\t\t\t}\n'
         '\t\t\t\tblockoverride "fourth_button_tooltip"\n\t\t\t\t{\n\t\t\t\t\ttooltip = "PMR_CC_TAB_TT"\n\t\t\t\t}\n'
         f'\t\t\t\tblockoverride "fourth_button_click"\n\t\t\t\t{{\n\t\t\t\t\tonclick = "[InformationPanel.SelectTab(\'{tab_id}\')]"\n'
-        f'\t\t\t\t\tonclick = "[{refresh}]"\n\t\t\t\t}}\n'
+        f'\t\t\t\t\tonclick = "[{refresh}]"\n'
+        f'\t\t\t\t\tonclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n\t\t\t\t}}\n'
         f'\t\t\t\tblockoverride "fourth_button_visibility"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'{tab_id}\')]"\n\t\t\t\t}}\n'
         f'\t\t\t\tblockoverride "fourth_button_visibility_checked"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[Not( InformationPanel.IsTabSelected(\'{tab_id}\') )]"\n\t\t\t\t}}\n'
         '\t\t\t\tblockoverride "fourth_button_selected"\n\t\t\t\t{\n\t\t\t\t\ttext = "PMR_CC_TAB"\n\t\t\t\t}\n')
@@ -620,8 +677,30 @@ def patch_panel(text, tab_id):
                '\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'statistics\')]"\n\t\t\t\t}\n')
     if text.count(anchor2) != 1:
         cc.fail(where, 'the Statistics tab contents moved')
-    return text.replace(anchor2, anchor2 + '\n\t\t\t\t# PMR: Company Culture tab\n\t\t\t\tcompany_panel_culture_tab = {\n'
+    text = text.replace(anchor2, anchor2 + '\n\t\t\t\t# PMR: Company Culture tab\n\t\t\t\tcompany_panel_culture_tab = {\n'
                         f'\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'{tab_id}\')]"\n\t\t\t\t}}\n')
+    bar = '\t\tblockoverride "fixed_bottom" {\n\t\t\tflowcontainer = {\n\t\t\t\tvisible = "[Company.GetCountry.IsLocalPlayer]"\n'
+    if text.count(bar) != 1:
+        cc.fail(where, 'the charter row at the panel\'s foot moved')
+    text = text.replace(bar, '\t\tblockoverride "fixed_bottom" {\n\t\t\tflowcontainer = {\n'
+                        '\t\t\t\tvisible = no  # PMR: the charter buttons are on the Company Culture wheel\'s charter nodes\n')
+    hide = ('\t\t\tstate = {\n\t\t\t\tname = _hide\n\t\t\t\tstart_sound = {\n'
+            '\t\t\t\t\tsoundeffect = "event:/SFX/UI/CompanyCharters/company_panel_stop"\n')
+    if text.count(hide) != 1:
+        cc.fail(where, 'the panel\'s _hide state moved')
+    return text.replace(hide, hide.replace('name = _hide\n', f'name = _hide\n\t\t\t\ton_start = "[GetVariableSystem.Clear(\'{FULL}\')]"  # PMR\n'))
+
+
+HUD_GUI = 'gui/ingame_hud.gui'
+
+
+def patch_hud(text):
+    """ingame_hud.gui: the full-screen wheel after the side panels and before the topbar, so the topbar and the left
+    sidebar buttons stay over it as over the tech tree."""
+    anchor = '\t# topbar / alerts / timemanip\n\tvbox = {\n'
+    if text.count(anchor) != 1:
+        cc.fail(HUD_GUI, 'the topbar vbox moved')
+    return text.replace(anchor, '\t# PMR: Company Culture, full-screen (cc_wheel.fullscreen)\n\tpmr_cc_fullscreen = {}\n\n' + anchor)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -686,10 +765,8 @@ def textures(out_dir):
     ims = {
         'cc_card': _rounded(CW // 2, NODE_H // 2, 20, grad=0.66),
         'cc_outline': _rounded(CW // 2, NODE_H // 2, 20, ring=3),
-        'cc_swatch': _rounded(60, 30, 4, ring=4),
         'cc_pm_plate': _plate(),
         'cc_dot_orbit': _soft(16, (225, 205, 160), 0.35),
-        'cc_dot_gate': _dot(24, (240, 205, 120), (196, 160, 80)),
     }
     for mode, (border, core) in DOT_COL.items():
         ims[f'cc_dot_{mode}'] = _dot(24, border, core)
