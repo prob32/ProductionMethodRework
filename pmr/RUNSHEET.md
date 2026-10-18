@@ -1,4 +1,4 @@
-# PMR run sheet: Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,28 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: Company Works share probe (q19, test mod; any save)
+## Latest: who owns each level of a building (q20, test mod; your current save works)
+
+What q19 answered (2026-10-18): a company's executive trait lands on each building scaled by the company's share,
+and script reads it (Krupp's 2 of 5 Westfalen steel levels read `marker=0.400`, `company_levels=2.00`). A trait's
+engines input shows in the Modifiers tab only and is not a real input or demand.
+
+q20 adds the rest of the split you asked for (16:14Z). Each `PMR;rec=WSP` line now names its state and building and
+adds `government_levels` (read the way PMR reads it, every government's levels together, to the nearest 5%) and
+`other_levels`, whatever neither the company nor a government owns: financial districts, manor houses and anyone
+else. The probe is still on in your save; in a new game take the decision again.
+
+1. Load and let one month pass.
+2. Filter debug.log for `PMR;rec=WSP` and find the Westfalen Steel Mills line.
+
+| Result | Meaning (decided before the run) |
+| --- | --- |
+| `building=Steel Mills`, `company_levels=2.00`, `government_levels=3`, `other_levels=0.00` | **Works.** Script can state the split: Krupp 2 (its special method's share), government 3, financial districts and manor houses 0 |
+| `government_levels=0` on the steel mill | The ownership read doesn't work through the probe's saved building: a probe bug, not an answer (PMR's own government read is confirmed in game) |
+| `other_levels` below 0 | The company and government reads overlap; the split can't be stated this simply |
+| `state=` or `building=` empty or ERROR | The names are still broken; the numbers still count |
+
+## Earlier: Company Works share probe (q19; answered 2026-10-18 16:10Z, above)
 
 One addition since q18, asked for in the Company Culture thread (2026-10-18 15:35Z and 15:42Z). It is a test-only
 probe with two questions. First, can a building read how much of it your companies own, through an executive trait?
