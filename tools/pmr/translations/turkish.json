@@ -321,5 +321,11 @@
  "Resources": "Kaynaklar",
  "Covers {0}, {1}, {2}.": "Kapsam: {0}, {1}, {2}.",
  "#v {0}#! privately owned building levels, #v {1}#! of the five groups. Covers {2}, {3}, {4}.": "#v {0}#! özel mülk bina seviyesi; beş gruptaki payı #v {1}#!. Kapsam: {2}, {3}, {4}.",
- "Infrastructure": "Altyapı"
+ "Infrastructure": "Altyapı",
+ " (most profitable)": " (en kârlı)",
+ " (not available)": " (kullanılamaz)",
+ " (skipped: an input is at the +{0}% price cap)": " (atlandı: bir girdi +%{0} fiyat sınırında)",
+ "Most profitable: #bold {0}#!, @money!{1} per level a week": "En kârlı: #bold {0}#!, seviye başına haftada @money!{1}",
+ "{0}: @money!{1} per level a week{2}": "{0}: seviye başına haftada @money!{1}{2}",
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Bu eyaletin fiyatlarıyla, ücretler dahil, seviye başına haftalık kâr. Yeni seviyeler ve yeniden donatım en kârlı yöntemi izler."
 }

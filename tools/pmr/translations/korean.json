@@ -321,5 +321,11 @@
  "Resources": "자원",
  "Covers {0}, {1}, {2}.": "포함: {0}, {1}, {2}.",
  "#v {0}#! privately owned building levels, #v {1}#! of the five groups. Covers {2}, {3}, {4}.": "개인 소유 건물 단계 #v {0}#!, 다섯 집단 전체의 #v {1}#!. 포함: {2}, {3}, {4}.",
- "Infrastructure": "기반 시설"
+ "Infrastructure": "기반 시설",
+ " (most profitable)": " (가장 수익성 높음)",
+ " (not available)": " (사용 불가)",
+ " (skipped: an input is at the +{0}% price cap)": " (제외됨: 투입물 가격이 +{0}% 상한에 도달)",
+ "Most profitable: #bold {0}#!, @money!{1} per level a week": "가장 수익성 높음: #bold {0}#!, 레벨당 주간 @money!{1}",
+ "{0}: @money!{1} per level a week{2}": "{0}: 레벨당 주간 @money!{1}{2}",
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "이 주의 가격 기준, 임금을 포함한 레벨당 주간 이익입니다. 새 레벨과 개조는 가장 수익성 높은 방식을 따릅니다."
 }

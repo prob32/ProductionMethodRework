@@ -321,5 +321,11 @@
  "Resources": "資源",
  "Covers {0}, {1}, {2}.": "対象: {0}、{1}、{2}。",
  "#v {0}#! privately owned building levels, #v {1}#! of the five groups. Covers {2}, {3}, {4}.": "私有の施設レベル: #v {0}#!（5グループ全体の#v {1}#!）。対象: {2}、{3}、{4}。",
- "Infrastructure": "インフラ"
+ "Infrastructure": "インフラ",
+ " (most profitable)": " (最も収益性が高い)",
+ " (not available)": " (利用不可)",
+ " (skipped: an input is at the +{0}% price cap)": " (除外: 投入物の価格が +{0}% の上限)",
+ "Most profitable: #bold {0}#!, @money!{1} per level a week": "最も収益性が高い: #bold {0}#!、レベルあたり週 @money!{1}",
+ "{0}: @money!{1} per level a week{2}": "{0}: レベルあたり週 @money!{1}{2}",
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "この州の価格での、賃金を含むレベルあたりの週間利益。新しいレベルと改修は最も収益性の高い方式に従います。"
 }

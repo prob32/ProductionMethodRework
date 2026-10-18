@@ -1422,6 +1422,8 @@ def main():
         return t.value if t else GENERIC_ICON
     opt_ui = {bk: [(gi, mode, none, pm_tex(none), os_) for g, gi, mode, none, os_, std in conv]
               for bk, conv in options.items() if conv}
+    # the pick row, on every type the profit calculation covers (PROFIT_TARGET)
+    pick_ui = {bk: recipe_keys[bk] for bk in dispatch} if PROFIT_TARGET else {}
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
@@ -1430,12 +1432,14 @@ def main():
                     f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xav_{o.j}_{short(bk)} = 0 }}\n'
                     f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
                     '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
-                    for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_))
+                    for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_)
+          + '\n# State scope. The profit pick\'s name and each recipe\'s note on the pick row (pick_row).\n'
+          + pick_custom_loc(pick_ui))
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
         recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(),
-        opt_ui, also, auto_ui), bom=False)
+        opt_ui, also, auto_ui, pick_ui), bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     # The Buildings tab: the building type row's grid (the first of three) becomes the country recipe
@@ -1461,7 +1465,7 @@ def main():
           bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
-    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui)
+    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
@@ -2954,6 +2958,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
       pmr_rav_<i>_<b>    1 while recipe i can become the target here (pmr_newest_<b>'s rule)
       pmr_rveto_<i>_<b>  1 while recipe i needs more of an input than the current pick and its price is at the cap
       pmr_pbest_<b>      the pick: best pmr_rm of the runnable, unvetoed recipes, sticky (PROFIT_STICK_*); 0 if none
+      pmr_prm_<b>        the pick's pmr_rm (the panel's pick row)
     Throughput and the building's modifiers are left out: they scale every recipe alike.
     Pat, 2026-10-18 17:14Z: the pick decides new builds and retooling, and must not cost the game speed. So the
     calculation runs only when pmr_best_<b> finds a reason: no pick yet, the newest runnable recipe changed
@@ -3020,7 +3025,10 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
                  f'\t\telse_if = {{ limit = {{ var:{v("pmr_pbest")} > {i} }} change_variable = {{ name = pmr_t subtract = var:pmr_hd }} }}\n'
                  f'\t\tif = {{ limit = {{ var:pmr_t > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:pmr_t }} '
                  f'set_variable = {{ name = pmr_pk value = {i} }} }}\n\t}}\n')
-    o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n}}\n\n')
+    o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n\t{setv("pmr_prm", 0)}\n'
+             + ''.join(f'\tif = {{ limit = {{ var:pmr_pk = {i} }} {setv("pmr_prm", "var:" + xv("pmr_rm", i))} }}\n'
+                       for i in range(1, k + 1))
+             + '}\n\n')
 
     # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
     def var(name, d=0):
@@ -3820,6 +3828,58 @@ def automation_bar(bk, group, levels, ind):
             f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
 
 
+def pick_row(bk, ind):
+    """The details panel's pick row (Pat, 2026-10-18 17:49Z: where a building shows its preferred recipe): the
+    most profitable recipe, the target its new levels and retooling follow, and its profit per level a week;
+    the tooltip lists every recipe's (pick_loc)."""
+    b = short(bk)
+    i2 = ind + '\t\t'
+    return (f'{ind}# PMR: most profitable recipe of {bk}\n'
+            f'{ind}widget = {{\n{ind}\tvisible = "[And({is_type(bk)}, '
+            f"GreaterThan_CFixedPoint({state_var(b, 'pmr_pbest')}, '(CFixedPoint)0'))]\"\n"
+            f'{ind}\tsize = {{ @panel_width {OPTION_ROW_H} }}\n'
+            f'{ind}\ttextbox = {{\n{i2}position = {{ {ROW_X} 0 }}\n{i2}size = {{ {ROW_W + 235} {OPTION_ROW_H} }}\n'
+            f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "PMR_PICK_ROW_{b}"\n{i2}tooltip = "PMR_PICK_TOOLTIP_{b}"\n'
+            f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
+
+
+def pick_custom_loc(pick_ui):
+    """State scope: pmr_pick_<b>, the pick's name, and pmr_pnote_<b>_<i>, a note after each recipe's profit."""
+    out = []
+    for bk, keys in pick_ui.items():
+        b = short(bk)
+        out.append(f'pmr_pick_{b} = {{\n\ttype = state\n\trandom_valid = no\n'
+                   + ''.join(f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = {key}\n\t}}\n'
+                             for i, key in enumerate(keys, 1))
+                   + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
+        for i in range(1, len(keys) + 1):
+            out.append(f'pmr_pnote_{b}_{i} = {{\n\ttype = state\n\trandom_valid = no\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = PMR_PICK_NOTE_BEST\n\t}}\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rav_{i}_{b} = 0 }}\n\t\tlocalization_key = PMR_PICK_NOTE_LOCKED\n\t}}\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rveto_{i}_{b} = 1 }}\n\t\tlocalization_key = PMR_PICK_NOTE_VETO\n\t}}\n'
+                       '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
+    return ''.join(out)
+
+
+def pick_loc(pick_ui):
+    """The pick row and its tooltip."""
+    loc = [' PMR_PICK_NOTE_BEST:0 " (most profitable)"', ' PMR_PICK_NOTE_LOCKED:0 " (not available)"',
+           ' PMR_PICK_NOTE_VETO:0 " (skipped: an input is at the +75% price cap)"']
+    for bk, keys in pick_ui.items():
+        b = short(bk)
+
+        def var(name, f='0'):
+            return f"[Building.GetState.MakeScope.Var('{name}').GetValue|{f}]"
+        loc.append(f' PMR_PICK_ROW_{b}:0 "Most profitable: #bold [Building.GetState.GetCustom(\'pmr_pick_{b}\')]#!, '
+                   f'@money!{var(f"pmr_prm_{b}")} per level a week"')
+        lines = [f"${key}$: @money!{var(f'pmr_rm_{i}_{b}')} per level a week"
+                 f"[Building.GetState.GetCustom('pmr_pnote_{b}_{i}')]" for i, key in enumerate(keys, 1)]
+        loc.append(f' PMR_PICK_TOOLTIP_{b}:0 "' + '\\n'.join(lines)
+                   + '\\n\\nProfit per level a week at this state\'s prices, wages included. '
+                   'New levels and retooling follow the most profitable recipe."')
+    return loc
+
+
 def automation_loc(auto_ui):
     """The automation bar's tooltips, from vanilla's own names, so every language has them."""
     loc = []
@@ -3831,12 +3891,12 @@ def automation_loc(auto_ui):
     return loc
 
 
-def patch_option_bars(text, opt_ui, auto_ui=None):
+def patch_option_bars(text, opt_ui, auto_ui=None, pick_ui=None):
     """building_details_panel.gui: an empty block at the end of condensed_building_information,
     filled only by the details panel's own instance, so the Buildings tab rows stay as they are.
     The automation bars come first, right under the recipe bar."""
-    auto_ui = auto_ui or {}
-    if not opt_ui and not auto_ui:
+    auto_ui, pick_ui = auto_ui or {}, pick_ui or {}
+    if not opt_ui and not auto_ui and not pick_ui:
         return text
     end = '\t\t\t}\n\t\t}\n\t}\n\n\ttype building_type_nationalize_button = '
     if text.count(end) != 1:
@@ -3852,6 +3912,7 @@ def patch_option_bars(text, opt_ui, auto_ui=None):
     return (text[:at] + '\n\t\t\tblockoverride "pmr_option_bars" {\n'
             '\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n\t\t\t\t\tignoreinvisible = yes\n'
             '\t\t\t\t\tmargin_bottom = 4\n'
+            + ''.join(pick_row(bk, '\t\t\t\t\t') for bk in pick_ui)
             + ''.join(automation_bar(bk, group, levels, '\t\t\t\t\t') for bk, (group, levels) in auto_ui.items())
             + ''.join(option_bars(bk, groups, '\t\t\t\t\t') for bk, groups in opt_ui.items())
             + '\t\t\t\t}\n\t\t\t}\n' + text[at:])
@@ -3888,7 +3949,7 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extr
     return hide + text[at:end] + labour + text[end:]
 
 
-def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None):
+def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, pick_ui=None):
     buildings = list(recipe_tex)
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
@@ -3913,7 +3974,7 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None):
         raise SystemExit(f'building_details_panel.gui: expected one {anchor.strip()!r}, found '
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
     text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk]) for bk in buildings))
-    return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {}, auto_ui or {})
+    return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {}, auto_ui or {}, pick_ui or {})
 
 
 # Pat, 2026-10-13: a Production Method column in the Owners list, with the icons of the recipes each

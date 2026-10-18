@@ -321,5 +321,11 @@
  "Resources": "Ресурсы",
  "Covers {0}, {1}, {2}.": "Включает: {0}, {1}, {2}.",
  "#v {0}#! privately owned building levels, #v {1}#! of the five groups. Covers {2}, {3}, {4}.": "Уровни сооружений в частной собственности: #v {0}#! (#v {1}#! от пяти групп). Включает: {2}, {3}, {4}.",
- "Infrastructure": "Инфраструктура"
+ "Infrastructure": "Инфраструктура",
+ " (most profitable)": " (самый прибыльный)",
+ " (not available)": " (недоступен)",
+ " (skipped: an input is at the +{0}% price cap)": " (пропущен: цена одного из ресурсов на пределе +{0}%)",
+ "Most profitable: #bold {0}#!, @money!{1} per level a week": "Самый прибыльный: #bold {0}#!, @money!{1} за уровень в неделю",
+ "{0}: @money!{1} per level a week{2}": "{0}: @money!{1} за уровень в неделю{2}",
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Прибыль за уровень в неделю по ценам этой области с учётом зарплат. Новые уровни и переоснащение следуют самому прибыльному методу."
 }

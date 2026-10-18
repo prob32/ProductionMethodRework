@@ -321,5 +321,11 @@
  "Resources": "Recursos",
  "Covers {0}, {1}, {2}.": "Inclui: {0}, {1}, {2}.",
  "#v {0}#! privately owned building levels, #v {1}#! of the five groups. Covers {2}, {3}, {4}.": "#v {0}#! níveis de construção de propriedade privada, #v {1}#! dos cinco grupos. Inclui: {2}, {3}, {4}.",
- "Infrastructure": "Infraestrutura"
+ "Infrastructure": "Infraestrutura",
+ " (most profitable)": " (o mais lucrativo)",
+ " (not available)": " (indisponível)",
+ " (skipped: an input is at the +{0}% price cap)": " (ignorado: um insumo está no teto de preço de +{0}%)",
+ "Most profitable: #bold {0}#!, @money!{1} per level a week": "O mais lucrativo: #bold {0}#!, @money!{1} por nível por semana",
+ "{0}: @money!{1} per level a week{2}": "{0}: @money!{1} por nível por semana{2}",
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "Lucro por nível por semana aos preços deste estado, salários incluídos. Novos níveis e readaptações seguem o método mais lucrativo."
 }

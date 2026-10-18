@@ -321,5 +321,11 @@
  "Resources": "资源",
  "Covers {0}, {1}, {2}.": "包括{0}、{1}、{2}。",
  "#v {0}#! privately owned building levels, #v {1}#! of the five groups. Covers {2}, {3}, {4}.": "#v {0}#!级私有建筑，占五个组总数的#v {1}#!。包括{2}、{3}、{4}。",
- "Infrastructure": "基础设施"
+ "Infrastructure": "基础设施",
+ " (most profitable)": " （最赚钱）",
+ " (not available)": " （不可用）",
+ " (skipped: an input is at the +{0}% price cap)": " （已跳过：某项投入品价格已达 +{0}% 上限）",
+ "Most profitable: #bold {0}#!, @money!{1} per level a week": "最赚钱：#bold {0}#!，每级每周 @money!{1}",
+ "{0}: @money!{1} per level a week{2}": "{0}：每级每周 @money!{1}{2}",
+ "Profit per level a week at this state's prices, wages included. New levels and retooling follow the most profitable recipe.": "按本州价格计算的每级每周利润，已计入工资。新等级和改造都会采用最赚钱的方法。"
 }
