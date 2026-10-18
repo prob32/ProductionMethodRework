@@ -1,4 +1,4 @@
-# PMR run sheet: PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,9 +10,24 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: PMR's text in every game language (test mod; your current save works)
+## Latest: automation pays for itself (q18, test mod; a new game shows it from the start)
 
-One change since q16, from `dev` in prob32/ProductionMethodRework:
+New since q17, from `dev` in prob32/ProductionMethodRework (q18 also carries q17's translations, below):
+
+- **Every automation method is cheaper (your 14:48Z ask).** At 1836 wages vanilla's automation lost money: it saves
+  1,000 to 3,000 laborers at about GBP 0.04 a week each, against goods that cost far more. Each automation method
+  now needs fewer goods (6 to 24% of vanilla's) and removes half as many workers again, so it pays even with its
+  inputs at +75% of base price. This applies wherever the automation sits: folded into a recipe from tier 3,
+  the electric recipe, or kept as its own group. Company Culture's tier sizes shift a little, as they are worked
+  out from the blends.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| B1 | Open a Steel Mill whose levels all run Open Hearth Process (tier 3), and hover its coal and tools inputs and its employment | Each fully staffed level takes coal 30.8 and tools 0.4 (the totals scale with levels), and the jobs are machinists and engineers, no laborers | Coal 40 and tools 5 a level, or laborers listed: the automation buff is not in this build; check that the Queue Test folder's `RUNSHEET.md` starts with "automation pays at 1836 wages" |
+
+## Also new since q16: PMR's text in every game language (q17)
+
+From `dev` in prob32/ProductionMethodRework:
 
 - **PMR is translated (#3).** All of PMR's text now reads in the game's language: Brazilian Portuguese, French,
   German, Japanese, Korean, Polish, Russian, Simplified Chinese, Spanish and Turkish. Each uses the game's own
