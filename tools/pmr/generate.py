@@ -210,6 +210,14 @@ PROFIT_RECHECK_DAYS = 365
 PROFIT_RECHECK_SPREAD = 120    # re-checks fall 60 days either side, in 7 steps
 PROFIT_STICK_UP = 0.05
 PROFIT_STICK_DOWN = 0.25
+# Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
+# pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
+# a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
+# GOODS_DEFICIT_FACTOR 10000), plus the goods it makes at base value x PRODUCED_VALUE_FACTOR 0.25 x the pool's 1.25.
+# pmr_profit_<b> scores its pick so (pmr_pvs_<b>); private_investment.pf_effects averages it per country into the
+# type's ai_value. The market terms (price bands, wanted goods, shortages) stay the game's own, per state.
+VANILLA_PROFIT_W, VANILLA_DEFICIT_W, VANILLA_OUTPUT_W = 5000 * 1.5, 10000, 0.25 * 1.25
+TARGET_EMPLOYEES = {}   # building type -> employees per level of each retool target (the order of econ)
 # Pat, 2026-10-13: a recipe that needs electricity (its own goods, its folded automation, or vanilla's
 # required_input_goods) can't become a building's target unless its state produces electricity, and
 # retooling towards it pauses while the state has none. One rule for government and private retooling.
@@ -1385,6 +1393,7 @@ def main():
         # Each recipe (each recipe + automation pair with the split) as a retool target: what a level of it makes,
         # costs and needs.
         tiers_of = []     # per retool target: (recipe, the automation run with it)
+        TARGET_EMPLOYEES[bk] = []
         for i, r in enumerate(recipes, 1):
             if isinstance(r, ElectricRecipe):
                 autos = r.autos
@@ -1397,6 +1406,7 @@ def main():
                 blend, emp, elec, clamped = effective(r, autos)
             fold_techs[i] = [] if sp else list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
             econ.append(recipe_econ(blend, emp, weight))
+            TARGET_EMPLOYEES[bk].append(sum(emp.values()))
             profit_goods.update(g for g in econ[-1][0] if goods_cost.get(g))
             if elec:
                 elec_tiers.append(i)
@@ -3305,6 +3315,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n\t{setv("pmr_prm", 0)}\n'
              + ''.join(f'\tif = {{ limit = {{ var:pmr_pk = {i} }} {setv("pmr_prm", "var:" + xv("pmr_rm", i))} }}\n'
                        for i in range(1, k + 1))
+             + vanilla_score(bk, b, econ, goods_cost, setv, v)
              + pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v) + '}\n\n')
 
     # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
@@ -3340,6 +3351,24 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=first_month" }}\n\t\t}}\n'
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              + f'\t{setv("pmr_best_now", "var:" + v("pmr_pbest"))}\n}}\n\n')
+    return ''.join(o)
+
+
+def vanilla_score(bk, b, econ, goods_cost, setv, v):
+    """Inside pmr_profit_<b>, after the pick: pmr_pvs_<b>, what vanilla's investment pool would add to the type's
+    ai_value for a new level of the pick at this state's prices (VANILLA_*_W): its profit per level a week
+    (pmr_prm_<b>) / the target's employees per level x 7500 (x 10000 for a loss), plus its outputs at base value
+    x 0.3125. 0 without a pick."""
+    emps = TARGET_EMPLOYEES.get(bk, [])
+    o = [f'\t# vanilla\'s profit and output terms for the pick (vanilla_score)\n\t{setv("pmr_pvs", 0)}\n']
+    for i, (gd, _wu) in enumerate(econ, 1):
+        e = max(emps[i - 1] if i <= len(emps) else 0, 1)
+        out = sum(q * goods_cost[g] for g, q in gd.items() if q > 0 and goods_cost.get(g))
+        o.append(f'\tif = {{\n\t\tlimit = {{ var:pmr_pk = {i} }}\n\t\t{setv("pmr_pvs", "var:" + v("pmr_prm"))}\n'
+                 f'\t\tif = {{ limit = {{ var:{v("pmr_pvs")} > 0 }} '
+                 f'change_variable = {{ name = {v("pmr_pvs")} multiply = {fmt(VANILLA_PROFIT_W / e)} }} }}\n'
+                 f'\t\telse = {{ change_variable = {{ name = {v("pmr_pvs")} multiply = {fmt(VANILLA_DEFICIT_W / e)} }} }}\n'
+                 f'\t\tchange_variable = {{ name = {v("pmr_pvs")} add = {fmt(out * VANILLA_OUTPUT_W)} }}\n\t}}\n')
     return ''.join(o)
 
 
@@ -4262,8 +4291,9 @@ def pair_options(bk, pair):
 
 def ai_cell(bk, group, ind):
     """Pat, 2026-10-18 18:40Z: what the AI weighs a building type by, under its row: its AI value (pmr_ai_value_<b>,
-    vanilla's with the policy and foreign-or-domestic additions, x the factor from the country's average profit for
-    the type, Pat 21:10Z) at the state the row's prices come from, and the multiplier its priority group's slider gives
+    vanilla's with the policy and foreign-or-domestic additions, plus vanilla's profit and output terms at the
+    country's average for the type, Pat 21:10Z/21:32Z) at the state the row's prices come from, and the multiplier its
+    priority group's slider gives
     (pmr_ipw_<group>). A strip the side panel's width (Pat 21:21Z: the Investments tab)."""
     b = short(bk)
     i1, i2 = ind + '\t', ind + '\t\t'
@@ -4357,19 +4387,20 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
         b = short(bk)
         mult = f"{MV_COUNTRY}.MakeScope.ScriptValue('{private_investment.VAR.format(group)}')"
         aiv, aib = mv_read(f'pmr_mv_aiv_{b}'), mv_read(f'pmr_mv_aib_{b}')
-        pf, avg = mv_read(f'pmr_pf_{b}'), mv_read(f'pmr_pavg_{b}')
+        term, avg = mv_read(f'pmr_pterm_{b}'), mv_read(f'pmr_pavg_{b}')
         loc.append(f' PMR_MV_AI_{b}:0 "AI weight #bold [{aiv}|0]#! x[{mult}|2]"')
-        loc.append(f' PMR_MV_AI_SUB_{b}:0 "Base [{aib}|0] x#bold [{pf}|2]#! for an average profit of @money![{avg}|0] '
-                   f'a level a week; x[{mult}|2] from $PMR_IPW_GROUP_{group}$"')
+        loc.append(f' PMR_MV_AI_SUB_{b}:0 "Base [{aib}|0] [{term}|=+0] from your average level\'s profit '
+                   f'(@money![{avg}|0] a week) and output; x[{mult}|2] from $PMR_IPW_GROUP_{group}$"')
         loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold What investors weigh ${bk}$ by#!\\n'
-                   f"AI value: #bold [{aiv}|0]#! at the state the row\'s prices come from: the building\'s own "
-                   f"[{aib}|0], with your economic policy and the foreign or domestic bar, times #bold [{pf}|2]#! for "
-                   f"its average profit across your states, @money![{avg}|0] a level a week (x1 at none, "
-                   f"+1 for every @money!{private_investment.PF_REF}, from x{private_investment.PF_MIN} to "
-                   f"x{private_investment.PF_MAX}; recounted monthly).\\n"
+                   f"AI value: #bold [{aiv}|0]#! at the state the row\'s prices come from: the building\'s own [{aib}|0], "
+                   f"with your economic policy and the foreign or domestic bar, plus #bold [{term}|=+0]#!: the game\'s "
+                   f"own score for a new level, at your country\'s average for this building type. That is its profit "
+                   f"per level a week (@money![{avg}|0] on average) divided by its workers, "
+                   f"x{VANILLA_PROFIT_W:g} (x{VANILLA_DEFICIT_W:g} for a loss), plus the goods it makes at base prices "
+                   f"x{VANILLA_OUTPUT_W:g}; never below {private_investment.AI_FLOOR}. Recounted monthly.\\n"
                    f'Investment priority: #bold x[{mult}|2]#! from the $PMR_IPW_GROUP_{group}$ slider.\\n\\n'
-                   'Financial districts and manor houses rank what to build by these with each building\'s own '
-                   'predicted profit."')
+                   'Financial districts and manor houses then add the same profit and output terms for the state '
+                   'they look at, with its prices, shortages and wanted goods, and rank what to build by the total."')
     for bk, pr in (pair_ui or {}).items():
         b = short(bk)
         for a, opt in enumerate(pr['options'], 1):
