@@ -12,7 +12,7 @@ names, so the caller decides where the prices come from:
 read(name) returns the GUI expression for one of them, e.g. lambda n: f"GetPlayer.MakeScope.Var('{n}').GetValue" for
 country copies, or f"<a state>.MakeScope.Var('{n}').GetValue" for a state's own.
 
-    methods_row(bk, recipes, read, tip, ind, visible=None) -> GUI text
+    methods_row(bk, recipes, read, tip, ind, visible=None, width=ROW_W) -> GUI text
         recipes: [(recipe key, icon texture)], oldest first, as PMR numbers them
         tip(i):  the tooltip key of recipe i's icon (the caller writes the loc; recipe_tip_lines helps)
 
@@ -32,11 +32,11 @@ def eq(expr, n):
     return f"EqualTo_CFixedPoint({expr}, '(CFixedPoint){n}')"
 
 
-def methods_row(bk, recipes, read, tip, ind, visible=None):
+def methods_row(bk, recipes, read, tip, ind, visible=None, width=ROW_W):
     b = bk[len('building_'):]
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
     vis = f'{i1}visible = "[{visible}]"\n' if visible else ''
-    out = (f'{ind}widget = {{\n{vis}{i1}size = {{ {ROW_W} {ROW_H} }}\n{i1}parentanchor = hcenter\n'
+    out = (f'{ind}widget = {{\n{vis}{i1}size = {{ {width} {ROW_H} }}\n{i1}parentanchor = hcenter\n'
            f'{i1}background = {{\n{i1}\tusing = entry_bg\n{i1}}}\n'
            f'{i1}icon = {{\n{i2}position = {{ 6 0 }}\n{i2}parentanchor = vcenter\n{i2}size = {{ 54 54 }}\n'
            f'{i2}datacontext = "[GetBuildingType(\'{bk}\')]"\n{i2}texture = "[BuildingType.GetIcon]"\n'

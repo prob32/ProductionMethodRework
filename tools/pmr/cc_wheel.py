@@ -8,15 +8,15 @@ further out, each orbit turned SWIRL degrees further round so the arms curl. The
 boundary between two arms, between the inner and outer tiers they open, and their synergies further out behind them.
 
 Every piece is a vanilla GUI part or a small texture this module writes (textures()): the node card is the tech
-node's (round_frame_dec behind an invention picture, cost badge, ticks, the add button and the event glow), on a
+node's (round_frame_dec behind an invention picture, cost badge, ticks and the add button), on a
 rounded card whose outline colour says the kind of benefit (KIND_COL). The wheel sits on a canvas in a zoomarea, the
 tech tree's pan-and-zoom widget, over the tech tree's backdrop painting, in a fullscreen_block_window that ingame_hud.gui
 holds beside the side panels (pmr_cc_fullscreen, open while the 'pmr_cc_full' GUI variable is set and the company panel
 is). A bought charter node carries the vanilla charter button, which the company panel's charter row had (Pat 20:37Z).
 
 Links are dotted. A drawn curve would be one uncompressed texture per link (megabytes each), so each link is a row of
-small dot icons along its curve, in three colourings (done, open, locked) of which one shows. The orbits are faint
-dots.
+small dot icons along its curve, in three colourings (done, open, locked) of which one shows. Pat 21:53Z: no glow
+behind a node that can be bought and no orbit dots.
 
 A node reads its state from the executive's mirror, pmr_cc_st_<line>_<tier> (company_culture.effects, pmr_cc_states):
 0 locked, 1 can be bought now, 2 next but short of points (or another grant running), 3 its arm not chosen,
@@ -70,6 +70,7 @@ OPENS = {'tr': [('g2', 3), ('fw', 3)], 'iv': [('g1', 3), ('cl', 3)], 'ch': [('xs
 MARGIN = 260
 LABEL_OUT = 380                         # arm titles, this far beyond the arm's outermost node
 LABEL_W, LABEL_H = 1500, 150
+LABEL_TEXT_W = 1150                     # the widest title's letters at its size; no node may sit behind them
 
 # Pat 17:08Z: the outline colour by the kind of benefit (BUILD-SPEC section 1; the legend went in q27, Pat 20:37Z)
 KIND_COL = {'pm': (150, 44, 56), 'prod': (206, 124, 80), 'input': (98, 156, 214), 'work': (170, 136, 216),
@@ -81,7 +82,6 @@ DOT_COL = {    # border, core: the colours of vanilla's tech_line_border_<x>.dds
     'locked': ((40, 44, 46), (110, 132, 137)),
 }
 DOT, DOT_STEP = 18, 30                  # link dots: size and spacing along the curve
-ORBIT_DOT, ORBIT_STEP = 10, 64
 PM_C = (246, 204, 52)                   # Pat 17:45Z: new methods in yellow
 LOGO_W, LOGO_H = 64, 40
 
@@ -191,7 +191,12 @@ def layout():
     for a in cc.ARMS:
         rmax = max(float(np.hypot(*p)) for (k, _t), p in pos.items()
                    if not cc.BY_KEY[k].shared and cc.BY_KEY[k].arm == a)
-        labels[a] = _place(ANGLE[a], rmax + LABEL_OUT)
+        r = rmax + LABEL_OUT
+        # Pat 21:53Z: STEWARDSHIP ran behind its outermost node; move a title out until its letters clear every node
+        while any(abs(c[0] - q[0]) < (LABEL_TEXT_W + NODE_W) / 2 + 40 and abs(c[1] - q[1]) < (LABEL_H + NODE_H) / 2 + 40
+                  for c in [_place(ANGLE[a], r)] for q in pos.values()):
+            r += 20
+        labels[a] = _place(ANGLE[a], r)
     return pos, links, labels
 
 
@@ -288,18 +293,6 @@ def link_gui(pos, a, b, ox, oy):
     return out, len(pts)
 
 
-def orbits_gui(ox, oy, rmax):
-    """The faint orbits, one per tier out to the last used."""
-    out = 'container = {\n'
-    for r in RINGS:
-        if r > rmax + NODE_H:
-            break
-        n = int(2 * math.pi * r // ORBIT_STEP)
-        pts = [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n)) for i in range(n)]
-        out += dots(pts, ox, oy, ORBIT_DOT + (4 if r == RINGS[0] else 0), f'{TEX}/cc_dot_orbit.dds')
-    return out + '}\n'
-
-
 def _textbox(x, y, w, h, text, size, extra='', raw=False):
     key = 'raw_text' if raw else 'text'
     return (f'textbox = {{\nposition = {{ {x} {y} }}\nsize = {{ {w} {h} }}\nalign = left|nobaseline\n'
@@ -308,8 +301,8 @@ def _textbox(x, y, w, h, text, size, extra='', raw=False):
 
 
 def goods_body(p, ln, t, cands_b, cands_g):
-    """A goods tier's bullets (BUILD-SPEC section 4): the method's name in yellow with its logo, the net line, and the
-    grey note naming the base method."""
+    """A goods tier's bullets (BUILD-SPEC section 4): the method's name in yellow with its logo, then the output gain
+    and the input cost on lines of their own (Pat 21:53Z), the cost only where the method needs more of an input."""
     gl = ln.goods
     logos = ''
     for b in cands_b:
@@ -318,18 +311,18 @@ def goods_body(p, ln, t, cands_b, cands_g):
                   f'texture = "{WHITE}"\n{_rgb(PM_C)}'
                   f'modify_texture = {{\ntexture = "{w["icons"][t - 1]}"\nspriteType = Corneredstretched\n'
                   'spriteborder = { 0 0 }\nblend_mode = alphamultiply\n}\nalwaystransparent = yes\n}\n')
-    return (f'flowcontainer = {{\nposition = {{ {TX0} 82 }}\ndirection = vertical\nspacing = 4\n'
+    line = (f'textbox = {{\n{{VIS}}autoresize = yes\nmaximumsize = {{ {TXW} -1 }}\nalign = left|nobaseline\nfontsize = 24\n'
+            'elide = right\ntext = "{KEY}"\nalwaystransparent = yes\n}\n')
+    return (f'flowcontainer = {{\nposition = {{ {TX0} 82 }}\ndirection = vertical\nspacing = 4\nignoreinvisible = yes\n'
             f'flowcontainer = {{\ndirection = horizontal\nspacing = 10\n'
             f'textbox = {{\nautoresize = yes\nmaximumsize = {{ {TXW - LOGO_W - 10} -1 }}\nalign = left|nobaseline\n'
             f'fontsize = 26\nelide = right\ntext = "PMR_CC_PMNAME_g{gl}_{t}"\nalwaystransparent = yes\n}}\n'
             f'widget = {{\nsize = {{ {LOGO_W} {LOGO_H} }}\n'
             f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{TEX}/cc_pm_plate.dds"\nalwaystransparent = yes\n}}\n'
             + logos + '}\n}\n'
-            f'textbox = {{\nautoresize = yes\nmaximumsize = {{ {TXW} -1 }}\nalign = left|nobaseline\nfontsize = 24\n'
-            f"elide = right\nraw_text = \"[Character.GetCustom('pmr_cc_net_g{gl}_{t}')]\"\nalwaystransparent = yes\n}}\n"
-            f'textbox = {{\nautoresize = yes\nmaximumsize = {{ {TXW - 22} -1 }}\nposition = {{ 22 0 }}\n'
-            f'align = left|nobaseline\nfontsize = 20\nelide = right\ntext = "PMR_CC_OVER_g{gl}"\nalwaystransparent = yes\n}}\n'
-            '}\n')
+            + line.replace('{VIS}', '').replace('{KEY}', f'PMR_CC_GAIN_g{gl}_{t}')
+            + line.replace('{VIS}', _vis(f'Not({EQ(f"pmr_cc_k_g{gl}i", 0)})')).replace('{KEY}', f'PMR_CC_COST_g{gl}_{t}')
+            + '}\n')
 
 
 def node(p, ln, t, x, y, cands):
@@ -345,9 +338,6 @@ def node(p, ln, t, x, y, cands):
     click = f'enabled = "[{can}]"\nonclick = "[{sg}.Execute({scope})]"\n'
     kc = KIND_COL[ln.kind]
     out = f'widget = {{\n{_vis(f"Not({hidden(k, t)})" if hidden(k, t) else None)}position = {{ {x} {y} }}\nsize = {{ {NODE_W} {NODE_H} }}\n{tt}'
-    # the tech node's glow while it can be bought
-    out += (f'widget = {{\n{_vis(cls["active"])}size = {{ 130% 70 }}\nparentanchor = bottom|hcenter\nposition = {{ 0 -15 }}\n'
-            'using = ui_event_glow_animation_looping\nalwaystransparent = yes\n}\n')
     # the card by state, its outline by kind (fainter while locked, faintest when ruled out)
     card = f'position = {{ {NODE_W - CW} 0 }}\nsize = {{ {CW} {NODE_H} }}\nalwaystransparent = yes\n'
     for c, col in CARD_COL.items():
@@ -366,6 +356,11 @@ def node(p, ln, t, x, y, cands):
     name = cc.node_name(k, t)
     title = (_textbox(TX0, 18, TXW, 50, name, 36, raw=True) if name.startswith('[')
              else _textbox(TX0, 18, TXW, 50, f'PMR_CC_NAME_{k}_{t}', 36))
+    if k == 'pg':
+        # Pat 21:53Z: the company's own prestige good, its name and picture (Dollfus-Mieg: Designer Clothes)
+        title = (prestige(f'flowcontainer = {{\nposition = {{ {TX0} 18 }}\n{{DM}}item = {{\n'
+                          + _textbox(0, 0, TXW, 50, '[Goods.GetName]', 36, raw=True) + '}\n}\n')
+                 + f'container = {{\n{_vis(PG_NONE)}{title}}}\n')
     body = (goods_body(p, ln, t, *cands[ln.goods]) if ln.goods else
             f'textbox = {{\nposition = {{ {TX0} 82 }}\nautoresize = yes\nmaximumsize = {{ {TXW} 150 }}\nmultiline = yes\n'
             f'align = left|nobaseline\nfontsize = 26\nelide = right\ntext = "PMR_CC_FX_{k}_{t}"\nalwaystransparent = yes\n}}\n')
@@ -377,11 +372,15 @@ def node(p, ln, t, x, y, cands):
     fy, iy = (NODE_H - FRAME) // 2, (NODE_H - ICON) // 2
     frame = f'position = {{ 0 {fy} }}\nsize = {{ {FRAME} {FRAME} }}\ntexture = "{FRAME_TEX}"\nalwaystransparent = yes\n'
     pic = f'position = {{ 20 {iy} }}\nsize = {{ {ICON} {ICON} }}\ntexture = "{ln.icons[t - 1]}"\n'
-    out += (f'icon = {{\n{_vis(f"Not({locked})")}{frame}}}\n'
-            f'icon = {{\n{_vis(locked)}{frame}color = {{ 0.5 0.5 0.5 1 }}\n}}\n'
-            f'button = {{\n{_vis(cls["active"])}{pic}using = technology_confirm_button_sound\n{click}{tt}}}\n'
+    pics = (f'button = {{\n{_vis(cls["active"])}{pic}using = technology_confirm_button_sound\n{click}{tt}}}\n'
             f'icon = {{\n{_vis(OR(cls["pending"], cls["bought"]))}{pic}{tt}}}\n'
             f'icon = {{\n{_vis(locked)}{pic}color = {{ 0.4 0.4 0.4 1 }}\n{tt}}}\n')
+    if k == 'pg':
+        pics = (prestige('flowcontainer = {\n{DM}item = {\ncontainer = {\n'
+                         + pics.replace(f'texture = "{ln.icons[t - 1]}"', 'texture = "[Goods.GetTexture]"') + '}\n}\n}\n')
+                + f'container = {{\n{_vis(PG_NONE)}{pics}}}\n')
+    out += (f'icon = {{\n{_vis(f"Not({locked})")}{frame}}}\n'
+            f'icon = {{\n{_vis(locked)}{frame}color = {{ 0.5 0.5 0.5 1 }}\n}}\n' + pics)
     # the cost in points, where the tech node shows its era
     badge = f'widget = {{\n{{VIS}}position = {{ 70 {fy + FRAME - 30} }}\nsize = {{ 40 40 }}\ntooltip = "PMR_CC_COST_TT"\n' \
             f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\n}}\n' \
@@ -413,6 +412,14 @@ def node(p, ln, t, x, y, cands):
     if k in CHARTER_TEST:
         out += charter_plate(k)
     return out + '}\n'
+
+
+PG_NONE = 'IsDataModelEmpty(Company.GetPrestigeGoods)'
+
+
+def prestige(gui):
+    """gui with {DM} as the datamodel of the company's first prestige good (vanilla company_panel.gui lists them)."""
+    return gui.replace('{DM}', "datamodel = \"[DataModelFirst(Company.GetPrestigeGoods, '(int32)1')]\"\n")
 
 
 CHARTER_TEST = {'tr': 'IsTradeCharter', 'iv': 'IsInvestmentCharter', 'ch': 'IsIndustryCharter',
@@ -493,17 +500,15 @@ def arm_title(a, c, ox, oy):
 
 
 def wheel(p, ready):
-    """The zoomarea, filling the full-screen window's content area: orbits, links, the seal, arm titles, nodes, grant
-    bars."""
+    """The zoomarea, filling the full-screen window's content area: links, the seal, arm titles, nodes, grant bars."""
     pos, links, labels = layout()
     w, h, ox, oy = canvas(pos, labels)
-    rmax = max(float(np.hypot(*q)) for q in pos.values())
     cands = {}
     for gl in (1, 2):
         bs = sorted({v['g'][gl - 1] for v in p.comp.values() if len(v['g']) >= gl}, key=lambda b: p.works[b]['idx'])
         gs = sorted({v['gout'][gl - 1] for v in p.comp.values() if len(v['g']) >= gl})
         cands[gl] = (bs, gs)
-    out = orbits_gui(ox, oy, rmax)
+    out = ''
     n_dots = 0
     for a, b in links:
         g, n = link_gui(pos, a, b, ox, oy)
@@ -530,9 +535,7 @@ def wheel(p, ready):
            'state = {\nname = "_zoom_changed"\nduration = 0.15\n}\n'
            f'zoom = {ZOOM}\nzoom_step = {ZOOM_STEP}\nzoom_min = {ZOOM_MIN}\nzoom_max = {ZOOM_MAX}\ndraggable_by = left\n'
            f'pan_position = {{ {pan_x} {pan_y} }}\n'
-           f'zoomwidget = {{\ncontainer = {{\nwidget = {{\nsize = {{ {w} {h} }}\n}}\n{out}}}\n}}\n}}\n'
-           'textbox = {\nposition = { 8 4 }\nautoresize = yes\nalign = left|nobaseline\nusing = fontsize_small\n'
-           'text = "PMR_CC_WHEEL_HINT"\nalwaystransparent = yes\n}\n}\n')
+           f'zoomwidget = {{\ncontainer = {{\nwidget = {{\nsize = {{ {w} {h} }}\n}}\n{out}}}\n}}\n}}\n}}\n')
     return gui, {'canvas': (w, h), 'nodes': len(pos), 'links': len(links), 'link_dots': n_dots}
 
 
@@ -752,15 +755,6 @@ def _dot(size, border, core):
     return im.resize((size, size), Image.LANCZOS)
 
 
-def _soft(size, col, alpha):
-    n = size * 4
-    yy, xx = np.mgrid[0:n, 0:n] + 0.5
-    dist = np.hypot(xx - n / 2, yy - n / 2) / (n / 2)
-    a = alpha * np.clip((1 - dist) * 2, 0, 1)
-    im = Image.fromarray(np.dstack([np.full((n, n, 3), col), a * 255]).round().astype('uint8'), 'RGBA')
-    return im.resize((size, size), Image.LANCZOS)
-
-
 def _plate():
     """The dark button the new method's logo sits on, with a gold frame (Pat 17:45-17:52Z)."""
     s = 4
@@ -778,7 +772,6 @@ def textures(out_dir):
         'cc_card': _rounded(CW // 2, NODE_H // 2, 20, grad=0.66),
         'cc_outline': _rounded(CW // 2, NODE_H // 2, 20, ring=3),
         'cc_pm_plate': _plate(),
-        'cc_dot_orbit': _soft(16, (225, 205, 160), 0.35),
     }
     for mode, (border, core) in DOT_COL.items():
         ims[f'cc_dot_{mode}'] = _dot(24, border, core)

@@ -1,4 +1,4 @@
-# PMR run sheet: the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,49 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the Investments tab, AI weight by vanilla's own scoring, the full-screen wheel fixed (q29, test mod; a new game is needed)
+## Latest: Production Methods cards, a quieter wheel, 12-month grants (q30, test mod; a new game is needed)
+
+From the build thread, after your 21:53Z message and screenshots on q29. Your q29 logs are saved in
+`pmr_dev_files\logs_q29`: no errors from the new window or the Investments tab, 29 `PF` lines as France, and two
+faults fixed here. The art academy's AI weight term came out at about 4 million, because its workers sit in its
+ownership method and PMR divided its profit by 1 worker; it now divides by the building's whole workforce, as the game
+does. Six text keys were missing or doubled in error.log; they are fixed.
+
+- The wheel: no gold glow behind a node you can buy, no gold orbit dots, and no "Drag to move, scroll to zoom" line.
+  A goods node shows its method's name, then the output gain (green) and the extra input (red) on lines of their own,
+  without "over the base … method".
+- Hallmark Goods shows the company's own prestige good, its name and picture (Dollfus-Mieg: Designer Clothes), and
+  the STEWARDSHIP title moved out so it no longer runs behind the node.
+- Node tooltips are shorter: the name, the lock reason, the bullets, and for a goods tier "Unlocks after a 12-month
+  research grant." The closing line on cost, arm and what rules it out is gone. Research grants run 12 months.
+- Investments: the header reads "Production Methods" with nothing under it. Each building type is a card: the recipe
+  row or recipe and automation grid on the left, the AI weight on the right ("AI weight", then the weight and the
+  priority multiplier). The cards are the Buildings list's own rows, so the search, filters and the four sort buttons
+  stay on both tabs and sort and filter the cards too. The AI weight tooltip is five short lines.
+
+1. Start a new game on the PMR Test playset as France, unpause and play to 1 February 1836, then pause.
+2. Take "PMR test: 6 Culture points for each of your companies" twice.
+3. Open Dollfus-Mieg's company panel and click its Company Culture tab. Look at the wheel, then hover a goods node.
+4. Click Engineering, then the textile mill's first goods node, and look under it.
+5. Open the Buildings panel from the left sidebar and click Investments. Click each of the four sort buttons, then turn
+   on the Rural filter and off again. Hover an AI weight.
+6. Click Buildings.
+7. Close the game and tell the build thread; it reads debug.log and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| W1 | Step 3 | No gold bars glowing behind any node, no rings of gold dots, nothing written in the top left corner under the title | A glow or dots still there: the old q29 files are still installed (the test mod folder wasn't replaced) |
+| W2 | Step 3's goods node | The method's name in yellow, then "+15% Clothes" in green, then "+5% Fabric" in red on the next line; no grey line under them. Its tooltip ends "Unlocks after a 12-month research grant." with no "Costs … Ruled out by …" line | One combined line or a "for": the q29 text is still loaded |
+| W3 | Step 3, the Stewardship arm's outermost node | It reads "Designer Clothes" with the designer clothes picture, and the STEWARDSHIP title sits clear of it | "Hallmark Goods" with a glass picture: the company's prestige goods list was empty in that window (error.log naming `GetPrestigeGoods` or `DataModelFirst`). The title still behind the node: tell the build thread, with a screenshot |
+| W4 | Step 4 | A green bar "Research grant 0 / 12 months" under the node | "/ 24 months": the q29 files are still installed. No bar at all with `CC_BUY` in debug.log: the grant didn't start |
+| I1 | Step 5 | "Production Methods" under the priorities, with no text under it, then one card per building type: icon and method row or grid on the left, "AI weight" and a number with ×1.00 on the right; nothing wider than the panel | The header but no cards: a card is made only for its own list row, and that lookup failed (error.log naming `pmr_methods_cards`, `DataModelRepeatedItem` or `Select_int32`); tell the build thread |
+| I2 | Step 5's sort buttons and filter | Each sort button reorders the cards as it reorders the Buildings rows; Rural leaves only rural building types | The buttons show but the cards don't move: the cards aren't following the list's order; tell the build thread which button |
+| I3 | Step 5's hover | Five lines: "AI weight for (building)", Base, Policy and Foreign/Domestic bar, Profit and output (with £ a week), Priority | Blank numbers on every line: the monthly count (`PMR;rec=PF`) never ran |
+| I4 | Step 6 | The normal Buildings rows, with no cards | Cards on Buildings: the tab flag isn't read by the list |
+| P3 | debug.log `PMR;rec=PF` | The art academy's `term=` is in the thousands or less, not millions | Still millions: the workforce fix didn't load |
+| E3 | error.log | No line naming `pmr_cc_why`, `PMR_CC_FX_pg`, `PMR_EMPTY`, `pmr_methods_cards`, `building_browser_panel` or `pmr_company_culture` | Any such line: that part never ran, and its rows above are not results |
+
+## Earlier: the Investments tab, AI weight by vanilla's own scoring, the full-screen wheel fixed (q29, test mod; played 2026-10-18, logs in logs_q29)
 
 From the build thread, after your 21:08Z to 21:32Z messages on q27. q29 replaces q28, which was installed for a few
 minutes with an earlier AI weight scale and never played.

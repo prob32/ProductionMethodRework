@@ -1394,6 +1394,10 @@ def main():
         # costs and needs.
         tiers_of = []     # per retool target: (recipe, the automation run with it)
         TARGET_EMPLOYEES[bk] = []
+        # vanilla divides profit by the building's whole workforce, so the other groups' first methods (ownership)
+        # count too; the art academy's are all there (q29: its term came out at 4 million with 1 for its workforce)
+        other_emp = sum(sum(Recipe(groups[g][0], *pms[groups[g][0]]).employment.values())
+                        for g in pdx.items(pg) if g != g0 and 'automation' not in g and groups.get(g) and groups[g][0] in pms)
         for i, r in enumerate(recipes, 1):
             if isinstance(r, ElectricRecipe):
                 autos = r.autos
@@ -1406,7 +1410,7 @@ def main():
                 blend, emp, elec, clamped = effective(r, autos)
             fold_techs[i] = [] if sp else list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
             econ.append(recipe_econ(blend, emp, weight))
-            TARGET_EMPLOYEES[bk].append(sum(emp.values()))
+            TARGET_EMPLOYEES[bk].append(sum(emp.values()) + other_emp)
             profit_goods.update(g for g in econ[-1][0] if goods_cost.get(g))
             if elec:
                 elec_tiers.append(i)
@@ -1703,7 +1707,7 @@ def main():
     write('gui/building_browser_panel.gui', patch_browser_tabs(patch_browser_actions(patch_grid_instance(
         patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
-        extra=browser_bars, also=also), dispatch), bool(mv_keys)), bom=False)
+        extra=browser_bars, also=also), dispatch), list(mv_keys)), bom=False)
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
     write('gui/states_panel_buildings.gui', hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types),
           bom=False)
@@ -4289,54 +4293,75 @@ def pair_options(bk, pair):
     return out
 
 
-def ai_cell(bk, group, ind):
-    """Pat, 2026-10-18 18:40Z: what the AI weighs a building type by, under its row: its AI value (pmr_ai_value_<b>,
-    vanilla's with the policy and foreign-or-domestic additions, plus vanilla's profit and output terms at the
-    country's average for the type, Pat 21:10Z/21:32Z) at the state the row's prices come from, and the multiplier its
-    priority group's slider gives
-    (pmr_ipw_<group>). A strip the side panel's width (Pat 21:21Z: the Investments tab)."""
+# Pat 21:53Z: the Investments tab is a column of cards, one per building type, in the order and under the filters of
+# the side Buildings panel's own list: the recipe row or grid on the left, the AI weight on the right.
+CARD_W, CARD_PAD, CARD_LEFT = 540, 8, 372
+AI_X = CARD_PAD + CARD_LEFT + 14
+
+
+def ai_column(bk, h, ind):
+    """Pat, 2026-10-18 18:40Z, 21:53Z: what the AI weighs a building type by, in the card's right column: its AI value
+    (pmr_ai_value_<b>, vanilla's with the policy and foreign-or-domestic additions, plus vanilla's profit and output
+    terms at the country's average for the type, Pat 21:10Z/21:32Z) at the state the row's prices come from, and the
+    multiplier its priority group's slider gives (pmr_ipw_<group>). The breakdown is in the tooltip."""
     b = short(bk)
     i1, i2 = ind + '\t', ind + '\t\t'
-    return (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}minimumsize = {{ 540 -1 }}\n'
-            f'{i1}margin = {{ 10 4 }}\n{i1}background = {{\n{i2}using = entry_bg\n{i1}}}\n'
+    return (f'{ind}icon = {{\n{i1}position = {{ {AI_X - 8} {CARD_PAD} }}\n{i1}size = {{ 1 {h - 2 * CARD_PAD} }}\n'
+            f'{i1}texture = "{methods_row.WHITE}"\n{i1}color = {{ 1 1 1 0.15 }}\n{i1}alwaystransparent = yes\n{ind}}}\n'
+            f'{ind}flowcontainer = {{\n{i1}position = {{ {AI_X} 0 }}\n{i1}parentanchor = vcenter\n{i1}direction = vertical\n'
             f'{i1}tooltip = "PMR_MV_AI_TT_{b}"\n{i1}using = tooltip_above\n'
-            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n'
-            f'{i2}text = "PMR_MV_AI_{b}"\n{i1}}}\n'
-            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}multiline = yes\n{i2}maximumsize = {{ 520 -1 }}\n'
-            f'{i2}align = left|nobaseline\n{i2}using = fontsize_small\n{i2}text = "PMR_MV_AI_SUB_{b}"\n{i1}}}\n{ind}}}\n')
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_small\n'
+            f'{i2}text = "PMR_MV_AI_LABEL"\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_large\n'
+            f'{i2}text = "PMR_MV_AI_{b}"\n{i1}}}\n{ind}}}\n')
 
 
 def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None):
-    """Each building type the player has: its recipe row (what new levels and retooling follow) and, where the type
-    folds automation, the recipe x automation grid (Pat, 2026-10-18 18:17Z), then its AI weight (ai_cell) under it."""
+    """One card per building type the player has (pmr_mv_card_<b>): its recipe row (what new levels and retooling
+    follow) or, where the type folds automation, the icon and the recipe x automation grid (Pat, 2026-10-18 18:17Z),
+    with the AI weight beside it (ai_column). pmr_methods_cards stands in each item of the side Buildings panel's list
+    (patch_browser_tabs), under the item's building type, and makes only that type's card: a card per item per type
+    would be thousands of widgets."""
     pair_ui, ai = pair_ui or {}, ai or {}
-    rows = ''
+    cards, picks = '', ''
     for bk, keys in recipe_keys.items():
         b = short(bk)
         pr = pair_ui.get(bk)
-        # the side panel is 540 wide (Pat 21:21Z): the recipe row, or the icon and the pairs grid, then the AI strip
-        rows += (f'\t\tflowcontainer = {{\n\t\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
-                 '\t\t\tdirection = vertical\n\t\t\tspacing = 4\n\t\t\tflowcontainer = {\n\t\t\t\tspacing = 8\n')
         names = (pr.get('keys') or recipe_keys[bk]) if pr else None
-        grid = (methods_row.pairs_grid(
-            bk, [(i, recipe_tex[bk][i - 1]) for i in pr['recipes']], pair_options(bk, pr), mv_read,
-            lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', '\t\t\t\t')
-            if pr else '')
+        grid, gh = '', 0
+        if pr:
+            grid = methods_row.pairs_grid(
+                bk, [(i, recipe_tex[bk][i - 1]) for i in pr['recipes']], pair_options(bk, pr), mv_read,
+                lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', '\t\t\t\t\t')
+            gh = methods_row.pairs_size(len(pr['recipes']), len(pr['options']))[1]
         if pr and pr.get('split'):
             # the recipe + automation pairs are the targets (SPLIT_AUTOMATION): the building's icon, then the grid
-            rows += methods_row.type_icon(bk, '\t\t\t\t') + grid + '\t\t\t}\n'
+            left = ('\t\t\t\tflowcontainer = {\n\t\t\t\t\tspacing = 8\n' + methods_row.type_icon(bk, '\t\t\t\t\t')
+                    + grid + '\t\t\t\t}\n')
+            lh = max(methods_row.ROW_H, gh)
         else:
-            rows += (methods_row.methods_row(bk, list(zip(keys, recipe_tex[bk])), mv_read,
-                                             lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t\t') + '\t\t\t}\n'
-                     + (f'\t\t\tflowcontainer = {{\n\t\t\t\tmargin_left = 68\n{grid}\t\t\t}}\n' if grid else ''))
-        if bk in ai:
-            rows += ai_cell(bk, ai[bk], '\t\t\t')
-        rows += '\t\t}\n'
-    return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The Buildings panel\'s Owners\' Methods tab;\n'
-            '# rows by tools/pmr/methods_row.py, shared with the Company Culture tab.\n'
-            'types pmr_methods_view {\n\ttype pmr_methods_view = flowcontainer {\n\t\tdirection = vertical\n'
-            '\t\tspacing = 12\n\t\tignoreinvisible = yes\n'
-            + rows + '\t}\n}\n')
+            left = methods_row.methods_row(bk, list(zip(keys, recipe_tex[bk])), mv_read,
+                                           lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t\t', width=CARD_LEFT)
+            lh = methods_row.ROW_H
+            if grid:
+                left += f'\t\t\t\tflowcontainer = {{\n\t\t\t\t\tmargin_left = 66\n{grid}\t\t\t\t}}\n'
+                lh += 6 + gh
+        h = lh + 2 * CARD_PAD
+        cards += (f'\ttype pmr_mv_card_{b} = widget {{\n\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
+                  f'\t\tsize = {{ {CARD_W} {h} }}\n'
+                  '\t\tbackground = {\n\t\t\tusing = entry_bg_simple\n\t\t}\n'
+                  f'\t\tflowcontainer = {{\n\t\t\tposition = {{ {CARD_PAD} {CARD_PAD} }}\n\t\t\tdirection = vertical\n'
+                  '\t\t\tspacing = 6\n' + left + '\t\t}\n'
+                  + (ai_column(bk, h, '\t\t') if bk in ai else '') + '\t}\n\n')
+        same = f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
+        picks += (f'\t\tflowcontainer = {{\n\t\t\tdatamodel = "[DataModelRepeatedItem(Select_int32({same}, '
+                  "'(int32)1', '(int32)0'))]\"\n"
+                  f'\t\t\titem = {{\n\t\t\t\tpmr_mv_card_{b} = {{}}\n\t\t\t}}\n\t\t}}\n')
+    return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The side Buildings panel\'s Investments tab: a card\n'
+            '# per building type; rows by tools/pmr/methods_row.py, shared with the Company Culture tab.\n'
+            'types pmr_methods_view {\n' + cards
+            + '\t# in an item of the Buildings list (BuildingType = the item\'s): makes its own type\'s card only\n'
+            '\ttype pmr_methods_cards = container {\n\t\tposition = { 7 0 }\n' + picks + '\t}\n}\n')
 
 
 def methods_view_custom_loc(recipe_keys, pair_ui=None):
@@ -4363,15 +4388,11 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
 
 
 def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
-    loc = [' PMR_MV_HEADER:0 "Private Owners\' Methods"',
+    loc = [' PMR_MV_HEADER:0 "Production Methods"',   # Pat 21:53Z, with no explainer text under it
            ' PMR_BB_TAB_INVEST:0 "Investments"',
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
            ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
-           ' PMR_MV_PAIRS:0 "Where a building type has automation, the grid scores every recipe (columns) with '
-           'every automation (rows) at the same prices; gold marks the most profitable combination, which new levels '
-           'and retooling follow."',
-           ' PMR_MV_INTRO:0 "Financial districts and manor houses build and retool to the most profitable recipe of each '
-           'state. Each row is a building type at the prices of your state with the most levels of it, as of its last check."']
+           ' PMR_MV_AI_LABEL:0 "AI weight"']
     for bk, keys in recipe_keys.items():
         b = short(bk)
         if (pair_ui or {}).get(bk, {}).get('split'):
@@ -4388,19 +4409,14 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
         mult = f"{MV_COUNTRY}.MakeScope.ScriptValue('{private_investment.VAR.format(group)}')"
         aiv, aib = mv_read(f'pmr_mv_aiv_{b}'), mv_read(f'pmr_mv_aib_{b}')
         term, avg = mv_read(f'pmr_pterm_{b}'), mv_read(f'pmr_pavg_{b}')
-        loc.append(f' PMR_MV_AI_{b}:0 "AI weight #bold [{aiv}|0]#! x[{mult}|2]"')
-        loc.append(f' PMR_MV_AI_SUB_{b}:0 "Base [{aib}|0] [{term}|=+0] from your average level\'s profit '
-                   f'(@money![{avg}|0] a week) and output; x[{mult}|2] from $PMR_IPW_GROUP_{group}$"')
-        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold What investors weigh ${bk}$ by#!\\n'
-                   f"AI value: #bold [{aiv}|0]#! at the state the row\'s prices come from: the building\'s own [{aib}|0], "
-                   f"with your economic policy and the foreign or domestic bar, plus #bold [{term}|=+0]#!: the game\'s "
-                   f"own score for a new level, at your country\'s average for this building type. That is its profit "
-                   f"per level a week (@money![{avg}|0] on average) divided by its workers, "
-                   f"x{VANILLA_PROFIT_W:g} (x{VANILLA_DEFICIT_W:g} for a loss), plus the goods it makes at base prices "
-                   f"x{VANILLA_OUTPUT_W:g}; never below {private_investment.AI_FLOOR}. Recounted monthly.\\n"
-                   f'Investment priority: #bold x[{mult}|2]#! from the $PMR_IPW_GROUP_{group}$ slider.\\n\\n'
-                   'Financial districts and manor houses then add the same profit and output terms for the state '
-                   'they look at, with its prices, shortages and wanted goods, and rank what to build by the total."')
+        policy = f'Subtract_CFixedPoint(Subtract_CFixedPoint({aiv}, {aib}), {term})'
+        # Pat 21:53Z: less text, on the card and in the tooltip
+        loc.append(f' PMR_MV_AI_{b}:0 "#bold [{aiv}|0]#! ×[{mult}|2]"')
+        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold AI weight for ${bk}$#!\\n'
+                   f'Base: [{aib}|0]\\n'
+                   f'Policy and Foreign/Domestic bar: [{policy}|=+0]\\n'
+                   f'Profit and output: [{term}|=+0] (@money![{avg}|0] a week on average)\\n'
+                   f'Priority: ×[{mult}|2] from $PMR_IPW_GROUP_{group}$"')
     for bk, pr in (pair_ui or {}).items():
         b = short(bk)
         for a, opt in enumerate(pr['options'], 1):
@@ -4677,15 +4693,17 @@ def patch_browser_actions(text, buildings):
 MV_TAB = 'pmr_bb_mv'   # GetVariableSystem flag: the side Buildings panel shows its Investments tab
 
 
-def patch_browser_tabs(text, on):
+def patch_browser_tabs(text, types):
     """building_browser_panel.gui (Pat, 2026-10-18 21:08Z, 21:21Z: "a sub panel called Investments in the buildings
     panel", "just like how private and government are separate panels with construction"): the side Buildings panel
     (compact_building_browser_panel) gets the construction panel's tab row, Buildings (vanilla's list) and Investments:
-    the economic law, policy and investment priorities (private_investment.policy_block, Pat 18:40Z) and the Private
-    Owners' Methods rows (gui/pmr_methods_view.gui, recounted by pmr_mv_refresh_sgui as the tab is clicked). The tabs
-    are vanilla's tab_buttons switched by a GetVariableSystem flag (MV_TAB), which the panel's closing clears, so it
-    reopens on Buildings as the construction panel does. The full-screen Building Registry stays vanilla."""
-    if not on:
+    the economic law, policy and investment priorities (private_investment.policy_block, Pat 18:40Z), then Production
+    Methods, a card per building type (Pat 21:53Z), recounted by pmr_mv_refresh_sgui as the tab is clicked. The cards
+    are the list's own items (types: the building types with a card), so the search, filters and sort buttons, which
+    both tabs keep, order and filter them as they do the vanilla rows. The tabs are vanilla's tab_buttons switched by a
+    GetVariableSystem flag (MV_TAB), which the panel's closing clears, so it reopens on Buildings as the construction
+    panel does. The full-screen Building Registry stays vanilla."""
+    if not types:
         return text
     def once(old, new):
         nonlocal text
@@ -4705,39 +4723,50 @@ def patch_browser_tabs(text, on):
                 f'{t}blockoverride "{n}_button_visibility" {{\n{t}\tvisible = "[{sel}]"\n{t}}}\n'
                 f'{t}blockoverride "{n}_button_visibility_checked" {{\n{t}\tvisible = "[Not({sel})]"\n{t}}}\n'
                 f'{t}blockoverride "{n}_button_selected" {{\n{t}\ttext = "{key}"\n{t}}}\n')
-    # the tab row over the search and filters, which hide on Investments, as the sort buttons do
+    # the tab row over the search and filters
     top = '\t\tblockoverride "fixed_top" {\n\n\t\t\tflowcontainer = {\n\t\t\t\tdirection = vertical\n'
     once(top, '\t\tblockoverride "fixed_top" {\n'
          '\t\t\t# PMR: Buildings / Investments tabs (patch_browser_tabs)\n\t\t\ttab_buttons = {\n'
          + tab('first', 'PMR_BB_TAB_BUILDINGS', [f"GetVariableSystem.Clear('{MV_TAB}')", pick_off], hidden)
          + tab('second', 'PMR_BB_TAB_INVEST', [f"GetVariableSystem.Set('{MV_TAB}', 'yes')", refresh, pick_off], shown)
          + '\t\t\t}\n\t\t\twidget = { size = { 1 10 } }\n\n'
-         f'\t\t\tflowcontainer = {{\n\t\t\t\tvisible = "[{hidden}]"  # PMR\n\t\t\t\tdirection = vertical\n')
-    once('\t\t\t# SORT BUTTONS\n\t\t\tflowcontainer = {\n\t\t\t\tmargin_bottom = 5\n',
-         f'\t\t\t# SORT BUTTONS\n\t\t\tflowcontainer = {{\n\t\t\t\tvisible = "[{hidden}]"  # PMR\n\t\t\t\tmargin_bottom = 5\n')
-    # the list's flowcontainer hides on Investments, and the tab's contents go before it
+         '\t\t\tflowcontainer = {\n\t\t\t\tdirection = vertical\n')
+    # the list's items: vanilla's row on Buildings, PMR's card on Investments (pmr_methods_cards, gui/pmr_methods_view.gui)
+    has_rows = 'Not(IsDataModelEmpty(BuildingBrowserBuildingTypeItem.GetBuildings))'
+    carded = any_of([f"ObjectsEqual(BuildingBrowserBuildingTypeItem.GetBuildingType, GetBuildingType('{bk}').Self)"
+                     for bk in types])
+    items = ('\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n\t\t\t\t\tspacing = 5\n\n'
+             '\t\t\t\t\tdatamodel = "[BuildingBrowserPanel.GetBuildingBrowserBuildingTypeItems]"\n\n'
+             '\t\t\t\t\titem = {\n\t\t\t\t\t\tcontainer = {\n\t\t\t\t\t\t\tbuildings_production_method_item = {\n')
+    once(items, '\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n\t\t\t\t\tspacing = 5\n'
+         '\t\t\t\t\tignoreinvisible = yes  # PMR\n\n'
+         '\t\t\t\t\tdatamodel = "[BuildingBrowserPanel.GetBuildingBrowserBuildingTypeItems]"\n\n'
+         '\t\t\t\t\titem = {\n\t\t\t\t\t\tcontainer = {\n'
+         f'\t\t\t\t\t\t\tvisible = "[Or({hidden}, And({has_rows}, {carded}))]"  # PMR\n'
+         '\t\t\t\t\t\t\t# PMR: a card per building type on Investments\n'
+         f'\t\t\t\t\t\t\tpmr_methods_cards = {{\n\t\t\t\t\t\t\t\tvisible = "[{shown}]"\n'
+         '\t\t\t\t\t\t\t\tdatacontext = "[BuildingBrowserBuildingTypeItem.GetBuildingType]"\n\t\t\t\t\t\t\t}\n'
+         '\t\t\t\t\t\t\tbuildings_production_method_item = {\n'
+         f'\t\t\t\t\t\t\t\tblockoverride "visible" {{\n\t\t\t\t\t\t\t\t\tvisible = "[And({has_rows}, {hidden})]"  # PMR\n'
+         '\t\t\t\t\t\t\t\t}\n')
+    # vanilla's lists of buildings that could be built stay on Buildings
+    for f in ('is_development', 'is_rural', 'is_urban'):
+        once(f'\t\t\t\tbuilding_panel_potential_buildings = {{\n\t\t\t\t\tvisible = "[BuildingBrowserPanel.IsFilterYes(\'{f}\')]"\n',
+             f'\t\t\t\tbuilding_panel_potential_buildings = {{\n'
+             f'\t\t\t\t\tvisible = "[And(BuildingBrowserPanel.IsFilterYes(\'{f}\'), {hidden})]"  # PMR\n')
+    # Investments' own head (law, policy, priorities, the Production Methods header) above the list
     body = '\t\tblockoverride "scrollarea_content"\n\t\t{\n'
     lst = '\t\t\tflowcontainer = {\n\t\t\t\tdirection = vertical\n'
-    once(body + lst, body + '@@PMR_VIEW@@' + lst)
-    view = ('\t\t\t# PMR: the Investments tab\n\t\t\tflowcontainer = {\n'
-            f'\t\t\t\tvisible = "[{shown}]"\n\t\t\t\tusing = default_list_position\n\t\t\t\tdirection = vertical\n'
-            '\t\t\t\tignoreinvisible = yes\n\t\t\t\tspacing = 8\n\t\t\t\tmargin_bottom = 10\n'
-            '\t\t\t\tpmr_policy_block = {}\n'
-            '\t\t\t\tdefault_header = {\n\t\t\t\t\tblockoverride "text" {\n\t\t\t\t\t\ttext = "PMR_MV_HEADER"\n'
-            '\t\t\t\t\t}\n\t\t\t\t}\n'
-            + ''.join('\t\t\t\ttextbox = {\n\t\t\t\t\tparentanchor = hcenter\n'
-                      '\t\t\t\t\tminimumsize = { 520 -1 }\n\t\t\t\t\tmaximumsize = { 520 -1 }\n'
-                      '\t\t\t\t\tautoresize = yes\n\t\t\t\t\tmultiline = yes\n\t\t\t\t\tusing = fontsize_small\n'
-                      f'\t\t\t\t\talign = left|nobaseline\n\t\t\t\t\ttext = "{k}"\n\t\t\t\t}}\n'
-                      for k in ('PMR_MV_INTRO', 'PMR_MV_PAIRS'))
-            + '\t\t\t\tpmr_methods_view = {\n\t\t\t\t\tparentanchor = hcenter\n\t\t\t\t}\n\t\t\t}\n')
-    # both in one flowcontainer that drops the hidden one, so the scroll area is as tall as the tab shown
-    at = text.index('@@PMR_VIEW@@' + lst)
-    end = block_end(text, at + len('@@PMR_VIEW@@'))
-    text = (text[:at] + '\t\t\t# PMR: the tab shown\n\t\t\tflowcontainer = {\n\t\t\t\tdirection = vertical\n'
-            '\t\t\t\tignoreinvisible = yes\n\n' + view
-            + lst.replace('{\n', f'{{\n\t\t\t\tvisible = "[{hidden}]"  # PMR\n', 1)
-            + text[at + len('@@PMR_VIEW@@' + lst):end] + '\n\t\t\t}  # PMR' + text[end:])
+    once(body + lst, body + '\t\t\t# PMR: the Investments tab\'s head, then the list both tabs share\n'
+         '\t\t\tflowcontainer = {\n\t\t\t\tdirection = vertical\n\t\t\t\tignoreinvisible = yes\n\n'
+         f'\t\t\tflowcontainer = {{\n\t\t\t\tvisible = "[{shown}]"\n\t\t\t\tusing = default_list_position\n'
+         '\t\t\t\tdirection = vertical\n\t\t\t\tignoreinvisible = yes\n\t\t\t\tspacing = 8\n\t\t\t\tmargin_bottom = 8\n'
+         '\t\t\t\tpmr_policy_block = {}\n'
+         '\t\t\t\tdefault_header = {\n\t\t\t\t\tblockoverride "text" {\n\t\t\t\t\t\ttext = "PMR_MV_HEADER"\n'
+         '\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n' + '@@PMR_LIST@@' + lst)
+    at = text.index('@@PMR_LIST@@')
+    end = block_end(text, at + len('@@PMR_LIST@@'))
+    text = text[:at] + text[at + len('@@PMR_LIST@@'):end] + '\n\t\t\t}  # PMR' + text[end:]
     # closing the panel puts it back on Buildings, with the policy window shut
     hide = ('\t\t\t\tname = _hide\n\t\t\t\tstart_sound = {\n\t\t\t\t\tsoundeffect = "event:/SFX/UI/SideBar/buildings_stop"\n'
             '\t\t\t\t}\n\n\t\t\t\ton_start = "[BuildingBrowserPanel.Sort(\'database_order\')]"\n')
