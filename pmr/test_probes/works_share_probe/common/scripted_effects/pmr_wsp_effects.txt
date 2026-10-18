@@ -50,7 +50,11 @@ pmr_wsp_log = {
 				if = {
 					limit = { var:pmr_wsp_val != 0 }
 					root = { change_variable = { name = pmr_wsp_hit add = 1 } }
-					debug_log = "PMR;rec=WSP;date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetName];building=[SCOPE.sBuilding('pmr_wsp_b').GetName];level=[THIS.Var('pmr_wsp_lvl').GetValue|0];marker=[THIS.Var('pmr_wsp_val').GetValue|3];company_levels=[THIS.Var('pmr_wsp_cl').GetValue|2]"
+					# Logged from the building, which names itself (q19: SCOPE.sBuilding from the state printed no name, THIS.GetName failed). The
+					# numbers sit on the state, because buildings hold no variables.
+					scope:pmr_wsp_b = {
+						debug_log = "PMR;rec=WSP;date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetBuilding.GetState.GetName];building=[THIS.GetBuilding.GetName];level=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_lvl').GetValue|0];marker=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_val').GetValue|3];company_levels=[THIS.GetBuilding.GetState.MakeScope.Var('pmr_wsp_cl').GetValue|2]"
+					}
 				}
 			}
 		}
