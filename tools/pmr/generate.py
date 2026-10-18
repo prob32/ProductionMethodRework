@@ -345,6 +345,9 @@ THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the preview, 1024 x 1
 # add-on mods. works_probe (the Hudson's Bay executive trait) passed 03:51Z and was retired when Company Culture
 # (company_culture.py) took over building_employment_laborers_mult. buyin_probe (Pat 13:54Z) ran at 14:22Z and was
 # retired when Pat dropped foreign buy-in at 14:29Z (results: /mnt/project-files/pmr/foreign-buyin/probe-results.md).
+# works_share_probe (Company Culture thread, Pat 2026-10-18 15:35Z) asks whether a building reads its company owners'
+# share through an executive trait (run sheet: /mnt/project-files/pmr/mio/works-share-probe/RUN.md). A probe's
+# English localisation is copied to every other language.
 TEST_PROBES = os.path.join(ROOT, 'pmr', 'test_probes')
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')
@@ -1415,9 +1418,17 @@ def main():
             src = os.path.join(TEST_PROBES, probe)
             for dirpath, _dirs, files in os.walk(src):
                 for fn in files:
-                    dst = os.path.join(args.out, os.path.relpath(os.path.join(dirpath, fn), src))
+                    rel = os.path.relpath(os.path.join(dirpath, fn), src)
+                    dst = os.path.join(args.out, rel)
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     shutil.copyfile(os.path.join(dirpath, fn), dst)
+                    # A probe's English text goes to every language too, or a tester playing in another language
+                    # sees its keys raw.
+                    if rel.startswith(os.path.join('localization', 'english', '')) and fn.endswith('_l_english.yml'):
+                        with open(os.path.join(dirpath, fn), encoding='utf-8-sig') as f:
+                            body = f.read().split('\n', 1)[1]
+                        for lang in OTHER_LANGUAGES:
+                            write(f'localization/{lang}/{fn[:-len("english.yml")]}{lang}.yml', f'l_{lang}:\n' + body)
         # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, in the test build until Pat ships it.
         loc += company_culture.write_all(game, write, header, report)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and

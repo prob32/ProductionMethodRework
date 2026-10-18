@@ -1,0 +1,57 @@
+﻿# Works share probe (Company Culture thread, Pat 2026-10-18 15:35Z). Test builds only, from pmr/test_probes/.
+# Question: does a building read its company owners' share through an executive trait? Run sheet:
+# /mnt/project-files/pmr/mio/works-share-probe/RUN.md
+
+# Country scope (the player): every company's executive carries the probe trait.
+pmr_wsp_apply = {
+	every_company = {
+		executive ?= {
+			if = { limit = { NOT = { has_trait = pmr_wsp_marker_trait } } add_trait = pmr_wsp_marker_trait }
+		}
+	}
+}
+
+pmr_wsp_strip = {
+	every_company = {
+		executive ?= {
+			if = { limit = { has_trait = pmr_wsp_marker_trait } remove_trait = pmr_wsp_marker_trait }
+		}
+	}
+}
+
+# Country scope. One PMR;rec=WSP line per building whose marker reads non-zero, then one PMR;rec=WSP_SUM line that
+# always prints, so a silent probe can't be mistaken for a zero.
+pmr_wsp_log = {
+	set_variable = { name = pmr_wsp_execs value = 0 }
+	set_variable = { name = pmr_wsp_seen value = 0 }
+	set_variable = { name = pmr_wsp_hit value = 0 }
+	every_company = {
+		if = {
+			limit = { executive ?= { has_trait = pmr_wsp_marker_trait } }
+			root = { change_variable = { name = pmr_wsp_execs add = 1 } }
+		}
+	}
+	every_scope_state = {
+		every_scope_building = {
+			limit = { level >= 1 }
+			save_scope_as = pmr_wsp_b
+			root = { change_variable = { name = pmr_wsp_seen add = 1 } }
+			state = {
+				set_variable = { name = pmr_wsp_val value = scope:pmr_wsp_b.modifier:building_pmr_works_probe_marker }
+				set_variable = { name = pmr_wsp_lvl value = scope:pmr_wsp_b.level }
+				set_variable = { name = pmr_wsp_cl value = { value = var:pmr_wsp_val multiply = var:pmr_wsp_lvl } }
+				if = {
+					limit = { var:pmr_wsp_val != 0 }
+					root = { change_variable = { name = pmr_wsp_hit add = 1 } }
+					debug_log = "PMR;rec=WSP;date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetName];building=[SCOPE.sBuilding('pmr_wsp_b').GetName];level=[THIS.Var('pmr_wsp_lvl').GetValue|0];marker=[THIS.Var('pmr_wsp_val').GetValue|3];company_levels=[THIS.Var('pmr_wsp_cl').GetValue|2]"
+				}
+			}
+		}
+	}
+	capital = {
+		set_variable = { name = pmr_wsp_execs value = root.var:pmr_wsp_execs }
+		set_variable = { name = pmr_wsp_seen value = root.var:pmr_wsp_seen }
+		set_variable = { name = pmr_wsp_hit value = root.var:pmr_wsp_hit }
+		debug_log = "PMR;rec=WSP_SUM;date=[TimeKeeper.GetCurrentDate.GetString];executives=[THIS.Var('pmr_wsp_execs').GetValue|0];buildings=[THIS.Var('pmr_wsp_seen').GetValue|0];nonzero=[THIS.Var('pmr_wsp_hit').GetValue|0]"
+	}
+}

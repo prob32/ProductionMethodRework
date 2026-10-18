@@ -1,0 +1,16 @@
+﻿# Works share probe (Company Culture thread, Pat 2026-10-18 15:35Z). Test builds only, from pmr/test_probes/.
+# Question: does a building read its company owners' share through an executive trait? Run sheet:
+# /mnt/project-files/pmr/mio/works-share-probe/RUN.md
+# Never random (possible no, weight 0, value 0). Only the probe decision gives it.
+pmr_wsp_marker_trait = {
+	type = condition
+	texture = "gfx/interface/icons/character_trait_icons/ambitious.dds"
+
+	executive_modifier = {
+		building_pmr_works_probe_marker = 1
+	}
+
+	possible = { always = no }
+	weight = { value = 0 }
+	value = 0
+}

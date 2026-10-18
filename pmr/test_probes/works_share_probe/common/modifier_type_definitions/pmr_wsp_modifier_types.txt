@@ -1,0 +1,10 @@
+﻿# Works share probe (Company Culture thread, Pat 2026-10-18 15:35Z). Test builds only, from pmr/test_probes/.
+# Question: does a building read its company owners' share through an executive trait? Run sheet:
+# /mnt/project-files/pmr/mio/works-share-probe/RUN.md
+# A marker no code reads. The probe trait sets it to 1; if the engine scales executive modifiers by the company's
+# share, a building reads that share here.
+building_pmr_works_probe_marker = {
+	decimals = 2
+	color = neutral
+	game_data = { ai_value = 0 }
+}

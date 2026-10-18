@@ -1,0 +1,14 @@
+﻿# Works share probe (Company Culture thread, Pat 2026-10-18 15:35Z). Test builds only, from pmr/test_probes/.
+# Appended to vanilla's monthly country pulse the documented way.
+on_monthly_pulse_country = { on_actions = { pmr_wsp_monthly_country } }
+
+# Root = country. While the probe is on: a new executive gets the trait, then the log.
+pmr_wsp_monthly_country = {
+	effect = {
+		if = {
+			limit = { is_player = yes has_variable = pmr_wsp_on }
+			pmr_wsp_apply = yes
+			pmr_wsp_log = yes
+		}
+	}
+}

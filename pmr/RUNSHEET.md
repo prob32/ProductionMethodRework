@@ -1,4 +1,4 @@
-# PMR run sheet: automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,44 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: automation pays for itself (q18, test mod; a new game shows it from the start)
+## Latest: Company Works share probe (q19, test mod; any save)
+
+One addition since q18, asked for in the Company Culture thread (2026-10-18 15:35Z). It is a log-only probe: it
+changes no gameplay. It asks whether a building can read how much of it your companies own, through an executive
+trait. If it can, Company Works can blend a company's special method in proportion to that company's own levels.
+
+- A new building modifier, `building_pmr_works_probe_marker`, that nothing else uses, set to 1 by a hidden
+  executive trait ("Share Marker (probe)").
+- A decision, **PMR probe: company share marker (on/off)**, gives the trait to every company of yours (English
+  text in every language).
+- Each monthly pulse, every building of yours reads the marker: a `PMR;rec=WSP` line for each building that reads
+  non-zero, and one `PMR;rec=WSP_SUM` line that always prints.
+
+Steps (PMR Test playset, new game or any save):
+
+1. Load the game. Check error.log for `pmr_wsp` or `building_pmr_works_probe_marker` before anything else.
+2. Take the decision. debug.log shows `PMR;rec=WSP_ARM;arm=ON`.
+3. Let one month pass.
+4. Pick a building one of your companies part-owns, ideally with only one company among its owners. Note the
+   company's levels and the building's total level from its ownership tooltip.
+5. Hover the building's modifiers. The probe marker should appear with a value.
+6. Find that building's `PMR;rec=WSP` line in debug.log (filter `PMR;rec=WSP`).
+7. Take the decision again to switch the probe off.
+
+| Result | Meaning (decided before the run) |
+| --- | --- |
+| `marker` equals the companies' share (5 of 20 levels gives 0.25) and `company_levels` equals their levels | **Works.** A building can read its company share; Company Works can size its share from the executive trait |
+| `marker` = 1 on part-owned buildings | The engine applies executive modifiers unscaled; the share can't be measured this way |
+| `WSP_SUM` shows `executives` > 0 and `nonzero=0`, no error, but the tooltip in step 5 shows the right share | The marker is applied, but script can't read it on a building |
+| Same as the row above, but the tooltip shows nothing either | The trait never reached the buildings; check the executive has "Share Marker (probe)" |
+| An error.log line naming `modifier` in pmr_wsp_effects.txt | Building scope has no `modifier:` link |
+| No `WSP_SUM` line a month after taking the decision | The monthly hook didn't run: a probe bug, not an answer |
+| `executives=0` | No company of yours has an executive, or the trait wasn't added: a probe bug, not an answer |
+
+If two companies of yours share one building, its marker is their combined share; use a building with a single
+company owner for the clean check.
+
+## Still to check from q18: automation pays for itself (a new game shows it from the start)
 
 New since q17, from `dev` in prob32/ProductionMethodRework (q18 also carries q17's translations, below):
 
@@ -25,7 +62,7 @@ New since q17, from `dev` in prob32/ProductionMethodRework (q18 also carries q17
 | --- | --- | --- | --- |
 | B1 | Open a Steel Mill whose levels all run Open Hearth Process (tier 3), and hover its coal and tools inputs and its employment | Each fully staffed level takes coal 30.8 and tools 0.4 (the totals scale with levels), and the jobs are machinists and engineers, no laborers | Coal 40 and tools 5 a level, or laborers listed: the automation buff is not in this build; check that the Queue Test folder's `RUNSHEET.md` starts with "automation pays at 1836 wages" |
 
-## Also new since q16: PMR's text in every game language (q17)
+## Earlier: PMR's text in every game language (q17; you checked it in Chinese on 2026-10-18 15:39Z)
 
 From `dev` in prob32/ProductionMethodRework:
 
