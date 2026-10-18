@@ -1,0 +1,7 @@
+# Generated locally from the installed game; never committed (may come from a non-public build).
+pmr/ProductionMethodRework/
+pmr/release/
+
+# Python bytecode
+__pycache__/
+*.pyc
