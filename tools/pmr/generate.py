@@ -3263,8 +3263,10 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     goods = sorted({g for gd, _ in list(econ) + list((pair or {}).get('econ', {}).values())
                     for g in gd if goods_cost.get(g)})
     o = [f'pmr_profit_{b} = {{\n'
-         '\t# a good\'s price is read once a day per state (pmr_pxd_<good>), as for the trade-offs\n'
-         + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
+         '\t# a good\'s price is read once a day per state (pmr_pxd_<good>), as for the trade-offs. During game setup\n'
+         '\t# (pmr_setup) the market has no prices yet, so the base price stands in until the first monthly pulse.\n'
+         + ''.join(f'\tif = {{ limit = {{ has_global_variable = pmr_setup }} set_variable = {{ name = pmr_px_{g} value = 1 }} }}\n'
+                   f'\telse_if = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
                    f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
          + f'\tset_variable = {{ name = pmr_wage value = {AUTOMATION_WAGE} }}\n']
     for i, (gd, wu) in enumerate(econ, 1):
@@ -3339,7 +3341,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                       for d in range(PROFIT_RECHECK_DAYS - PROFIT_RECHECK_SPREAD // 2,
                                      PROFIT_RECHECK_DAYS + PROFIT_RECHECK_SPREAD // 2 + 1, PROFIT_RECHECK_SPREAD // 6))
     # The first calculation runs during game setup, before the market has real prices (q23: steel read 0.25-0.35
-    # of base in every French state, so Blister Steel showed -£2,990 a level while the mill made +£1.57K). It is
+    # of base in every French state, so Blister Steel showed -£2,990 a level while the mill made +£1.57K; q31: the
+    # Investments tab showed those figures on 1 January, Pat 23:22Z). It uses base prices (pmr_setup) and is
     # not trusted: every building's pick is computed once more on its first monthly pulse (pmr_pmkt_<b>), which
     # also gives the log every player building's pick on its own (Pat, 17:59Z), then the yearly re-check runs.
     first = f'has_variable = pmr_month NOT = {{ has_variable = pmr_pmkt_{b} }}'
@@ -4279,7 +4282,30 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None):
                  + ''.join(f'\t\tchange_variable = {{ name = pmr_mv_ps_{i}_{b} divide = var:pmr_mv_lv_{b} }}\n'
                            for i in range(1, k + 1))
                  + '\t}\n}\n\n')
-    o.append('pmr_mv_refresh = {\n' + ''.join(f'\tpmr_mv_{short(bk)} = yes\n' for bk in recipe_keys) + '}\n')
+    # Pat 23:22Z: each type's AI weight as its share of the sum over every type on the tab, as the investors pick by
+    # weight: the AI value times its priority group's multiplier (pmr_mv_w_<b>), over pmr_mv_wsum, as pmr_mv_sh_<b>
+    shown = [(short(bk), private_investment.VAR.format(ai[bk])) for bk in recipe_keys if bk in ai]
+    share = ('\tset_variable = { name = pmr_mv_wsum value = 0 }\n\tset_variable = { name = pmr_mv_m value = 1 }\n'
+             + ''.join(f'\tset_variable = {{ name = pmr_mv_w_{b} value = 0 }}\n'
+                       f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 has_variable = pmr_mv_aiv_{b} }}\n'
+                       f'\t\tset_variable = {{ name = pmr_mv_m value = {m} }}\n'
+                       f'\t\tset_variable = {{ name = pmr_mv_w_{b} value = var:pmr_mv_aiv_{b} }}\n'
+                       f'\t\tchange_variable = {{ name = pmr_mv_w_{b} multiply = var:pmr_mv_m }}\n'
+                       f'\t\tchange_variable = {{ name = pmr_mv_wsum add = var:pmr_mv_w_{b} }}\n\t}}\n'
+                       for b, m in shown)
+             + ''.join(f'\tset_variable = {{ name = pmr_mv_sh_{b} value = 0 }}\n'
+                       f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_wsum > 0 }}\n'
+                       f'\t\tset_variable = {{ name = pmr_mv_sh_{b} value = var:pmr_mv_w_{b} }}\n'
+                       f'\t\tchange_variable = {{ name = pmr_mv_sh_{b} divide = var:pmr_mv_wsum }}\n\t}}\n'
+                       for b, _m in shown)
+             + '\tremove_variable = pmr_mv_m\n'
+             + '\tif = {\n\t\tlimit = { is_player = yes }\n'
+             '\t\tdebug_log = "PMR;rec=MV_SHARE;date=[TimeKeeper.GetCurrentDate.GetString];'
+             "sum=[THIS.Var('pmr_mv_wsum').GetValue|0];"
+             + ';'.join(f"{b}=[THIS.Var('pmr_mv_w_{b}').GetValue|0]/[THIS.Var('pmr_mv_sh_{b}').GetValue|3]"
+                        for b, _m in shown)
+             + '"\n\t}\n' if shown else '')
+    o.append('pmr_mv_refresh = {\n' + ''.join(f'\tpmr_mv_{short(bk)} = yes\n' for bk in recipe_keys) + share + '}\n')
     return ''.join(o)
 
 
@@ -4293,21 +4319,29 @@ def pair_options(bk, pair):
 
 
 # Pat 21:53Z: the Investments tab is a column of cards, one per building type, in the order and under the filters of
-# the side Buildings panel's own list: the recipe row or grid on the left, the AI weight on the right.
-CARD_W, CARD_PAD, CARD_LEFT = 540, 8, 372
-AI_X = CARD_PAD + CARD_LEFT + 14
+# the side Buildings panel's own list: the building's icon and its grid on the left, the AI weight on the right.
+# 23:22Z: every card in the same columns: one icon column, then a grid box of the same width on every card (the widest
+# type's recipe count, MV_COLS), recipe columns at the same x, the AI weight at the same x.
+CARD_W, CARD_PAD, ICON_W, ICON_GAP = 540, 8, 60, 8
+AI_W = 100   # the AI weight column's text
 
 
-def ai_column(bk, h, ind):
-    """Pat, 2026-10-18 18:40Z, 21:53Z: what the AI weighs a building type by, in the card's right column: its AI value
-    (pmr_ai_value_<b>, vanilla's with the policy and foreign-or-domestic additions, plus vanilla's profit and output
-    terms at the country's average for the type, Pat 21:10Z/21:32Z) at the state the row's prices come from, and the
-    multiplier its priority group's slider gives (pmr_ipw_<group>). The breakdown is in the tooltip."""
+def mv_cols(recipe_keys, pair_ui):
+    return max(len(pair_ui[bk]['recipes']) if bk in pair_ui else len(keys) for bk, keys in recipe_keys.items())
+
+
+def ai_column(bk, h, x, ind):
+    """Pat, 2026-10-18 18:40Z, 21:53Z, 23:22Z: what the AI weighs a building type by, in the card's right column at x:
+    its share of the country's AI weights over every building type on the tab (pmr_mv_sh_<b>, methods_view_effects),
+    as the investors pick by weight. The weight is the type's AI value (pmr_ai_value_<b>: vanilla's with the policy and
+    foreign-or-domestic additions, plus vanilla's profit and output terms at the country's average for the type, Pat
+    21:10Z/21:32Z) at the state the grid's prices come from, times its priority group's slider (pmr_ipw_<group>). The
+    breakdown is in the tooltip."""
     b = short(bk)
     i1, i2 = ind + '\t', ind + '\t\t'
-    return (f'{ind}icon = {{\n{i1}position = {{ {AI_X - 8} {CARD_PAD} }}\n{i1}size = {{ 1 {h - 2 * CARD_PAD} }}\n'
+    return (f'{ind}icon = {{\n{i1}position = {{ {x - 8} {CARD_PAD} }}\n{i1}size = {{ 1 {h - 2 * CARD_PAD} }}\n'
             f'{i1}texture = "{methods_row.WHITE}"\n{i1}color = {{ 1 1 1 0.15 }}\n{i1}alwaystransparent = yes\n{ind}}}\n'
-            f'{ind}flowcontainer = {{\n{i1}position = {{ {AI_X} 0 }}\n{i1}parentanchor = vcenter\n{i1}direction = vertical\n'
+            f'{ind}flowcontainer = {{\n{i1}position = {{ {x} 0 }}\n{i1}parentanchor = vcenter\n{i1}direction = vertical\n'
             f'{i1}tooltip = "PMR_MV_AI_TT_{b}"\n{i1}using = tooltip_above\n'
             f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_small\n'
             f'{i2}text = "PMR_MV_AI_LABEL"\n{i1}}}\n'
@@ -4316,48 +4350,47 @@ def ai_column(bk, h, ind):
 
 
 def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None):
-    """One card per building type the player has (pmr_mv_card_<b>): its recipe row (what new levels and retooling
-    follow) or, where the type folds automation, the icon and the recipe x automation grid (Pat, 2026-10-18 18:17Z),
-    with the AI weight beside it (ai_column). pmr_methods_cards stands in each item of the side Buildings panel's list
-    (patch_browser_tabs), under the item's building type, and makes only that type's card: a card per item per type
-    would be thousands of widgets."""
+    """One card per building type the player has (pmr_mv_card_<b>): the building's icon, then its grid, the recipe x
+    automation pairs where the type has them (Pat, 2026-10-18 18:17Z) or one row of recipes, every grid box MV_COLS
+    columns wide so all cards line up (Pat 23:22Z), with the AI weight beside it (ai_column). pmr_methods_cards stands in
+    each item of the side Buildings panel's list (patch_browser_tabs), under the item's building type, and makes only
+    that type's card: a card per item per type would be thousands of widgets."""
     pair_ui, ai = pair_ui or {}, ai or {}
+    cols = mv_cols(recipe_keys, pair_ui)
+    box_w = methods_row.pairs_size(cols, 1)[0]
+    ai_x = CARD_PAD + ICON_W + ICON_GAP + box_w + 14
+    if ai_x + AI_W > CARD_W:
+        raise SystemExit(f'methods_view_gui: {cols} recipe columns leave no room for the AI weight')
     cards, picks = '', ''
     for bk, keys in recipe_keys.items():
         b = short(bk)
         pr = pair_ui.get(bk)
-        names = (pr.get('keys') or recipe_keys[bk]) if pr else None
         grid, gh = '', 0
+        if not (pr and pr.get('split')):   # the recipes are the targets: one row of them
+            grid = methods_row.recipes_grid(bk, list(enumerate(recipe_tex[bk], 1)), mv_read,
+                                            lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t\t', cols=cols)
+            gh = methods_row.pairs_size(cols, 1)[1]
         if pr:
-            grid = methods_row.pairs_grid(
+            names = pr.get('keys') or recipe_keys[bk]
+            grid += methods_row.pairs_grid(
                 bk, [(i, recipe_tex[bk][i - 1]) for i in pr['recipes']], pair_options(bk, pr), mv_read,
-                lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', '\t\t\t\t\t')
-            gh = methods_row.pairs_size(len(pr['recipes']), len(pr['options']))[1]
-        if pr and pr.get('split'):
-            # the recipe + automation pairs are the targets (SPLIT_AUTOMATION): the building's icon, then the grid
-            left = ('\t\t\t\tflowcontainer = {\n\t\t\t\t\tspacing = 8\n' + methods_row.type_icon(bk, '\t\t\t\t\t')
-                    + grid + '\t\t\t\t}\n')
-            lh = max(methods_row.ROW_H, gh)
-        else:
-            left = methods_row.methods_row(bk, list(zip(keys, recipe_tex[bk])), mv_read,
-                                           lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t\t', width=CARD_LEFT)
-            lh = methods_row.ROW_H
-            if grid:
-                left += f'\t\t\t\tflowcontainer = {{\n\t\t\t\t\tmargin_left = 66\n{grid}\t\t\t\t}}\n'
-                lh += 6 + gh
-        h = lh + 2 * CARD_PAD
+                lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', '\t\t\t\t',
+                cols=cols)
+            gh += (6 if gh else 0) + methods_row.pairs_size(cols, len(pr['options']))[1]
+        grid = f'\t\t\tflowcontainer = {{\n\t\t\t\tdirection = vertical\n\t\t\t\tspacing = 6\n{grid}\t\t\t}}\n'
+        h = max(methods_row.ROW_H, gh) + 2 * CARD_PAD
         cards += (f'\ttype pmr_mv_card_{b} = widget {{\n\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
                   f'\t\tsize = {{ {CARD_W} {h} }}\n'
                   '\t\tbackground = {\n\t\t\tusing = entry_bg_simple\n\t\t}\n'
-                  f'\t\tflowcontainer = {{\n\t\t\tposition = {{ {CARD_PAD} {CARD_PAD} }}\n\t\t\tdirection = vertical\n'
-                  '\t\t\tspacing = 6\n' + left + '\t\t}\n'
-                  + (ai_column(bk, h, '\t\t') if bk in ai else '') + '\t}\n\n')
+                  f'\t\tflowcontainer = {{\n\t\t\tposition = {{ {CARD_PAD} {CARD_PAD} }}\n\t\t\tspacing = {ICON_GAP}\n'
+                  + methods_row.type_icon(bk, '\t\t\t') + grid + '\t\t}\n'
+                  + (ai_column(bk, h, ai_x, '\t\t') if bk in ai else '') + '\t}\n\n')
         same = f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
         picks += (f'\t\tflowcontainer = {{\n\t\t\tdatamodel = "[DataModelRepeatedItem(Select_int32({same}, '
                   "'(int32)1', '(int32)0'))]\"\n"
                   f'\t\t\titem = {{\n\t\t\t\tpmr_mv_card_{b} = {{}}\n\t\t\t}}\n\t\t}}\n')
     return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The side Buildings panel\'s Investments tab: a card\n'
-            '# per building type; rows by tools/pmr/methods_row.py, shared with the Company Culture tab.\n'
+            '# per building type; grids by tools/pmr/methods_row.py.\n'
             'types pmr_methods_view {\n' + cards
             + '\t# in an item of the Buildings list (BuildingType = the item\'s): makes its own type\'s card only\n'
             '\ttype pmr_methods_cards = container {\n\t\tposition = { 7 0 }\n' + picks + '\t}\n}\n')
@@ -4409,9 +4442,9 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
         aiv, aib = mv_read(f'pmr_mv_aiv_{b}'), mv_read(f'pmr_mv_aib_{b}')
         term = mv_read(f'pmr_pterm_{b}')
         policy = f'Subtract_CFixedPoint(Subtract_CFixedPoint({aiv}, {aib}), {term})'
-        # Pat 21:53Z: less text, on the card and in the tooltip
-        loc.append(f' PMR_MV_AI_{b}:0 "#bold [{aiv}|0]#! ×[{mult}|2]"')
-        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold AI weight#!\\n'
+        # Pat 21:53Z: less text, on the card and in the tooltip; 23:22Z: the card shows the share of all weights
+        loc.append(f' PMR_MV_AI_{b}:0 "#bold [{mv_read(f"pmr_mv_sh_{b}")}|%1]#!"')
+        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold AI weight [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
                    f'Base: [{aib}|0]\\n'
                    f'Policy: [{policy}|=+0]\\n'
                    f'Profit and output: [{term}|=+0]\\n'
@@ -5026,6 +5059,8 @@ pmr_on_game_started = {
 		debug_log = "PMR;rec=LOADED;date=[TimeKeeper.GetCurrentDate.GetString];hook=on_game_started"
 		# No country is a player's yet here (no player state logs INIT), so every country gets its
 		# Buildings tab totals now; after this only players' are kept up to date.
+		# The market has no prices yet: the profit calculation uses base prices meanwhile (profit_effect).
+		set_global_variable = pmr_setup
 		every_country = {
 			every_scope_state = {
 				pmr_state_tick = yes
@@ -5035,6 +5070,7 @@ pmr_on_game_started = {
 			# A day later the players exist: their totals then add buildings abroad (pmr.1).
 			trigger_event = { id = pmr.1 days = 1 }
 		}
+		remove_global_variable = pmr_setup
 	}
 }
 

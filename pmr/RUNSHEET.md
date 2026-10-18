@@ -1,4 +1,4 @@
-# PMR run sheet: research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,37 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: grants paid from the investment pool, the Production Methods cards fixed, less text (q31, test mod; a new game is needed)
+## Latest: Production Methods cards in one set of columns, AI weight as a share, base prices at game start (q32, test mod; a new game is needed)
+
+From the build thread, after your 23:22Z message and screenshots on q31. Your q31 logs are saved in
+`pmr_dev_files\logs_q31`: no PMR errors; the game stayed on 1 January 1836.
+
+- Every card now has the same shape: the building's icon, then one framed grid of the same width on every card, with
+  recipe columns at the same place. Types without automation pairs (glassworks, farms, plantations, ports...) get a
+  one-row grid. The AI weight sits at the same place on the right of every card.
+- The AI weight on a card is now that type's share of the sum of all AI weights on the tab (its AI value times its
+  priority multiplier, divided by the total). The tooltip gives the weight, the total and the breakdown.
+- Why the profits read negative: on 1 January the cards showed the game-start pass, which read prices before the
+  market had any (tooling showed -£292 for its pick; in your q30 game the same workshops made +£246 to +£1,438 a level
+  once prices existed, Burgundy 2 January and Lorraine 29 January). That pass now uses base prices; each building
+  recomputes at market prices on its first monthly pulse in January. Some stay negative at real prices: in q30 French
+  clothes sold at 0.6-0.7 of base with dye at the +75% cap, and glass sold at 0.65.
+
+1. Start a new game on the PMR Test playset as France. Before unpausing, open the Buildings panel from the left
+   sidebar and click Investments. Scroll through the cards and hover a few AI weights.
+2. Unpause and play to 1 February 1836, then pause. Click Buildings, then Investments again.
+3. Then do q31's steps 2 to 8 below (they were not reached in q31).
+4. Close the game and tell the build thread; it reads debug.log and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| A1 | Step 1 | Every card: the building icon on the left, then a framed grid the same width as every other card's, recipe icons in the same columns from card to card, the AI weight at the same place on the right | The glassworks card still framed around its icon: the old q31 files are still installed |
+| W1 | Step 1 | Each AI weight reads as a percentage (all cards together come to about 100%); its tooltip reads "AI weight X of Y" then Base, Policy, Profit and output, Priority. debug.log has a `MV_SHARE` line whose `sum=` is the total and whose `type=weight/share` pairs add up to `sum=` and to 1 | "0.0%" on every card: the total read as 0 (`MV_SHARE` with `sum=0`); tell the build thread. No `MV_SHARE` line: the tab's refresh never ran (error.log naming `pmr_mv_refresh`) |
+| P1 | Step 1, debug.log | The `PF` lines dated 1 January show positive `avg=` for tooling workshops and steel mills (q31: -322.7 and -2,910.6) | Still those negatives: the game-start pass still read the empty market; tell the build thread |
+| P2 | Step 2, debug.log | `PROFIT` lines with `why=first_month` for France's buildings through January, and the cards show those figures after step 2 | No `first_month` lines by 1 February: the monthly pulse never reached the profit calculation; the cards then still show base-price figures |
+| E5 | error.log | No line naming `pmr_setup`, `pmr_mv_w`, `pmr_mv_sh`, `pmr_mv_wsum` or `pmr_methods_view` | Any such line: that part never ran, and its rows above are not results |
+
+## Earlier: grants paid from the investment pool, the Production Methods cards fixed, less text (q31, test mod; opened 2026-10-18 on 1 January only, logs in logs_q31)
 
 From the build thread, after your 22:28Z message and screenshots on q30. Your q30 logs are saved in
 `pmr_dev_files\logs_q30`.
