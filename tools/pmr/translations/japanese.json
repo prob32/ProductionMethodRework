@@ -332,5 +332,8 @@
  "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "金融街と荘園は、各州で最も収益性の高い方式で建設・改修します。各行は、その建物のレベルが最も多いあなたの州の価格(最終確認時点)での建物の種類です。",
  "@money!{0} per level a week{1}": "レベルあたり週 @money!{0}{1}",
  "Picked in states holding #bold {0}#! of your levels": "あなたのレベルの #bold {0}#! を持つ州で選択",
- "Running on #bold {0}#! of your levels": "あなたのレベルの #bold {0}#! で稼働中"
+ "Running on #bold {0}#! of your levels": "あなたのレベルの #bold {0}#! で稼働中",
+ "Buildings": "建物",
+ " (best combination)": " (最良の組み合わせ)",
+ "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "建物タイプに自動化がある場合、その横の表は各方式（列）と各自動化（行）を同じ価格で評価します。金色は最も収益性の高い組み合わせです。改修は当面、方式の行に従います。"
 }

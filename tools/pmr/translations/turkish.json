@@ -332,5 +332,8 @@
  "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "Finans bölgeleri ve malikâneler her eyaletin en kârlı yöntemine göre inşa eder ve yeniden donatır. Her satır, son kontrolüne göre, o binadan en çok seviyeye sahip eyaletinizin fiyatlarıyla bir bina türüdür.",
  "@money!{0} per level a week{1}": "Seviye başına haftada @money!{0}{1}",
  "Picked in states holding #bold {0}#! of your levels": "Seviyelerinizin #bold {0}#! kadarını tutan eyaletlerde seçildi",
- "Running on #bold {0}#! of your levels": "Seviyelerinizin #bold {0}#! kadarında çalışıyor"
+ "Running on #bold {0}#! of your levels": "Seviyelerinizin #bold {0}#! kadarında çalışıyor",
+ "Buildings": "Binalar",
+ " (best combination)": " (en iyi bileşim)",
+ "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "Bir bina türünde otomasyon varsa, yanındaki tablo her yöntemi (sütunlar) her otomasyonla (satırlar) aynı fiyatlarla değerlendirir; altın renk en kârlı bileşimi gösterir. Yeniden donatım şimdilik yöntem satırını izlemeye devam eder."
 }

@@ -332,5 +332,8 @@
  "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "Los distritos financieros y las casas señoriales construyen y readaptan al método más rentable de cada estado. Cada fila es un tipo de edificio a los precios de tu estado con más niveles de él, según su última comprobación.",
  "@money!{0} per level a week{1}": "@money!{0} por nivel a la semana{1}",
  "Picked in states holding #bold {0}#! of your levels": "Elegido en estados con el #bold {0}#! de tus niveles",
- "Running on #bold {0}#! of your levels": "En uso en el #bold {0}#! de tus niveles"
+ "Running on #bold {0}#! of your levels": "En uso en el #bold {0}#! de tus niveles",
+ "Buildings": "Edificios",
+ " (best combination)": " (mejor combinación)",
+ "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "Cuando un tipo de edificio tiene automatización, la cuadrícula de al lado evalúa cada método (columnas) con cada automatización (filas) a los mismos precios; el dorado marca la combinación más rentable. Por ahora, la readaptación sigue la fila de métodos."
 }

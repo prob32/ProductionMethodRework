@@ -583,6 +583,27 @@ def recipe_econ(blend, emp, weight):
     return {g: q for g, q in goods.items() if q}, wu
 
 
+def pairs(recipes, auto_groups, groups, pms, weight):
+    """Pat, 2026-10-18 18:17Z: the Methods view scores every recipe with every automation (PM1 + PM3). The plain
+    recipes (not the electric one, which is the newest recipe with the top automation already) are i = 1.. as PMR
+    numbers them; an automation option a = 1.. is one method of each automation group (their product, vanilla's
+    order, so a = 1 is none). Each pair's goods and wage units are effective(recipe, option), so employment that
+    automation would push below zero stops at zero as it does in the game. Automation methods don't depend on the
+    recipe (PM rework, 14:06Z), so these are the figures a split of the fold would retool by."""
+    plain = [(i, r) for i, r in enumerate(recipes, 1) if not isinstance(r, ElectricRecipe)]
+    options = [[]]
+    for g in auto_groups:
+        options = [o + [Recipe(p, *pms[p])] for o in options for p in groups[g]]
+    econ, elec = {}, {}
+    for i, r in plain:
+        for a, opt in enumerate(options, 1):
+            blend, emp, needs, _ = effective(r, opt)
+            econ[(i, a)] = recipe_econ(blend, emp, weight)
+            elec[(i, a)] = needs
+    return {'recipes': [i for i, _ in plain], 'options': options, 'econ': econ, 'elec': elec,
+            'techs': [list(dict.fromkeys(t for m in opt for t in m.unlock_techs)) for opt in options]}
+
+
 def buff_automation(game, p_srcs, groups, b_srcs):
     """Pat, 2026-10-18 14:48Z (AUTOMATION_WAGE): rewrite every automation method in its vanilla file, before
     anything reads it, so the folded, electric and kept automation all carry the buff. Each method's
@@ -1110,6 +1131,7 @@ def main():
     weight = wage_weights(game)
     auto_ui = {}           # building -> (its first automation group, auto_tiers), for the automation bar
     profit_goods = set()   # every good a recipe's profit is read at (pmr_price_<good>)
+    pair_ui = {}           # building -> pairs(): every plain recipe with every automation, for the Methods view
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
@@ -1292,9 +1314,12 @@ def main():
                                         '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in lst) + '\t}\n}\n')
                     loc.append(f' {grp}:0 "${o.key}$ {label}"')
 
+        if automation.get(bk):
+            pair_ui[bk] = pairs(recipes, auto_groups_of[bk], groups, pms, weight)
+            profit_goods.update(g for gd, _ in pair_ui[bk]['econ'].values() for g in gd if goods_cost.get(g))
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, recipes)
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
-                                          econ, goods_cost, [t for _, _, t in auto_tiers]))
+                                          econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk)))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
@@ -1416,7 +1441,10 @@ def main():
     report['vanilla_compat'] = compat_lines
     write('common/scripted_guis/pmr_sguis.txt', header + SGUI_DOC + ''.join(gov_retool_sgui(bk) for bk in dispatch)
           + '# The same for every state at once, from the Buildings tab\'s building type row. Country scope.\n\n'
-          + ''.join(gov_retool_country_sgui(bk) for bk in dispatch))
+          + ''.join(gov_retool_country_sgui(bk) for bk in dispatch)
+          + ('# The Buildings panel\'s Owners\' Methods tab, recounted from the cached picks when the tab is clicked.\n'
+             'pmr_mv_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_mv_refresh = yes\n\t}\n}\n'
+             if PROFIT_TARGET else ''))
     # the panel's second group bars, per building type
     def pm_tex(key):
         t = pdx.get(pms[key][0].value, 'texture')
@@ -1436,10 +1464,10 @@ def main():
                     '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
                     for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_)
           + '\n# State scope. The profit pick\'s name and each recipe\'s note on the pick row (pick_row).\n'
-          + pick_custom_loc(pick_ui) + (methods_view_custom_loc(mv_keys) if mv_keys else ''))
+          + pick_custom_loc(pick_ui) + (methods_view_custom_loc(mv_keys, pair_ui) if mv_keys else ''))
     if mv_keys:
-        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys))
-        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex), bom=False)
+        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys, pair_ui))
+        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex, pair_ui), bom=False)
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
@@ -1461,16 +1489,16 @@ def main():
         f'\t\t\t\t\tsize = {{ 156 24 }}\n\t\t\t\t\tparentanchor = vcenter\n'
         + stacked_bar(short(bk), recipe_tex[bk], ('100%', '100%'), 18, '\t\t\t\t\t') + '\t\t\t\t}\n'
         for bk in dispatch)
-    write('gui/building_browser_panel.gui', patch_browser_actions(patch_grid_instance(
+    write('gui/building_browser_panel.gui', patch_browser_tabs(patch_browser_actions(patch_grid_instance(
         patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
-        extra=browser_bars, also=also), dispatch), bom=False)
+        extra=browser_bars, also=also), dispatch), bool(mv_keys)), bom=False)
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
     write('gui/states_panel_buildings.gui', hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types),
           bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
-    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys)
+    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
@@ -2220,7 +2248,8 @@ def highest(ns, cond, leaf, ind='\t'):
     return find(0, len(ns) - 1, ind)
 
 
-def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None, auto_tiers=()):
+def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None, auto_tiers=(),
+                pair=None):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -2725,7 +2754,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         return ''.join(out)
     o.append(best_effect(f"pmr_newest_{b}", "pmr_new_now", True))
     o.append(best_effect(f"pmr_hbest_{b}", "pmr_hbest_now", False))
-    o.append(profit_effect(bk, b, recipes, econ, goods_cost or {}, active, reach, setv, v))
+    o.append(profit_effect(bk, b, recipes, econ, goods_cost or {}, active, reach, setv, v, pair))
 
     o.append(f'pmr_activate_{b} = {{\n')
     for i, r in enumerate(recipes, 1):
@@ -2954,7 +2983,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     return ''.join(o)
 
 
-def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
+def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair=None):
     """State scope: pmr_profit_<b>, the profit calculation, and pmr_best_<b>, which makes its pick the target.
     The interface Company Culture reads (fixed 2026-10-18; the best-methods windows), recipe index i as everywhere:
       pmr_rg_<i>_<b>     goods margin per level per week at the state's prices (outputs minus inputs, GBP)
@@ -2977,7 +3006,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
         return f'pmr_best_{b} = {{\n{newest}\t{setv("pmr_best_now", "var:" + v("pmr_new_now"))}\n}}\n\n'
     xv = lambda name, i: f'{name}_{i}_{b}'   # noqa: E731
     top = fmt(1 + PRICE_LADDER[-1] / 100)
-    goods = sorted({g for gd, _ in econ for g in gd if goods_cost.get(g)})
+    goods = sorted({g for gd, _ in list(econ) + list((pair or {}).get('econ', {}).values())
+                    for g in gd if goods_cost.get(g)})
     o = [f'pmr_profit_{b} = {{\n'
          '\t# a good\'s price is read once a day per state (pmr_pxd_<good>), as for the trade-offs\n'
          + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
@@ -3034,7 +3064,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
     o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n\t{setv("pmr_prm", 0)}\n'
              + ''.join(f'\tif = {{ limit = {{ var:pmr_pk = {i} }} {setv("pmr_prm", "var:" + xv("pmr_rm", i))} }}\n'
                        for i in range(1, k + 1))
-             + '}\n\n')
+             + pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v) + '}\n\n')
 
     # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
     def var(name, d=0):
@@ -3044,7 +3074,10 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
             f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
             f"wage={var('pmr_wage')};rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
-            f"can={per('pmr_rav')};veto={per('pmr_rveto')};px="
+            f"can={per('pmr_rav')};veto={per('pmr_rveto')};"
+            + (f"pair={var(v('pmr_cbi'))}x{var(v('pmr_cba'))};cp="
+               + '/'.join(var(f'pmr_cp_{i}_{a}_{b}', 1) for i, a in sorted(pair['econ'])) + ';' if pair else '')
+            + 'px='
             + ','.join(f"{g}:{var('pmr_px_' + g, 2)}" for g in goods))
     spread = ' '.join(f'1 = {{ set_variable = {{ name = pmr_pchk_{b} value = yes days = {d} }} }}'
                       for d in range(PROFIT_RECHECK_DAYS - PROFIT_RECHECK_SPREAD // 2,
@@ -3065,6 +3098,38 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
              f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=first_month" }}\n\t\t}}\n'
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              + f'\t{setv("pmr_best_now", "var:" + v("pmr_pbest"))}\n}}\n\n')
+    return ''.join(o)
+
+
+def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
+    """Inside pmr_profit_<b>: every plain recipe with every automation option (pairs()), at the same prices and wage.
+    The pairs' interface (the Methods view; a = 1 is no automation, options in vanilla's order):
+      pmr_cp_<i>_<a>_<b>   the pair's profit per level a week, as pmr_rm
+      pmr_cav_<i>_<a>_<b>  1 while the pair could run here: recipe i's marker can activate (or runs), the owner has
+                           the automation's technologies, and a pair that needs electricity has it
+      pmr_cbi_<b>, pmr_cba_<b>  the most profitable runnable pair (0, 0 if none); no stickiness, no veto: it is read,
+                           not retooled to (the fold still decides what levels run)"""
+    if not pair:
+        return ''
+    o = [f'\t# recipe + automation pairs (pair_effect)\n\t{setv("pmr_cbi", 0)}\n\t{setv("pmr_cba", 0)}\n'
+         '\tset_variable = { name = pmr_pv value = -1000000 }\n']
+    for (i, a), (gd, wu) in sorted(pair['econ'].items()):
+        r, cp, cav = recipes[i - 1], f'pmr_cp_{i}_{a}_{b}', f'pmr_cav_{i}_{a}_{b}'
+        o.append(f'\tset_variable = {{ name = {cp} value = var:pmr_wage }}\n'
+                 f'\tchange_variable = {{ name = {cp} multiply = {fmt(-wu / 10000)} }}\n')
+        for g, q in sorted(gd.items()):
+            if goods_cost.get(g):
+                o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{g} }}\n'
+                         f'\tchange_variable = {{ name = pmr_t multiply = {fmt(q * goods_cost[g])} }}\n'
+                         f'\tchange_variable = {{ name = {cp} add = var:pmr_t }}\n')
+        techs = pair['techs'][a - 1]
+        cond = (f'OR = {{ {active(r)} can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }} }}'
+                + (' owner = { ' + ' '.join(f'has_technology_researched = {t}' for t in techs) + ' }' if techs else '')
+                + (' var:pmr_elec = 1' if pair['elec'][(i, a)] else ''))
+        o.append(f'\tset_variable = {{ name = {cav} value = 0 }}\n'
+                 f'\tif = {{\n\t\tlimit = {{ {cond} }}\n\t\tset_variable = {{ name = {cav} value = 1 }}\n'
+                 f'\t\tif = {{ limit = {{ var:{cp} > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:{cp} }} '
+                 f'{setv("pmr_cbi", i)} {setv("pmr_cba", a)} }}\n\t}}\n')
     return ''.join(o)
 
 
@@ -3870,13 +3935,17 @@ def mv_read(name):
     return f"{MV_COUNTRY}.MakeScope.Var('{name}').GetValue"
 
 
-def methods_view_effects(recipe_keys):
+def methods_view_effects(recipe_keys, pair_ui=None):
     """Country scope: pmr_mv_<b> per building type and pmr_mv_refresh for all of them."""
-    o = ['# Country scope. The Private tab\'s Methods view (methods_view_effects in generate.py).\n\n']
+    pair_ui = pair_ui or {}
+    o = ['# Country scope. The Buildings panel\'s Owners\' Methods tab (methods_view_effects in generate.py).\n\n']
     for bk, keys in recipe_keys.items():
         b, k = short(bk), len(keys)
         per = [f'pmr_rm_{i}_{b}' for i in range(1, k + 1)] + [f'pmr_rav_{i}_{b}' for i in range(1, k + 1)] \
             + [f'pmr_rveto_{i}_{b}' for i in range(1, k + 1)] + [f'pmr_pbest_{b}']
+        if bk in pair_ui:
+            per += [f'pmr_{x}_{i}_{a}_{b}' for i, a in sorted(pair_ui[bk]['econ']) for x in ('cp', 'cav')] \
+                + [f'pmr_cbi_{b}', f'pmr_cba_{b}']
         o.append(f'pmr_mv_{b} = {{\n\tsave_temporary_scope_as = pmr_ctry\n'
                  f'\tset_variable = {{ name = pmr_mv_lv_{b} value = 0 }}\n\tset_variable = {{ name = pmr_mv_max_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pbest_{b} value = 0 }}\n'
@@ -3900,19 +3969,49 @@ def methods_view_effects(recipe_keys):
     return ''.join(o)
 
 
-def methods_view_gui(recipe_keys, recipe_tex):
-    rows = ''.join(methods_row.methods_row(
-        bk, list(zip(keys, recipe_tex[bk])), mv_read, lambda i, b=short(bk): f'PMR_MV_TIP_{b}_{i}', '\t\t',
-        visible=methods_row.gt(mv_read(f'pmr_mv_lv_{short(bk)}'), 0)) for bk, keys in recipe_keys.items())
-    return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The Private tab\'s Methods view; rows by\n'
-            '# tools/pmr/methods_row.py, shared with the Company Culture tab.\n'
+def pair_options(bk, pair):
+    """[(tooltip key, icon)] per automation option of pairs(): the icon of its first method beyond none."""
+    out = []
+    for a, opt in enumerate(pair['options'], 1):
+        on = [m for m in opt if m.blend or m.employment] or opt
+        out.append((f'PMR_MVA_{short(bk)}_{a}', on[-1].texture))
+    return out
+
+
+def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None):
+    """Each building type the player has: its recipe row (what new levels and retooling follow) and, where the type
+    folds automation, the recipe x automation grid beside it (Pat, 2026-10-18 18:17Z)."""
+    pair_ui = pair_ui or {}
+    rows = ''
+    for bk, keys in recipe_keys.items():
+        b = short(bk)
+        rows += (f'\t\tflowcontainer = {{\n\t\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
+                 '\t\t\tspacing = 8\n'
+                 + methods_row.methods_row(bk, list(zip(keys, recipe_tex[bk])), mv_read,
+                                           lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t'))
+        if bk in pair_ui:
+            pr = pair_ui[bk]
+            rows += methods_row.pairs_grid(
+                bk, [(i, recipe_tex[bk][i - 1]) for i in pr['recipes']], pair_options(bk, pr), mv_read,
+                lambda i, a, b=b: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{recipe_keys[bk][i - 1]}', '\t\t\t')
+        rows += '\t\t}\n'
+    return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The Buildings panel\'s Owners\' Methods tab;\n'
+            '# rows by tools/pmr/methods_row.py, shared with the Company Culture tab.\n'
             'types pmr_methods_view {\n\ttype pmr_methods_view = flowcontainer {\n\t\tdirection = vertical\n'
-            '\t\tparentanchor = hcenter\n\t\tspacing = 4\n\t\tignoreinvisible = yes\n'
+            '\t\tspacing = 6\n\t\tignoreinvisible = yes\n'
             + rows + '\t}\n}\n')
 
 
-def methods_view_custom_loc(recipe_keys):
-    out = ['\n# Country scope. A note after each recipe\'s profit in the Private tab\'s Methods view.\n']
+def methods_view_custom_loc(recipe_keys, pair_ui=None):
+    out = ['\n# Country scope. A note after each recipe\'s or pair\'s profit in the Owners\' Methods tab.\n']
+    for bk, pr in (pair_ui or {}).items():
+        b = short(bk)
+        for i, a in sorted(pr['econ']):
+            out.append(f'pmr_mvcn_{b}_{i}_{a} = {{\n\ttype = country\n\trandom_valid = no\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cbi_{b} = {i} var:pmr_cba_{b} = {a} }}\n'
+                       '\t\tlocalization_key = PMR_PAIR_NOTE_BEST\n\t}\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cav_{i}_{a}_{b} = 0 }}\n\t\tlocalization_key = PMR_PICK_NOTE_LOCKED\n\t}}\n'
+                       '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     for bk, keys in recipe_keys.items():
         b = short(bk)
         for i in range(1, len(keys) + 1):
@@ -3924,8 +4023,13 @@ def methods_view_custom_loc(recipe_keys):
     return ''.join(out)
 
 
-def methods_view_loc(recipe_keys):
+def methods_view_loc(recipe_keys, pair_ui=None):
     loc = [' PMR_MV_HEADER:0 "Private Owners\' Methods"',
+           ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
+           ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
+           ' PMR_MV_PAIRS:0 "Where a building type has automation, the grid beside it scores every recipe (columns) with '
+           'every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still '
+           'follows the recipe row for now."',
            ' PMR_MV_INTRO:0 "Financial districts and manor houses build and retool to the most profitable recipe of each '
            'state. Each row is a building type at the prices of your state with the most levels of it, as of its last check."']
     for bk, keys in recipe_keys.items():
@@ -3935,6 +4039,15 @@ def methods_view_loc(recipe_keys):
             lines += [f"Picked in states holding #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#! of your levels",
                       f"Running on #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#! of your levels"]
             loc.append(f' PMR_MV_TIP_{b}_{i}:0 "' + '\\n'.join(lines) + '"')
+    for bk, pr in (pair_ui or {}).items():
+        b = short(bk)
+        for a, opt in enumerate(pr['options'], 1):
+            on = [m for m in opt if m.blend or m.employment] or opt
+            loc.append(f' PMR_MVA_{b}_{a}:0 "' + ' + '.join(f'${m.key}$' for m in on) + '"')
+        for i, a in sorted(pr['econ']):
+            loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${recipe_keys[bk][i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!\\n'
+                       f"@money![{mv_read(f'pmr_cp_{i}_{a}_{b}')}|0] per level a week"
+                       f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]\"")
     return loc
 
 
@@ -4192,6 +4305,64 @@ def patch_browser_actions(text, buildings):
          f'{ind}# PMR: government upgrade button\n{ind}widget = {{\n{ind}\tvisible = "[{any_type(buildings)}]"\n'
          f'{ind}\tsize = {{ 35 35 }}\n' + buttons + f'{ind}}}\n\n{ind}### NATIONALIZE\n')
     return text
+
+
+MV_TAB = 'pmr_bb_mv'   # GetVariableSystem flag: the Buildings panel shows the Owners' Methods tab
+
+
+def patch_browser_tabs(text, on):
+    """building_browser_panel.gui (Pat, 2026-10-18 18:17Z): a tab heading over the Buildings panel, Buildings (vanilla's
+    list) and Private Owners' Methods (gui/pmr_methods_view.gui, recounted by pmr_mv_refresh_sgui as it is clicked).
+    The panel is a fullscreen_block_window, whose fixed_top block is empty in vanilla; the tabs are vanilla's
+    tab_buttons switched by a GetVariableSystem flag (MV_TAB), and the scroll area's two rows hide while it is set."""
+    if not on:
+        return text
+    def once(old, new):
+        nonlocal text
+        if text.count(old) != 1:
+            raise SystemExit(f'building_browser_panel.gui: expected one {old.strip()!r}, found {text.count(old)}; '
+                             'update patch_browser_tabs')
+        text = text.replace(old, new)
+    shown, hidden = f"GetVariableSystem.Exists('{MV_TAB}')", f"Not(GetVariableSystem.Exists('{MV_TAB}'))"
+    refresh = "GetScriptedGui('pmr_mv_refresh_sgui').Execute(GuiScope.SetRoot(GetPlayer.MakeScope).End)"
+    t = '\t\t\t\t'
+
+    def tab(n, key, click, sel):
+        return (f'{t}blockoverride "{n}_button" {{\n{t}\ttext = "{key}"\n{t}}}\n'
+                f'{t}blockoverride "{n}_button_tooltip" {{\n{t}\ttooltip = "{key}"\n{t}}}\n'
+                f'{t}blockoverride "{n}_button_click" {{\n' + ''.join(f'{t}\tonclick = "[{c}]"\n' for c in click) + f'{t}}}\n'
+                f'{t}blockoverride "{n}_button_visibility" {{\n{t}\tvisible = "[{sel}]"\n{t}}}\n'
+                f'{t}blockoverride "{n}_button_visibility_checked" {{\n{t}\tvisible = "[Not({sel})]"\n{t}}}\n'
+                f'{t}blockoverride "{n}_button_selected" {{\n{t}\ttext = "{key}"\n{t}}}\n')
+    tabs = ('\t\t# PMR: Buildings / Private Owners\' Methods tabs (patch_browser_tabs)\n'
+            '\t\tblockoverride "fixed_top" {\n\t\t\ttab_buttons = {\n'
+            + tab('first', 'PMR_BB_TAB_BUILDINGS', [f"GetVariableSystem.Clear('{MV_TAB}')"], hidden)
+            + tab('second', 'PMR_MV_HEADER', [f"GetVariableSystem.Set('{MV_TAB}', 'yes')", refresh], shown)
+            + '\t\t\t}\n\t\t}\n\n')
+    once('\t\tblockoverride "scrollarea_content" {\n\t\t\tvbox = {\n',
+         tabs + '\t\tblockoverride "scrollarea_content" {\n\t\t\tvbox = {\n')
+    once('\t\t\t\thbox = {\n\t\t\t\t\tlayoutpolicy_vertical = preferred\n\t\t\t\t\tlayoutpolicy_horizontal = expanding\n'
+         '\t\t\t\t\tmargin_top = -3\n',
+         f'\t\t\t\thbox = {{\n\t\t\t\t\tvisible = "[{hidden}]"  # PMR\n\t\t\t\t\tlayoutpolicy_vertical = preferred\n'
+         '\t\t\t\t\tlayoutpolicy_horizontal = expanding\n\t\t\t\t\tmargin_top = -3\n')
+    once('\t\t\t\thbox = {\n\t\t\t\t\tlayoutpolicy_vertical = expanding\n\t\t\t\t\tlayoutpolicy_horizontal = expanding\n'
+         '\t\t\t\t\tspacing = 10\n\n\t\t\t\t\t# FILTERS\n',
+         f'\t\t\t\thbox = {{\n\t\t\t\t\tvisible = "[{hidden}]"  # PMR\n\t\t\t\t\tlayoutpolicy_vertical = expanding\n'
+         '\t\t\t\t\tlayoutpolicy_horizontal = expanding\n\t\t\t\t\tspacing = 10\n\n\t\t\t\t\t# FILTERS\n')
+    view = (f'\t\t\t\t# PMR: the Owners\' Methods tab\n\t\t\t\tvbox = {{\n\t\t\t\t\tvisible = "[{shown}]"\n'
+            '\t\t\t\t\tlayoutpolicy_horizontal = expanding\n\t\t\t\t\tlayoutpolicy_vertical = expanding\n'
+            '\t\t\t\t\tmargin = { 20 10 }\n\t\t\t\t\tspacing = 8\n'
+            + ''.join('\t\t\t\t\ttextbox = {\n\t\t\t\t\t\tlayoutpolicy_horizontal = expanding\n'
+                      '\t\t\t\t\t\tmaximumsize = { 1100 -1 }\n\t\t\t\t\t\tautoresize = yes\n\t\t\t\t\t\tmultiline = yes\n'
+                      f'\t\t\t\t\t\talign = left|nobaseline\n\t\t\t\t\t\ttext = "{k}"\n\t\t\t\t\t}}\n'
+                      for k in ('PMR_MV_INTRO', 'PMR_MV_PAIRS'))
+            + '\t\t\t\t\tpmr_methods_view = {}\n\t\t\t\t\texpand = {}\n\t\t\t\t}\n')
+    # the view goes after the scroll area's last row, which closes just before the vbox and the blockoverride
+    end = block_end(text, text.index('\t\t\t\thbox = {\n\t\t\t\t\tvisible = "[' + hidden + ']"  # PMR\n\t\t\t\t\tlayoutpolicy_vertical = expanding'))
+    if text[end:end + 10] != '\n\t\t\t}\n\t\t}\n':
+        raise SystemExit('building_browser_panel.gui: the scroll area no longer ends after its second row; '
+                         'update patch_browser_tabs')
+    return text[:end] + '\n' + view + text[end + 1:]
 
 
 def block_end(text, start):

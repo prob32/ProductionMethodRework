@@ -332,5 +332,8 @@
  "Financial districts and manor houses build and retool to the most profitable recipe of each state. Each row is a building type at the prices of your state with the most levels of it, as of its last check.": "금융 지구와 장원은 각 주에서 가장 수익성 높은 방식으로 건설하고 개조합니다. 각 행은 해당 건물 레벨이 가장 많은 주의 가격(마지막 확인 기준)으로 본 건물 유형입니다.",
  "@money!{0} per level a week{1}": "레벨당 주간 @money!{0}{1}",
  "Picked in states holding #bold {0}#! of your levels": "전체 레벨의 #bold {0}#!를 보유한 주에서 선택됨",
- "Running on #bold {0}#! of your levels": "전체 레벨의 #bold {0}#!에서 가동 중"
+ "Running on #bold {0}#! of your levels": "전체 레벨의 #bold {0}#!에서 가동 중",
+ "Buildings": "건물",
+ " (best combination)": " (최고의 조합)",
+ "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "건물 유형에 자동화가 있으면 옆의 표가 같은 가격으로 각 방식(열)과 각 자동화(행)를 평가합니다. 금색은 가장 수익성 높은 조합입니다. 개조는 당분간 방식 행을 따릅니다."
 }
