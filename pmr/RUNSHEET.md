@@ -12,7 +12,7 @@ error there means the mechanism below never ran, and a missing log line is then 
 
 ## Latest: every game language, and automation waits for its technology (test mod; your current save works)
 
-Three changes since the Company Culture build (q14), from `dev` in prob32/ProductionMethodRework:
+Four changes since the Company Culture build (q14), from `dev` in prob32/ProductionMethodRework:
 
 - **Every game language (#3).** The test build now carries PMR's text in all 11 game languages, the English text in
   each, as the release always has. Your Chinese screenshots of 2026-10-18 showed raw `PMR_` keys because q14 shipped
@@ -23,10 +23,14 @@ Three changes since the Company Culture build (q14), from `dev` in prob32/Produc
   Steam Donkey and Railways, steel's Open Hearth for the Rotary Valve Engine, and so on (25 recipes on 15 building
   types). Buildings already running such a recipe keep it.
 - **The foreign buy-in probe is gone** (you dropped the idea on 2026-10-14), with its log lines and decision.
+- **Policy cards fit every language (q16, #3).** In Chinese, Focus on Infrastructure's authority cost spilled under
+  its card: a Chinese, Japanese or Korean game draws PMR's English text about a third wider. The cards are now sized
+  for that font, so in English they keep a little room at the bottom.
 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
 | L1 | Set the game to Chinese (or any language but English), load, open a mine's building panel and the Private construction tab | PMR's text in English, no `PMR_` keys | Raw `PMR_` keys: the language files didn't install. Check that the Queue Test folder has `localization\simp_chinese\pmr_l_simp_chinese.yml` |
+| L2 | Still in Chinese, open the Private tab and click Add Policy | Every card's authority cost sits inside its card | A cost under its card: the card height estimate is still short for that font; send a screenshot |
 | A1 | Whenever you research Baking Powder before Dough Rollers | No `PMR;rec=RESEARCH` line for `building=building_food_industry` with `best=3` until you also have Dough Rollers; then one appears | A `RESEARCH` line with `best=3` before Dough Rollers: the gate didn't take. Check `error.log` for `pmr_best_food_industry` |
 
 ## Earlier: Company Culture, a trait tree on every company (test mod; a new game is best)
