@@ -1369,10 +1369,6 @@ def localization(p, rows, kept_split):
         f' pmr_cc_test_points_decision_desc:0 "Gives every company of yours {TEST_POINTS} Culture points to spend and refreshes its Company Culture tab, so the wheel can be tried without waiting. Levels do not change."',
         ' pmr_cc_test_grant_decision:0 "PMR test: finish your companies\' research grants"',
         f' pmr_cc_test_grant_decision_desc:0 "Every research grant your companies are running completes at the start of next month, instead of after {GRANT_MONTHS} months, so the new production method can be checked without waiting."',
-        ' building_employment_laborers_mult:0 "Laborer jobs"',
-        ' building_employment_laborers_mult_desc:0 "Change to the laborer jobs of each building level."',
-        ' building_employment_engineers_mult:0 "Engineer jobs"',
-        ' building_employment_engineers_mult_desc:0 "Change to the engineer jobs of each building level."',
     ]
     for bk in sorted(p.works):
         for t in T3:
