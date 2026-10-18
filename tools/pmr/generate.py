@@ -3050,8 +3050,15 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
              f'\t\tpmr_profit_{b} = yes\n\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
              f'\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
              f'\t\trandom_list = {{ {spread} }}\n'
-             f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line}" }}\n\t}}\n'
-             f'\t{setv("pmr_best_now", "var:" + v("pmr_pbest"))}\n}}\n\n')
+             f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
+             # Pat, 17:59Z: the log must show every pick on its own once the game rolls forward. The first
+             # calculation runs during game setup, before the log is written, so the test build logs each
+             # player building's pick once more on its first monthly pulse (pmr_plog_<b>).
+             + ('' if RELEASE else
+                f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month NOT = {{ has_variable = pmr_plog_{b} }} '
+                f'owner = {{ is_player = yes }} }}\n\t\tset_variable = pmr_plog_{b}\n'
+                f'\t\tdebug_log = "{line};why=first_month"\n\t}}\n')
+             + f'\t{setv("pmr_best_now", "var:" + v("pmr_pbest"))}\n}}\n\n')
     return ''.join(o)
 
 
