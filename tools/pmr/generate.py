@@ -58,6 +58,7 @@ import argparse
 import collections
 import glob
 import json
+import math
 import re
 import os
 import shutil
@@ -178,6 +179,17 @@ RECIPE_ICON_SHARE = 0.25   # a recipe's slice of the bar shows its icon above th
 # into those recipes. It becomes one more recipe on top of the newest, needing the newest recipe's and
 # the automation's technologies and electricity in the state (ElectricRecipe).
 AUTOMATION_FROM_TIER = 3
+# Pat, 2026-10-18 14:48Z: every automation method pays for itself at 1836 wages with its goods at the +75%
+# price cap (buff_automation). Vanilla's lose GBP 220 to 900 a level a week there: they save 1,000 to 3,000
+# laborers, whose wage is about GBP 0.04 a week each. Each method now removes AUTOMATION_LABOUR_MULT times
+# vanilla's workforce, and its goods (its inputs and the output it eats) are cut by one factor until the wage
+# it saves covers them at AUTOMATION_PRICE_CAP x base price, where it runs with the fewest workers to save.
+# The wage is Pat's Champagne food industry on 1836.1.1: GBP 1.41K a week for 6 levels of 36,000 wage units.
+AUTOMATION_WAGE = 390          # weekly GBP per 10,000 wage units (REVIEW.md: GB 1838 median about 450)
+AUTOMATION_PRICE_CAP = 1.75    # the game clamps prices to +75% (PRICE_LADDER)
+AUTOMATION_LABOUR_MULT = 1.5   # workforce removed, x vanilla's, to the nearest AUTOMATION_JOBS_STEP
+AUTOMATION_JOBS_STEP = 250
+AUTOMATION_GOODS_STEP = 0.1    # goods rounded down to this, never below it, so a method keeps its demand
 # Pat, 2026-10-13: a recipe that needs electricity (its own goods, its folded automation, or vanilla's
 # required_input_goods) can't become a building's target unless its state produces electricity, and
 # retooling towards it pauses while the state has none. One rule for government and private retooling.
@@ -528,6 +540,135 @@ def effective(r, autos):
     return {sec: mods for sec, mods in blend.items() if mods}, emp, elec, clamped
 
 
+def buff_automation(game, p_srcs, groups, b_srcs):
+    """Pat, 2026-10-18 14:48Z (AUTOMATION_WAGE): rewrite every automation method in its vanilla file, before
+    anything reads it, so the folded, electric and kept automation all carry the buff. Each method's
+    workforce change is x AUTOMATION_LABOUR_MULT; its goods are x k, the smallest factor over every place it
+    runs (a recipe it folds into, the electric recipe, or each recipe beside a kept group) that lets the wage
+    it really saves there (employment stops at zero, shared between the methods running together) pay for
+    them at AUTOMATION_PRICE_CAP. Returns the report rows; the caller rebuilds pms from p_srcs."""
+    pms = {k: (n, s) for s in p_srcs for k, n in s.objects().items()}
+    cost = {k: num(pdx.get(n.value, 'cost').value, f'{k} cost')
+            for s in load_dir(game, 'goods') for k, n in s.objects().items() if pdx.get(n.value, 'cost')}
+    weight = {}
+    for s in load_dir(game, 'pop_types'):
+        for k, n in s.objects().items():
+            w = pdx.get(n.value, 'wage_weight')
+            weight[k] = num(w.value, f'{k} wage_weight') if w else 1.0
+
+    def rec(p):
+        return Recipe(p, *pms[p])
+
+    # Where each method runs, as generate's own folding rules put it: (building, where, base employment, methods).
+    places = []
+    for s in b_srcs:
+        for bk, bn in s.objects().items():
+            pg = pdx.get(bn.value, 'production_method_groups')
+            gl = pdx.items(pg) if pg else []
+            if not gl:
+                continue
+            g0 = gl[0]
+            ag = [g for g in gl if g != g0 and 'automation' in g]
+            recipes = [rec(p) for p in groups.get(g0, []) if p not in DROP_RECIPES and p in pms]
+            if not ag or not recipes:
+                continue
+            if len(recipes) >= AUTOMATION_FROM_TIER:
+                folded = []
+                for g in ag:
+                    plain = [p for p in groups[g] if not rec(p).needs(ELECTRICITY)]
+                    if plain:
+                        folded.append(rec(plain[-1]))
+                for r in recipes[AUTOMATION_FROM_TIER - 1:]:
+                    places.append((bk, r.key, r.employment, folded))
+                tops = [rec(groups[g][-1]) for g in ag]
+                if any(a.needs(ELECTRICITY) for a in tops):
+                    places.append((bk, f'{recipes[-1].key} + electric automation', recipes[-1].employment, tops))
+            else:
+                for g in ag:
+                    for p in groups[g]:
+                        if rec(p).employment:
+                            places += [(bk, f'{r.key} + {p}', r.employment, [rec(p)]) for r in recipes]
+
+    def jobs(v):
+        return round(v * AUTOMATION_LABOUR_MULT / AUTOMATION_JOBS_STEP) * AUTOMATION_JOBS_STEP
+
+    def saved(base, autos):
+        """wage units each method really removes from base, the methods' new workforce together."""
+        tot = {}
+        for a in autos:
+            for k, v in a.employment.items():
+                tot[k] = tot.get(k, 0) + jobs(v)
+        out = {}
+        for a in autos:
+            out[a.key] = sum(jobs(v) / tot[k] * min(-tot[k], base.get(k, 0)) * weight[k[len('building_employment_'):-len('_add')]]
+                             for k, v in a.employment.items() if tot[k] < 0)
+        return out
+
+    def goods_bill(a, k=1.0):
+        """weekly GBP of a method's goods at the price cap: its inputs, and the output it eats."""
+        return AUTOMATION_PRICE_CAP * k * (sum(q * cost[g] for g, q in a.inputs.items())
+                                           - sum(q * cost[g] for g, q in a.outputs.items() if q < 0))
+
+    worst = {}   # method -> (wage units it saves where it saves least, where)
+    for bk, where, base, autos in places:
+        for key, wu in saved(base, autos).items():
+            if key not in worst or wu < worst[key][0]:
+                worst[key] = (wu, f'{bk}: {where}')
+    rows, edits = [], {}
+    for key, (wu, where) in sorted(worst.items()):
+        a = rec(key)
+        bill = goods_bill(a)
+        pay = wu * AUTOMATION_WAGE / 10000
+        k = min(1.0, pay / bill) if bill else 1.0
+        new_goods = {}
+        for g, q in list(a.inputs.items()) + [(g, -q) for g, q in a.outputs.items() if q < 0]:
+            new_goods[g] = max(AUTOMATION_GOODS_STEP, math.floor(q * k / AUTOMATION_GOODS_STEP) * AUTOMATION_GOODS_STEP)
+        bill_new = AUTOMATION_PRICE_CAP * sum(q * cost[g] for g, q in new_goods.items())
+        if bill_new > pay:
+            raise SystemExit(f'buff_automation: {key} still loses GBP {bill_new - pay:.1f} a week at the cap ({where}); '
+                             'lower AUTOMATION_GOODS_STEP')
+        rows.append({'method': key, 'least_saved_at': where, 'wage_units_saved': wu, 'wage_saved': round(pay, 1),
+                     'goods_before': {**a.inputs, **{g: -q for g, q in a.outputs.items() if q < 0}},
+                     'goods_after': {g: round(q, 4) for g, q in new_goods.items()},
+                     'goods_bill_at_cap_before': round(bill, 1), 'goods_bill_at_cap_after': round(bill_new, 1),
+                     'employment_before': dict(a.employment),
+                     'employment_after': {k2: jobs(v) for k2, v in a.employment.items()}})
+        edits[key] = new_goods
+    # Rewrite the values in place: every other byte of the file stays vanilla's.
+    for s in p_srcs:
+        spans = []
+        for key, n in s.objects().items():
+            if key not in edits:
+                continue
+            new_goods = edits[key]
+            bm = pdx.get(n.value, 'building_modifiers')
+            for block in pdx.get_all(bm.value, 'workforce_scaled'):
+                for m in block.value:
+                    for pre, sign in (('goods_input_', 1), ('goods_output_', -1)):
+                        if m.key and m.key.startswith(pre) and m.key.endswith('_add'):
+                            g = m.key[len(pre):-len('_add')]
+                            if sign * num(m.value, m.key) > 0 and g in new_goods:
+                                spans.append((m, fmt(sign * new_goods[g])))
+            for block in pdx.get_all(bm.value, 'level_scaled'):
+                for m in block.value:
+                    if m.key and m.key.startswith('building_employment_'):
+                        spans.append((m, fmt(jobs(num(m.value, m.key)))))
+        if not spans:
+            continue
+        text, pos, out = s.text, 0, []
+        for m, val in sorted(spans, key=lambda x: x[0].start):
+            e = text.find('\n', m.end)
+            e = len(text) if e < 0 else e
+            tail = text[m.end:e]
+            end = e if tail.strip().startswith('#') or not tail.strip() else m.end
+            out += [text[pos:m.start], f'{m.key} = {val}\t# PMR: vanilla {m.value} (automation buff)']
+            pos = end
+        out.append(text[pos:])
+        s.text = ''.join(out)
+        s.nodes = pdx.parse(s.text)
+    return rows
+
+
 class Option:
     """One option of a second group on one building: a vanilla method whose effects PMR moves into
     share methods pm_pmr_x_<b>_<j>_<n>, scaled by n / SHARE_STEPS. The vanilla method stays in its
@@ -623,6 +764,7 @@ def main():
             pm = pdx.get(n.value, 'production_methods')
             groups[k] = pdx.items(pm) if pm else []
             group_src[k] = (s, pm)
+    report_automation_buff = buff_automation(game, p_srcs, groups, b_srcs)
     pms = {}
     for s in p_srcs:
         for k, n in s.objects().items():
@@ -658,7 +800,8 @@ def main():
         for p in lst:
             pm_groups.setdefault(p, set()).add(g)
 
-    report = {'treated': [], 'skipped': [], 'blended': [], 'icon_fallback': []}
+    report = {'treated': [], 'skipped': [], 'blended': [], 'icon_fallback': [],
+              'automation_buff': report_automation_buff}
     treated = []          # (building_key, building_node, building_src, [Recipe])
     candidates = []
     for s in b_srcs:
