@@ -58,23 +58,48 @@ TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
 PANEL_GUI = 'gui/company_panel.gui'
 CALIBRATION_MD = '/mnt/project-files/pmr/mio/calibration.md'
-CAL_VERSION = 1                     # bump to make every company re-read its numbers (pmr_cc_on)
+CAL_VERSION = 2                     # bump to make every company re-read its numbers (pmr_cc_on); 2: Workforce lines
 
-# The tree (Pat 04:00Z). Line code, key, column name, node names, trait icons.
+# The tree. Pat 04:00Z: Production (Equipment or People, and Scale). Pat 2026-10-18 13:23Z: laid out like the tech
+# tree, with more people options (wage targets). Each line is a column of tiers bought in order; its tier is the
+# company variable pmr_cc_<key>. code is the scope:line value the tab's click passes; cost is points per tier (Pat
+# 12:37Z: no queue, a click spends points already earned); needs lists (line, tier) bought before tier 1.
+class Line:
+    def __init__(self, code, key, section, title, names, icons, cost, needs=()):
+        self.code, self.key, self.section, self.title = code, key, section, title
+        self.names, self.icons, self.cost, self.needs = names, icons, cost, needs
+        self.tiers = len(names)
+
+
+def _icons(*names):
+    return tuple(f'gfx/interface/icons/{n}.dds' for n in names)
+
+
 LINES = [
-    (1, 'eq', 'Equipment', ('Refined Process I', 'Refined Process II', 'Refined Process III'),
-     ('meticulous', 'engineer', 'innovative')),
-    (2, 'pp', 'People', ('Skilled Workforce I', 'Skilled Workforce II', 'Skilled Workforce III'),
-     ('tactful', 'erudite', 'charismatic')),
-    (3, 'sc', 'Scale', ('Expanded Works I', 'Expanded Works II', 'Mass Production'),
-     ('basic_entrepreneur', 'experienced_entrepreneur', 'expert_entrepreneur')),
+    Line(1, 'eq', 'pr', 'Equipment', ('Refined Process I', 'Refined Process II', 'Refined Process III'),
+         _icons('character_trait_icons/meticulous', 'character_trait_icons/engineer', 'character_trait_icons/innovative'),
+         (1, 2, 3)),
+    Line(2, 'pp', 'pr', 'People', ('Skilled Workforce I', 'Skilled Workforce II', 'Skilled Workforce III'),
+         _icons('character_trait_icons/tactful', 'character_trait_icons/erudite', 'character_trait_icons/charismatic'),
+         (1, 2, 3)),
+    Line(3, 'sc', 'pr', 'Scale', ('Expanded Works I', 'Expanded Works II', 'Mass Production'),
+         _icons('character_trait_icons/basic_entrepreneur', 'character_trait_icons/experienced_entrepreneur',
+                'character_trait_icons/expert_entrepreneur'), (1, 2, 3)),
+    Line(4, 'fw', 'wf', 'Fair Wages', ('Fair Wages', 'Living Wage', 'Profit Sharing'),
+         _icons('law_icons/wage_controls', 'sol_icons/secure', 'law_icons/cooperative_ownership'), (1, 2, 3)),
+    Line(5, 'tp', 'wf', 'Tight Payroll', ('Tight Payroll', 'Combination Clauses'),
+         _icons('law_icons/laissez_faire', 'law_icons/combination_acts'), (1, 2)),
+    Line(6, 'ho', 'wf', 'Housing', ('Company Housing', 'Model Dwellings'),
+         _icons('law_icons/poor_laws', 'sol_icons/prosperous'), (1, 2)),
+    Line(7, 'sf', 'wf', 'Safety', ('Safety Rules', 'Safety Inspectors'),
+         _icons('institution_icons/workplace_safety', 'law_icons/worker_protections'), (1, 2)),
+    Line(8, 'ct', 'wf', 'Company Town', ('Company Town',), _icons('law_icons/corporate_state'), (3,),
+         (('ho', 2), ('sf', 2))),
 ]
-EXCLUSIVE = {'eq': 'pp', 'pp': 'eq'}
-TIER_COST = (1, 2, 3)               # points per tier (Pat 12:37Z: no queue, a click spends points already earned)
-COLUMN_ICONS = {'eq': 'gfx/interface/icons/timed_modifier_icons/modifier_gear_positive.dds',
-                'pp': 'gfx/interface/icons/pops_icons/engineers.dds',
-                'sc': 'gfx/interface/icons/generic_icons/upgrade_arrow.dds'}
-TRAIT_ICON = 'gfx/interface/icons/character_trait_icons/{}.dds'
+BY_KEY = {ln.key: ln for ln in LINES}
+SECTIONS = (('pr', 'Production'), ('wf', 'Workforce'))
+EXCLUSIVE = {'eq': 'pp', 'pp': 'eq', 'fw': 'tp', 'tp': 'fw'}
+COMPANY_LINES = ('eq', 'pp')        # numbers calibrated per company type; the other lines' traits are shared
 EXCLUSIVE_ICON = 'gfx/interface/icons/generic_icons/warning.dds'
 WHITE = 'gfx/interface/backgrounds/white.dds'
 
@@ -83,6 +108,33 @@ LABORERS_PER_ENGINEER = 4           # People: one engineer job added for every f
 LABORER_CUT_MAX = 0.6
 THROUGHPUT = (0.05, 0.10, 0.20)     # Scale: +5 / +5 / +10%, so 5, 10 and 20% in all
 INPUT_CUT_MAX = 0.20                # Equipment: the most input goods tier III may cut
+
+# The order AI companies buy in: col is their own column (Equipment or People), pay the wage line that goes with it.
+AI_ORDER = [('col', 1), ('sc', 1), ('ho', 1), ('col', 2), ('sc', 2), ('sf', 1), ('pay', 1), ('ho', 2), ('col', 3),
+            ('sc', 3), ('sf', 2), ('pay', 2), ('pay', 3), ('ct', 1)]
+
+# Workforce (Pat 2026-10-18 13:23Z: "things more related to people such as wage target modifiers"). Every key is a
+# vanilla 1.14.5 building modifier: building_minimum_wage_mult is the one shown as "Building Wage Target" (laws use
+# +0.10 / +0.15), building_working_conditions_mult already rides executive_modifier on a vanilla personality trait
+# (-0.10), the job attractiveness and per-profession standard of living keys are used on vanilla plantation methods,
+# and building_company_worker_dividends_add ("Company Workforce Dividends") on vanilla company HQ methods (+0.25)
+# and the cooperative ownership law (+0.75).
+# Totals per tier: a tier's trait replaces the one before.
+WORKERS = ('laborers', 'farmers', 'machinists', 'clerks', 'engineers', 'shopkeepers')
+WORKFORCE = {
+    ('fw', 1): [('building_minimum_wage_mult', 0.10)],
+    ('fw', 2): [('building_minimum_wage_mult', 0.20), ('building_job_attractiveness_mult', 0.20)],
+    ('fw', 3): [('building_minimum_wage_mult', 0.20), ('building_job_attractiveness_mult', 0.20),
+                ('building_company_worker_dividends_add', 0.15)],
+    ('tp', 1): [('building_minimum_wage_mult', -0.10)],
+    ('tp', 2): [('building_minimum_wage_mult', -0.20)],
+    ('ho', 1): [(f'building_{p}_standard_of_living_add', 1) for p in WORKERS],
+    ('ho', 2): [(f'building_{p}_standard_of_living_add', 2) for p in WORKERS],
+    ('sf', 1): [('building_working_conditions_mult', -0.10)],
+    ('sf', 2): [('building_working_conditions_mult', -0.20)],
+    ('ct', 1): [(f'building_{p}_standard_of_living_add', 1) for p in WORKERS]
+               + [('building_job_attractiveness_mult', 0.15)],
+}
 
 # Points (plan section 2)
 PROSPERITY_LADDER = list(range(100, 0, -5))          # 100, 95 .. 5
@@ -247,12 +299,12 @@ def calibration_md(cal, comps):
 # Traits
 
 def trait_key(line, company, t):
-    return f'pmr_cc_sc_{t}' if line == 'sc' else f'pmr_cc_{line}_{short(company)}_{t}'
+    return f'pmr_cc_{line}_{short(company)}_{t}' if line in COMPANY_LINES else f'pmr_cc_{line}_{t}'
 
 
 def trait(key, icon, mods):
     body = ''.join(f'\t\t{k} = {v}\n' for k, v in mods)
-    return (f'{key} = {{\n\ttype = condition\n\ttexture = "{TRAIT_ICON.format(icon)}"\n\n'
+    return (f'{key} = {{\n\ttype = condition\n\ttexture = "{icon}"\n\n'
             f'\texecutive_modifier = {{\n{body}\t}}\n\n'
             '\tpossible = { always = no }\n\tweight = { value = 0 }\n\tvalue = 0\n}\n')
 
@@ -265,9 +317,11 @@ def fmt(x):
 def traits(cal):
     out = ['# Company Culture traits (company_culture.py). Each sits on a company\'s executive; its executive_modifier\n'
            '# applies to the building levels that company owns. Never random (possible no, weight 0, value 0).\n\n']
-    icons = {key: icons for _c, key, _n, _names, icons in LINES}
+    icons = {ln.key: ln.icons for ln in LINES}
     for t in (1, 2, 3):
         out.append(trait(trait_key('sc', None, t), icons['sc'][t - 1], [('building_throughput_add', fmt(THROUGHPUT[t - 1]))]))
+    for (k, t), mods in WORKFORCE.items():
+        out.append(trait(trait_key(k, None, t), icons[k][t - 1], [(m, fmt(v)) for m, v in mods]))
     for c in sorted(cal):
         for t, r in enumerate(cal[c]['tiers'], 1):
             out.append(trait(trait_key('eq', c, t), icons['eq'][t - 1], [('building_goods_input_mult', fmt(-r['x']))]))
@@ -305,8 +359,8 @@ def log_line(rec, extra=''):
             'company=[THIS.GetCompany.GetNameNoFormatting];' + extra +
             "level=[THIS.Var('pmr_cc_level').GetValue|0];pts=[THIS.Var('pmr_cc_pts').GetValue|0];"
             "funds=[THIS.Var('pmr_cc_funds').GetValue|0];cost=[THIS.Var('pmr_cc_cost').GetValue|0];"
-            "rate=[THIS.Var('pmr_cc_rate').GetValue|1];eq=[THIS.Var('pmr_cc_eq').GetValue|0];"
-            "pp=[THIS.Var('pmr_cc_pp').GetValue|0];sc=[THIS.Var('pmr_cc_sc').GetValue|0]\"")
+            "rate=[THIS.Var('pmr_cc_rate').GetValue|1];"
+            + ';'.join(f"{ln.key}=[THIS.Var('pmr_cc_{ln.key}').GetValue|0]" for ln in LINES) + '"')
 
 
 def player_log(rec, extra=''):
@@ -316,9 +370,9 @@ def player_log(rec, extra=''):
 NUMBERS = ('x', 'l', 'a', 'p', 'e')     # per company and tier, from calibrate() (tiers_for)
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mo',
              'pmr_cc_prosp', 'pmr_cc_size']
-            + [f'pmr_cc_{k}' for _c, k, *_r in LINES]
-            + [f'pmr_cc_pick_{k}' for _c, k, *_r in LINES]
-            + [f'pmr_cc_st_{k}_{t}' for _c, k, *_r in LINES for t in (1, 2, 3)]
+            + [f'pmr_cc_{ln.key}' for ln in LINES]
+            + [f'pmr_cc_pick_{ln.key}' for ln in LINES]
+            + [f'pmr_cc_st_{ln.key}_{t}' for ln in LINES for t in range(1, ln.tiers + 1)]
             + [f'pmr_cc_{n}{t}' for n in NUMBERS for t in (1, 2, 3)])
 
 
@@ -346,8 +400,8 @@ def effects(cal):
              '# company\'s numbers, its first cost. A company type PMR does not know (another mod) takes the median.\n'
              'pmr_cc_init = {\n'
              + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = {v} }} }} set_variable = {{ name = {v} value = 0 }} }}\n'
-                       for v in ('pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate', 'pmr_cc_eq',
-                                 'pmr_cc_pp', 'pmr_cc_sc'))
+                       for v in ['pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate']
+                       + [f'pmr_cc_{ln.key}' for ln in LINES])
              + chain + f'\telse = {{\n\t\t{dsets}\n\t\tset_variable = {{ name = pmr_cc_ail value = 2 }}\n\t}}\n'
              '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_cc_ai } }\n'
              '\t\t# the AI\'s column, a quarter of the time the other one\n'
@@ -381,58 +435,73 @@ def effects(cal):
              '\t\tpmr_cc_set_cost = yes\n'
              f'\t\t{player_log("CC_POINT")}\n\t}}\n}}\n\n')
     # Triggers are in scripted triggers; buying.
-    o.append('# Buy the next tier of line $L$ (eq, pp, sc): its cost in points, the tier, the traits.\n'
+    pay = ''
+    for ln in LINES:
+        chain = ''.join(f'\t{"if" if t == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_{ln.key} = {t} }} '
+                        f'change_variable = {{ name = pmr_cc_pts subtract = {c} }} }}\n'
+                        for t, c in enumerate(ln.cost))
+        pay += f'pmr_cc_pay_{ln.key} = {{\n{chain}}}\n\n'
+    o.append('# The points for the next tier of each line, taken when it is bought.\n' + pay)
+    o.append('# Buy the next tier of line $L$: its cost in points, the tier, the traits.\n'
              'pmr_cc_buy = {\n'
-             '\tif = { limit = { var:pmr_cc_$L$ = 0 } change_variable = { name = pmr_cc_pts subtract = 1 } }\n'
-             '\telse_if = { limit = { var:pmr_cc_$L$ = 1 } change_variable = { name = pmr_cc_pts subtract = 2 } }\n'
-             '\telse = { change_variable = { name = pmr_cc_pts subtract = 3 } }\n'
+             '\tpmr_cc_pay_$L$ = yes\n'
              '\tchange_variable = { name = pmr_cc_$L$ add = 1 }\n'
              '\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n'
              f'\t{player_log("CC_BUY", "line=$L$;")}\n}}\n\n')
     # A click (scope:line from the GUI).
     click = ''
-    for code, k, *_r in LINES:
-        click += (f'\t{"if" if code == 1 else "else_if"} = {{\n'
-                  f'\t\tlimit = {{\n\t\t\tscope:line = {code}\n\t\t\tpmr_cc_open_{k} = yes\n\t\t\tpmr_cc_afford = {{ L = {k} }}\n\t\t}}\n'
-                  f'\t\tpmr_cc_buy = {{ L = {k} }}\n\t}}\n')
-    o.append('# The player clicked the next node of line scope:line (1 Equipment, 2 People, 3 Scale): it is bought with\n'
+    for i, ln in enumerate(LINES):
+        click += (f'\t{"if" if i == 0 else "else_if"} = {{\n'
+                  f'\t\tlimit = {{\n\t\t\tscope:line = {ln.code}\n\t\t\tpmr_cc_open_{ln.key} = yes\n'
+                  f'\t\t\tpmr_cc_afford = {{ L = {ln.key} }}\n\t\t}}\n'
+                  f'\t\tpmr_cc_buy = {{ L = {ln.key} }}\n\t}}\n')
+    codes = ', '.join(f'{ln.code} {ln.title}' for ln in LINES)
+    o.append(f'# The player clicked the next node of line scope:line ({codes}): it is bought with\n'
              '# points already earned, or nothing happens (Pat 12:37Z: no queue).\n'
              'pmr_cc_click = {\n\tsave_scope_as = pmr_cc_co\n' + click + '\tpmr_cc_mirror = yes\n}\n\n')
-    # AI.
-    ai_line = ('\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tpmr_cc_open_$L$ = yes\n\t\t\t\tpmr_cc_afford = { L = $L$ }\n'
-               '\t\t\t\tvar:pmr_cc_$L$ <= var:pmr_cc_sc\n\t\t\t}\n\t\t\tpmr_cc_buy = { L = $L$ }\n\t\t}\n'
-               '\t\telse_if = {\n\t\t\tlimit = { pmr_cc_open_sc = yes pmr_cc_afford = { L = sc } }\n'
-               '\t\t\tpmr_cc_buy = { L = sc }\n\t\t}\n'
-               '\t\telse_if = {\n\t\t\tlimit = { pmr_cc_open_$L$ = yes pmr_cc_afford = { L = $L$ } }\n'
-               '\t\t\tpmr_cc_buy = { L = $L$ }\n\t\t}\n')
-    o.append('# AI companies (Pat 04:00Z: yes) buy as soon as they can, their column (pmr_cc_ai) and Scale in turn.\n'
-             'pmr_cc_ai_line = {\n\tif = {\n\t\tlimit = { var:pmr_cc_pts >= 1 }\n' + ai_line + '\t}\n}\n\n'
-             'pmr_cc_ai_buy = {\n'
-             '\tif = { limit = { var:pmr_cc_ai = 1 } pmr_cc_ai_line = { L = eq } pmr_cc_ai_line = { L = eq } }\n'
-             '\telse = { pmr_cc_ai_line = { L = pp } pmr_cc_ai_line = { L = pp } }\n}\n\n')
-    # Traits.
-    line_fx = ('\tif = {\n\t\tlimit = { scope:pmr_cc_co = { var:pmr_cc_$L$ >= 3 } }\n'
-               '\t\tif = { limit = { has_trait = $T1$ } remove_trait = $T1$ }\n'
-               '\t\tif = { limit = { has_trait = $T2$ } remove_trait = $T2$ }\n'
-               '\t\tif = { limit = { NOT = { has_trait = $T3$ } } add_trait = $T3$ }\n\t}\n'
-               '\telse_if = {\n\t\tlimit = { scope:pmr_cc_co = { var:pmr_cc_$L$ = 2 } }\n'
-               '\t\tif = { limit = { has_trait = $T1$ } remove_trait = $T1$ }\n'
-               '\t\tif = { limit = { has_trait = $T3$ } remove_trait = $T3$ }\n'
-               '\t\tif = { limit = { NOT = { has_trait = $T2$ } } add_trait = $T2$ }\n\t}\n'
-               '\telse_if = {\n\t\tlimit = { scope:pmr_cc_co = { var:pmr_cc_$L$ = 1 } }\n'
-               '\t\tif = { limit = { has_trait = $T2$ } remove_trait = $T2$ }\n'
-               '\t\tif = { limit = { has_trait = $T3$ } remove_trait = $T3$ }\n'
-               '\t\tif = { limit = { NOT = { has_trait = $T1$ } } add_trait = $T1$ }\n\t}\n'
-               '\telse = {\n'
-               '\t\tif = { limit = { has_trait = $T1$ } remove_trait = $T1$ }\n'
-               '\t\tif = { limit = { has_trait = $T2$ } remove_trait = $T2$ }\n'
-               '\t\tif = { limit = { has_trait = $T3$ } remove_trait = $T3$ }\n\t}\n')
-    o.append('# Character scope (the executive), scope:pmr_cc_co the company: the trait of line $L$ for its tier, the\n'
-             '# other tiers removed.\npmr_cc_line = {\n' + line_fx + '}\n\n')
+    # AI: one fixed order per column. A step already bought, or closed to the company, is passed over; the first
+    # step still open is bought when affordable, otherwise the company saves for it.
+    def ai_chain(col, wage, ind):
+        out = ''
+        for i, (k, t) in enumerate(AI_ORDER):
+            k = {'col': col, 'pay': wage}.get(k, k)
+            out += (f'{ind}{"if" if i == 0 else "else_if"} = {{\n{ind}\tlimit = {{ var:pmr_cc_{k} < {t} pmr_cc_open_{k} = yes }}\n'
+                    f'{ind}\tif = {{ limit = {{ pmr_cc_afford = {{ L = {k} }} }} pmr_cc_buy = {{ L = {k} }} }}\n{ind}}}\n')
+        return out
+    o.append('# AI companies (Pat 04:00Z: yes) buy along a fixed order as soon as they can afford the next step:\n'
+             '# Equipment companies (pmr_cc_ai 1) take Tight Payroll, People companies Fair Wages.\n'
+             'pmr_cc_ai_step = {\n\tif = {\n\t\tlimit = { var:pmr_cc_ai = 1 }\n'
+             + ai_chain('eq', 'tp', '\t\t')
+             + '\t}\n\telse = {\n'
+             + ai_chain('pp', 'fw', '\t\t')
+             + '\t}\n}\n\n'
+             'pmr_cc_ai_buy = {\n\tpmr_cc_ai_step = yes\n\tpmr_cc_ai_step = yes\n}\n\n')
+    # Traits: the trait of each line for its tier, the other tiers removed.
+    def line_fx(k, keys):
+        out = ''
+        for t in range(len(keys), 0, -1):
+            kw = 'if' if t == len(keys) else 'else_if'
+            cond = f'var:pmr_cc_{k} >= {t}' if t == len(keys) else f'var:pmr_cc_{k} = {t}'
+            out += f'\t{kw} = {{\n\t\tlimit = {{ scope:pmr_cc_co = {{ {cond} }} }}\n'
+            out += ''.join(f'\t\tif = {{ limit = {{ has_trait = {o_} }} remove_trait = {o_} }}\n'
+                           for n, o_ in enumerate(keys, 1) if n != t)
+            out += f'\t\tif = {{ limit = {{ NOT = {{ has_trait = {keys[t - 1]} }} }} add_trait = {keys[t - 1]} }}\n\t}}\n'
+        out += '\telse = {\n' + ''.join(f'\t\tif = {{ limit = {{ has_trait = {o_} }} remove_trait = {o_} }}\n'
+                                         for o_ in keys) + '\t}\n'
+        return out
+    o.append('# Character scope (the executive), scope:pmr_cc_co the company: the trait of a three-tier line $L$ for its\n'
+             '# tier, the other tiers removed.\npmr_cc_line = {\n'
+             + line_fx('$L$', ['$T1$', '$T2$', '$T3$']) + '}\n\n')
+    shared = ''
+    for ln in LINES:
+        if ln.key not in COMPANY_LINES:
+            shared += f'pmr_cc_line_{ln.key} = {{\n' + line_fx(ln.key, [trait_key(ln.key, None, t) for t in
+                                                                       range(1, ln.tiers + 1)]) + '}\n\n'
+    o.append('# The same for each line whose traits every company shares.\n' + shared)
     apply_chain = ''
     for i, c in enumerate(sorted(cal)):
         kw = 'if' if i == 0 else 'else_if'
-        t = {k: [trait_key(k, c, n) for n in (1, 2, 3)] for k in ('eq', 'pp')}
+        t = {k: [trait_key(k, c, n) for n in (1, 2, 3)] for k in COMPANY_LINES}
         apply_chain += (f'\t\t{kw} = {{\n\t\t\tlimit = {{ scope:pmr_cc_co = {{ is_company_type = company_type:{c} }} }}\n'
                         f'\t\t\tpmr_cc_line = {{ L = eq T1 = {t["eq"][0]} T2 = {t["eq"][1]} T3 = {t["eq"][2]} }}\n'
                         f'\t\t\tpmr_cc_line = {{ L = pp T1 = {t["pp"][0]} T2 = {t["pp"][1]} T3 = {t["pp"][2]} }}\n\t\t}}\n')
@@ -442,26 +511,31 @@ def effects(cal):
              '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\thas_variable = pmr_cc_of\n\t\t\t\tNOT = { var:pmr_cc_of ?= scope:pmr_cc_co }\n\t\t\t}\n'
              '\t\t\tpmr_cc_strip = yes\n\t\t}\n'
              '\t\tset_variable = { name = pmr_cc_of value = scope:pmr_cc_co }\n'
-             + apply_chain +
-             '\t\tpmr_cc_line = { L = sc T1 = pmr_cc_sc_1 T2 = pmr_cc_sc_2 T3 = pmr_cc_sc_3 }\n\t}\n}\n\n')
+             + apply_chain
+             + ''.join(f'\t\tpmr_cc_line_{ln.key} = yes\n' for ln in LINES if ln.key not in COMPANY_LINES)
+             + '\t}\n}\n\n')
     strip = ''.join(f'\tif = {{ limit = {{ has_trait = {trait_key(k, c, t)} }} remove_trait = {trait_key(k, c, t)} }}\n'
-                    for c in sorted(cal) for k in ('eq', 'pp') for t in (1, 2, 3))
-    strip += ''.join(f'\tif = {{ limit = {{ has_trait = pmr_cc_sc_{t} }} remove_trait = pmr_cc_sc_{t} }}\n' for t in (1, 2, 3))
+                    for c in sorted(cal) for k in COMPANY_LINES for t in (1, 2, 3))
+    strip += ''.join(f'\tif = {{ limit = {{ has_trait = {trait_key(ln.key, None, t)} }} '
+                     f'remove_trait = {trait_key(ln.key, None, t)} }}\n'
+                     for ln in LINES if ln.key not in COMPANY_LINES for t in range(1, ln.tiers + 1))
     o.append('# Character scope: every Company Culture trait off. Runs only when an executive changes company and on\n'
              '# disbanding (Pat 04:00Z: a disbanded company loses its bonuses).\n'
              'pmr_cc_strip = {\n' + strip + '\tremove_variable = pmr_cc_of\n}\n\n')
     # Node states for the tab.
     states = ''
-    for code, k, *_r in LINES:
+    for ln in LINES:
+        k = ln.key
         other = EXCLUSIVE.get(k)
         excl = f'var:pmr_cc_{other} > 0' if other else 'always = no'
+        needs = ''.join(f' var:pmr_cc_{nk} >= {nt}' for nk, nt in ln.needs)
         states += f'\tset_variable = {{ name = pmr_cc_pick_{k} value = 0 }}\n'
-        for t in (1, 2, 3):
+        for t in range(1, ln.tiers + 1):
             st = f'pmr_cc_st_{k}_{t}'
             states += (f'\tif = {{ limit = {{ var:pmr_cc_{k} >= {t} }} set_variable = {{ name = {st} value = 4 }} }}\n'
                        f'\telse_if = {{ limit = {{ {excl} }} set_variable = {{ name = {st} value = 5 }} }}\n'
-                       f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_{k} = {t - 1} }}\n'
-                       f'\t\tif = {{ limit = {{ var:pmr_cc_pts >= {TIER_COST[t - 1]} }} '
+                       f'\telse_if = {{\n\t\tlimit = {{ var:pmr_cc_{k} = {t - 1}{needs if t == 1 else ""} }}\n'
+                       f'\t\tif = {{ limit = {{ var:pmr_cc_pts >= {ln.cost[t - 1]} }} '
                        f'set_variable = {{ name = {st} value = 1 }} set_variable = {{ name = pmr_cc_pick_{k} value = 1 }} }}\n'
                        f'\t\telse = {{ set_variable = {{ name = {st} value = 2 }} }}\n\t}}\n'
                        f'\telse = {{ set_variable = {{ name = {st} value = 0 }} }}\n')
@@ -469,7 +543,7 @@ def effects(cal):
                      f'set_variable = {{ name = {v} value = scope:pmr_cc_co.var:{v} }} }}\n'
                      f'\t\telse_if = {{ limit = {{ has_variable = {v} }} remove_variable = {v} }}\n' for v in MIRRORED)
     o.append('# The tab\'s numbers, mirrored onto the executive (the panel reads Company.GetExecutive.MakeScope). Node states\n'
-             '# pmr_cc_st_<line>_<tier>: 0 a later tier, 1 next and affordable (a click buys it), 2 next but not enough\n'
+             '# pmr_cc_st_<line>_<tier>: 0 locked (a later tier, or its needs not bought), 1 next and affordable (a click buys it), 2 next but not enough\n'
              '# points yet, 4 bought, 5 ruled out by the other column. pmr_cc_pick_<line>: the line\'s next node can be bought.\n'
              'pmr_cc_mirror = {\n\tsave_scope_as = pmr_cc_co\n'
              + states +
@@ -506,24 +580,27 @@ def effects(cal):
 
 def triggers():
     o = ['# Company Culture (company_culture.py). Company scope.\n\n'
-         '# pmr_cc_open_<line>: the line has a tier left to buy and, for Equipment and People, the other column is\n'
-         '# untouched (Pat 04:00Z: the first tier bought locks the company to its column).\n']
-    for code, k, *_r in LINES:
-        other = EXCLUSIVE.get(k)
-        excl = f'\tvar:pmr_cc_{other} = 0\n' if other else ''
-        o.append(f'pmr_cc_open_{k} = {{\n\tvar:pmr_cc_{k} < 3\n{excl}}}\n\n')
-    o.append('# The points for line $L$\'s next tier (1, 2, 3).\n'
-             'pmr_cc_afford = {\n\tOR = {\n'
-             '\t\tAND = { var:pmr_cc_$L$ = 0 var:pmr_cc_pts >= 1 }\n'
-             '\t\tAND = { var:pmr_cc_$L$ = 1 var:pmr_cc_pts >= 2 }\n'
-             '\t\tAND = { var:pmr_cc_$L$ = 2 var:pmr_cc_pts >= 3 }\n\t}\n}\n\n')
+         '# pmr_cc_open_<line>: the line has a tier left to buy, its needs are bought, and for an exclusive pair\n'
+         '# (Equipment or People, Fair Wages or Tight Payroll) the other line is untouched (Pat 04:00Z: the first tier\n'
+         '# bought locks the company to its column).\n']
+    for ln in LINES:
+        other = EXCLUSIVE.get(ln.key)
+        body = f'\tvar:pmr_cc_{ln.key} < {ln.tiers}\n'
+        body += f'\tvar:pmr_cc_{other} = 0\n' if other else ''
+        body += ''.join(f'\tvar:pmr_cc_{nk} >= {nt}\n' for nk, nt in ln.needs)
+        o.append(f'pmr_cc_open_{ln.key} = {{\n{body}}}\n\n')
+    o.append('# The points for the next tier of each line.\n')
+    for ln in LINES:
+        alts = ''.join(f'\t\tAND = {{ var:pmr_cc_{ln.key} = {t} var:pmr_cc_pts >= {c} }}\n' for t, c in enumerate(ln.cost))
+        o.append(f'pmr_cc_afford_{ln.key} = {{\n\tOR = {{\n{alts}\t}}\n}}\n\n')
+    o.append('# The points for line $L$\'s next tier.\npmr_cc_afford = {\n\tpmr_cc_afford_$L$ = yes\n}\n\n')
     return ''.join(o)
 
 
 def sguis():
-    picks = ''.join(f'\t\t\tAND = {{ scope:line = {code} var:pmr_cc_pick_{k} ?= 1 }}\n' for code, k, *_r in LINES)
+    picks = ''.join(f'\t\t\tAND = {{ scope:line = {ln.code} var:pmr_cc_pick_{ln.key} ?= 1 }}\n' for ln in LINES)
     return ('# Company Culture tab (company_culture.py). Character scope: the company\'s executive, as the panel reads\n'
-            '# Company.GetExecutive.MakeScope. scope:line is the column clicked (1 Equipment, 2 People, 3 Scale).\n\n'
+            '# Company.GetExecutive.MakeScope. scope:line is the line clicked (Line.code in company_culture.py).\n\n'
             'pmr_cc_pick_sgui = {\n\tscope = character\n\tsaved_scopes = { line }\n'
             '\tis_valid = {\n\t\towner ?= { is_player = yes }\n\t\tOR = {\n' + picks + '\t\t}\n\t}\n'
             '\teffect = {\n\t\tpmr_cc_with_company = { EFFECT = pmr_cc_click }\n\t}\n}\n\n'
@@ -661,6 +738,41 @@ def unlock_values(rows):
 # ---------------------------------------------------------------------------------------------------------------
 # GUI
 
+SG_SCOPE = 'GuiScope.SetRoot(Character.MakeScope)'
+LOCAL = 'Company.GetCountry.IsLocalPlayer'
+
+# The tree, drawn with the tech tree's pieces (gui/tech_tree.gui; Pat 2026-10-18 13:23Z: "utilize the tech tree UI
+# and selectors"): each node is the tech's round frame over its icon, with the tech's backgrounds for each state, its
+# era badge (here the node's cost) and its researched tick, joined by lines in the tech tree's spline colours. The
+# tech node is 465 wide; stacked frame-over-card nodes let four columns fit the company panel.
+CARD_W, CARD_H, CARD_TOP = 128, 150, 36    # node, and where its card starts under the frame
+FRAME, ICON = 84, 60
+COL_STEP, ROW_STEP = 136, 174
+BUS_Y, TOP = 30, 44                        # the line joining a section's columns; the first row of nodes
+TREE_W = 536
+# tech_tree.gui techtree_spline: a border line (width 8, alpha 0.6) under a core line (width 4, alpha 0.8). Across the
+# line the textures are a fixed colour profile, so horizontal lines use them as they are and vertical ones use their
+# colours (sampled from the 1.14.5 files) on a plain strip.
+LINE_TEX = {'done': 'research_done', 'active': 'researching', 'locked': 'research_locked'}
+LINE_RGB = {'done': ('0.94 0.80 0.60', '0.50 0.41 0.28'),
+            'active': ('0.61 0.80 0.91', '0.44 0.68 0.76'),
+            'locked': ('0.43 0.52 0.54', '0.43 0.52 0.54')}
+
+
+def _reindent(text, base):
+    """Indents generated GUI text by brace depth."""
+    out, depth = [], 0
+    for raw in text.split('\n'):
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith('}'):
+            depth -= 1
+        out.append(base + '\t' * depth + line)
+        depth += line.count('{') - line.count('}') + (1 if line.startswith('}') else 0)
+    return '\n'.join(out) + '\n'
+
+
 def V(name):
     return f"Character.MakeScope.Var('{name}').GetValue"
 
@@ -673,68 +785,149 @@ def GT(name, n):
     return f"GreaterThan_CFixedPoint({V(name)}, '(CFixedPoint){n}')"
 
 
-SG_SCOPE = 'GuiScope.SetRoot(Character.MakeScope)'
-NODE_W, NODE_H, GAP = 168, 64, 18
-LOCAL = 'Company.GetCountry.IsLocalPlayer'
+def line_modes(st):
+    """visible expressions for a line drawn into the node whose state variable is st."""
+    done, active = EQ(st, 4), f'Or({EQ(st, 1)}, {EQ(st, 2)})'
+    return {'done': done, 'active': active, 'locked': f'Not(Or({done}, {active}))'}
 
 
-def node(code, k, t, name, icon, ind):
+def vline(x, y0, y1, st):
+    out = ''
+    for mode, vis in line_modes(st).items():
+        border, core = LINE_RGB[mode]
+        out += (f'icon = {{\nvisible = "[{vis}]"\nposition = {{ {x - 4} {y0} }}\nsize = {{ 8 {y1 - y0} }}\n'
+                f'texture = "{WHITE}"\ncolor = {{ {border} 0.6 }}\nalwaystransparent = yes\n}}\n'
+                f'icon = {{\nvisible = "[{vis}]"\nposition = {{ {x - 2} {y0} }}\nsize = {{ 4 {y1 - y0} }}\n'
+                f'texture = "{WHITE}"\ncolor = {{ {core} 0.8 }}\nalwaystransparent = yes\n}}\n')
+    return out
+
+
+def hline(x0, x1, y, st=None):
+    modes = line_modes(st) if st else {'locked': None}
+    out = ''
+    for mode, vis in modes.items():
+        v = f'visible = "[{vis}]"\n' if vis else ''
+        out += (f'icon = {{\n{v}position = {{ {x0} {y - 4} }}\nsize = {{ {x1 - x0} 8 }}\n'
+                f'texture = "gfx/interface/tech_tree/tech_line_border_{LINE_TEX[mode]}.dds"\nalpha = 0.6\nalwaystransparent = yes\n}}\n'
+                f'icon = {{\n{v}position = {{ {x0} {y - 2} }}\nsize = {{ {x1 - x0} 4 }}\n'
+                f'texture = "gfx/interface/tech_tree/tech_line_{LINE_TEX[mode]}.dds"\nalpha = 0.8\nalwaystransparent = yes\n}}\n')
+    return out
+
+
+def node(ln, t, x, y):
+    k = ln.key
     st = f'pmr_cc_st_{k}_{t}'
-    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
-    sg = f"GetScriptedGui('pmr_cc_pick_sgui')"
-    scope = f"{SG_SCOPE}.AddScope('line', MakeScopeValue('(CFixedPoint){code}')).End"
+    cost = ln.cost[t - 1]
+    icon = ln.icons[t - 1]
+    tt = f'tooltip = "PMR_CC_TT_{k}_{t}"\n'
+    sg = "GetScriptedGui('pmr_cc_pick_sgui')"
+    scope = f"{SG_SCOPE}.AddScope('line', MakeScopeValue('(CFixedPoint){ln.code}')).End"
     can = f"And({LOCAL}, And({EQ(st, 1)}, {sg}.IsValid({scope})))"
+    click = f'enabled = "[{can}]"\nonclick = "[{sg}.Execute({scope})]"\n'
+    locked = f'Or({EQ(st, 0)}, {EQ(st, 5)})'
+    card = f'position = {{ 0 {CARD_TOP} }}\nsize = {{ {CARD_W} {CARD_H - CARD_TOP} }}\n'
+    fx, fy = (CARD_W - FRAME) // 2, 0
+    ix, iy = (CARD_W - ICON) // 2, (FRAME - ICON) // 2
+    out = (f'widget = {{\nposition = {{ {x} {y} }}\nsize = {{ {CARD_W} {CARD_H} }}\n'
+           # can buy: the tech's glow under an action button with its shimmer (CAN RESEARCH)
+           f'widget = {{\nvisible = "[{EQ(st, 1)}]"\nsize = {{ {CARD_W + 30} 70 }}\nparentanchor = bottom|hcenter\n'
+           f'position = {{ 0 -10 }}\nusing = ui_event_glow_animation_looping\n}}\n'
+           f'button = {{\nvisible = "[{EQ(st, 1)}]"\n{card}using = default_button_action\nusing = shimmer\n'
+           f'using = technology_confirm_button_sound\n{click}{tt}}}\n'
+           # next, not enough points yet: the tech's greyed action button (LOCKED RESEARCH BUTTON)
+           f'button = {{\nvisible = "[{EQ(st, 2)}]"\n{card}using = default_button_action\ncolor = {{ 0.4 0.4 0.4 1 }}\n'
+           f'enabled = no\n{tt}}}\n'
+           # bought: the tech's paper (HAS RESEARCHED), in the gold frame Pat chose for bought tiers (12:37Z)
+           f'widget = {{\nvisible = "[{EQ(st, 4)}]"\n{card}{tt}background = {{\nusing = paper_bg\n}}\n'
+           f'icon = {{\nusing = highlighted_selected_square_selection\nalwaystransparent = yes\n}}\n}}\n'
+           # locked or ruled out: the tech's dark card (CAN'T RESEARCH)
+           f'widget = {{\nvisible = "[{locked}]"\n{card}{tt}background = {{\nusing = entry_fancy_header_colored\n'
+           f'using = dark_area\n}}\n}}\n'
+           # the round frame and icon; a buyable node's icon is a button, like the tech icon
+           f'icon = {{\nvisible = "[Not({locked})]"\nposition = {{ {fx} {fy} }}\nsize = {{ {FRAME} {FRAME} }}\n'
+           f'texture = "gfx/interface/backgrounds/round_frame_dec.dds"\nalwaystransparent = yes\n}}\n'
+           f'icon = {{\nvisible = "[{locked}]"\nposition = {{ {fx} {fy} }}\nsize = {{ {FRAME} {FRAME} }}\n'
+           f'texture = "gfx/interface/backgrounds/round_frame_dec.dds"\ncolor = {{ 0.5 0.5 0.5 1 }}\nalwaystransparent = yes\n}}\n'
+           f'icon = {{\nvisible = "[And(Not({locked}), Not({EQ(st, 1)}))]"\nposition = {{ {ix} {iy} }}\n'
+           f'size = {{ {ICON} {ICON} }}\ntexture = "{icon}"\n{tt}}}\n'
+           f'icon = {{\nvisible = "[{locked}]"\nposition = {{ {ix} {iy} }}\nsize = {{ {ICON} {ICON} }}\n'
+           f'texture = "{icon}"\ncolor = {{ 0.4 0.4 0.4 1 }}\n{tt}}}\n'
+           f'button = {{\nvisible = "[{EQ(st, 1)}]"\nposition = {{ {ix} {iy} }}\nsize = {{ {ICON} {ICON} }}\n'
+           f'texture = "{icon}"\nusing = technology_confirm_button_sound\n{click}{tt}}}\n'
+           # cost, where the tech shows its era; the tech's tick once bought
+           f'widget = {{\nvisible = "[Not({EQ(st, 4)})]"\nposition = {{ 12 52 }}\nsize = {{ 34 34 }}\n'
+           f'tooltip = "PMR_CC_COST_TT_{cost}"\nicon = {{\nsize = {{ 100% 100% }}\n'
+           f'texture = "gfx/interface/backgrounds/round_button_bg.dds"\n}}\n'
+           f'textbox = {{\nparentanchor = center\nautoresize = yes\nalign = center|nobaseline\nusing = fontsize_xl\n'
+           f'raw_text = "{cost}"\nalwaystransparent = yes\n}}\n}}\n'
+           f'widget = {{\nvisible = "[{EQ(st, 4)}]"\nposition = {{ {CARD_W - 46} 52 }}\nsize = {{ 34 34 }}\n'
+           f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "gfx/interface/backgrounds/round_button_bg.dds"\n}}\n'
+           f'icon = {{\nsize = {{ 80% 80% }}\nparentanchor = center\n'
+           f'texture = "gfx/interface/icons/generic_icons/green_checkmark.dds"\n}}\n}}\n'
+           + (f'icon = {{\nvisible = "[{EQ(st, 5)}]"\nposition = {{ {CARD_W - 42} 54 }}\nsize = {{ 28 28 }}\n'
+              f'texture = "{EXCLUSIVE_ICON}"\ntooltip = "PMR_CC_EXCLUSIVE_TT_{k}"\n}}\n' if k in EXCLUSIVE else '') +
+           f'textbox = {{\nposition = {{ 4 86 }}\nsize = {{ {CARD_W - 8} 38 }}\nmultiline = yes\nalign = hcenter|nobaseline\n'
+           f'fontsize_min = 12\nelide = right\ntext = "PMR_CC_NAME_{k}_{t}"\nalwaystransparent = yes\n}}\n')
+    for s, key in ((1, f'PMR_CC_NODE_BUY_{cost}'), (2, f'PMR_CC_NODE_NEED_{cost}'), (4, 'PMR_CC_NODE_OWNED'),
+                   (5, f'PMR_CC_NODE_RULED_OUT_{k}'), (0, f'PMR_CC_NODE_LOCKED_{k}_{t}')):
+        out += (f'textbox = {{\nvisible = "[{EQ(st, s)}]"\nposition = {{ 4 124 }}\nsize = {{ {CARD_W - 8} 22 }}\n'
+                f'align = hcenter|nobaseline\nusing = fontsize_small\ntext = "{key}"\nalwaystransparent = yes\n}}\n')
+    return out + '}\n'
 
-    def content(ii):
-        lines = [(1, f'PMR_CC_NODE_BUY_{t}'), (2, f'PMR_CC_NODE_NEED_{t}'), (4, 'PMR_CC_NODE_OWNED'),
-                 (5, f'PMR_CC_NODE_RULED_OUT_{k}'), (0, f'PMR_CC_COST_{t}')]
-        out = (f'{ii}icon = {{\n{ii}\tposition = {{ 8 0 }}\n{ii}\tparentanchor = vcenter\n{ii}\tsize = {{ 44 44 }}\n'
-               f'{ii}\ttexture = "{TRAIT_ICON.format(icon)}"\n{ii}\talwaystransparent = yes\n{ii}}}\n'
-               f'{ii}textbox = {{\n{ii}\tposition = {{ 58 8 }}\n{ii}\tsize = {{ {NODE_W - 64} 24 }}\n'
-               f'{ii}\tmultiline = no\n{ii}\talign = left|nobaseline\n{ii}\tfontsize_min = 12\n{ii}\telide = right\n'
-               f'{ii}\ttext = "PMR_CC_NAME_{k}_{t}"\n{ii}\talwaystransparent = yes\n{ii}}}\n')
-        for s, key in lines:
-            out += (f'{ii}textbox = {{\n{ii}\tvisible = "[{EQ(st, s)}]"\n{ii}\tposition = {{ 58 34 }}\n'
-                    f'{ii}\tsize = {{ {NODE_W - 64} 22 }}\n{ii}\talign = left|nobaseline\n{ii}\tusing = fontsize_small\n'
-                    f'{ii}\ttext = "{key}"\n{ii}\talwaystransparent = yes\n{ii}}}\n')
-        return out
-    return (f'{ind}widget = {{\n{i1}size = {{ {NODE_W} {NODE_H} }}\n'
-            # bought (Pat 12:37Z: the chosen tiers highlighted with a frame): a gold-tinted card inside the frame
-            # vanilla draws round a selected building type (companies_panel.gui, highlighted_selected_square_selection)
-            f'{i1}widget = {{\n{i2}visible = "[{EQ(st, 4)}]"\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "PMR_CC_TT_{k}_{t}"\n'
-            f'{i2}background = {{\n{i3}using = entry_bg\n{i2}}}\n'
-            f'{i2}icon = {{\n{i3}size = {{ 100% 100% }}\n{i3}texture = "{WHITE}"\n{i3}color = {{ 0.74 0.60 0.30 0.22 }}\n'
-            f'{i3}alwaystransparent = yes\n{i2}}}\n'
-            + content(i2) +
-            f'{i2}icon = {{\n{i3}using = highlighted_selected_square_selection\n{i3}alwaystransparent = yes\n{i2}}}\n'
-            f'{i1}}}\n'
-            # every other state: a button, live only when the next tier is affordable
-            f'{i1}button = {{\n{i2}visible = "[Not({EQ(st, 4)})]"\n{i2}using = default_button\n{i2}size = {{ 100% 100% }}\n'
-            f'{i2}alpha = "[TransparentIfFalse(Not({EQ(st, 5)}))]"\n'
-            f'{i2}enabled = "[{can}]"\n{i2}onclick = "[{sg}.Execute({scope})]"\n{i2}tooltip = "PMR_CC_TT_{k}_{t}"\n'
-            + content(i2) + f'{i1}}}\n'
-            f'{ind}}}\n')
+
+def layout(section):
+    """(line, tier) -> top-left of its node, and the section's height. Columns are the lines without needs, centred;
+    a line with needs sits below and between the lines it needs."""
+    cols = [ln for ln in LINES if ln.section == section and not ln.needs]
+    left = (TREE_W - (len(cols) * COL_STEP - (COL_STEP - CARD_W))) // 2
+    pos = {}
+    for i, ln in enumerate(cols):
+        for t in range(1, ln.tiers + 1):
+            pos[(ln.key, t)] = (left + i * COL_STEP, TOP + (t - 1) * ROW_STEP)
+    for ln in LINES:
+        if ln.section == section and ln.needs:
+            xs = [pos[(nk, nt)][0] for nk, nt in ln.needs]
+            row = max(pos[(nk, nt)][1] for nk, nt in ln.needs) + ROW_STEP
+            for t in range(1, ln.tiers + 1):
+                pos[(ln.key, t)] = (sum(xs) // len(xs), row + (t - 1) * ROW_STEP)
+    height = max(y for _x, y in pos.values()) + CARD_H
+    return cols, pos, height
 
 
-def connector(ind):
-    return (f'{ind}widget = {{\n{ind}\tsize = {{ {NODE_W} 12 }}\n{ind}\ticon = {{\n{ind}\t\tparentanchor = hcenter\n'
-            f'{ind}\t\tsize = {{ 2 12 }}\n{ind}\t\ttexture = "{WHITE}"\n{ind}\t\tcolor = {{ 0.74 0.60 0.30 0.6 }}\n'
-            f'{ind}\t\talwaystransparent = yes\n{ind}\t}}\n{ind}}}\n')
-
-
-def column(code, k, title, names, icons, ind):
-    i1 = ind + '\t'
-    out = (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}spacing = 0\n'
-           f'{i1}widget = {{\n{i1}\tsize = {{ {NODE_W} 40 }}\n{i1}\ttooltip = "PMR_CC_COLUMN_TT_{k}"\n'
-           f'{i1}\ticon = {{\n{i1}\t\tposition = {{ 4 0 }}\n{i1}\t\tparentanchor = vcenter\n{i1}\t\tsize = {{ 32 32 }}\n'
-           f'{i1}\t\ttexture = "{COLUMN_ICONS[k]}"\n{i1}\t}}\n'
-           f'{i1}\ttextbox = {{\n{i1}\t\tposition = {{ 42 0 }}\n{i1}\t\tparentanchor = vcenter\n{i1}\t\tautoresize = yes\n'
-           f'{i1}\t\talign = left|nobaseline\n{i1}\t\tusing = fontsize_large\n{i1}\t\ttext = "PMR_CC_COLUMN_{k}"\n{i1}\t}}\n{i1}}}\n')
-    for t in (1, 2, 3):
-        out += node(code, k, t, names[t - 1], icons[t - 1], i1)
-        if t < 3:
-            out += connector(i1)
-    return out + f'{ind}}}\n'
+def tree(section, ready):
+    cols, pos, height = layout(section)
+    mid = CARD_W // 2
+    out = f'widget = {{\nvisible = "[{ready}]"\nparentanchor = hcenter\nsize = {{ {TREE_W} {height} }}\n'
+    # column titles, the line joining them, and an exclusive pair's mark on the line between them
+    centres = [pos[(ln.key, 1)][0] + mid for ln in cols]
+    for ln, cx in zip(cols, centres):
+        out += (f'textbox = {{\nposition = {{ {cx - mid} 0 }}\nsize = {{ {CARD_W} 22 }}\nalign = hcenter|nobaseline\n'
+                f'text = "PMR_CC_COLUMN_{ln.key}"\ntooltip = "PMR_CC_COLUMN_TT_{ln.key}"\n}}\n')
+    out += hline(centres[0], centres[-1], BUS_Y)
+    for (a, ca), (b, cb) in zip(zip(cols, centres), zip(cols[1:], centres[1:])):
+        if EXCLUSIVE.get(a.key) == b.key:
+            out += (f'icon = {{\nposition = {{ {(ca + cb) // 2 - 12} {BUS_Y - 12} }}\nsize = {{ 24 24 }}\n'
+                    f'texture = "{EXCLUSIVE_ICON}"\ntooltip = "PMR_CC_EXCLUSIVE_TT_{a.key}"\n}}\n')
+    for ln, cx in zip(cols, centres):
+        out += vline(cx, BUS_Y + 4, TOP, f'pmr_cc_st_{ln.key}_1')
+    for ln in LINES:
+        if ln.section != section:
+            continue
+        for t in range(2, ln.tiers + 1):
+            x, y = pos[(ln.key, t - 1)]
+            out += vline(x + mid, y + CARD_H, pos[(ln.key, t)][1], f'pmr_cc_st_{ln.key}_{t}')
+        if ln.needs:
+            x1, y1 = pos[(ln.key, 1)]
+            st = f'pmr_cc_st_{ln.key}_1'
+            bottoms = [(pos[n][0] + mid, pos[n][1] + CARD_H) for n in ln.needs]
+            ym = max(b for _x, b in bottoms) + 12
+            for bx, by in bottoms:
+                out += vline(bx, by, ym, st)
+            out += hline(min(bx for bx, _b in bottoms) - 4, max(bx for bx, _b in bottoms) + 4, ym, st)
+            out += vline(x1 + mid, ym, y1, st)
+    for (k, t), (x, y) in pos.items():
+        out += node(BY_KEY[k], t, x, y)
+    return out + '}\n'
 
 
 def text_row(key, ind, visible=None, w=520, small=False):
@@ -769,14 +962,6 @@ def methods_block(b, recipes, ind):
 
 def tab(rows, untreated):
     i1, i2, i3, i4 = '\t\t', '\t\t\t', '\t\t\t\t', '\t\t\t\t\t'
-    cols = ''
-    for n, (code, k, title, names, icons) in enumerate(LINES):
-        cols += column(code, k, title, names, icons, i3)
-        if n == 0:
-            cols += (f'{i3}widget = {{\n{i4}size = {{ {GAP} 40 }}\n{i4}icon = {{\n{i4}\tparentanchor = center\n'
-                     f'{i4}\tsize = {{ 18 18 }}\n{i4}\ttexture = "{EXCLUSIVE_ICON}"\n{i4}\ttooltip = "PMR_CC_EXCLUSIVE_TT"\n{i4}}}\n{i3}}}\n')
-        elif n == 1:
-            cols += f'{i3}widget = {{\n{i4}size = {{ {GAP} 40 }}\n{i3}}}\n'
     bar_value = f"FixedPointToFloat({V('pmr_cc_pct')})"
     # Every mirrored executive holds a cost (800 and up). Without one (a new executive this month, a save from
     # before Company Culture) the tab offers a button that reads the company in, instead of an empty tree.
@@ -802,9 +987,8 @@ def tab(rows, untreated):
         f'{i2}textbox = {{\n{i3}visible = "[Not({GT("pmr_cc_mo", 0)})]"\n{i3}position = {{ 220 50 }}\n{i3}size = {{ 300 22 }}\n'
         f'{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n{i3}text = "PMR_CC_RATE_NONE"\n{i3}tooltip = "PMR_CC_BAR_TT"\n{i2}}}\n'
         f'{i1}}}\n')
-    tree = (f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_TREE_HEADER"\n{i2}}}\n{i1}}}\n'
-            f'{i1}flowcontainer = {{\n{i2}visible = "[{ready}]"\n{i2}parentanchor = hcenter\n{i2}direction = horizontal\n'
-            f'{i2}spacing = 0\n' + cols + f'{i1}}}\n')
+    trees = ''.join(f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_SECTION_{sec}"\n'
+                    f'{i2}}}\n{i1}}}\n' + _reindent(tree(sec, ready), i1) for sec, _title in SECTIONS)
     methods =(f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_METHODS_HEADER"\n{i2}}}\n{i1}}}\n'
                + text_row('PMR_CC_METHODS_INTRO', i1, small=True) +
                f'{i1}flowcontainer = {{\n{i2}parentanchor = hcenter\n{i2}direction = vertical\n{i2}spacing = 4\n'
@@ -823,7 +1007,7 @@ def tab(rows, untreated):
             '\t\tdirection = vertical\n\t\tusing = default_list_position\n\t\tusing = default_content_fade\n'
             '\t\tspacing = 6\n\t\tmargin_bottom = 10\n\t\tminimumsize = { 540 -1 }\n'
             '\t\tdatacontext = "[Company.GetExecutive]"\n\n'
-            + show + header + tree + methods +
+            + show + header + trees + methods +
             '\t}\n}\n')
 
 
@@ -865,13 +1049,17 @@ def localization(cal, rows, pms_techs):
         ' PMR_CC_TAB_TT:0 "#header Company Culture#!\\nWhat this company has learned to do better. Its prosperity earns Culture points, and points buy bonuses for every building level it owns."',
         f' PMR_CC_LEVEL:0 "Culture Level #v {v("pmr_cc_level", 0)}#!"',
         f' PMR_CC_POINTS:0 "#v {v("pmr_cc_pts", 0)}#! points to spend"',
-        ' PMR_CC_LEVEL_TT:0 "#header Culture points#!\\nA company earns Culture points from its prosperity. Each point buys one tier of a column below; a tier costs as many points as its number (1, 2 or 3). The bonuses apply to the building levels this company owns, in proportion where it owns part of a building."',
+        ' PMR_CC_LEVEL_TT:0 "#header Culture points#!\\nA company earns Culture points from its prosperity and spends them on the trees below; each node shows its cost in points. The bonuses apply to the building levels this company owns, in proportion where it owns part of a building."',
         f' PMR_CC_BAR:0 "#v {v("pmr_cc_funds", 0)}#! / {v("pmr_cc_cost", 0)}"',
         f' PMR_CC_BAR_TT:0 "#header Next Culture point#!\\nEach month this company earns its prosperity (#v {v("pmr_cc_prosp", 0)}#!) times its size (#v ×{v("pmr_cc_size", 1)}#!, from its employed levels: one more tenth per 5 levels, at most ×2), so #v +{v("pmr_cc_rate", 0)}#! a month.\\n\\nA full bar gives one point and one Culture level, and each level needs more than the last."',
         f' PMR_CC_RATE:0 "+{v("pmr_cc_rate", 0)} a month, next point in about {v("pmr_cc_mo", 0)} months"',
         ' PMR_CC_RATE_NONE:0 "Earning nothing while its prosperity is 0"',
-        ' PMR_CC_TREE_HEADER:0 "Culture"',
-        ' PMR_CC_EXCLUSIVE_TT:0 "#header Equipment or People#!\\nA company focuses on its machinery or on its people. The first Equipment or People tier it buys rules out the other column."',
+        ' PMR_CC_SECTION_pr:0 "Production"',
+        ' PMR_CC_SECTION_wf:0 "Workforce"',
+        ' PMR_CC_EXCLUSIVE_TT_eq:0 "#header Equipment or People#!\\nA company focuses on its machinery or on its people. The first Equipment or People tier it buys rules out the other column."',
+        ' PMR_CC_EXCLUSIVE_TT_pp:0 "$PMR_CC_EXCLUSIVE_TT_eq$"',
+        ' PMR_CC_EXCLUSIVE_TT_fw:0 "#header Fair Wages or Tight Payroll#!\\nA company sets its pay above or below what its buildings would otherwise aim for. The first Fair Wages or Tight Payroll tier it buys rules out the other column."',
+        ' PMR_CC_EXCLUSIVE_TT_tp:0 "$PMR_CC_EXCLUSIVE_TT_fw$"',
         ' PMR_CC_SHOW:0 "Show Company Culture"',
         ' PMR_CC_SHOW_TT:0 "This company\'s Culture has not been read in yet (a new executive this month, or a game started before Company Culture). Click to bring it up to date; it also updates on its own at the start of each month."',
         ' PMR_CC_COLUMN_eq:0 "Equipment"',
@@ -880,10 +1068,23 @@ def localization(cal, rows, pms_techs):
         ' PMR_CC_COLUMN_TT_eq:0 "#header Equipment#!\\nThe company invests in its machinery: every level it owns needs fewer input goods.\\n\\nEach tier raises productivity about as much as the People tier beside it, at base prices for this company\'s buildings, or less where inputs are so cheap that the cut would pass 20%. Rules out People."',
         ' PMR_CC_COLUMN_TT_pp:0 "#header People#!\\nThe company invests in its workforce: fewer laborer jobs on every level it owns, and a few engineer jobs in their place, so fewer jobs in all.\\n\\nEngineer jobs left empty lower output like any unfilled job. Rules out Equipment."',
         ' PMR_CC_COLUMN_TT_sc:0 "#header Scale#!\\nMore throughput on every level the company owns."',
+        ' PMR_CC_COLUMN_fw:0 "Fair Wages"',
+        ' PMR_CC_COLUMN_tp:0 "Tight Payroll"',
+        ' PMR_CC_COLUMN_ho:0 "Housing"',
+        ' PMR_CC_COLUMN_sf:0 "Safety"',
+        ' PMR_CC_COLUMN_TT_fw:0 "#header Fair Wages#!\\nThe company aims to pay more: a higher wage target on every level it owns, so its workers grow wealthier and its jobs fill more easily. Rules out Tight Payroll."',
+        ' PMR_CC_COLUMN_TT_tp:0 "#header Tight Payroll#!\\nThe company aims to pay less: a lower wage target on every level it owns, so more of its earnings go to profit. Rules out Fair Wages."',
+        ' PMR_CC_COLUMN_TT_ho:0 "#header Housing#!\\nThe company houses its workers: a higher standard of living for the workers on every level it owns."',
+        ' PMR_CC_COLUMN_TT_sf:0 "#header Safety#!\\nThe company makes its workplaces safer on every level it owns."',
         ' PMR_CC_NODE_OWNED:0 "#v Bought#!"',
         ' PMR_CC_NODE_RULED_OUT_eq:0 "Ruled out by People"',
         ' PMR_CC_NODE_RULED_OUT_pp:0 "Ruled out by Equipment"',
         ' PMR_CC_NODE_RULED_OUT_sc:0 ""',
+        ' PMR_CC_NODE_RULED_OUT_fw:0 "Ruled out by Tight Payroll"',
+        ' PMR_CC_NODE_RULED_OUT_tp:0 "Ruled out by Fair Wages"',
+        ' PMR_CC_NODE_RULED_OUT_ho:0 ""',
+        ' PMR_CC_NODE_RULED_OUT_sf:0 ""',
+        ' PMR_CC_NODE_RULED_OUT_ct:0 ""',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
         ' PMR_CC_METHODS_INTRO:0 "Every recipe of this company\'s buildings, oldest to newest. Greyed: not yet researched. Gold: the newest one the country can run, which its levels retool to. Under each, the share of your levels running it."',
         ' PMR_CC_METHODS_NONE:0 "No recipes to retool"',
@@ -895,9 +1096,39 @@ def localization(cal, rows, pms_techs):
     for t in (1, 2, 3):
         pts = 'point' if t == 1 else 'points'
         loc += [f' PMR_CC_COST_{t}:0 "{t} {pts}"',
+                f' PMR_CC_COST_TT_{t}:0 "Costs #v {t}#! Culture {pts}."',
                 f' PMR_CC_NODE_BUY_{t}:0 "#P Buy#!: {t} {pts}"',
                 f' PMR_CC_NODE_NEED_{t}:0 "Needs {t} {pts}"']
-    names = {k: n for _c, k, _col, n, _i in LINES}
+    names = {ln.key: ln.names for ln in LINES}
+    for ln in LINES:
+        for t in range(1, ln.tiers + 1):
+            if t > 1:
+                after = names[ln.key][t - 2]
+            else:
+                after = ' and '.join(BY_KEY[nk].names[nt - 1] for nk, nt in ln.needs)
+            loc.append(f' PMR_CC_NODE_LOCKED_{ln.key}_{t}:0 "{"After " + after if after else ""}"')
+    workers = 'laborers, farmers, machinists, clerks, engineers and shopkeepers'
+    wf_tt = {
+        ('fw', 1): ('Wage target #v +10%#! on every level {co} owns: its buildings aim for higher pay, so its workers grow wealthier over time.', 'Rules out Tight Payroll.'),
+        ('fw', 2): ('Wage target #v +20%#! and job attractiveness #v +20%#! on every level {co} owns: higher pay, and its jobs draw workers more easily.', 'Rules out Tight Payroll.'),
+        ('fw', 3): ('As Living Wage, and the workforce on every level {co} owns is paid #v +15%#! of its dividends.', 'Rules out Tight Payroll.'),
+        ('tp', 1): ('Wage target #v -10%#! on every level {co} owns: its buildings aim for lower pay, so more of their earnings are profit.', 'Rules out Fair Wages.'),
+        ('tp', 2): ('Wage target #v -20%#! on every level {co} owns.', 'Rules out Fair Wages.'),
+        ('ho', 1): ('Standard of living #v +1#! for the ' + workers + ' working on every level {co} owns.', ''),
+        ('ho', 2): ('Standard of living #v +2#! for the ' + workers + ' working on every level {co} owns.', ''),
+        ('sf', 1): ('Dangerous working conditions #v -10%#! on every level {co} owns.', ''),
+        ('sf', 2): ('Dangerous working conditions #v -20%#! on every level {co} owns.', ''),
+        ('ct', 1): ('Standard of living a further #v +1#! for its workers, and job attractiveness #v +15%#!, on every level {co} owns.', 'Needs Model Dwellings and Safety Inspectors.'),
+    }
+    exec_co = "this executive's company"
+    for (k, t), (body, tail) in wf_tt.items():
+        c = BY_KEY[k].cost[t - 1]
+        pts = 'point' if c == 1 else 'points'
+        loc += [f' PMR_CC_NAME_{k}_{t}:0 "{names[k][t - 1]}"',
+                f' PMR_CC_TT_{k}_{t}:0 "#header {names[k][t - 1]}#!\\n{body.format(co=co)}\\n\\nCosts #v {c}#! {pts}.'
+                + (f' {tail}' if tail else '') + '"',
+                f' {trait_key(k, None, t)}:0 "{names[k][t - 1]}"',
+                f' {trait_key(k, None, t)}_desc:0 "Company Culture, Workforce: {body.format(co=exec_co)}"']
     roman = ('I', 'II', 'III')
     for t in (1, 2, 3):
         x, l, a, p, e = (v(f'pmr_cc_x{t}', '%1'), v(f'pmr_cc_l{t}', '%0'), v(f'pmr_cc_a{t}', 0),
@@ -958,9 +1189,10 @@ def write_all(game, write, header_text, report):
     if os.path.isdir(os.path.dirname(CALIBRATION_MD)):
         with open(CALIBRATION_MD, 'w', encoding='utf-8') as f:
             f.write(calibration_md(cal, comps))
-    report['company_culture'] = {'companies': len(cal), 'traits': 3 + 6 * len(cal),
+    n_traits = 3 + len(WORKFORCE) + 6 * len(cal)
+    report['company_culture'] = {'companies': len(cal), 'traits': n_traits,
                                  'fallback': sorted(c for c, v in cal.items() if v.get('fallback')),
                                  'method_rows': len(rows), 'untreated': untreated}
-    print(f'company culture: {len(cal)} companies, {3 + 6 * len(cal)} traits, {len(rows)} building types in Methods '
+    print(f'company culture: {len(cal)} companies, {n_traits} traits, {len(rows)} building types in Methods '
           f'({len(untreated)} without recipes)')
     return localization(cal, rows, pms)
