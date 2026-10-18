@@ -1,4 +1,4 @@
-# PMR run sheet: Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the Investments tab in the side Buildings panel, AI weight from average profit, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,51 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: Company Culture full-screen, lock reasons, charter buttons on the nodes (q27, test mod; a new game is needed)
+## Latest: the Investments tab, AI weight from average profit, the full-screen wheel fixed (q28, test mod; a new game is needed)
+
+From the build thread, after your 21:08Z to 21:21Z messages on q27:
+
+- The full-screen Company Culture window now finds its company: q27 asked the company panel for it from outside the
+  panel, so every node showed every state at once and the game logged errors without end (941,475 on your screen; they
+  also pushed q27's early debug.log lines out of the log). Clicking a company's Company Culture tab, or its "Open
+  Company Culture" button, now stores that company's executive on your country, and the window reads the company from
+  there. Its X moved left of the topbar's construction box, which covered it.
+- The side Buildings panel has two tabs at the top, like the construction panel's: **Buildings** (the normal list) and
+  **Investments**: the economic law and policy cards, the investment priorities, then Private Owners' Methods, each
+  building type's recipe row with its AI weight in a strip under it. The policy window opens under the cards, one policy
+  to a row. Closing the panel puts it back on Buildings. The Building Registry is vanilla again, and the q27 button under
+  it is gone.
+- AI weight from average profit (your 21:10Z ask; the decision card's "Strong" scale until you pick another): each
+  month, for every country, each building type's average profit per level a week across the country's states with it
+  (the "Most profitable" figure, weighted by levels) sets a factor, 1 + average / £500, from x0.1 to x3. The type's
+  AI weight is multiplied by it, so investors in that country build and retool profitable types more and losing ones
+  hardly at all. A type the country has nowhere stays x1.
+
+1. Start a new game on the PMR Test playset as Prussia, unpause and play to 1 February 1836, then pause.
+2. Take "PMR test: 6 Culture points for each of your companies" twice.
+3. Open Krupp's company panel and click its Company Culture tab. Hover Expansion and the steel mill's Works Method II;
+   click Engineering and hover them again.
+4. Click the back arrow, then the X. Open another company's panel and click its Company Culture tab.
+5. Open the Buildings panel from the left sidebar and click Investments. Hover an AI weight strip. Click the policy
+   card's button to open the policy window, then close it.
+6. Close and reopen the Buildings panel.
+7. Close the game and tell the build thread; it reads debug.log and error.log.
+
+Rows L2, K1, K2 and M1 of the q27 section below still apply on this run (step 5 of q27 for L2); F1, F2 and B1 here
+replace q27's.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| F1 | Step 3 | A full-screen window like the tech tree: "Company Culture: Friedrich Krupp" at the top, the back arrow top left, the X left of the construction box, Krupp's level, points and bar under the title. Bought, buyable and locked nodes look different; the goods nodes show their methods; no charter buttons on unbought charter nodes; the error counter in the corner doesn't climb | The q27 picture again (every node the same, empty goods nodes, errors climbing): the window still can't read the company. error.log names `pmr_cc_exec` or `Character.GetCompany`; tell the build thread which |
+| F2 | Step 4 | The back arrow returns to Krupp's company panel, the X closes both, and the second company's tab opens the full-screen window with its own name and seal | Krupp's wheel over the second company: the stored executive isn't replaced on the click (`pmr_cc_view_sgui` in error.log) |
+| L1 | Step 3's hovers | Before Engineering, Works Method II reads "Locked: needs the Engineering founding culture." After, Expansion reads "Ruled out: this company holds Engineering." | A blank first line under the name: the reason's custom localisation didn't resolve (error.log names `pmr_cc_why`) |
+| B1 | Step 5 | Two tabs, Buildings and Investments, at the top of the panel. Investments shows the law and policy cards, the priority rows, then "Private Owners' Methods" with a recipe row per building type you have and an AI weight strip under each; nothing wider than the panel | No tabs: another enabled mod replaces `building_browser_panel.gui`. Tabs but an empty Investments tab: the tab's contents didn't load (error.log `pmr_methods_view` or `pmr_policy_block`) |
+| B2 | Step 6 | The panel reopens on Buildings, with the normal search, filters and list | It reopens on Investments: the panel's closing didn't clear the tab, a nuisance only |
+| P1 | Step 5's strips | Each reads "AI weight N x(priority)" and "Base 1000 x(factor) for an average profit of £A a level a week". Factors differ by type: above 1 where A is positive, below 1 where it is negative (textile mills and shipyards were negative in q26) | Every strip "x0.00" and "£0": the factor wasn't counted (no `PMR;rec=PF` lines, row P2). "x1.00" everywhere with non-zero £A: the counting runs but the factor isn't stored |
+| P2 | debug.log `PMR;rec=PF` | From 1 February, once a month, one line per building type you have: `levels=`, `avg=` (£ a level a week) and `factor=`, where factor is 1 + avg / 500, never below 0.1 or above 3 | No lines: the monthly count never ran (error.log `pmr_pf`); then the AI weights haven't changed either |
+| E2 | error.log | No line naming `pmr_cc`, `pmr_pf`, `pmr_mv`, `pmr_company_culture`, `ingame_hud` or `building_browser_panel` | Any such line: that part never ran, and its rows above are not results |
+
+## Earlier: Company Culture full-screen, lock reasons, charter buttons on the nodes (q27, test mod; a new game is needed)
 
 From the build thread, after your 20:37Z feedback on q26:
 

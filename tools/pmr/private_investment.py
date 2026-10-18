@@ -271,7 +271,8 @@ FD_MULT = {1: 1 / 3, 2: 1 / 2, 3: 2 / 3, 4: 1, 5: 3 / 2, 6: 2, 7: 3}
 FD_ICONS = ('max_subvention', 'high_subvention', 'low_subvention', 'no_tariffs_no_subvention', 'low_tariffs',
             'high_tariffs', 'max_tariffs')
 CARD_W, CARD_H = 268, 380                 # law and policy cards, the same size (Pat 04:50Z), taller (Pat 13:05Z)
-PCARD_W = 300                             # a policy in the policy window: benefits only (Pat 14:28Z)
+PCARD_W = 500                             # a policy in the policy window: benefits only (Pat 14:28Z); one a
+                                          # row in the side Buildings panel's Investments tab (Pat 21:21Z)
 # Each row of policy cards is as tall as its longest card's text (Pat 19:25Z: the Laissez-faire cards ran out of
 # their fixed 176 px and the status line sat on the effects). A GUI box cannot size itself to wrapped text and
 # keep two cards level, so the height is worked out here from the text: 1.14.5's body font averages 6.9 px a
@@ -775,6 +776,7 @@ def on_actions():
             '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_policy_lock_m <= 0 }\n\t\t\t\tremove_variable = pmr_policy_lock_m\n\t\t\t}\n\t\t}\n'
             '\t\tpmr_policy_upkeep = yes\n'
             '\t\tpmr_policy_ai_pick = yes\n'
+            '\t\tpmr_pf_all = yes   # each building type\'s AI weight from its average profit (pf_effects)\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
             '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
             '\t\t\tpmr_reinvest_publish = yes\n'
@@ -782,6 +784,42 @@ def on_actions():
             '\t}\n}\n\n'
             '# Root = building, a level of it starting construction (the Recent Investments bars).\n'
             'pmr_pi_on_start = {\n\teffect = {\n\t\tpmr_pi_start = yes\n\t}\n}\n')
+
+
+def pf_effects(shorts):
+    """Country scope, monthly for every country (pmr_pi_monthly_country): per building type b with PMR's profit pick,
+    pmr_pavg_<b>, the level-weighted average of its states' pmr_prm_<b> (the pick's profit per level a week, the
+    Buildings panel's "Most profitable" row), and pmr_pf_<b> = 1 + pmr_pavg_<b> / PF_REF between PF_MIN and PF_MAX,
+    which pmr_ai_pf_<b> reads into the type's ai_value. Both go when no state of the country has the type, so it
+    weighs x1 there. The player's figures go to debug.log (PMR;rec=PF)."""
+    o = ['# Country scope. A building type\'s average profit and its AI weight factor (private_investment.pf_effects).\n\n']
+    for b in shorts:
+        o.append(f'pmr_pf_{b} = {{\n\tset_variable = {{ name = pmr_pf_s_{b} value = 0 }}\n'
+                 f'\tset_variable = {{ name = pmr_pf_l_{b} value = 0 }}\n'
+                 f'\tevery_scope_state = {{\n\t\tlimit = {{ has_variable = pmr_prm_{b} has_variable = pmr_level_{b} '
+                 f'var:pmr_level_{b} > 0 }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pft value = var:pmr_prm_{b} }}\n'
+                 f'\t\tchange_variable = {{ name = pmr_pft multiply = var:pmr_level_{b} }}\n'
+                 '\t\tsave_temporary_scope_as = pmr_st\n'
+                 f'\t\towner = {{\n\t\t\tchange_variable = {{ name = pmr_pf_s_{b} add = scope:pmr_st.var:pmr_pft }}\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_pf_l_{b} add = scope:pmr_st.var:pmr_level_{b} }}\n\t\t}}\n'
+                 '\t\tremove_variable = pmr_pft\n\t}\n'
+                 f'\tif = {{\n\t\tlimit = {{ var:pmr_pf_l_{b} > 0 }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pavg_{b} value = var:pmr_pf_s_{b} }}\n'
+                 f'\t\tchange_variable = {{ name = pmr_pavg_{b} divide = var:pmr_pf_l_{b} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pf_{b} value = var:pmr_pavg_{b} }}\n'
+                 f'\t\tchange_variable = {{ name = pmr_pf_{b} divide = {PF_REF} }}\n'
+                 f'\t\tchange_variable = {{ name = pmr_pf_{b} add = 1 }}\n'
+                 f'\t\tclamp_variable = {{ name = pmr_pf_{b} min = {PF_MIN} max = {PF_MAX} }}\n'
+                 '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
+                 '\t\t\tdebug_log = "PMR;rec=PF;date=[TimeKeeper.GetCurrentDate.GetString];'
+                 f'country=[THIS.GetCountry.GetNameNoFormatting];building=building_{b};'
+                 f"levels=[THIS.Var('pmr_pf_l_{b}').GetValue|0];avg=[THIS.Var('pmr_pavg_{b}').GetValue|1];"
+                 f"factor=[THIS.Var('pmr_pf_{b}').GetValue|2]\"\n\t\t}}\n\t}}\n"
+                 f'\telse = {{\n\t\tremove_variable = pmr_pavg_{b}\n\t\tremove_variable = pmr_pf_{b}\n\t}}\n'
+                 f'\tremove_variable = pmr_pf_s_{b}\n\tremove_variable = pmr_pf_l_{b}\n}}\n\n')
+    o.append('pmr_pf_all = {\n' + ''.join(f'\tpmr_pf_{b} = yes\n' for b in shorts) + '}\n')
+    return ''.join(o)
 
 
 def upkeep_effect():
@@ -1663,24 +1701,27 @@ def policy_laws():
     return by_law
 
 
+PER_ROW = 1   # policy cards a row in the policy window
+
+
 def policy_window(law, items):
     """The economic policy window (Pat 13:05Z, slimmed 14:28Z so it fits the screen): one per economic system law,
-    showing that law's policies as cards, two to a row (only the held law's window shows, Pat 16:06Z). Since Pat
-    2026-10-18 18:40Z it opens under the policy card in the Buildings panel's Owners' Methods tab (policy_block), not
-    beside the construction panel. Each window is as tall as its own rows (Pat 19:25Z: the Laissez-faire window had an
+    showing that law's policies as cards (only the held law's window shows, Pat 16:06Z). Since Pat 2026-10-18 18:40Z
+    it opens under the policy card in the Buildings panel (policy_block), not beside the construction panel; since
+    21:21Z that is the side panel's Investments tab, so the cards are one to a row, the panel's width. Each window is as tall as its own rows (Pat 19:25Z: the Laissez-faire window had an
     empty half). Vanilla's popup background, header and frame (block_windows.gui default_popup)."""
     i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
     shown = f"GetScriptedGui('pmr_policy_{items[0][0]}_sgui').IsShown(GuiScope.SetRoot({COUNTRY}.MakeScope).End)"
     rows, body = '', 0
-    for r in range(0, len(items), 2):
-        row = items[r:r + 2]
+    for r in range(0, len(items), PER_ROW):
+        row = items[r:r + PER_ROW]
         h = policy_card_h([k for k, _i, _c in row])
         body += h + 10
         rows += f'{i2}flowcontainer = {{\n{i3}spacing = 10\n'
         for k, i, icon in row:
             rows += policy_choice(k, i, icon, i3, h)
         rows += f'{i2}}}\n'
-    w = 2 * PCARD_W + 10 + 40
+    w = PER_ROW * PCARD_W + (PER_ROW - 1) * 10 + 40
     h = 84 + body + 10    # the rows and their spacing, then a margin; no intro text (Pat 20:06Z)
     return (f'\ttype pmr_policy_window_{law} = widget {{\n'
             f'{i1}visible = "[And(GetVariableSystem.Exists(\'{PICK}\'), {shown})]"\n'
@@ -1708,8 +1749,8 @@ def sv_on(name):
 
 def policy_block():
     """Pat, 2026-10-18 18:40Z: the economic law and policy cards and the investment priorities, moved from the Private
-    tab to the top of the Buildings panel's Owners' Methods tab (generate.py patch_browser_tabs), side by side as the
-    panel is wide, with the policy window opening under them."""
+    tab to the top of the side Buildings panel's Investments tab (generate.py patch_browser_tabs; Pat 21:21Z), one
+    under the other at the panel's width, with the policy window opening under them."""
     i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
     law = f"{COUNTRY}.GetActiveLawFromGroup('lawgroup_economic_system')"
     law_card = card(i3, card_column(i3 + '\t', card_title('[Law.GetTexture]', '[Law.GetNameNoFormatting]', i3 + '\t\t')
@@ -1718,7 +1759,7 @@ def policy_block():
                     f'{i3}\tdatacontext = "[{law}]"\n')
     return (
         '\ttype pmr_policy_block = flowcontainer {\n\t\tdirection = vertical\n\t\tspacing = 8\n\t\tignoreinvisible = yes\n'
-        f'{i1}flowcontainer = {{\n{i2}spacing = 24\n'
+        f'{i1}flowcontainer = {{\n{i2}direction = vertical\n{i2}spacing = 12\n'
         # economic law and policy
         f'{i2}flowcontainer = {{\n{i3}direction = vertical\n{i3}minimumsize = {{ 540 -1 }}\n'
         + header('PMR_PI_POLICY_HEADER', i3) +
@@ -1894,6 +1935,14 @@ def patch_retool_ai(text, btype, parent, invest):
 # Set by generate.py in test builds: company types -> lines that end pmr_ai_value_<b> (company_culture.ai_value_tail).
 AI_TAIL = None
 
+# Pat, 2026-10-18 21:10Z: "Can we have this ai weighting dynamic based on its profitability average?" Every
+# investable type with PMR's profit pick (generate.py sets PROFIT_TYPES) has its ai_value multiplied by
+# pmr_ai_pf_<b>: 1 + the country's average profit per level a week of the type / PF_REF, between PF_MIN and
+# PF_MAX (pf_effects, monthly). Vanilla's own profit term is small beside the flat 1000 base, so this is what
+# lets profit decide what investors build.
+PROFIT_TYPES = set()
+PF_REF, PF_MIN, PF_MAX = 500, 0.1, 3
+
 
 def patch_ai_value(text, owners, invest):
     """A building file: each building type a company lists (owners) or the investment bars count (invest) gets
@@ -1943,7 +1992,12 @@ def patch_ai_value(text, owners, invest):
                          f'\t\t\tvalue = {e}\n\t\t}}\n' for j, e in enumerate(EARNINGS_LADDER))
         if AI_TAIL and k in owners:
             extra += AI_TAIL(owners[k])
-        values.append(f'pmr_ai_base_{b} = {{\n{inner}}}\n'
+        pf = ''
+        if k in PROFIT_TYPES:
+            extra += f'\tmultiply = pmr_ai_pf_{b}\n'
+            pf = (f'pmr_ai_pf_{b} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{ owner ?= {{ has_variable = pmr_pf_{b} }} }}\n'
+                  f'\t\tvalue = owner.var:pmr_pf_{b}\n\t}}\n}}\n')
+        values.append(pf + f'pmr_ai_base_{b} = {{\n{inner}}}\n'
                       f'pmr_ai_earn_{b} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{ exists = b:{k} }}\n{ladder}\t}}\n}}\n'
                       f'{name} = {{\n\tvalue = pmr_ai_base_{b}\n{extra}}}\n')
     for a, b, ins in sorted(edits, reverse=True):
@@ -2161,6 +2215,7 @@ def write_all(game, write, header_text, out=None):
     buildings, _groups = patch_scores(open(mine, encoding='utf-8-sig').read() if mine and os.path.exists(mine)
                                       else vanilla(SOURCE_FILE))
     values = script_values()
+    pf_types = []
     write('common/scripted_guis/pmr_ipw_sguis.txt', header_text + sguis())
     write('common/static_modifiers/pmr_policy_modifiers.txt', header_text + static_modifiers())
     write('common/on_actions/pmr_pi_on_actions.txt', header_text + on_actions())
@@ -2203,6 +2258,7 @@ def write_all(game, write, header_text, out=None):
                 wrapped += vals
                 patched.append(name)
         names = set(re.findall(r'^pmr_ai_value_([a-z_0-9]+) = ', '\n'.join(wrapped), re.M))
+        pf_types = sorted(n for n in names if f'building_{n}' in PROFIT_TYPES)
         missing = sorted(invest - {f'building_{n}' for n in names})
         if missing:
             fail('common/buildings', f'investable types without a wrapped ai_value: {missing}')
@@ -2218,6 +2274,7 @@ def write_all(game, write, header_text, out=None):
               f'the company card or the investment focus, in {", ".join(patched)}')
     write(SOURCE_FILE, buildings)
     write('common/script_values/pmr_ipw_values.txt', header_text + values)
+    write('common/scripted_effects/pmr_pf_effects.txt', header_text + pf_effects(pf_types))
     return localization(types)
 
 

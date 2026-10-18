@@ -90,6 +90,12 @@ LOGO_W, LOGO_H = 64, 40
 VIEW_W, VIEW_H = 1825, 810
 ZOOM, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.3, 0.08, 1, 0.05
 FULL = 'pmr_cc_full'                    # the GUI variable that opens the full-screen wheel
+# The full-screen window lives in ingame_hud.gui, outside the company panel, so it reads the company from the
+# executive the tab or its Open button stored on the player's country (pmr_cc_view_sgui; Pat 21:09Z: q27's
+# CompanyPanel.GetCompany had no context there)
+VIEWED = "GetPlayer.MakeScope.Var('pmr_cc_exec').GetCharacter"
+VIEW = ("GetScriptedGui('pmr_cc_view_sgui').Execute(GuiScope.SetRoot(Company.GetExecutive.MakeScope)"
+        ".AddScope('player', GetPlayer.MakeScope).End)")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -430,7 +436,9 @@ def charter_plate(k):
             'Company.AccessSelf, PdxGuiWidget.AccessSelf)]"\n}\n'
             'blockoverride "button_style" {\nusing = default_button\n}\n}\n'
             f'container = {{\n{_vis(f"Not({TARGETS})")}'
-            f'company_charter_active_widget_horizontal = {{\n{_vis(ACTIVE)}{size}}}\n'
+            f'company_charter_active_widget_horizontal = {{\n{_vis(ACTIVE)}{size}'
+            # vanilla puts this block's onclick on an icon, which logs an error per widget (gui.log)
+            'blockoverride "onclick" {}\n}\n'
             f'company_charter_button_horizontal = {{\n{_vis(f"Not({ACTIVE})")}{size}enabled = "[IsValid({TOGGLE})]"\n'
             f'blockoverride "onclick" {{\nonclick = "[PopupManager.AskConfirmationWithSound({TOGGLE}, '
             "'event:/SFX/UI/CompanyCharters/company_charter_grant')]\"\nusing = icon_toggle_single_on_sound\n}\n"
@@ -606,7 +614,7 @@ def tab(p, rows, untreated, split):
     STATS.update(stats)
     open_button = (f'button = {{\n{_vis(ready)}parentanchor = hcenter\nusing = default_button_primary_big\n'
                    'size = { 400 50 }\ntext = "PMR_CC_OPEN"\ntooltip = "PMR_CC_OPEN_TT"\n'
-                   f'onclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n}}\n')
+                   f'onclick = "[{VIEW}]"\nonclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n}}\n')
     methods = (f'{i1}default_header = {{\n{i2}blockoverride "text" {{\n{i3}text = "PMR_CC_METHODS_HEADER"\n{i2}}}\n{i1}}}\n'
                + text_row('PMR_CC_METHODS_INTRO', i1, small=True) +
                f'{i1}flowcontainer = {{\n{i2}parentanchor = hcenter\n{i2}direction = vertical\n{i2}spacing = 4\n'
@@ -635,15 +643,20 @@ def fullscreen(gui, ready):
     """The full-screen wheel (Pat 20:37Z): vanilla's fullscreen_block_window, as the tech tree, over the side panels
     (ingame_hud.gui, patch_hud). It shows while the company panel is open and the 'pmr_cc_full' GUI variable is set (the
     tab sets it); the back arrow clears it, back to the panel. Closing it, or the company panel closing under it,
-    clears it too (its _hide), so the next company panel opens on its own tabs."""
+    clears it too (its _hide), so the next company panel opens on its own tabs. Its company is the one whose executive
+    the tab stored on the player's country (VIEWED)."""
     return (f'type pmr_cc_fullscreen = fullscreen_block_window {{\nname = "pmr_cc_fullscreen"\n'
-            f'visible = "[And(GetVariableSystem.Exists(\'{FULL}\'), InformationPanelBar.IsPanelOpen(\'company_panel\'))]"\n'
-            'datacontext = "[CompanyPanel.GetCompany]"\ndatacontext = "[Company.GetExecutive]"\n'
+            f'visible = "[And(And(GetVariableSystem.Exists(\'{FULL}\'), InformationPanelBar.IsPanelOpen(\'company_panel\')), '
+            "GreaterThan_CFixedPoint(GetPlayer.MakeScope.ScriptValue('pmr_cc_viewing'), '(CFixedPoint)0'))]\"\n"
+            f'datacontext = "[{VIEWED}]"\ndatacontext = "[Character.GetCompany]"\n'
             'blockoverride "animation_state_block" {\n'
             'state = {\nname = _show\nstart_sound = {\nsoundeffect = "event:/SFX/UI/SideBar/technology"\n}\n}\n'
             f'state = {{\nname = _hide\non_start = "[GetVariableSystem.Clear(\'{FULL}\')]"\n'
             'start_sound = {\nsoundeffect = "event:/SFX/UI/SideBar/technology_stop"\n}\n}\n}\n'
             'blockoverride "window_header_name" {\ntext = "PMR_CC_FULL_TITLE"\n}\n'
+            # the topbar's construction box (410 x 75 at y 76, right) stays over this window, unlike over vanilla's
+            # full-screens (block_windows.gui fullscreen_hide), so the X sits left of it
+            'blockoverride "close_button_position" {\nposition = { -425 15 }\n}\n'
             'blockoverride "back_button_fullscreen" {\nback_button_large = {\nposition = { 11 15 }\nparentanchor = top|left\n'
             f'onclick = "[GetVariableSystem.Clear(\'{FULL}\')]"\ninput_action = "back"\ntooltip = "PMR_CC_BACK_TT"\n}}\n}}\n'
             'blockoverride "fixed_top" {\nwidget = {\nlayoutpolicy_horizontal = expanding\nsize = { 0 98 }\n'
@@ -661,13 +674,12 @@ def patch_panel(text, tab_id):
     anchor = '\t\t\t\tblockoverride "third_button_selected"\n\t\t\t\t{\n\t\t\t\t\ttext = "COMPANY_TAB_STATISTICS"\n\t\t\t\t}\n'
     if text.count(anchor) != 1:
         cc.fail(where, 'the Statistics tab button block moved')
-    refresh = "GetScriptedGui('pmr_cc_refresh_sgui').Execute(GuiScope.SetRoot(Company.GetExecutive.MakeScope).End)"
     four = (
         '\n\t\t\t\t# PMR: Company Culture tab\n'
         '\t\t\t\tblockoverride "fourth_button"\n\t\t\t\t{\n\t\t\t\t\ttext = "PMR_CC_TAB"\n\t\t\t\t}\n'
         '\t\t\t\tblockoverride "fourth_button_tooltip"\n\t\t\t\t{\n\t\t\t\t\ttooltip = "PMR_CC_TAB_TT"\n\t\t\t\t}\n'
         f'\t\t\t\tblockoverride "fourth_button_click"\n\t\t\t\t{{\n\t\t\t\t\tonclick = "[InformationPanel.SelectTab(\'{tab_id}\')]"\n'
-        f'\t\t\t\t\tonclick = "[{refresh}]"\n'
+        f'\t\t\t\t\tonclick = "[{VIEW}]"\n'
         f'\t\t\t\t\tonclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n\t\t\t\t}}\n'
         f'\t\t\t\tblockoverride "fourth_button_visibility"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'{tab_id}\')]"\n\t\t\t\t}}\n'
         f'\t\t\t\tblockoverride "fourth_button_visibility_checked"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[Not( InformationPanel.IsTabSelected(\'{tab_id}\') )]"\n\t\t\t\t}}\n'

@@ -1095,7 +1095,12 @@ def sguis():
             '# Opening the tab, or its Show button while the executive has no numbers yet (a new executive this month,\n'
             '# a save from before Company Culture), brings the company up to date.\n'
             'pmr_cc_refresh_sgui = {\n\tscope = character\n'
-            '\teffect = {\n\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n')
+            '\teffect = {\n\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n\n'
+            '# The tab and its Open button: as the refresh, and the executive kept on the viewing player\'s country\n'
+            '# (pmr_cc_exec), where the full-screen wheel (ingame_hud.gui, outside the company panel) finds the company.\n'
+            'pmr_cc_view_sgui = {\n\tscope = character\n\tsaved_scopes = { player }\n'
+            '\teffect = {\n\t\tscope:player = {\n\t\t\tset_variable = { name = pmr_cc_exec value = root }\n\t\t}\n'
+            '\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n')
 
 
 ON_ACTIONS = '''# Company Culture (company_culture.py). Appended to vanilla on_actions the documented way.
@@ -1269,7 +1274,9 @@ def pm_info(game):
 def unlock_values(rows):
     out = ['# Company Culture Methods list (company_culture.py). Country scope.\n'
            '# pmr_cc_unl_<recipe>: 1 once the country has researched every technology the recipe needs.\n'
-           '# pmr_cc_new_<b>: the newest recipe of the building type the country can run (its index, from 1).\n\n']
+           '# pmr_cc_new_<b>: the newest recipe of the building type the country can run (its index, from 1).\n\n'
+           '# 1 once the player has opened a Company Culture tab (pmr_cc_view_sgui): the full-screen wheel shows only then.\n'
+           'pmr_cc_viewing = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { has_variable = pmr_cc_exec }\n\t\tvalue = 1\n\t}\n}\n\n']
     seen = set()
     for b, recipes in sorted(rows.items()):
         for key, _tex, techs in recipes:
