@@ -82,6 +82,7 @@ New since q17, from `dev` in prob32/ProductionMethodRework (q18 also carries q17
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
 | B1 | Open a Steel Mill whose levels all run Open Hearth Process (tier 3), and hover its coal and tools inputs and its employment | Each fully staffed level takes coal 30.8 and tools 0.4 (the totals scale with levels), and the jobs are machinists and engineers, no laborers | Coal 40 and tools 5 a level, or laborers listed: the automation buff is not in this build; check that the Queue Test folder's `RUNSHEET.md` starts with "automation pays at 1836 wages" |
+| B2 | The earliest place to see it: a Textile Mill whose levels all run Sewing Machines (tier 3; needs Mechanized Workshops). Hover its tools input and employment. Not testable in 1836: no country starts with the tech, and the tech tooltip lists Sewing Machines, not Mechanized Looms, because PMR folds the looms into that recipe, whose own method carries no numbers | Each fully staffed level takes tools 6.2 and 1,250 laborers | Tools 10 and 2,000 laborers a level: the buff is not in this build |
 
 ## Earlier: PMR's text in every game language (q17; you checked it in Chinese on 2026-10-18 15:39Z)
 
