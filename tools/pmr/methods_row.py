@@ -57,6 +57,15 @@ def methods_row(bk, recipes, read, tip, ind, visible=None):
     return out + f'{i1}}}\n{ind}}}\n'
 
 
+def type_icon(bk, ind):
+    """The building type's icon alone, where a pairs_grid stands in for the row (the split: the pairs are the targets)."""
+    i1, i2 = ind + '\t', ind + '\t\t'
+    return (f'{ind}widget = {{\n{i1}size = {{ 60 {ROW_H} }}\n{i1}icon = {{\n{i2}position = {{ 3 0 }}\n'
+            f'{i2}parentanchor = vcenter\n{i2}size = {{ 54 54 }}\n'
+            f'{i2}datacontext = "[GetBuildingType(\'{bk}\')]"\n{i2}texture = "[BuildingType.GetIcon]"\n'
+            f'{i2}tooltipwidget = {{\n{i2}\tFancyTooltip_BuildingType = {{}}\n{i2}}}\n{i1}}}\n{ind}}}\n')
+
+
 def recipe_tip_lines(bk, i, key, read, note):
     """The first lines of recipe i's tooltip: its name, and its profit with the caller's note (a [GetCustom(...)]
     fragment naming the pick, a recipe that can't run, or one skipped at the price cap)."""

@@ -335,5 +335,10 @@
  "Running on #bold {0}#! of your levels": "전체 레벨의 #bold {0}#!에서 가동 중",
  "Buildings": "건물",
  " (best combination)": " (최고의 조합)",
- "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "건물 유형에 자동화가 있으면 옆의 표가 같은 가격으로 각 방식(열)과 각 자동화(행)를 평가합니다. 금색은 가장 수익성 높은 조합입니다. 개조는 당분간 방식 행을 따릅니다."
+ "#bold What investors weigh {0} by#!": "#bold 투자자가 {0}을(를) 평가하는 기준#!",
+ "AI value: #bold {0}#! (the building's own: {1}), with your economic policy and the foreign or domestic bar, at the state the row's prices come from.": "AI 가치: #bold {0}#! (건물 자체 값: {1}). 경제 정책과 국외·국내 막대를 반영하며, 이 행의 가격을 가져온 주 기준입니다.",
+ "AI weight": "AI 가중치",
+ "Financial districts and manor houses rank what to build by these with each building's profitability.": "금융 지구와 장원은 이 값들과 각 건물의 수익성으로 무엇을 건설할지 정합니다.",
+ "Investment priority: #bold x{0}#! from the {1} slider.": "투자 우선순위: {1} 슬라이더로 #bold x{0}#!.",
+ "Where a building type has automation, the grid scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination, which new levels and retooling follow.": "자동화가 있는 건물 유형은 표가 각 방식(열)과 각 자동화(행)의 조합을 같은 가격으로 평가합니다. 금색은 가장 수익성 높은 조합이며, 새 레벨과 개조는 이를 따릅니다."
 }

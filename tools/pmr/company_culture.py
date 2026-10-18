@@ -146,7 +146,8 @@ def building_stats(blended, cost):
     """building type -> its recipes' average jobs, laborer jobs, input and output value per level."""
     by_b = {}
     for r in blended:
-        by_b.setdefault(r['building'], []).append(r)
+        if r.get('kind', 'recipe') == 'recipe':   # with the automation split, an automation member is not a recipe
+            by_b.setdefault(r['building'], []).append(r)
     out = {}
     for b, rs in by_b.items():
         tot = dict(W=0.0, Lab=0.0, I=0.0, O=0.0)
@@ -616,6 +617,7 @@ def method_rows(report, pms, comps):
     """building type -> [(recipe key, texture, technologies)] for every PMR-treated type a company lists."""
     listed = {b for bts in comps.values() for b in bts}
     elec = {a['building']: a['electric_recipe'] for a in report['automation'] if a.get('electric_recipe')}
+    split = {a['building'] for a in report['automation'] if a.get('split')}   # recipe + automation pairs: the plain recipes
     rows = {}
     for t in report['treated']:
         b = t['building']
@@ -623,6 +625,8 @@ def method_rows(report, pms, comps):
             continue
         out, last = [], []
         for key in t['recipes']:
+            if b in split and key not in pms:
+                continue
             if key in pms:
                 tex, techs = pms[key]
                 last = techs

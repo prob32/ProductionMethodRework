@@ -335,5 +335,10 @@
  "Running on #bold {0}#! of your levels": "在你 #bold {0}#! 的等级上运行",
  "Buildings": "建筑",
  " (best combination)": " （最佳组合）",
- "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "若某建筑类型有自动化，旁边的表格会按相同价格评估每种方法（列）与每种自动化（行）的组合；金色标出最赚钱的组合。目前改造仍按方法一行进行。"
+ "#bold What investors weigh {0} by#!": "#bold 投资者对{0}的权衡依据#!",
+ "AI value: #bold {0}#! (the building's own: {1}), with your economic policy and the foreign or domestic bar, at the state the row's prices come from.": "AI 价值：#bold {0}#!（建筑本身：{1}），含你的经济政策和国外或国内倾向条，按该行价格所在的州计算。",
+ "AI weight": "AI 权重",
+ "Financial districts and manor houses rank what to build by these with each building's profitability.": "金融区和庄园根据这些数值和每座建筑的盈利能力来决定建造什么。",
+ "Investment priority: #bold x{0}#! from the {1} slider.": "投资优先级：{1}滑块带来 #bold x{0}#!。",
+ "Where a building type has automation, the grid scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination, which new levels and retooling follow.": "若某建筑类型有自动化，表格会按相同价格评估每种方法（列）与每种自动化（行）的组合；金色标出最赚钱的组合，新等级和改造都会遵循它。"
 }

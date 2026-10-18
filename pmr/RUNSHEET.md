@@ -1,4 +1,4 @@
-# PMR run sheet: profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,38 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: profit figures at market prices, and Private Owners' Methods moves to the Buildings panel (q24, test mod; a new game is needed)
+## Latest: recipe and automation chosen as pairs, and the investment cards move to Private Owners' Methods (q25, test mod; a new game is needed)
+
+From the build thread (your 18:36Z "yeah i want to split it"): the 15 building types that folded automation into their
+recipes no longer do. Every recipe with every automation option is a retool target of its own, so new levels and
+retooling follow the most profitable pair (a steel mill has 4 recipes x 3 options = 12 pairs, a coal mine 16). The
+recipe bar shows the plain recipes again and the green bar under it shows the automation methods. Buildings start a
+new game on their history recipe with no automation, so the green bar stays empty until a building retools onto a
+pair with automation. Watertube boilers now get the same buff as the other automation methods.
+
+Also from the build thread (your 18:40Z ask): the economic law and policy cards and the investment priorities have left
+the Private tab and now sit at the top of the Buildings panel's "Private Owners' Methods" heading, and the policy window
+opens under the cards. Each building row ends with an "AI weight" cell: what investors weigh that building by, and the
+multiplier its investment priority slider gives it.
+
+1. Start a new game on the PMR Test playset (a q24 save has no pairs) and play past 1 February 1836.
+2. Open a steel mill and a textile mill and hover each one's "Most profitable" row.
+3. Open the Buildings panel from the top bar, click "Private Owners' Methods", then click the policy card.
+4. Open the Private tab.
+5. Tell the build thread; it reads debug.log (`PMR;rec=PROFIT`) and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| S1 | Play past 1 February 1836 | Steel, textile and the other split types write PROFIT lines with `pick=` between 1 and the pair count, `pair=<recipe>x<automation>` (automation 1 = none) and one `rm=` figure per pair (12 on a steel mill) | `pair=0x0` with `pick=` above 0: the pair copy didn't run. Four `rm=` figures on a steel mill: an old build. No PROFIT lines at all: nothing logs |
+| S2 | Look at a steel or textile mill's recipe bar | The bar names plain recipes only (no "+" in a slice's name); the green bar under it is empty or shows automation methods | A slice named "Recipe + Automation": the bar reads per-pair shares instead of per-recipe ones. Recipe slices that don't add up to the building's levels: the recipe sums (`pmr_rs`) are wrong |
+| S3 | Hover the "Most profitable" row | A pair such as "Blister Steel + Watertube Boiler" or a plain recipe, with its £ per level a week matching the building's PROFIT line for the same `pair=` | A different pair from the PROFIT line: the row reads a stale pick |
+| M3 | "Private Owners' Methods" heading | The law card and policy card on the left and the investment priorities on the right, above the building rows; clicking the policy card opens its window under the cards | No cards: the block didn't load. The window never opens, or opens over the map: the card's click and the window's visibility test disagree |
+| M4 | Same heading, each building row | An "AI weight" cell: a number, `x` and the priority multiplier (x1.00 with every slider at its default), and the priority group's name; hovering explains it | 0 on every row: the AI values weren't copied when the tab opened. x0.00 on every row: the priority multiplier didn't evaluate |
+| M5 | Same heading, a steel or textile mill row | A grid with a column per recipe and a row per automation option, gold behind one cell that matches that building's `pair=` in the state with the most levels | Gold on a different cell: the grid and the retool pick disagree |
+| P1 | Private tab | No law card, policy card or priorities; the construction queue follows the sections above it | The cards are still there: an old build |
+| S4 | Play a year or more (optional) | A mill's PROFIT line picks a pair with automation (`pair=<r>x2` or higher) once its `rm=` is the highest runnable figure, and its green bar starts to fill | An automation pair with the highest `rm=` and `can=1` that is never picked: the pick ignores pairs. Every pick stays on automation 1 while those pairs earn less: expected at 1836 wages |
+
+## Earlier: profit figures at market prices, and Private Owners' Methods moves to the Buildings panel (q24, test mod; a new game is needed)
 
 From the PM rework thread (dev dce666b, your 18:15Z screenshot): in q23 the profit pick was worked out during game
 setup, before the market had prices (steel read 0.25-0.35 of base), so the Alsace-Lorraine steel mill showed Blister

@@ -335,5 +335,10 @@
  "Running on #bold {0}#! of your levels": "Działa na #bold {0}#! Twoich poziomów",
  "Buildings": "Budynki",
  " (best combination)": " (najlepsze połączenie)",
- "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "Gdy typ budynku ma automatyzację, siatka obok ocenia każdą metodę (kolumny) z każdą automatyzacją (wiersze) po tych samych cenach; złoto oznacza najbardziej opłacalne połączenie. Na razie przezbrajanie nadal podąża za wierszem metod."
+ "#bold What investors weigh {0} by#!": "#bold Według czego inwestorzy ważą {0}#!",
+ "AI value: #bold {0}#! (the building's own: {1}), with your economic policy and the foreign or domestic bar, at the state the row's prices come from.": "Wartość SI: #bold {0}#! (samego budynku: {1}), z Twoją polityką gospodarczą i suwakiem zagraniczne lub krajowe, w stanie, z którego pochodzą ceny wiersza.",
+ "AI weight": "Waga SI",
+ "Financial districts and manor houses rank what to build by these with each building's profitability.": "Dzielnice finansowe i dwory szeregują, co budować, według tych wartości i opłacalności każdego budynku.",
+ "Investment priority: #bold x{0}#! from the {1} slider.": "Priorytet inwestycyjny: #bold x{0}#! z suwaka {1}.",
+ "Where a building type has automation, the grid scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination, which new levels and retooling follow.": "Gdy typ budynku ma automatyzację, siatka ocenia każdą metodę (kolumny) z każdą automatyzacją (wiersze) po tych samych cenach; złoto oznacza najbardziej opłacalne połączenie, za którym idą nowe poziomy i przezbrajanie."
 }

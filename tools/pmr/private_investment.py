@@ -10,12 +10,13 @@ queue and loses the investment pool. The Private tab, top to bottom:
   3. what feeds the pool, as a tree chart by priority group (Pat 13:05Z). The game gives its per-building amounts
      only as text (1.14.5 exe: no datamodel, no script value), so the chart shows the privately owned building levels
      of each group, and the game's own list in money is its tooltip
-  4. the economic system law as a card, and to its right a policy card, chosen under Interventionism or (Pat 16:06Z)
-     Laissez-faire
-  5. investment priorities, one row per priority group (Pat 13:05Z: five groups over the vanilla building groups)
-  6. the private construction queue with the vanilla location filter, then recent investments and privatizations,
+  4. the private construction queue with the vanilla location filter, then recent investments and privatizations,
      topped by two bars of what the player's investors built: domestic vs foreign, and by priority group, both in
      construction points (14:28Z; PMR records them from now on, invest_effects)
+The economic system law card with the policy card beside it (chosen under Interventionism or, Pat 16:06Z,
+Laissez-faire) and the investment priorities, one row per priority group (Pat 13:05Z: five groups over the vanilla
+building groups), were the Private tab's sections 4 and 5 until Pat moved them to the top of the Buildings panel's
+Owners' Methods tab (2026-10-18 18:40Z): policy_block, placed by generate.py's patch_browser_tabs.
 
 Priorities (Pat 04:16Z). Each priority group's slider runs 0..100% of a cap: the cap is +50% weight, or +75% while
 Steer the Economy is held. The pool weighs each building group by the `investment_scores` of the ownership buildings
@@ -34,7 +35,7 @@ The GUI cannot write a number into script, so a slider is the budget page's five
 group's scripted GUI with the step as a saved value scope (MakeScopeValue, as vanilla's ep2_japan_widgets.gui does).
 
 Policies (Pat: under Interventionism; 16:06Z: two more under Laissez-faire). One at a time, as a static modifier; a
-monthly country pulse drops it when the country no longer has its law (POLICY_LAWS). The policy card's plus opens a window beside the panel with every policy as a
+monthly country pulse drops it when the country no longer has its law (POLICY_LAWS). The policy card's plus opens a window under the cards with every policy as a
 blue card that is clicked to adopt it, showing its benefits only, the explanation on hover (Pat 13:05Z and 14:28Z;
 Pat also asked for a few fitting benefits to round them out: the modifiers in POLICIES).
   - Steer the Economy (Pat 04:16Z): the sliders' cap goes from +50% to +75%.
@@ -1142,13 +1143,6 @@ def patch_panel(text):
     tabs = once(tabs, '\t\t\t\tblockoverride "third_button"\n', private + '\t\t\t\tblockoverride "third_button"\n', where)
     text = text[:start] + tabs + text[end + 1:]
 
-    # The policy window, beside the panel where other panels put their map-mode button (block_windows.gui: the
-    # window root allows children outside it; map_modes_button_position is { 607 102 }).
-    text = once(text, '\t\t#TOP\n\t\tblockoverride "fixed_top"\n',
-                '\t\t# PMR: the economic policy windows, one per law\n\t\tblockoverride "map_modes_button" {\n'
-                + ''.join(f'\t\t\tpmr_policy_window_{law} = {{}}\n' for law in policy_laws()) +
-                '\t\t}\n\n\t\t#TOP\n\t\tblockoverride "fixed_top"\n', where)
-
     # The Private tab's contents, after the domestic tab's flowcontainer.
     text = once(text, '\t\t\t# FOREIGN QUEUE TAB CONTENTS\n',
                 '\t\t\t# PMR: PRIVATE TAB CONTENTS\n'
@@ -1671,10 +1665,10 @@ def policy_laws():
 
 def policy_window(law, items):
     """The economic policy window (Pat 13:05Z, slimmed 14:28Z so it fits the screen): one per economic system law,
-    showing that law's policies as cards, two to a row, beside the construction panel while its Private tab is
-    open (only the held law's window shows, Pat 16:06Z). Each window is as tall as its own rows (Pat 19:25Z: the
-    Laissez-faire window had an empty half). Vanilla's popup background, header and frame (block_windows.gui
-    default_popup)."""
+    showing that law's policies as cards, two to a row (only the held law's window shows, Pat 16:06Z). Since Pat
+    2026-10-18 18:40Z it opens under the policy card in the Buildings panel's Owners' Methods tab (policy_block), not
+    beside the construction panel. Each window is as tall as its own rows (Pat 19:25Z: the Laissez-faire window had an
+    empty half). Vanilla's popup background, header and frame (block_windows.gui default_popup)."""
     i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
     shown = f"GetScriptedGui('pmr_policy_{items[0][0]}_sgui').IsShown(GuiScope.SetRoot({COUNTRY}.MakeScope).End)"
     rows, body = '', 0
@@ -1689,9 +1683,8 @@ def policy_window(law, items):
     w = 2 * PCARD_W + 10 + 40
     h = 84 + body + 10    # the rows and their spacing, then a margin; no intro text (Pat 20:06Z)
     return (f'\ttype pmr_policy_window_{law} = widget {{\n'
-            f'{i1}visible = "[And(And(InformationPanel.IsTabSelected(\'{TAB}\'), GetVariableSystem.Exists(\'{PICK}\')), '
-            f'{shown})]"\n'
-            f'{i1}position = {{ 607 102 }}\n{i1}size = {{ {w} {h} }}\n{i1}using = clickthrough_blocker\n'
+            f'{i1}visible = "[And(GetVariableSystem.Exists(\'{PICK}\'), {shown})]"\n'
+            f'{i1}parentanchor = hcenter\n{i1}size = {{ {w} {h} }}\n{i1}using = clickthrough_blocker\n'
             f'{i1}background = {{\n{i2}texture = "gfx/interface/backgrounds/popup_bg.dds"\n{i2}spriteType = Corneredstretched\n'
             f'{i2}spriteborder = {{ 90 90 }}\n{i2}texture_density = 2\n'
             f'{i2}modify_texture = {{\n{i3}texture = "gfx/interface/backgrounds/default_bg_shading.dds"\n'
@@ -1713,6 +1706,44 @@ def sv_on(name):
     return f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.ScriptValue('{name}'), '(CFixedPoint)0')"
 
 
+def policy_block():
+    """Pat, 2026-10-18 18:40Z: the economic law and policy cards and the investment priorities, moved from the Private
+    tab to the top of the Buildings panel's Owners' Methods tab (generate.py patch_browser_tabs), side by side as the
+    panel is wide, with the policy window opening under them."""
+    i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
+    law = f"{COUNTRY}.GetActiveLawFromGroup('lawgroup_economic_system')"
+    law_card = card(i3, card_column(i3 + '\t', card_title('[Law.GetTexture]', '[Law.GetNameNoFormatting]', i3 + '\t\t')
+                                    + scrolled_text('[Law.GetLawType.GetEffectDesc(GetPlayer.Self)]', i3 + '\t\t',
+                                                    CARD_W - 14, CARD_H - 84, raw=True)),
+                    f'{i3}\tdatacontext = "[{law}]"\n')
+    return (
+        '\ttype pmr_policy_block = flowcontainer {\n\t\tdirection = vertical\n\t\tspacing = 8\n\t\tignoreinvisible = yes\n'
+        f'{i1}flowcontainer = {{\n{i2}spacing = 24\n'
+        # economic law and policy
+        f'{i2}flowcontainer = {{\n{i3}direction = vertical\n{i3}minimumsize = {{ 540 -1 }}\n'
+        + header('PMR_PI_POLICY_HEADER', i3) +
+        f'{i3}flowcontainer = {{\n{i3}\tparentanchor = hcenter\n{i3}\tmargin_top = 8\n{i3}\tspacing = 8\n'
+        + law_card + policy_card(i3 + '\t') + f'{i3}}}\n{i2}}}\n'
+        # priorities: foreign or domestic on its own row (Pat 15:34Z, instead of the explanation), then the groups;
+        # the law's lock on the rows is in each coin's tooltip only (Pat 20:25Z: no line under the header)
+        f'{i2}flowcontainer = {{\n{i3}direction = vertical\n{i3}minimumsize = {{ 540 -1 }}\n'
+        + header('PMR_IPW_HEADER', i3) +
+        f'{i3}widget = {{\n{i3}\tsize = {{ 540 6 }}\n{i3}}}\n'
+        + fd_row(i3) +
+        f'{i3}widget = {{\n{i3}\tsize = {{ 540 6 }}\n{i3}}}\n'
+        + ''.join(priority_row(g, i3) for g, *_r in GROUPS) + f'{i2}}}\n{i1}}}\n'
+        # the policy window, under the cards while it is open
+        + ''.join(f'{i1}pmr_policy_window_{lw} = {{}}\n' for lw in policy_laws())
+        + '\t}\n\n')
+
+
+def ai_groups(game):
+    """building type -> its priority group, for every type with pmr_ai_value_<b> (the investable types; write_all
+    fails if one lacks it), so the Owners' Methods tab can show each row's AI weight."""
+    keys = [k for k, *_r in GROUPS]
+    return {f'building_{s}': keys[g] for s, g, _c in invest_types(game)}
+
+
 def private_tab():
     i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
     filt = []
@@ -1728,15 +1759,11 @@ def private_tab():
                     f'{i3}\tblockoverride "text" {{\n{i3}\t\ttext = "{key}"\n{i3}\t}}\n{i3}}}\n')
     queue = ('Country.AccessPagedPrivateConstructionQueue(ConstructionPanel.AccessCurrentPrivateConstructionQueuePage('
              'GetMetaPlayer.GetPlayedOrObservedCountry), ConstructionPanel.GetFilter)')
-    law = f"{COUNTRY}.GetActiveLawFromGroup('lawgroup_economic_system')"
-    law_card = card(i2, card_column(i2 + '\t', card_title('[Law.GetTexture]', '[Law.GetNameNoFormatting]', i2 + '\t\t')
-                                    + scrolled_text('[Law.GetLawType.GetEffectDesc(GetPlayer.Self)]', i2 + '\t\t',
-                                                    CARD_W - 14, CARD_H - 84, raw=True)),
-                    f'{i2}\tdatacontext = "[{law}]"\n')
     return (
         '@pmr_w = 554\n\n'
         'types pmr_private_investment {\n'
-        + ''.join(policy_window(lw, items) + '\n' for lw, items in policy_laws().items()) +
+        + ''.join(policy_window(lw, items) + '\n' for lw, items in policy_laws().items())
+        + policy_block() +
         '\ttype pmr_private_tab = flowcontainer {\n'
         '\t\tusing = default_list_position\n\t\tdirection = vertical\n\t\tminimumsize = { 540 -1 }\n\t\tmargin_bottom = 10\n\n'
         # 1. the pool: the budget panel's own Investment Pool line (Pat 13:05Z), then the next private construction
@@ -1756,18 +1783,8 @@ def private_tab():
         + charts_row(i1) +
         # 3. contributors, as tree charts by group (Pat 13:05Z) and by owner (Pat 15:33Z)
         header('PMR_PI_SOURCES_HEADER', i1) + contributors_charts(i1) +
-        # 4. economic law and policy
-        header('PMR_PI_POLICY_HEADER', i1) +
-        f'{i1}flowcontainer = {{\n{i1}\tparentanchor = hcenter\n{i1}\tmargin_top = 8\n{i1}\tmargin_bottom = 8\n{i1}\tspacing = 8\n'
-        + law_card + policy_card(i2) + f'{i1}}}\n'
-        # 5. priorities: foreign or domestic on its own row (Pat 15:34Z, instead of the explanation), then the groups
-        + header('PMR_IPW_HEADER', i1) +
-        f'{i1}widget = {{\n{i1}\tsize = {{ 540 6 }}\n{i1}}}\n'
-        + fd_row(i1) +
-        # the law's lock on the rows is in each coin's tooltip only (Pat 20:25Z: no line under the header)
-        f'{i1}widget = {{\n{i1}\tsize = {{ 540 6 }}\n{i1}}}\n'
-        + ''.join(priority_row(g, i1) for g, *_r in GROUPS) +
-        # 6. private construction, then recent investments
+        # 4. private construction, then recent investments (the law, policy and priorities moved to the Buildings
+        # panel's Owners' Methods tab, Pat 2026-10-18 18:40Z: policy_block)
         f'{i1}default_header_2texts = {{\n{i1}\tblockoverride "text1" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_HEADER"\n{i1}\t}}\n'
         f'{i1}\tblockoverride "text2" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_COUNT"\n{i1}\t}}\n{i1}}}\n'
         f'{i1}flowcontainer = {{\n{i1}\tparentanchor = hcenter\n{i1}\tmargin = {{ 0 8 }}\n{i1}\tspacing = 5\n'

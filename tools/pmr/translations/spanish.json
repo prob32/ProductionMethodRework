@@ -335,5 +335,10 @@
  "Running on #bold {0}#! of your levels": "En uso en el #bold {0}#! de tus niveles",
  "Buildings": "Edificios",
  " (best combination)": " (mejor combinación)",
- "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "Cuando un tipo de edificio tiene automatización, la cuadrícula de al lado evalúa cada método (columnas) con cada automatización (filas) a los mismos precios; el dorado marca la combinación más rentable. Por ahora, la readaptación sigue la fila de métodos."
+ "#bold What investors weigh {0} by#!": "#bold Lo que pesan los inversores en {0}#!",
+ "AI value: #bold {0}#! (the building's own: {1}), with your economic policy and the foreign or domestic bar, at the state the row's prices come from.": "Valor de IA: #bold {0}#! (el del propio edificio: {1}), con tu política económica y la barra de extranjero o nacional, en el estado del que vienen los precios de la fila.",
+ "AI weight": "Peso de IA",
+ "Financial districts and manor houses rank what to build by these with each building's profitability.": "Los distritos financieros y las casas señoriales ordenan qué construir según estos valores y la rentabilidad de cada edificio.",
+ "Investment priority: #bold x{0}#! from the {1} slider.": "Prioridad de inversión: #bold x{0}#! por el control de {1}.",
+ "Where a building type has automation, the grid scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination, which new levels and retooling follow.": "Cuando un tipo de edificio tiene automatización, la cuadrícula puntúa cada método (columnas) con cada automatización (filas) a los mismos precios; el dorado marca la combinación más rentable, que siguen los nuevos niveles y las readaptaciones."
 }

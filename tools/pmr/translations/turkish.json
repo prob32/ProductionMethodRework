@@ -335,5 +335,10 @@
  "Running on #bold {0}#! of your levels": "Seviyelerinizin #bold {0}#! kadarında çalışıyor",
  "Buildings": "Binalar",
  " (best combination)": " (en iyi bileşim)",
- "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "Bir bina türünde otomasyon varsa, yanındaki tablo her yöntemi (sütunlar) her otomasyonla (satırlar) aynı fiyatlarla değerlendirir; altın renk en kârlı bileşimi gösterir. Yeniden donatım şimdilik yöntem satırını izlemeye devam eder."
+ "#bold What investors weigh {0} by#!": "#bold Yatırımcıların {0} için baktığı ağırlık#!",
+ "AI value: #bold {0}#! (the building's own: {1}), with your economic policy and the foreign or domestic bar, at the state the row's prices come from.": "YZ değeri: #bold {0}#! (binanın kendi değeri: {1}), ekonomi politikanız ve yabancı veya yerli çubuğuyla, satırın fiyatlarının alındığı eyalette.",
+ "AI weight": "YZ ağırlığı",
+ "Financial districts and manor houses rank what to build by these with each building's profitability.": "Finans bölgeleri ve malikâneler ne inşa edeceklerini bu değerlere ve her binanın kârlılığına göre sıralar.",
+ "Investment priority: #bold x{0}#! from the {1} slider.": "Yatırım önceliği: {1} kaydırıcısından #bold x{0}#!.",
+ "Where a building type has automation, the grid scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination, which new levels and retooling follow.": "Bir bina türünde otomasyon varsa, tablo her yöntemi (sütunlar) her otomasyonla (satırlar) aynı fiyatlarla puanlar; altın rengi, yeni seviyelerin ve yeniden donatmanın izlediği en kârlı birleşimi gösterir."
 }

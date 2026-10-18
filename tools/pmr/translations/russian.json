@@ -335,5 +335,10 @@
  "Running on #bold {0}#! of your levels": "Работает на #bold {0}#! ваших уровней",
  "Buildings": "Здания",
  " (best combination)": " (лучшее сочетание)",
- "Where a building type has automation, the grid beside it scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still follows the recipe row for now.": "Если у типа зданий есть автоматизация, сетка рядом оценивает каждый метод (столбцы) с каждой автоматизацией (строки) по тем же ценам; золотом отмечено самое прибыльное сочетание. Пока переоснащение по-прежнему следует строке методов."
+ "#bold What investors weigh {0} by#!": "#bold По чему инвесторы оценивают {0}#!",
+ "AI value: #bold {0}#! (the building's own: {1}), with your economic policy and the foreign or domestic bar, at the state the row's prices come from.": "Ценность для ИИ: #bold {0}#! (собственная у здания: {1}), с вашей экономической политикой и шкалой «иностранные или отечественные», в области, откуда взяты цены строки.",
+ "AI weight": "Вес для ИИ",
+ "Financial districts and manor houses rank what to build by these with each building's profitability.": "Финансовые кварталы и поместья выбирают, что строить, по этим значениям и прибыльности каждого здания.",
+ "Investment priority: #bold x{0}#! from the {1} slider.": "Инвестиционный приоритет: #bold x{0}#! от ползунка {1}.",
+ "Where a building type has automation, the grid scores every recipe (columns) with every automation (rows) at the same prices; gold marks the most profitable combination, which new levels and retooling follow.": "Если у типа здания есть автоматизация, таблица оценивает каждый метод (столбцы) с каждой автоматизацией (строки) по одним и тем же ценам; золотом отмечено самое прибыльное сочетание, за которым следуют новые уровни и переоснащение."
 }

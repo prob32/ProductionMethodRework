@@ -180,6 +180,12 @@ RECIPE_ICON_SHARE = 0.25   # a recipe's slice of the bar shows its icon above th
 # into those recipes. It becomes one more recipe on top of the newest, needing the newest recipe's and
 # the automation's technologies and electricity in the state (ElectricRecipe).
 AUTOMATION_FROM_TIER = 3
+# Pat, 2026-10-18 18:36Z ("yeah i want to split it"): automation is no longer folded into the recipes. Every recipe
+# with every automation option (one method of each automation group) is a retool target of its own (PairRecipe),
+# so new levels and retooling follow the most profitable pair. The blend stays per axis: one share group per
+# recipe and one per automation method (split_members), so a building carries as many share groups as before.
+SPLIT_AUTOMATION = True
+SPLIT_BARS = {}   # short name -> plain recipes of a split building: its bars read pmr_rs_<j> (recipe j's share), not pmr_sh_<i>
 # Pat, 2026-10-18 14:48Z: every automation method pays for itself at 1836 wages with its goods at the +75%
 # price cap (buff_automation). Vanilla's lose GBP 220 to 900 a level a week there: they save 1,000 to 3,000
 # laborers, whose wage is about GBP 0.04 a week each. Each method now removes AUTOMATION_LABOUR_MULT times
@@ -519,6 +525,59 @@ ELECTRIC_DOC = """# Electric recipes (Pat, 2026-10-13): a building whose automat
 """
 
 
+class PairRecipe:
+    """Pat, 2026-10-18 18:36Z: a recipe with an automation option (SPLIT_AUTOMATION), as a retool target of its own.
+    Its marker, pm_pmr_pair_<b>_<r>_<a>, carries nothing and needs the recipe's and the automation's technologies;
+    the tick also asks the recipe's own marker (its other gates) and electricity where the automation needs it."""
+    def __init__(self, bk, base, r, a, opt, pms):
+        self.key = f'pm_pmr_pair_{short(bk)}_{r}_{a}'
+        self.base, self.opt, self.r, self.a = base, opt, r, a
+        self.autos = [m for m in opt if m.blend or m.employment]
+        self.texture = base.texture
+        self.unlock_techs = []
+        for m in [base] + list(opt):
+            ut = pdx.get(pms[m.key][0].value, 'unlocking_technologies')
+            for t in (pdx.items(ut) if ut else []):
+                if t not in self.unlock_techs:
+                    self.unlock_techs.append(t)
+        self.techs = list(self.unlock_techs)
+        # The other gates: the recipe's own (coffee's growing regions) as vanilla writes them, and every
+        # disallowing_* of the automation (law_industry_banned), so the marker runs only where both may.
+        self.gates, barred = [], {}
+        for m in [base] + list(opt):
+            for n in m.node.value:
+                if not n.key or n.key == 'unlocking_technologies':
+                    continue
+                if n.key.startswith('disallowing_'):
+                    for x in pdx.items(n):
+                        if x not in barred.setdefault(n.key, []):
+                            barred[n.key].append(x)
+                elif n.key.startswith('unlocking_'):
+                    if m is not base:
+                        raise SystemExit(f'{m.key}: {n.key} on an automation method; extend PairRecipe before shipping')
+                    self.gates.append(m.src.text[n.start:n.end])
+        self.gates += [f'{k} = {{ ' + ' '.join(xs) + ' }' for k, xs in barred.items()]
+        self.gated_otherwise = base.gated_otherwise or bool(barred)
+
+    def needs(self, good):
+        return self.base.needs(good) or any(m.needs(good) for m in self.opt)
+
+    def method(self):
+        return (f'{self.key} = {{\n\ttexture = "{self.texture}"\n'
+                + (f'\tunlocking_technologies = {{\n' + ''.join(f'\t\t{t}\n' for t in self.techs) + '\t}\n'
+                   if self.techs else '')
+                + ''.join(f'\t{g}\n' for g in self.gates)
+                + '}\n')
+
+
+def automation_options(auto_groups, groups, pms):
+    """Every automation option of a building: one method of each automation group, vanilla's order (a = 1 none)."""
+    options = [[]]
+    for g in auto_groups:
+        options = [o + [Recipe(p, *pms[p])] for o in options for p in groups[g]]
+    return options
+
+
 class ElectricRecipe:
     """The newest recipe with electric automation, as a recipe of its own on top of it."""
     def __init__(self, bk, base, autos, pms):
@@ -632,7 +691,14 @@ def buff_automation(game, p_srcs, groups, b_srcs):
             recipes = [rec(p) for p in groups.get(g0, []) if p not in DROP_RECIPES and p in pms]
             if not ag or not recipes:
                 continue
-            if len(recipes) >= AUTOMATION_FROM_TIER:
+            if len(recipes) >= AUTOMATION_FROM_TIER and SPLIT_AUTOMATION:
+                # every recipe with every automation option, the option's methods running together
+                for opt in automation_options(ag, groups, pms)[1:]:
+                    autos = [a for a in opt if a.employment]
+                    if autos:
+                        places += [(bk, f'{r.key} + ' + ' + '.join(a.key for a in opt), r.employment, autos)
+                                   for r in recipes]
+            elif len(recipes) >= AUTOMATION_FROM_TIER:
                 folded = []
                 for g in ag:
                     plain = [p for p in groups[g] if not rec(p).needs(ELECTRICITY)]
@@ -913,6 +979,8 @@ def main():
     automation = {}   # building -> the automation methods folded into its recipes from AUTOMATION_FROM_TIER
     auto_groups_of = {}   # building -> the automation groups that left it (their methods fold into the recipes)
     elec_pms = []     # the electric recipes' marker methods (ElectricRecipe), one per building that has one
+    pair_pms = []     # the recipe + automation pairs' marker methods (PairRecipe, SPLIT_AUTOMATION)
+    split_info = {}   # building -> its plain recipes, automation options, pair index and blend members
     for bk, bn, s, recipes, g0, pg in treated:
         for r in recipes:
             if r.key not in stripped:
@@ -937,7 +1005,39 @@ def main():
                     s.cuts.append(line_span(s.text, n))
             entry = {'building': bk, 'groups': auto_groups, 'folded': [a.key for a in automation[bk]],
                      'from_tier': AUTOMATION_FROM_TIER}
-            if any(a.needs(ELECTRICITY) for a in tops):
+            if SPLIT_AUTOMATION:
+                # every recipe with every automation option; (recipe, none) keeps the vanilla recipe as its marker
+                if group_users.get(g0, set()) != {bk}:
+                    raise SystemExit(f'{bk}: {g0} is shared with {sorted(group_users[g0] - {bk})}; '
+                                     'the recipe + automation pairs would need one marker per building')
+                plain_r = list(recipes)
+                options = automation_options(auto_groups, groups, pms)
+                pairs_l, index = [], {}
+                for ri, r in enumerate(plain_r, 1):
+                    for a, opt in enumerate(options, 1):
+                        none = a == 1 and not any(m.blend or m.employment for m in opt)
+                        pairs_l.append(r if none else PairRecipe(bk, r, ri, a, opt, pms))
+                        index[(ri, a)] = len(pairs_l)
+                recipes[:] = pairs_l
+                members = [(j, [index[(j, a)] for a in range(1, len(options) + 1)], 'recipe', r)
+                           for j, r in enumerate(plain_r, 1)]
+                for g in auto_groups:
+                    for pk in groups[g]:
+                        m = Recipe(pk, *pms[pk])
+                        if m.blend or m.employment:
+                            members.append((len(members) + 1,
+                                            [index[(ri, a)] for ri in range(1, len(plain_r) + 1)
+                                             for a, opt in enumerate(options, 1) if any(x.key == pk for x in opt)],
+                                            g, m))
+                split_info[bk] = {'plain': plain_r, 'options': options, 'index': index, 'members': members,
+                                  'pairs': pairs_l}
+                gsrc, gpm = group_src[g0]
+                markers = [r for r in pairs_l if isinstance(r, PairRecipe)]
+                pair_pms.extend(markers)
+                gsrc.inserts.append((gpm.end - 1, ''.join(f'\t{r.key}  # PMR: {r.base.key} + {", ".join(m.key for m in r.opt)}\n\t'
+                                                          for r in markers)))
+                entry['split'] = {'options': [[m.key for m in o] for o in options], 'pairs': [r.key for r in pairs_l]}
+            elif any(a.needs(ELECTRICITY) for a in tops):
                 if group_users.get(g0, set()) != {bk}:
                     raise SystemExit(f'{bk}: {g0} is shared with {sorted(group_users[g0] - {bk})}; '
                                      'the electric recipe would need one marker per building')
@@ -955,11 +1055,27 @@ def main():
         rest = s.text[brace:s.text.find('\n', brace)]
         tail = '' if not rest.strip() else '\n\t\t'   # the list continues on the brace's line
         s.inserts.append((brace, f'\n\t\tpmg_pmr_labour_{short(bk)}  # PMR: blended recipes slot{tail}'))
-        # Last in the list: one share group and one lock group per recipe.
+        # Last in the list: one share group and one lock group per recipe (per blend member when split).
+        blend_of = ([(j, m.key) for j, _, _, m in split_info[bk]['members']] if bk in split_info
+                    else [(i, r.key) for i, r in enumerate(recipes, 1)])
         s.inserts.append((pg.end - 1, ''.join(
-            f'\tpmg_pmr_share_{short(bk)}_{i}  # PMR: share of levels on {r.key}\n\t'
+            f'\tpmg_pmr_share_{short(bk)}_{i}  # PMR: share of levels on {key}\n\t'
             f'\tpmg_pmr_key_{short(bk)}_{i}  # PMR: lock for that share\n\t'
-            for i, r in enumerate(recipes, 1))))
+            for i, key in blend_of)))
+
+    # A method another method needs (unlocking_production_methods: pm_elastics needs a sewing machines recipe) is
+    # also met by every pair built on it: with the split, the recipe group's marker on such a building is the pair.
+    pair_of = {}
+    for sp in split_info.values():
+        for r in sp['pairs']:
+            if isinstance(r, PairRecipe):
+                pair_of.setdefault(r.base.key, []).append(r.key)
+    for key, (n, psrc) in pms.items():
+        upm = pdx.get(n.value, 'unlocking_production_methods')
+        listed = pdx.items(upm) if upm else []
+        add = [pk for x in listed for pk in pair_of.get(x, []) if pk not in listed]
+        if add:
+            psrc.inserts.append((upm.end - 1, ''.join(f'\t{pk}  # PMR: a recipe + automation pair\n\t' for pk in add)))
 
     # ---- second groups: trade-offs and working conditions become option shares -------------------
     # options[bk] = [(group, gi, mode, none method, [Option], standard methods)], gi counting the
@@ -1100,6 +1216,10 @@ def main():
             write(f'common/production_method_groups/{s.name}', s.render())
     write('common/production_methods/pmr_electric_production_methods.txt', header + ELECTRIC_DOC
           + '\n'.join(er.method() for er in elec_pms))
+    if pair_pms:
+        write('common/production_methods/pmr_pair_production_methods.txt', header
+              + '# Recipe + automation pairs (PairRecipe, SPLIT_AUTOMATION): markers of the retool target only.\n\n'
+              + '\n'.join(r.method() for r in pair_pms))
 
     # ---- new script ------------------------------------------------------------------------------
     labour_pms, labour_groups, retools, costs, loc = [], [], [], [], []
@@ -1128,6 +1248,7 @@ def main():
     gfx_root = game
     custom_new = []
     recipe_keys, recipe_tex, recipe_elec = {}, {}, {}
+    bar_keys = {}          # building -> the recipes its bars show (recipe_tex's keys): with the split, the plain ones
     weight = wage_weights(game)
     auto_ui = {}           # building -> (its first automation group, auto_tiers), for the automation bar
     profit_goods = set()   # every good a recipe's profit is read at (pmr_price_<good>)
@@ -1135,10 +1256,12 @@ def main():
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
-        r0 = recipes[0]
+        sp = split_info.get(bk)
+        plain = sp['plain'] if sp else recipes   # what the recipe bars show: with the split, recipes without automation
+        r0 = plain[0]
         # The fixed labour method's icon: the building's main output good, drawn gold (from the first recipe
         # that makes goods: a port's anchorage makes none).
-        r_out = next((r for r in recipes if r.outputs), r0)
+        r_out = next((r for r in plain if r.outputs), r0)
         good = max(r_out.outputs.items(), key=lambda kv: kv[1])[0] if r_out.outputs else None
         icon_tex = r0.texture
         src = os.path.join(gfx_root, goods_tex[good]) if good in goods_tex else None
@@ -1150,9 +1273,12 @@ def main():
         else:
             report['icon_fallback'].append({'building': bk, 'good': good, 'missing': src})
         recipe_keys[bk] = [r.key for r in recipes]
-        recipe_tex[bk] = [r.texture for r in recipes]
-        if len(recipes) > len(TIER_COLORS):
-            raise SystemExit(f'{bk}: {len(recipes)} recipes, but TIER_COLORS has {len(TIER_COLORS)}; add a colour')
+        recipe_tex[bk] = [r.texture for r in plain]
+        bar_keys[bk] = [r.key for r in plain]
+        if sp:
+            SPLIT_BARS[b] = len(plain)
+        if len(plain) > len(TIER_COLORS):
+            raise SystemExit(f'{bk}: {len(plain)} recipes, but TIER_COLORS has {len(TIER_COLORS)}; add a colour')
         for i, r in enumerate(recipes, 1):
             custom_new.append(f'\ttext = {{\n\t\ttrigger = {{ is_building_type = {bk} state = {{ var:pmr_to_{b} = {i} }} }}\n'
                               f'\t\tlocalization_key = {r.key}\n\t}}\n')
@@ -1187,7 +1313,7 @@ def main():
                     f' {rbx}_desc:0 "Privately funded construction that switches one level of ${bk}$ to its newest recipe. Investors from countries that own part of the building fund the privately owned share. ' + (f'Each level employs a crew of {RETOOL_CREW}, paid from a little ${RETOOL_CREW_GOOD}$ they make, so investors can add levels to it while it is staffed.' if RETOOL_CREW else
        'Investors may queue several levels on it at once; it goes once they are all done.' if RETOOL_STACK else 'It goes once its level is done.') + '"']
         for r in recipes:
-            if isinstance(r, ElectricRecipe):
+            if isinstance(r, (ElectricRecipe, PairRecipe)):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
         loc += [f' pmg_pmr_labour_{b}:0 "Recipes"',
                 f' pm_pmr_labour_{b}:0 "Blended Recipes"',
@@ -1218,31 +1344,63 @@ def main():
         fold_techs = {}   # tier -> the technologies of the methods folded into it (pmr_best_<b> asks the owner)
         econ = []         # per recipe: (goods per level, wage units per level), for pmr_profit_<b>
         auto_tiers = []   # the automation bar's levels: [(name key, texture or None, [tiers])], least automated first
-        if automation.get(bk):
-            plain = [i for i, r in enumerate(recipes, 1) if not isinstance(r, ElectricRecipe)]
+        if sp:
+            # one level per automation option, its key the option's name (PMR_MVA_<b>_<a>, methods_view_loc)
+            for a, opt in enumerate(sp['options'], 1):
+                on = [m for m in opt if m.blend or m.employment]
+                auto_tiers.append((f'PMR_MVA_{b}_{a}', on[-1].texture if on else None,
+                                   [sp['index'][(ri, a)] for ri in range(1, len(sp['plain']) + 1)]))
+            auto_ui[bk] = (auto_groups_of[bk][0], auto_tiers)
+        elif automation.get(bk):
+            plain_i = [i for i, r in enumerate(recipes, 1) if not isinstance(r, ElectricRecipe)]
             er = [(i, r) for i, r in enumerate(recipes, 1) if isinstance(r, ElectricRecipe)]
-            auto_tiers.append((groups[auto_groups_of[bk][0]][0], None, [i for i in plain if i < AUTOMATION_FROM_TIER]))
+            auto_tiers.append((groups[auto_groups_of[bk][0]][0], None, [i for i in plain_i if i < AUTOMATION_FROM_TIER]))
             auto_tiers.append((automation[bk][0].key, automation[bk][0].texture,
-                               [i for i in plain if i >= AUTOMATION_FROM_TIER]))
+                               [i for i in plain_i if i >= AUTOMATION_FROM_TIER]))
             for i, r in er:
                 elec_auto = [a for a in r.autos if a.needs(ELECTRICITY)] or r.autos
                 auto_tiers.append((elec_auto[0].key, r.texture, [i]))
             auto_ui[bk] = (auto_groups_of[bk][0], auto_tiers)
+        # Each recipe (each recipe + automation pair with the split) as a retool target: what a level of it makes,
+        # costs and needs.
+        tiers_of = []     # per retool target: (recipe, the automation run with it)
         for i, r in enumerate(recipes, 1):
             if isinstance(r, ElectricRecipe):
                 autos = r.autos
                 blend, emp, elec, clamped = effective(r.base, autos)
+            elif isinstance(r, PairRecipe):
+                autos = r.autos
+                blend, emp, elec, clamped = effective(r.base, autos)
             else:
-                autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER else []
+                autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER and not sp else []
                 blend, emp, elec, clamped = effective(r, autos)
-            fold_techs[i] = list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
+            fold_techs[i] = [] if sp else list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
             econ.append(recipe_econ(blend, emp, weight))
             profit_goods.update(g for g in econ[-1][0] if goods_cost.get(g))
             if elec:
                 elec_tiers.append(i)
             if clamped:
                 report.setdefault('employment_clamped', []).append({'building': bk, 'recipe': r.key, 'below_zero': clamped})
-            default_n = SHARE_STEPS if i == 1 else 0
+            tiers_of.append((r, autos, blend, emp, elec))
+        # The blend members: without the split, each recipe with its folded automation (recipe i is member i). With
+        # it (Pat, 2026-10-18 18:36Z), each plain recipe and each automation method that does something, on its own:
+        # an automation member carries the method's goods and its (negative) workforce, x its share of the levels.
+        if sp:
+            members = []
+            for j, idxs, grp, m in sp['members']:
+                if grp == 'recipe':
+                    blend, emp, _e, _c = effective(m, [])
+                else:
+                    blend = {sec: {k2: v2 for k2, v2 in mods.items() if v2} for sec, mods in m.blend.items()}
+                    blend = {sec: mods for sec, mods in blend.items() if mods}
+                    emp = {k2: v2 for k2, v2 in m.employment.items() if v2}
+                members.append((j, m, blend, emp, SHARE_STEPS if j == 1 else 0,
+                                {'member': j, 'kind': grp, 'pairs': idxs}))
+        else:
+            members = [(i, r, blend, emp, SHARE_STEPS if i == 1 else 0,
+                        {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
+                       for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
+        for i, r, blend, emp, default_n, rep in members:
             shares, keys = [], []
             any_key = f'pm_pmr_key_{b}_{i}_any'
             secs = list(dict.fromkeys(list(blend) + (['building_modifiers'] if emp else [])))
@@ -1282,9 +1440,7 @@ def main():
                 blend_groups.append(f'{g} = {{\n\ttexture = "{GENERIC_ICON}"\n'
                                     '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in lst) + '\t}\n}\n')
                 loc.append(f' {g}:0 "${r.key}$ {what}"')
-            report['blended'].append({'building': bk, 'recipe': r.key, 'tier': i, 'blend': blend,
-                                      'employment': emp, 'automation': [a.key for a in autos],
-                                      'needs_electricity': elec})
+            report['blended'].append({'building': bk, 'recipe': r.key, **rep, 'blend': blend, 'employment': emp})
 
         # Option shares: the same share / lock / switching-lock pattern as the recipes, carrying the
         # option's every effect x n / SHARE_STEPS. n = 0 is the default: a new building starts on none.
@@ -1314,10 +1470,16 @@ def main():
                                         '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in lst) + '\t}\n}\n')
                     loc.append(f' {grp}:0 "${o.key}$ {label}"')
 
-        if automation.get(bk):
+        if sp:
+            # the Methods view's grid is the retool targets themselves: pair (r, a) is target index[(r, a)]
+            pair_ui[bk] = {'recipes': list(range(1, len(plain) + 1)), 'options': sp['options'],
+                           'keys': [r.key for r in plain], 'index': sp['index'], 'split': True,
+                           'econ': {ra: econ[i - 1] for ra, i in sp['index'].items()},
+                           'members': [(j, idxs, grp) for j, idxs, grp, _m in sp['members']]}
+        elif automation.get(bk):
             pair_ui[bk] = pairs(recipes, auto_groups_of[bk], groups, pms, weight)
             profit_goods.update(g for gd, _ in pair_ui[bk]['econ'].values() for g in gd if goods_cost.get(g))
-        tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, recipes)
+        tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, plain)
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
                                           econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk)))
         recipe_elec[bk] = elec_tiers
@@ -1434,7 +1596,7 @@ def main():
     write('common/static_modifiers/pmr_principle_modifiers.txt', header + pb_mods)
     loc += pb_loc
     compat_trig, compat_files, compat_lines = vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users,
-                                                             drop_base)
+                                                             drop_base, split_info)
     write(COMPAT_TRIGGERS, header + compat_trig)
     for rel, text in compat_files.items():
         write(rel, text)
@@ -1454,6 +1616,7 @@ def main():
     # the pick row, on every type the profit calculation covers (PROFIT_TARGET)
     pick_ui = {bk: recipe_keys[bk] for bk in dispatch} if PROFIT_TARGET else {}
     mv_keys = pick_ui   # the Private tab's Methods view covers the same types
+    ai_of = private_investment.ai_groups(game) if mv_keys else {}   # each row's AI weight (Pat 18:40Z)
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
@@ -1466,8 +1629,8 @@ def main():
           + '\n# State scope. The profit pick\'s name and each recipe\'s note on the pick row (pick_row).\n'
           + pick_custom_loc(pick_ui) + (methods_view_custom_loc(mv_keys, pair_ui) if mv_keys else ''))
     if mv_keys:
-        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys, pair_ui))
-        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex, pair_ui), bom=False)
+        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys, pair_ui, ai_of))
+        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex, pair_ui, ai_of), bom=False)
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
@@ -1498,7 +1661,7 @@ def main():
           bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
-    loc += panel_loc(recipe_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui)
+    loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
@@ -2262,6 +2425,13 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     k = len(recipes)
     fold_techs = fold_techs or {}
     slots = list(enumerate(priv_slots(b), 1))
+    # The blend members, each with one share group (pmg_pmr_share_<b>_<j>): recipe i is member i, or with the split
+    # (SPLIT_AUTOMATION) each plain recipe and each automation method, over the retool targets (pairs) using it.
+    split = pair if pair and pair.get('split') else None
+    bm = split['members'] if split else [(i, [i], 'recipe') for i in range(1, k + 1)]
+    nb = len(bm)
+    rec_of = {i: j for j, idxs, grp in bm if grp == 'recipe' for i in idxs}   # target -> its recipe member
+    sv = 'pmr_rs' if split else 'pmr_sh'   # a member's share of the levels
 
     def slot_here(j):
         # the abroad slot only where the player owns levels abroad, the home slots everywhere else (ABROAD_SLOT);
@@ -2337,29 +2507,40 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # pmr_a_<i>: the step the tick wants (pmr_n_<i>) if that share method runs, else -1. Read before
     # the blend to see what must change, and after it for the log.
     o.append(f'pmr_read_blend_{b} = {{\n')
-    for i in range(1, k + 1):
+    for i in range(1, nb + 1):
         o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
                  + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}', '\t'))
     o.append('}\n\n')
 
-    # pmr_lock_<i>_<b>: recipe i's lock onto the step the tick wants.
-    for i in range(1, k + 1):
+    # pmr_lock_<i>_<b>: member i's lock onto the step the tick wants.
+    for i in range(1, nb + 1):
         o.append(f'pmr_lock_{i}_{b} = {{\n'
                  + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("key", i, n), '\t') + '}\n\n')
 
+    def step(i, cum):
+        # member i's share in steps, never past what is left of the whole (SHARE_STEPS less cum)
+        return (f'\t\t{setv(f"pmr_n_{i}", "var:" + v(f"{sv}_{i}"))}\n'
+                f'\t\t{chg(f"pmr_n_{i}", "multiply", SHARE_STEPS)}\n'
+                f'\t\tround_variable = {{ name = {v(f"pmr_n_{i}")} nearest = 1 }}\n'
+                f'\t\t{setv("pmr_nrest", SHARE_STEPS)}\n'
+                f'\t\t{chg("pmr_nrest", "subtract", "var:" + v(cum))}\n'
+                f'\t\tif = {{ limit = {{ var:{v(f"pmr_n_{i}")} > var:{v("pmr_nrest")} }} {setv(f"pmr_n_{i}", "var:" + v("pmr_nrest"))} }}\n'
+                f'\t\t{chg(cum, "add", "var:" + v(f"pmr_n_{i}"))}\n')
     o.append(f'pmr_blend_{b} = {{\n\t{setv("pmr_ncum", 0)}\n')
-    for i in range(1, k + 1):
-        o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:{v("pmr_to")} = {i} }} }}\n'
-                 f'\t\t{setv(f"pmr_n_{i}", "var:" + v(f"pmr_sh_{i}"))}\n'
-                 f'\t\t{chg(f"pmr_n_{i}", "multiply", SHARE_STEPS)}\n'
-                 f'\t\tround_variable = {{ name = {v(f"pmr_n_{i}")} nearest = 1 }}\n'
-                 f'\t\t{setv("pmr_nrest", SHARE_STEPS)}\n'
-                 f'\t\t{chg("pmr_nrest", "subtract", "var:" + v("pmr_ncum"))}\n'
-                 f'\t\tif = {{ limit = {{ var:{v(f"pmr_n_{i}")} > var:{v("pmr_nrest")} }} {setv(f"pmr_n_{i}", "var:" + v("pmr_nrest"))} }}\n'
-                 f'\t\t{chg("pmr_ncum", "add", "var:" + v(f"pmr_n_{i}"))}\n\t}}\n')
-    o.append(on_index('pmr_to', lambda i: f'{setv(f"pmr_n_{i}", SHARE_STEPS)} {chg(f"pmr_n_{i}", "subtract", "var:" + v("pmr_ncum"))}'))
+    for i, idxs, grp in bm:
+        if grp != 'recipe':
+            continue
+        on_target = (f'var:{v("pmr_to")} = {idxs[0]}' if len(idxs) == 1 else
+                     'OR = { ' + ' '.join(f'var:{v("pmr_to")} = {x}' for x in idxs) + ' }')
+        o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ {on_target} }} }}\n' + step(i, 'pmr_ncum') + '\t}\n')
+    o.append(on_index('pmr_to', lambda i: f'{setv(f"pmr_n_{rec_of[i]}", SHARE_STEPS)} '
+                                          f'{chg(f"pmr_n_{rec_of[i]}", "subtract", "var:" + v("pmr_ncum"))}'))
+    # automation members (the split): each its own share, rounded, the methods of one group never past the whole
+    for grp in dict.fromkeys(grp for _, _, grp in bm if grp != 'recipe'):
+        o.append(f'\t# {grp}\n\t{setv("pmr_gcum", 0)}\n'
+                 + ''.join(step(i, 'pmr_gcum') for i, _, g2 in bm if g2 == grp))
     o.append(f'\tpmr_read_blend_{b} = yes\n')
-    for i in range(1, k + 1):
+    for i in range(1, nb + 1):
         o.append(f'\t# recipe {i}: if its share is not the one wanted, unlock every share, switch, lock again;\n'
                  '\t# if only the lock moved (the AI took the switching lock), lock again\n'
                  f'\tif = {{\n\t\tlimit = {{ var:{v(f"pmr_a_{i}")} = -1 }}\n'
@@ -2578,6 +2759,14 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + '\t# privately owned levels per recipe, for the Owners list\n'
              + ''.join(f'\t{setv(f"pmr_lvp_{i}", "var:" + lv(i))}\n\t{chg(f"pmr_lvp_{i}", "subtract", "var:" + lvg(i))}\n'
                        for i in range(1, k + 1))
+             + ('\t# the split: each member\'s share (the blend, the bars), and each plain recipe\'s levels (the Owners list)\n'
+                + ''.join(f'\t{setv(f"pmr_rs_{j}", 0)}\n'
+                          + ''.join(f'\t{chg(f"pmr_rs_{j}", "add", "var:" + v(f"pmr_sh_{i}"))}\n' for i in idxs)
+                          + (f'\t{setv(f"pmr_rlvg_{j}", 0)}\n\t{setv(f"pmr_rlvp_{j}", 0)}\n'
+                             + ''.join(f'\t{chg(f"pmr_rlvg_{j}", "add", "var:" + lvg(i))}\n'
+                                       f'\t{chg(f"pmr_rlvp_{j}", "add", "var:" + v(f"pmr_lvp_{i}"))}\n' for i in idxs)
+                             if grp == 'recipe' else '')
+                          for j, idxs, grp in bm) if split else '')
              + f'\tif = {{ limit = {{ var:{v("pmr_need")} > 0 }} {setv("pmr_ui_retooling", 1)} }}\n'
              f'\telse = {{ {setv("pmr_ui_retooling", 0)} }}\n'
              '}\n\n')
@@ -2767,8 +2956,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         return f"[THIS.Var('{v(name)}').GetValue|{d}]"
     # blend: each recipe's share of the levels in steps of 1/SHARE_STEPS, as the tick set it;
     # active: the step each recipe's share group runs as the game reports it, -1 if none
-    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, k + 1))
-           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, k + 1)))
+    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, nb + 1))
+           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, nb + 1)))
     best = f";best={f('pmr_best_now')}" + mix
     split = mix + (f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}"
              f";share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}"
@@ -2945,7 +3134,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                        f'\t\tchange_variable = {{ name = pmr_c_sh_{i}_{b} divide = var:pmr_c_level_{b} }}\n'
                        for i in range(1, k + 1))
              + '\t}\n'
-             f'\tif = {{ limit = {{ var:pmr_c_need_{b} > 0 }} set_variable = {{ name = pmr_c_retooling_{b} value = 1 }} }}\n'
+             # the split: each plain recipe's share across the country, for the Buildings tab's bar
+             + ''.join(f'\tset_variable = {{ name = pmr_c_rs_{j}_{b} value = 0 }}\n'
+                       + ''.join(f'\tchange_variable = {{ name = pmr_c_rs_{j}_{b} add = var:pmr_c_sh_{i}_{b} }}\n' for i in idxs)
+                       for j, idxs, grp in (bm if split else []) if grp == 'recipe')
+             + f'\tif = {{ limit = {{ var:pmr_c_need_{b} > 0 }} set_variable = {{ name = pmr_c_retooling_{b} value = 1 }} }}\n'
              f'\telse = {{ set_variable = {{ name = pmr_c_retooling_{b} value = 0 }} }}\n'
              '}\n\n')
 
@@ -3075,8 +3268,9 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
             f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
             f"wage={var('pmr_wage')};rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
             f"can={per('pmr_rav')};veto={per('pmr_rveto')};"
-            + (f"pair={var(v('pmr_cbi'))}x{var(v('pmr_cba'))};cp="
-               + '/'.join(var(f'pmr_cp_{i}_{a}_{b}', 1) for i, a in sorted(pair['econ'])) + ';' if pair else '')
+            + (f"pair={var(v('pmr_cbi'))}x{var(v('pmr_cba'))};"
+               + ('' if pair.get('split') else
+                  'cp=' + '/'.join(var(f'pmr_cp_{i}_{a}_{b}', 1) for i, a in sorted(pair['econ'])) + ';') if pair else '')
             + 'px='
             + ','.join(f"{g}:{var('pmr_px_' + g, 2)}" for g in goods))
     spread = ' '.join(f'1 = {{ set_variable = {{ name = pmr_pchk_{b} value = yes days = {d} }} }}'
@@ -3111,6 +3305,19 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
                            not retooled to (the fold still decides what levels run)"""
     if not pair:
         return ''
+    if pair.get('split'):
+        # The pairs are the retool targets (SPLIT_AUTOMATION): the grid shows the pick's own figures, and its gold
+        # cell is the pick. A pair that can't run or is skipped at the price cap reads as unavailable.
+        o = [f'\t# recipe + automation pairs: the retool targets\' figures (pair_effect)\n'
+             f'\t{setv("pmr_cbi", 0)}\n\t{setv("pmr_cba", 0)}\n']
+        for (i, a), x in sorted(pair['index'].items()):
+            cp, cav = f'pmr_cp_{i}_{a}_{b}', f'pmr_cav_{i}_{a}_{b}'
+            o.append(f'\tset_variable = {{ name = {cp} value = var:pmr_rm_{x}_{b} }}\n'
+                     f'\tset_variable = {{ name = {cav} value = 0 }}\n'
+                     f'\tif = {{ limit = {{ var:pmr_rav_{x}_{b} = 1 var:pmr_rveto_{x}_{b} = 0 }} '
+                     f'set_variable = {{ name = {cav} value = 1 }} }}\n'
+                     f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {x} }} {setv("pmr_cbi", i)} {setv("pmr_cba", a)} }}\n')
+        return ''.join(o)
     o = [f'\t# recipe + automation pairs (pair_effect)\n\t{setv("pmr_cbi", 0)}\n\t{setv("pmr_cba", 0)}\n'
          '\tset_variable = { name = pmr_pv value = -1000000 }\n']
     for (i, a), (gd, wu) in sorted(pair['econ'].items()):
@@ -3517,8 +3724,10 @@ COMPAT_SKIP = ('common/history/', 'common/buildings/', 'common/production_method
 COMPAT_TRIGGERS = 'common/scripted_triggers/00_00_pmr_vanilla_compat_triggers.txt'   # sorts before 00_scripted_triggers
 
 
-def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop_base):
+def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop_base, split_info=None):
     """Returns (scripted triggers, {published path: shadowed vanilla file}, [report lines])."""
+    split_info = split_info or {}
+
     def kind(p, g):
         if p == groups[g][0]:
             return 'none'
@@ -3527,10 +3736,13 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
     recipes_of = {t[0]: t[3] for t in treated}
     runs = {}   # method -> [(building, [recipe indices on which a method of its kind runs])]
     for bk, ags in auto_groups_of.items():
-        for g in ags:
+        sp = split_info.get(bk)
+        for gpos, g in enumerate(ags):
             plain = [p for p in groups[g] if not Recipe(p, *pms[p]).needs(ELECTRICITY)]
             on = []   # the method of group g each recipe runs, by recipe index
-            for i, r in enumerate(recipes_of[bk], 1):
+            if sp:    # the split: each pair runs its option's method of group g
+                on = [(x, sp['options'][a - 1][gpos].key) for (ri, a), x in sorted(sp['index'].items())]
+            for i, r in enumerate([] if sp else recipes_of[bk], 1):
                 if isinstance(r, ElectricRecipe):
                     on.append((i, groups[g][-1]))
                 else:
@@ -3538,6 +3750,13 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
             for p in groups[g]:
                 k = kind(p, g)
                 runs.setdefault(p, []).append((bk, [i for i, q in on if kind(q, g) == k]))
+    # With the split a recipe of such a building is the marker of (recipe, no automation) only: a check on it means
+    # any pair built on it.
+    alias = {}
+    for bk, sp in split_info.items():
+        for r in sp['pairs']:
+            if isinstance(r, PairRecipe):
+                alias.setdefault(r.base.key, [r.base.key]).append(r.key)
     folded_bks = set(auto_groups_of)
     pm_users = {}
     for g, lst in groups.items():
@@ -3550,7 +3769,7 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
     def walk(src, nodes, rel):
         for n in nodes:
             if not n.is_block:
-                if n.key == 'has_active_production_method' and (n.value in runs or n.value in drop_base):
+                if n.key == 'has_active_production_method' and (n.value in runs or n.value in drop_base or n.value in alias):
                     rep = (f'has_active_production_method = {drop_base[n.value]}' if n.value in drop_base
                            else f'pmr_has_{n.value} = yes')
                     used.add(n.value)
@@ -3562,7 +3781,7 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
                 p, b = kv.get('production_method'), kv.get('building_type')
                 if p in drop_base:
                     rep = f'is_production_method_active = {{ building_type = {b} production_method = {drop_base[p]} }}'
-                elif p in runs:
+                elif p in runs or p in alias:
                     rep = f'AND = {{ has_building = {b} b:{b} = {{ pmr_has_{p} = yes }} }}'
                 else:
                     continue
@@ -3572,7 +3791,7 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
                 continue
             walk(src, n.value, rel)
 
-    names = set(runs) | set(drop_base)
+    names = set(runs) | set(drop_base) | set(alias)
     for top in COMPAT_DIRS:
         for root, _, fs in os.walk(os.path.join(game, top)):
             for fn in sorted(fs):
@@ -3603,11 +3822,19 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
     for p in sorted(used & set(runs)):
         alts = [f'\t\thas_active_production_method = {p}\n'] if p in still else []
         for bk, idx in runs[p]:
-            if idx:
+            if idx and bk in split_info:
+                # the split: a level on a pair whose option runs a method of p's kind (pmr_lv_<i>_<b>, the state's)
+                lvs = [f'pmr_lv_{i}_{short(bk)}' for i in idx]
+                alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tstate = {{ OR = {{ '
+                            + ' '.join(f'AND = {{ has_variable = {x} var:{x} > 0 }}' for x in lvs) + ' } }\n\t\t}\n')
+            elif idx:
                 alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tOR = {{ '
                             + ' '.join(f'NOT = {{ has_active_production_method = pm_pmr_share_{short(bk)}_{i}_0 }}'
                                        for i in idx) + ' }\n\t\t}\n')
         trig.append(f'pmr_has_{p} = {{\n' + (f'\tOR = {{\n{"".join(alts)}\t}}\n' if alts else '\talways = no\n') + '}\n\n')
+    for p in sorted(used & set(alias)):
+        trig.append(f'pmr_has_{p} = {{\n\tOR = {{\n'
+                    + ''.join(f'\t\thas_active_production_method = {x}\n' for x in alias[p]) + '\t}\n}\n\n')
     return ''.join(trig), files, lines
 
 
@@ -3686,7 +3913,7 @@ def stacked_bar(b, textures, size, icon, ind, var=None, tips=None):
     slices = []
     for i, tex in enumerate(textures, 1):
         name, rgb = TIER_COLORS[i - 1]
-        sh = var(f'pmr_sh_{i}')
+        sh = var(f'{"pmr_rs" if b in SPLIT_BARS else "pmr_sh"}_{i}')
         slices.append((f'tier {i}, {name.lower()}', f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint)0')",
                        f"FixedPointToInt(Multiply_CFixedPoint({sh}, '(CFixedPoint)100'))",
                        f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint){RECIPE_ICON_SHARE}')", rgb, tex))
@@ -3935,14 +4162,17 @@ def mv_read(name):
     return f"{MV_COUNTRY}.MakeScope.Var('{name}').GetValue"
 
 
-def methods_view_effects(recipe_keys, pair_ui=None):
-    """Country scope: pmr_mv_<b> per building type and pmr_mv_refresh for all of them."""
-    pair_ui = pair_ui or {}
+def methods_view_effects(recipe_keys, pair_ui=None, ai=None):
+    """Country scope: pmr_mv_<b> per building type and pmr_mv_refresh for all of them. ai: the types with an AI value
+    (private_investment.ai_groups), copied from the same state as pmr_mv_aiv_<b> and its vanilla base as pmr_mv_aib_<b>."""
+    pair_ui, ai = pair_ui or {}, ai or {}
     o = ['# Country scope. The Buildings panel\'s Owners\' Methods tab (methods_view_effects in generate.py).\n\n']
     for bk, keys in recipe_keys.items():
         b, k = short(bk), len(keys)
-        per = [f'pmr_rm_{i}_{b}' for i in range(1, k + 1)] + [f'pmr_rav_{i}_{b}' for i in range(1, k + 1)] \
-            + [f'pmr_rveto_{i}_{b}' for i in range(1, k + 1)] + [f'pmr_pbest_{b}']
+        split = pair_ui.get(bk, {}).get('split')
+        per = ([] if split else   # with the split the grid shows the targets' own figures (pair_effect)
+               [f'pmr_rm_{i}_{b}' for i in range(1, k + 1)] + [f'pmr_rav_{i}_{b}' for i in range(1, k + 1)]
+               + [f'pmr_rveto_{i}_{b}' for i in range(1, k + 1)]) + [f'pmr_pbest_{b}']
         if bk in pair_ui:
             per += [f'pmr_{x}_{i}_{a}_{b}' for i, a in sorted(pair_ui[bk]['econ']) for x in ('cp', 'cav')] \
                 + [f'pmr_cbi_{b}', f'pmr_cba_{b}']
@@ -3957,9 +4187,13 @@ def methods_view_effects(recipe_keys, pair_ui=None):
                  + ''.join(f'\t\tif = {{ limit = {{ var:pmr_pbest_{b} = {i} }} '
                            f'owner = {{ change_variable = {{ name = pmr_mv_ps_{i}_{b} add = scope:pmr_st.var:pmr_level_{b} }} }} }}\n'
                            for i in range(1, k + 1))
-                 + f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_level_{b} > scope:pmr_ctry.var:pmr_mv_max_{b} }}\n\t\t\towner = {{\n'
+                 + f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_level_{b} > scope:pmr_ctry.var:pmr_mv_max_{b} }}\n'
+                 + (f'\t\t\tset_variable = {{ name = pmr_mv_aiv_{b} value = pmr_ai_value_{b} }}\n'
+                    f'\t\t\tset_variable = {{ name = pmr_mv_aib_{b} value = pmr_ai_base_{b} }}\n' if bk in ai else '')
+                 + f'\t\t\towner = {{\n'
                  f'\t\t\t\tset_variable = {{ name = pmr_mv_max_{b} value = scope:pmr_st.var:pmr_level_{b} }}\n'
-                 + ''.join(f'\t\t\t\tset_variable = {{ name = {n} value = scope:pmr_st.var:{n} }}\n' for n in per)
+                 + ''.join(f'\t\t\t\tset_variable = {{ name = {n} value = scope:pmr_st.var:{n} }}\n'
+                           for n in per + ([f'pmr_mv_aiv_{b}', f'pmr_mv_aib_{b}'] if bk in ai else []))
                  + '\t\t\t}\n\t\t}\n\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 }}\n'
                  + ''.join(f'\t\tchange_variable = {{ name = pmr_mv_ps_{i}_{b} divide = var:pmr_mv_lv_{b} }}\n'
@@ -3978,22 +4212,47 @@ def pair_options(bk, pair):
     return out
 
 
-def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None):
+def ai_cell(bk, group, ind):
+    """Pat, 2026-10-18 18:40Z: what the AI weighs a building type by, beside its row: its AI value (pmr_ai_value_<b>,
+    vanilla's with the policy and foreign-or-domestic additions) at the state the row's prices come from, and the
+    multiplier its priority group's slider gives (pmr_ipw_<group>)."""
+    b = short(bk)
+    i1, i2 = ind + '\t', ind + '\t\t'
+    mult = f"{MV_COUNTRY}.MakeScope.ScriptValue('{private_investment.VAR.format(group)}')"
+    return (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}parentanchor = vcenter\n{i1}minimumsize = {{ 170 -1 }}\n'
+            f'{i1}margin = {{ 10 6 }}\n{i1}spacing = 2\n{i1}background = {{\n{i2}using = entry_bg\n{i1}}}\n'
+            f'{i1}tooltip = "PMR_MV_AI_TT_{b}"\n{i1}using = tooltip_above\n'
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_small\n'
+            f'{i2}text = "PMR_MV_AI_LABEL"\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_large\n'
+            f'{i2}raw_text = "#bold [{mv_read(f"pmr_mv_aiv_{b}")}|0]#! x[{mult}|2]"\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_small\n'
+            f'{i2}text = "PMR_IPW_GROUP_{group}"\n{i1}}}\n{ind}}}\n')
+
+
+def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None):
     """Each building type the player has: its recipe row (what new levels and retooling follow) and, where the type
-    folds automation, the recipe x automation grid beside it (Pat, 2026-10-18 18:17Z)."""
-    pair_ui = pair_ui or {}
+    folds automation, the recipe x automation grid beside it (Pat, 2026-10-18 18:17Z), then its AI weight (ai_cell)."""
+    pair_ui, ai = pair_ui or {}, ai or {}
     rows = ''
     for bk, keys in recipe_keys.items():
         b = short(bk)
+        pr = pair_ui.get(bk)
         rows += (f'\t\tflowcontainer = {{\n\t\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
-                 '\t\t\tspacing = 8\n'
-                 + methods_row.methods_row(bk, list(zip(keys, recipe_tex[bk])), mv_read,
-                                           lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t'))
-        if bk in pair_ui:
-            pr = pair_ui[bk]
+                 '\t\t\tspacing = 8\n')
+        if pr and pr.get('split'):
+            # the recipe + automation pairs are the targets (SPLIT_AUTOMATION): the building's icon, then the grid
+            rows += methods_row.type_icon(bk, '\t\t\t')
+        else:
+            rows += methods_row.methods_row(bk, list(zip(keys, recipe_tex[bk])), mv_read,
+                                            lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t')
+        if pr:
+            names = pr.get('keys') or recipe_keys[bk]
             rows += methods_row.pairs_grid(
                 bk, [(i, recipe_tex[bk][i - 1]) for i in pr['recipes']], pair_options(bk, pr), mv_read,
-                lambda i, a, b=b: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{recipe_keys[bk][i - 1]}', '\t\t\t')
+                lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', '\t\t\t')
+        if bk in ai:
+            rows += ai_cell(bk, ai[bk], '\t\t\t')
         rows += '\t\t}\n'
     return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The Buildings panel\'s Owners\' Methods tab;\n'
             '# rows by tools/pmr/methods_row.py, shared with the Company Culture tab.\n'
@@ -4014,6 +4273,8 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
                        '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     for bk, keys in recipe_keys.items():
         b = short(bk)
+        if (pair_ui or {}).get(bk, {}).get('split'):
+            continue   # no recipe row (methods_view_gui)
         for i in range(1, len(keys) + 1):
             out.append(f'pmr_mvnote_{b}_{i} = {{\n\ttype = country\n\trandom_valid = no\n'
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = PMR_PICK_NOTE_BEST\n\t}}\n'
@@ -4023,31 +4284,49 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
     return ''.join(out)
 
 
-def methods_view_loc(recipe_keys, pair_ui=None):
+def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
     loc = [' PMR_MV_HEADER:0 "Private Owners\' Methods"',
+           ' PMR_MV_AI_LABEL:0 "AI weight"',
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
            ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
-           ' PMR_MV_PAIRS:0 "Where a building type has automation, the grid beside it scores every recipe (columns) with '
-           'every automation (rows) at the same prices; gold marks the most profitable combination. Retooling still '
-           'follows the recipe row for now."',
+           ' PMR_MV_PAIRS:0 "Where a building type has automation, the grid scores every recipe (columns) with '
+           'every automation (rows) at the same prices; gold marks the most profitable combination, which new levels '
+           'and retooling follow."',
            ' PMR_MV_INTRO:0 "Financial districts and manor houses build and retool to the most profitable recipe of each '
            'state. Each row is a building type at the prices of your state with the most levels of it, as of its last check."']
     for bk, keys in recipe_keys.items():
         b = short(bk)
+        if (pair_ui or {}).get(bk, {}).get('split'):
+            continue   # no recipe row (methods_view_gui)
         for i, key in enumerate(keys, 1):
             lines = methods_row.recipe_tip_lines(bk, i, key, mv_read, f"[{MV_COUNTRY}.GetCustom('pmr_mvnote_{b}_{i}')]")
             lines += [f"Picked in states holding #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#! of your levels",
                       f"Running on #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#! of your levels"]
             loc.append(f' PMR_MV_TIP_{b}_{i}:0 "' + '\\n'.join(lines) + '"')
+    for bk, group in (ai or {}).items():
+        if bk not in recipe_keys:
+            continue
+        b = short(bk)
+        mult = f"{MV_COUNTRY}.MakeScope.ScriptValue('{private_investment.VAR.format(group)}')"
+        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold What investors weigh ${bk}$ by#!\\n'
+                   f"AI value: #bold [{mv_read(f'pmr_mv_aiv_{b}')}|0]#! (the building's own: [{mv_read(f'pmr_mv_aib_{b}')}|0]), "
+                   'with your economic policy and the foreign or domestic bar, at the state the row\'s prices come from.\\n'
+                   f'Investment priority: #bold x[{mult}|2]#! from the $PMR_IPW_GROUP_{group}$ slider.\\n\\n'
+                   'Financial districts and manor houses rank what to build by these with each building\'s profitability."')
     for bk, pr in (pair_ui or {}).items():
         b = short(bk)
         for a, opt in enumerate(pr['options'], 1):
             on = [m for m in opt if m.blend or m.employment] or opt
             loc.append(f' PMR_MVA_{b}_{a}:0 "' + ' + '.join(f'${m.key}$' for m in on) + '"')
+        names = pr.get('keys') or recipe_keys[bk]
         for i, a in sorted(pr['econ']):
-            loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${recipe_keys[bk][i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!\\n'
+            # with the split each cell is a retool target: how much of the country picks it, and runs it
+            more = (f"\\nPicked in states holding #bold [{mv_read(f'pmr_mv_ps_{pr['index'][(i, a)]}_{b}')}|%0]#! of your levels"
+                    f"\\nRunning on #bold [{mv_read(f'pmr_c_sh_{pr['index'][(i, a)]}_{b}')}|%0]#! of your levels"
+                    if pr.get('split') else '')
+            loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${names[i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!\\n'
                        f"@money![{mv_read(f'pmr_cp_{i}_{a}_{b}')}|0] per level a week"
-                       f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]\"")
+                       f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]{more}\"")
     return loc
 
 
@@ -4200,15 +4479,15 @@ def owners_cell(bk, textures):
     government retools its own with the upgrade button (Pat 21:26Z); private rows show pmr_lvp_*."""
     b = short(bk)
     abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
+    lvg, lvp = ('pmr_rlvg', 'pmr_rlvp') if b in SPLIT_BARS else ('pmr_lvg', 'pmr_lvp')   # by plain recipe with the split
     rows = []
     for side, gov in (('gov', True), ('priv', False)):
         who = 'BuildingOwnership.IsCountryOwned' if gov else 'Not(BuildingOwnership.IsCountryOwned)'
 
         def shown(i):
-            lvp = f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvp_{i}')}, '(CFixedPoint)0')"
             if not gov:
-                return lvp
-            return f"GreaterThan_CFixedPoint({state_var(b, f'pmr_lvg_{i}')}, '(CFixedPoint)0')"
+                return f"GreaterThan_CFixedPoint({state_var(b, f'{lvp}_{i}')}, '(CFixedPoint)0')"
+            return f"GreaterThan_CFixedPoint({state_var(b, f'{lvg}_{i}')}, '(CFixedPoint)0')"
         icons = ''.join(
             '\t\t\t\t\t\t\t\t\ticon = {\n'
             f'\t\t\t\t\t\t\t\t\t\tvisible = "[{shown(i)}]"\n'
@@ -4312,7 +4591,8 @@ MV_TAB = 'pmr_bb_mv'   # GetVariableSystem flag: the Buildings panel shows the O
 
 def patch_browser_tabs(text, on):
     """building_browser_panel.gui (Pat, 2026-10-18 18:17Z): a tab heading over the Buildings panel, Buildings (vanilla's
-    list) and Private Owners' Methods (gui/pmr_methods_view.gui, recounted by pmr_mv_refresh_sgui as it is clicked).
+    list) and Private Owners' Methods (gui/pmr_methods_view.gui, recounted by pmr_mv_refresh_sgui as it is clicked),
+    topped by the economic policy and investment priorities (Pat 18:40Z, moved from the construction panel's Private tab).
     The panel is a fullscreen_block_window, whose fixed_top block is empty in vanilla; the tabs are vanilla's
     tab_buttons switched by a GetVariableSystem flag (MV_TAB), and the scroll area's two rows hide while it is set."""
     if not on:
@@ -4325,6 +4605,7 @@ def patch_browser_tabs(text, on):
         text = text.replace(old, new)
     shown, hidden = f"GetVariableSystem.Exists('{MV_TAB}')", f"Not(GetVariableSystem.Exists('{MV_TAB}'))"
     refresh = "GetScriptedGui('pmr_mv_refresh_sgui').Execute(GuiScope.SetRoot(GetPlayer.MakeScope).End)"
+    pick_off = f"GetVariableSystem.Clear('{private_investment.PICK}')"   # the policy window starts closed
     t = '\t\t\t\t'
 
     def tab(n, key, click, sel):
@@ -4336,8 +4617,8 @@ def patch_browser_tabs(text, on):
                 f'{t}blockoverride "{n}_button_selected" {{\n{t}\ttext = "{key}"\n{t}}}\n')
     tabs = ('\t\t# PMR: Buildings / Private Owners\' Methods tabs (patch_browser_tabs)\n'
             '\t\tblockoverride "fixed_top" {\n\t\t\ttab_buttons = {\n'
-            + tab('first', 'PMR_BB_TAB_BUILDINGS', [f"GetVariableSystem.Clear('{MV_TAB}')"], hidden)
-            + tab('second', 'PMR_MV_HEADER', [f"GetVariableSystem.Set('{MV_TAB}', 'yes')", refresh], shown)
+            + tab('first', 'PMR_BB_TAB_BUILDINGS', [f"GetVariableSystem.Clear('{MV_TAB}')", pick_off], hidden)
+            + tab('second', 'PMR_MV_HEADER', [f"GetVariableSystem.Set('{MV_TAB}', 'yes')", refresh, pick_off], shown)
             + '\t\t\t}\n\t\t}\n\n')
     once('\t\tblockoverride "scrollarea_content" {\n\t\t\tvbox = {\n',
          tabs + '\t\tblockoverride "scrollarea_content" {\n\t\t\tvbox = {\n')
@@ -4352,6 +4633,9 @@ def patch_browser_tabs(text, on):
     view = (f'\t\t\t\t# PMR: the Owners\' Methods tab\n\t\t\t\tvbox = {{\n\t\t\t\t\tvisible = "[{shown}]"\n'
             '\t\t\t\t\tlayoutpolicy_horizontal = expanding\n\t\t\t\t\tlayoutpolicy_vertical = expanding\n'
             '\t\t\t\t\tmargin = { 20 10 }\n\t\t\t\t\tspacing = 8\n'
+            # Pat, 2026-10-18 18:40Z: the economic law, policy and investment priorities at the top
+            # (private_investment.policy_block)
+            '\t\t\t\t\tpmr_policy_block = {}\n'
             + ''.join('\t\t\t\t\ttextbox = {\n\t\t\t\t\t\tlayoutpolicy_horizontal = expanding\n'
                       '\t\t\t\t\t\tmaximumsize = { 1100 -1 }\n\t\t\t\t\t\tautoresize = yes\n\t\t\t\t\t\tmultiline = yes\n'
                       f'\t\t\t\t\t\talign = left|nobaseline\n\t\t\t\t\t\ttext = "{k}"\n\t\t\t\t\t}}\n'
@@ -4531,8 +4815,9 @@ def panel_loc(recipe_keys):
 
         def var(name, f):
             return f"[Building.GetState.MakeScope.Var('{name}_{b}').GetValue|{f}]"
-        # Pat, 2026-10-13: no colour names, and short.
-        tiers = ''.join(f'\\n${key}$: #bold {var(f"pmr_sh_{i}", "%0")}#!' for i, key in enumerate(keys, 1))
+        # Pat, 2026-10-13: no colour names, and short. With the split, by plain recipe (SPLIT_BARS).
+        sh, lvg, lvp = ('pmr_rs', 'pmr_rlvg', 'pmr_rlvp') if b in SPLIT_BARS else ('pmr_sh', 'pmr_lvg', 'pmr_lvp')
+        tiers = ''.join(f'\\n${key}$: #bold {var(f"{sh}_{i}", "%0")}#!' for i, key in enumerate(keys, 1))
         gov = (f'Government: #bold {var("pmr_pending_gov", "0")}#! queued, room for #bold {var("pmr_room_gov", "0")}#!.')
         loc += [
             f' PMR_RECIPE_BAR_TITLE_RETOOLING_{b}:0 "#bold {var("pmr_p", "%0")}#! on #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
@@ -4549,18 +4834,18 @@ def panel_loc(recipe_keys):
             f'\\n\\nOnly the levels your own government owns here. Another government\'s levels are not retooled, and privately owned levels are retooled by their investors.'
             f'\\n\\nUnavailable when your government\'s levels here already run the new recipe or are all queued, the new recipe needs electricity and this state produces none, or you may not build in this country."',
             f' PMR_OWNERS_GOV_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvg_{i}", "0")}#!' for i, key in enumerate(keys, 1)) + '"',
+            + ''.join(f'\\n${key}$: #bold {var(f"{lvg}_{i}", "0")}#!' for i, key in enumerate(keys, 1)) + '"',
             f' PMR_OWNERS_PRIV_TOOLTIP_{b}:0 "#bold Privately owned levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvp_{i}", "0")}#!' for i, key in enumerate(keys, 1))
+            + ''.join(f'\\n${key}$: #bold {var(f"{lvp}_{i}", "0")}#!' for i, key in enumerate(keys, 1))
             + '\\n\\nAll private owners together: retooling is tracked for the government and for private owners, not owner by owner."',
             f' PMR_OWNERS_ABROAD_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"pmr_lvg_{i}", "0")}#!' for i, key in enumerate(keys, 1))
+            + ''.join(f'\\n${key}$: #bold {var(f"{lvg}_{i}", "0")}#!' for i, key in enumerate(keys, 1))
             + '\\n\\nAbroad every government\'s levels are counted together. Your government retools its own levels here with the upgrade button; another government\'s levels are not retooled, and your investors retool only privately owned levels."',
         ]
 
         def cvar(name, f):
             return f"[GetPlayer.MakeScope.Var('{name}_{b}').GetValue|{f}]"
-        ctiers = ''.join(f'\\n${key}$: #bold {cvar(f"pmr_c_sh_{i}", "%0")}#!' for i, key in enumerate(keys, 1))
+        ctiers = ''.join(f'\\n${key}$: #bold {cvar(c_name(f"{sh}_{i}"), "%0")}#!' for i, key in enumerate(keys, 1))
         loc += [
             f' PMR_CBAR_TOOLTIP_{b}:0 "#bold Levels by recipe, at home and abroad#!{ctiers}'
             f'\\n\\n#bold {cvar("pmr_c_level", "0")}#! levels at home and in buildings abroad your investors own part of, #bold {cvar("pmr_c_need", "0")}#! still to retool.'
