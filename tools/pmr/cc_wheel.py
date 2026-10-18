@@ -399,7 +399,7 @@ def node(p, ln, t, x, y, cands):
     # a goods line's good, in a round badge on the card's top right corner
     if ln.goods:
         goods = ''.join(f'icon = {{\n{_vis(EQ(f"pmr_cc_k_g{ln.goods}g", cc.gi(p, g)))}position = {{ 4 4 }}\nsize = {{ 44 44 }}\n'
-                        f'texture = "gfx/interface/icons/goods_icons/{g}.dds"\nalwaystransparent = yes\n}}\n'
+                        f'texture = "{p.goods_tex.get(g, f"gfx/interface/icons/goods_icons/{g}.dds")}"\nalwaystransparent = yes\n}}\n'
                         for g in cands[ln.goods][1])
         out += (f'widget = {{\nposition = {{ {NODE_W - 64} -26 }}\nsize = {{ 52 52 }}\n'
                 f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\nalwaystransparent = yes\n}}\n{goods}}}\n')

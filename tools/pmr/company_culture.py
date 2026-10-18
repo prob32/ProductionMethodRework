@@ -420,15 +420,17 @@ class Plan:
         self.comp = {}         # company -> dict of its numbers (see plan())
         self.goods = []        # every good a company variable names, 1-based
         self.ae_values = []    # every Up-skilling engineer count
+        self.goods_tex = {}     # good -> its icon (vanilla's goods texture)
 
 
-def plan(game, plain, goods_cost):
+def plan(game, plain, goods_cost, goods_tex=None):
     """plain: building -> its plain PMR recipes (generate.Recipe). Picks each company's goods lines (the building types
     making its top two output goods by value), Supply goods (its top two input goods), Up-skilling names and engineer
     counts, and the works spec of every goods-line building."""
     comps = companies(game)
     groups = building_groups(game)
     p = Plan()
+    p.goods_tex = dict(goods_tex or {})
 
     def avg(rs, attr):
         tot = {}
@@ -631,12 +633,61 @@ def traits(p):
     return '\n'.join(out)
 
 
-def modifier_types(p):
+GOODS_MULT = re.compile(r'goods_(input|output)_\w+_mult')
+
+
+def goods_mults(p):
+    """Every goods_input/output_<good>_mult the traits and the works members use."""
+    used = {k for (_k, _t), mods in GENERIC.items() for k, _v in mods}
+    used |= {k for _key, _i, mods, _w in keyed_traits(p) for k, _v in mods}
+    for bk in p.works:
+        used |= {k for _kind, _m, mods in works_members(p, bk, None) for k in mods}
+    return sorted(k for k in used if GOODS_MULT.fullmatch(k))
+
+
+def vanilla_modifier_types(game):
+    keys = set()
+    for path in glob.glob(os.path.join(game, 'common', 'modifier_type_definitions', '*.txt')):
+        keys |= set(re.findall(r'^(\w+)\s*=\s*\{', open(path, encoding='utf-8-sig').read(), re.M))
+    return keys
+
+
+def goods_mult_loc(p, game):
+    """Names for the goods modifier types modifier_types() adds: vanilla's own name of the matching _add type, as
+    vanilla names building_employment_laborers_mult, so every language reads its own (else the good's name)."""
+    have, names = vanilla_modifier_types(game), set()
+    for path in glob.glob(os.path.join(game, 'localization', 'english', '*.yml')):
+        names |= set(re.findall(r'^ (goods_\w+_add):', open(path, encoding='utf-8-sig').read(), re.M))
+    out = []
+    for k in goods_mults(p):
+        if k in have:
+            continue
+        add = k[:-len('_mult')] + '_add'
+        if add in names:
+            out.append(f' {k}:0 "${add}$"')
+        else:   # vanilla names no _add for this good either: the good and vanilla's Input / Output Goods
+            m = GOODS_MULT.fullmatch(k)
+            g = k[len(f'goods_{m.group(1)}_'):-len('_mult')]
+            out.append(f' {k}:0 "@{g}! ${g}$ ($concept_{m.group(1)}_goods$)"')
+    return out
+
+
+def modifier_types(p, game):
     out = ['# Dynamic modifier types vanilla 1.14.5 does not define (the exe has the pattern building_employment_{}_mult;\n'
            '# the Hudson\'s Bay probe confirmed laborers in game, 2026-10-14).\n']
     for pop in ('laborers', 'engineers'):
         out.append(f'building_employment_{pop}_mult = {{\n\tdecimals = 0\n\tcolor = neutral\n\tpercent = yes\n'
                    '\tgame_data = { ai_value = 0 }\n}\n')
+    have = vanilla_modifier_types(game)
+    if not {'goods_output_hardwood_mult', 'goods_input_tanks_mult'} <= have:
+        fail('common/modifier_type_definitions', 'vanilla\'s goods modifier types not found')
+    out.append('# The per-good input and output multipliers the traits and the works members use: the engine looks them up\n'
+               '# by the pattern goods_input_{}_mult / goods_output_{}_mult, but an undefined one loads empty ("Unknown\n'
+               '# modifier type"). Vanilla defines some; these are the rest, styled as vanilla\'s.\n')
+    for k in goods_mults(p):
+        if k not in have:
+            col = 'good' if k.startswith('goods_output_') else 'bad'
+            out.append(f'{k} = {{\n\tdecimals = 1\n\tcolor = {col}\n\tpercent = yes\n\tgame_data = {{ ai_value = 0 }}\n}}\n')
     out.append('# Works markers (BUILD-SPEC section 4): a company\'s goods-tier trait sets one to 1, and a building reads it\n'
                '# as that company\'s share of its levels (the engine scales executive modifiers by share; q19/q20).\n')
     for bk in sorted(p.works):
@@ -1485,7 +1536,7 @@ def write_all(game, write, header_text, report, p, out_dir):
     pms = pm_info(game)
     rows, untreated, split = method_rows(report, pms, comps)
     write('common/character_traits/pmr_cc_traits.txt', header_text + traits(p))
-    write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + modifier_types(p))
+    write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + modifier_types(p, game))
     write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(p, comps))
     write('common/scripted_triggers/pmr_cc_triggers.txt', header_text + triggers())
     write('common/scripted_guis/pmr_cc_sguis.txt', header_text + sguis())
@@ -1509,4 +1560,4 @@ def write_all(game, write, header_text, report, p, out_dir):
         'method_rows': len(rows), 'untreated': untreated}
     print(f'company culture: {len(p.comp)} companies, {n_traits} traits, {len(p.works)} goods-line buildings '
           f'({sum(1 for v in p.comp.values() if not v["g"])} companies without a goods line), {n_tex} textures')
-    return localization(p, rows, split)
+    return localization(p, rows, split) + goods_mult_loc(p, game)

@@ -1080,7 +1080,7 @@ def main():
     if not args.release:
         cc_plan = company_culture.plan(game, {bk: (split_info[bk]['plain'] if bk in split_info else
                                                    [r for r in recipes if not isinstance(r, ElectricRecipe)])
-                                              for bk, _bn, _s, recipes, _g0, _pg in treated}, goods_cost)
+                                              for bk, _bn, _s, recipes, _g0, _pg in treated}, goods_cost, goods_tex)
         for bk, _bn, s_, recipes, _g0, pg in treated:
             if bk not in cc_plan.works:
                 continue
