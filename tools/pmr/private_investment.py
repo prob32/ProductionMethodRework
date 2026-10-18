@@ -272,9 +272,15 @@ PCARD_W = 300                             # a policy in the policy window: benef
 # Each row of policy cards is as tall as its longest card's text (Pat 19:25Z: the Laissez-faire cards ran out of
 # their fixed 176 px and the status line sat on the effects). A GUI box cannot size itself to wrapped text and
 # keep two cards level, so the height is worked out here from the text: 1.14.5's body font averages 6.9 px a
-# character and 22 px a line (measured on Pat's 19:25Z screenshot), lines wrap at the card's text width.
-PCARD_CHAR_W, PCARD_LINE_H = 6.9, 22
-PCARD_TOP, PCARD_FOOT = 10 + 48 + 6, 6 + 20 + 10    # margin, icon row, spacing / spacing, status line, margin
+# character and 22 px a line in English (measured on Pat's 19:25Z screenshot), lines wrap at the card's text width.
+# A game set to Chinese, Japanese or Korean draws the same English text in its own font, wider and taller: 9.1 px a
+# character and 24 px a line, and a name in the large font 13.3 px a character and 29 px a line, so a long name
+# takes two lines beside the 48 px icon (Pat's Chinese screenshot of 2026-10-18, where Focus on Infrastructure's
+# cost spilled under its card, #3). Rows are sized for that font, the widest the game uses, so no language spills
+# a card; in English the cards keep some room at the bottom.
+PCARD_CHAR_W, PCARD_LINE_H = 9.1, 24
+PCARD_TITLE_CHAR_W, PCARD_TITLE_LINE_H, PCARD_TITLE_W, PCARD_ICON = 13.3, 29, PCARD_W - 84, 48
+PCARD_FOOT = 6 + 20 + 10    # spacing, status line, margin
 PCARD_LOC = {'institution_health_system': 'Health System', 'institution_schools': 'Education',
              'investment_banks': 'Investment Banks'}    # vanilla names, for the estimate only
 MOD_NAMES = {  # how each modifier reads on a policy card (vanilla's names, modifiers.log)
@@ -319,7 +325,7 @@ def benefit_lines(core, mods):
     return '\\n'.join(out)
 
 
-def text_lines(text, width):
+def text_lines(text, width, char_w=PCARD_CHAR_W):
     """How many lines a policy card's text takes at width px: each \\n starts a line, words wrap."""
     text = re.sub(r'#[A-Za-z]+ |#!', '', text)
     text = re.sub(r'\$(\w+)\$', lambda m: PCARD_LOC.get(m.group(1), m.group(1)), text)
@@ -327,7 +333,7 @@ def text_lines(text, width):
     for para in text.split('\\n'):
         line, n = '', n + 1
         for word in para.split():
-            if line and len(line) + 1 + len(word) > width / PCARD_CHAR_W:
+            if line and len(line) + 1 + len(word) > width / char_w:
                 line, n = word, n + 1
             else:
                 line = f'{line} {word}' if line else word
@@ -335,10 +341,12 @@ def text_lines(text, width):
 
 
 def policy_card_h(keys):
-    """The height of a row of policy cards: room for the longest card's benefits and its status line."""
-    by_key = {k: (core, mods) for k, _n, _i, mods, core, *_x in POLICIES}
-    lines = max(text_lines(benefit_lines(*by_key[k]), PCARD_W - 24) for k in keys)
-    return PCARD_TOP + lines * PCARD_LINE_H + PCARD_FOOT
+    """The height of a row of policy cards: room for the longest card's name, benefits and status line."""
+    by_key = {k: (n, core, mods) for k, n, _i, mods, core, *_x in POLICIES}
+    names = max(text_lines(by_key[k][0], PCARD_TITLE_W, PCARD_TITLE_CHAR_W) for k in keys)
+    lines = max(text_lines(benefit_lines(*by_key[k][1:]), PCARD_W - 24) for k in keys)
+    top = 10 + max(PCARD_ICON, names * PCARD_TITLE_LINE_H) + 6    # margin, icon row, spacing
+    return top + lines * PCARD_LINE_H + PCARD_FOOT
 
 
 def fail(where, msg):
