@@ -1,4 +1,4 @@
-# PMR run sheet: new builds and retooling follow the most profitable recipe, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: new builds and retooling follow the most profitable recipe, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,7 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: new builds and retooling follow the most profitable recipe (q21, test mod; a new game is best)
+## Latest: new builds and retooling follow the most profitable recipe, and a green automation bar (q21, test mod; a new game is best)
 
 From the PM rework thread (dev 0167f30, your 17:14Z message): a building's target is no longer simply the newest
 recipe it can run. Each recipe is valued per level per week at the state's prices, with wages at the 1836 reference
@@ -29,6 +29,15 @@ building changes what can run, and on a staggered yearly re-check; every other t
 | No `PMR;rec=PROFIT` lines at all | The pick never recomputes, so it isn't driving anything |
 | Lines at game start but none after a production technology finishes | Research doesn't trigger a recompute; the pick goes stale until the yearly re-check |
 | `pick=0` on buildings that clearly run | No recipe counted as runnable or every one was vetoed; send the line |
+
+**Also in q21: a green automation bar** (dev f860857, your 17:15Z ask). On the 15 building types whose recipes fold in
+automation, a second bar sits under the recipe bar in the building's details panel: pale green for levels on recipes
+below tier 3, darker the more automated, darkest for the most. Its tooltip names vanilla's automation methods with
+the share of levels on each.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| G1 | Open a Steel Mill or Textile Mills building | A second bar sits under the recipe bar, pale green on an 1836 building (no automation yet), and its tooltip lists the automation methods with percentages adding to 100% | No bar: the panel patch didn't apply. A bar that is always empty or a tooltip at 0% everywhere: the shares (`pmr_ash`) are never set, so `pmr_mix_<b>` didn't run |
 
 ## Earlier: who owns each level of a building (q20; answered 2026-10-18 16:52Z: Krupp 2, government 3, others 0)
 
