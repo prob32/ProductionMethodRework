@@ -1,4 +1,4 @@
-# PMR run sheet: Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: every game language and the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,26 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: Company Culture, a trait tree on every company (test mod; a new game is best)
+## Latest: every game language, and automation waits for its technology (test mod; your current save works)
+
+Three changes since the Company Culture build (q14), from `dev` in prob32/ProductionMethodRework:
+
+- **Every game language (#3).** The test build now carries PMR's text in all 11 game languages, the English text in
+  each, as the release always has. Your Chinese screenshots of 2026-10-18 showed raw `PMR_` keys because q14 shipped
+  English only.
+- **Automation waits for its technology (#10).** From the third recipe on, a recipe carries its building's
+  automation. It now becomes a building's target only once the country has also researched that automation's
+  technology: Baking Powder waits for Dough Rollers (the Automated Bakery), the mines' Condensing Engine Pump for
+  Steam Donkey and Railways, steel's Open Hearth for the Rotary Valve Engine, and so on (25 recipes on 15 building
+  types). Buildings already running such a recipe keep it.
+- **The foreign buy-in probe is gone** (you dropped the idea on 2026-10-14), with its log lines and decision.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| L1 | Set the game to Chinese (or any language but English), load, open a mine's building panel and the Private construction tab | PMR's text in English, no `PMR_` keys | Raw `PMR_` keys: the language files didn't install. Check that the Queue Test folder has `localization\simp_chinese\pmr_l_simp_chinese.yml` |
+| A1 | Whenever you research Baking Powder before Dough Rollers | No `PMR;rec=RESEARCH` line for `building=building_food_industry` with `best=3` until you also have Dough Rollers; then one appears | A `RESEARCH` line with `best=3` before Dough Rollers: the gate didn't take. Check `error.log` for `pmr_best_food_industry` |
+
+## Earlier: Company Culture, a trait tree on every company (test mod; a new game is best)
 
 Built from your answers of 2026-10-14 04:00Z, changed at 12:37Z: **no queue** (a click spends points already
 earned), **no In Force list** (bought tiers carry a gold frame instead), and every company's tab is filled from the
