@@ -2967,7 +2967,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
     Throughput and the building's modifiers are left out: they scale every recipe alike.
     Pat, 2026-10-18 17:14Z: the pick decides new builds and retooling, and must not cost the game speed. So the
     calculation runs only when pmr_best_<b> finds a reason: no pick yet, the newest runnable recipe changed
-    (research, electricity, the player's know-how abroad), a new building, or its re-check timer ran out
+    (research, electricity, the player's know-how abroad), a new building, its first monthly pulse (the setup pass
+    runs before the market has prices), or its re-check timer ran out
     (pmr_pchk_<b>, PROFIT_RECHECK_DAYS, spread over PROFIT_RECHECK_SPREAD so states don't all check on one day).
     Every other tick reads the cached pick."""
     k = len(recipes)
@@ -3048,21 +3049,21 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v):
     spread = ' '.join(f'1 = {{ set_variable = {{ name = pmr_pchk_{b} value = yes days = {d} }} }}'
                       for d in range(PROFIT_RECHECK_DAYS - PROFIT_RECHECK_SPREAD // 2,
                                      PROFIT_RECHECK_DAYS + PROFIT_RECHECK_SPREAD // 2 + 1, PROFIT_RECHECK_SPREAD // 6))
+    # The first calculation runs during game setup, before the market has real prices (q23: steel read 0.25-0.35
+    # of base in every French state, so Blister Steel showed -£2,990 a level while the mill made +£1.57K). It is
+    # not trusted: every building's pick is computed once more on its first monthly pulse (pmr_pmkt_<b>), which
+    # also gives the log every player building's pick on its own (Pat, 17:59Z), then the yearly re-check runs.
+    first = f'has_variable = pmr_month NOT = {{ has_variable = pmr_pmkt_{b} }}'
     o.append(f'pmr_best_{b} = {{\n{newest}'
              f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pchk_{b} }} '
              f'NOT = {{ has_variable = {v("pmr_new")} }} NOT = {{ var:{v("pmr_new")} = var:{v("pmr_new_now")} }} '
-             f'has_variable = {v("pmr_new_build")} }} }}\n'
+             f'has_variable = {v("pmr_new_build")} AND = {{ {first} }} }} }}\n'
              f'\t\tpmr_profit_{b} = yes\n\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
              f'\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
              f'\t\trandom_list = {{ {spread} }}\n'
-             f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
-             # Pat, 17:59Z: the log must show every pick on its own once the game rolls forward. The first
-             # calculation runs during game setup, before the log is written, so the test build logs each
-             # player building's pick once more on its first monthly pulse (pmr_plog_<b>).
-             + ('' if RELEASE else
-                f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month NOT = {{ has_variable = pmr_plog_{b} }} '
-                f'owner = {{ is_player = yes }} }}\n\t\tset_variable = pmr_plog_{b}\n'
-                f'\t\tdebug_log = "{line};why=first_month"\n\t}}\n')
+             f'\t\tif = {{\n\t\t\tlimit = {{ {first} }}\n\t\t\tset_variable = pmr_pmkt_{b}\n'
+             f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=first_month" }}\n\t\t}}\n'
+             f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              + f'\t{setv("pmr_best_now", "var:" + v("pmr_pbest"))}\n}}\n\n')
     return ''.join(o)
 
