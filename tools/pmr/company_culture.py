@@ -66,14 +66,15 @@ import pdx
 import cc_icons
 import cc_wheel
 import company_panel
+import subsidiaries
 
 TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
 PANEL_GUI = 'gui/company_panel.gui'
 CHARTER_FILE = 'common/company_charter_types/00_company_charter_types.txt'
-SECOND_CHARTER = 'pmr_industry_charter_2'   # charters(): Industry Rights II, beside vanilla's (test builds)
-CAL_VERSION = 5                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
-                                    # 5: a grant per goods line, the Industry Charter's building (pmr_cc_k_chb)
+CAL_VERSION = 6                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
+                                    # 5: a grant per goods line, the Industry Charter's building (pmr_cc_k_chb);
+                                    # 6: the subsidiary bundles (subsidiaries.py, pmr_cc_k_sb*)
 
 # ---------------------------------------------------------------------------------------------------------------
 # Numbers Pat hasn't confirmed (BUILD-SPEC section 5 and 7): named so they are easy to change.
@@ -459,6 +460,8 @@ class Plan:
         self.sites = {}        # building -> [(slot, private retool site, state condition for the slot here)]
                                # (generate.py, from its priv_slots and ABROAD_SLOT)
         self.charter = []      # the Industry Charter test's buildings, 1-based (pmr_cc_k_chb)
+        self.sb_types = []     # every building type in a subsidiary bundle, 1-based (subsidiaries.plan_bundles)
+        self.sb_icon, self.sb_points, self.sb_good, self.sb_prices = {}, {}, {}, []
 
 
 def plan(game, plain, goods_cost, goods_tex=None):
@@ -566,6 +569,9 @@ def plan(game, plain, goods_cost, goods_tex=None):
             if mk and mk[0] not in ext:
                 ext.append(mk[0])
         p.comp[c]['chx'] = ext
+    # Pat 2026-10-19 12:28Z-14:18Z: the Industry Charter node's bundles of three of those industries, each founding a
+    # subsidiary (subsidiaries.py)
+    subsidiaries.plan_bundles(p, main, game)
     goods = set()
     for v in p.comp.values():
         goods.update(v['gout'] + [x for x in v['gin'] if x] + v['xg'])
@@ -978,7 +984,7 @@ def player_log(rec, extra=''):
 
 KVARS = ['pmr_cc_k_g1b', 'pmr_cc_k_g2b', 'pmr_cc_k_g1g', 'pmr_cc_k_g2g', 'pmr_cc_k_g1i', 'pmr_cc_k_g2i',
          'pmr_cc_k_g1r', 'pmr_cc_k_g2r', 'pmr_cc_k_xg1', 'pmr_cc_k_xg2', 'pmr_cc_k_xr', 'pmr_cc_k_ar',
-         'pmr_cc_k_ae1', 'pmr_cc_k_ae2', 'pmr_cc_k_ae3', 'pmr_cc_k_pg', 'pmr_cc_k_chb']
+         'pmr_cc_k_ae1', 'pmr_cc_k_ae2', 'pmr_cc_k_ae3', 'pmr_cc_k_pg', 'pmr_cc_k_chb'] + subsidiaries.KVARS
 # A research grant per goods line gl (Pat 2026-10-19 02:32Z): pmr_cc_grt<gl> its tier (0: none), pmr_cc_grw<gl> its
 # paid weeks, pmr_cc_grm<gl> those in months, pmr_cc_gpay<gl> this week's cost, pmr_cc_gper<gl> its cost per level,
 # pmr_cc_gpaid<gl> whether the pool paid this week. pmr_cc_gr counts the grants running.
@@ -988,7 +994,8 @@ MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_c
              'pmr_cc_prosp', 'pmr_cc_size', 'pmr_cc_gr', 'pmr_cc_fcost',
              'pmr_cc_nf', 'pmr_cc_xsv', 'pmr_cc_aev', 'pmr_cc_gc1', 'pmr_cc_gc2', 'pmr_cc_gok1', 'pmr_cc_gok2',
              'pmr_cc_glv', 'pmr_cc_g1tk', 'pmr_cc_g2tk', 'pmr_cc_g1fr', 'pmr_cc_g2fr']
-            + GRANT_VARS + [f'pmr_cc_{k}' for k in KEYS] + [f'pmr_cc_pick_{k}' for k in KEYS] + STATE_VARS + KVARS)
+            + GRANT_VARS + [f'pmr_cc_{k}' for k in KEYS] + [f'pmr_cc_pick_{k}' for k in KEYS] + STATE_VARS + KVARS
+            + subsidiaries.MIRRORED)
 
 
 def reached(arm):
@@ -1062,13 +1069,13 @@ def effects(p, comps):
                 'pmr_cc_k_xg2': gi(p, v['xg'][1]) if len(v['xg']) > 1 else 0,
                 'pmr_cc_k_xr': v['xr'], 'pmr_cc_k_ar': v['ar'], 'pmr_cc_k_ae1': v['ae'][0], 'pmr_cc_k_ae2': v['ae'][1],
                 'pmr_cc_k_ae3': v['ae'][2], 'pmr_cc_k_pg': 1 if v['pvars'] else 0,
-                'pmr_cc_k_chb': p.charter.index(v['chb']) + 1 if v['chb'] else 0}
+                'pmr_cc_k_chb': p.charter.index(v['chb']) + 1 if v['chb'] else 0, **subsidiaries.kvals(p, v)}
         sets = ' '.join(f'set_variable = {{ name = {k} value = {x} }}' for k, x in vals.items())
         chain += f'\t{"if" if i == 0 else "else_if"} = {{\n\t\tlimit = {{ is_company_type = company_type:{c} }}\n\t\t{sets}\n\t}}\n'
     dflt = ' '.join(f'set_variable = {{ name = {k} value = 0 }}' for k in KVARS if k != 'pmr_cc_k_xr')
     dflt += f' set_variable = {{ name = pmr_cc_k_xr value = {len(EXP_ROWS)} }} set_variable = {{ name = pmr_cc_k_ar value = 3 }}'
     zero = (['pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate', 'pmr_cc_gr', 'pmr_cc_glv'] + GRANT_VARS
-            + [f'pmr_cc_{k}' for k in KEYS])
+            + [f'pmr_cc_{k}' for k in KEYS] + subsidiaries.ZERO)
     # a grant running from before q35, one at a time (pmr_cc_gr its line's code, pmr_cc_grt / grm / grw), carries on
     # as its line's
     old = ['grt', 'grm', 'grw', 'gpay', 'gper', 'gpaid']
@@ -1194,6 +1201,7 @@ def effects(p, comps):
               + f'\tset_variable = {{ name = pmr_cc_gok{gl} value = 0 }}\n'
               f'\tif = {{ limit = {{ owner ?= {{ investment_pool >= scope:pmr_cc_gco.var:pmr_cc_gc{gl} }} }} '
               f'set_variable = {{ name = pmr_cc_gok{gl} value = 1 }} }}\n')
+    d += subsidiaries.derive(p.sb_prices)
     o.append('# Numbers derived from the tiers, and the goods tiers that are free: the owner has the technology of the base\n'
              '# recipe a tier modifies (tier t, recipe t or the newest) or of the recipe after it.\n'
              'pmr_cc_derive = {\n' + d + '}\n\n')
@@ -1438,7 +1446,7 @@ def effects(p, comps):
     o.append('# Character scope (an executive, from the tab): the owner\'s company this character runs, scope:line kept.\n'
              'pmr_cc_with_company = {\n\tsave_scope_as = pmr_cc_exec\n'
              '\towner ?= {\n\t\tevery_company = {\n\t\t\tlimit = { executive ?= scope:pmr_cc_exec }\n\t\t\t$EFFECT$ = yes\n\t\t}\n\t}\n}\n\n')
-    return ''.join(o)
+    return ''.join(o) + subsidiaries.effects(p)
 
 
 def triggers():
@@ -1477,7 +1485,10 @@ def triggers():
             alts = ''.join(f'\t\tAND = {{ var:pmr_cc_{ln.key} = {t} var:pmr_cc_pts >= {c} }}\n' for t, c in enumerate(ln.cost))
         pool = f'\tvar:pmr_cc_gok{ln.goods} = 1\n' if ln.goods else ''
         o.append(f'pmr_cc_afford_{ln.key} = {{\n{pool}\tOR = {{\n{alts}\t}}\n}}\n\n')
-    return ''.join(o)
+    o.append('# The weekly clock (pmr_cc.1) has work for this company: a research grant running or a subsidiary bundle paid for.\n'
+             'pmr_cc_weekly = {\n\tOR = {\n\t\tAND = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 }\n'
+             '\t\tpmr_sb_paying = yes\n\t}\n}\n\n')
+    return ''.join(o) + subsidiaries.triggers()
 
 
 def sguis():
@@ -1495,7 +1506,7 @@ def sguis():
             '# (pmr_cc_exec), where the full-screen wheel (ingame_hud.gui, outside the company panel) finds the company.\n'
             'pmr_cc_view_sgui = {\n\tscope = character\n\tsaved_scopes = { player }\n'
             '\teffect = {\n\t\tscope:player = {\n\t\t\tset_variable = { name = pmr_cc_exec value = root }\n\t\t}\n'
-            '\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n')
+            '\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n' + subsidiaries.sgui())
 
 
 ON_ACTIONS = '''# Company Culture (company_culture.py). Appended to vanilla on_actions the documented way.
@@ -1517,14 +1528,14 @@ pmr_cc_game_started = {
 }
 
 # Root = country. Every company earns, buys (AI companies) and keeps its executive's traits; a company with a
-# research grant running keeps the weekly grant clock going.
+# research grant running or a subsidiary bundle paid for keeps the weekly clock going.
 pmr_cc_monthly_country = {
 	effect = {
 		every_company = {
 			pmr_cc_tick = yes
 		}
 		if = {
-			limit = { any_company = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 } }
+			limit = { any_company = { pmr_cc_weekly = yes } }
 			pmr_cc_gclock = yes
 		}
 	}
@@ -1556,7 +1567,8 @@ pmr_cc_on_acquired_technology = {
 	}
 }
 
-# Root = country, scope:company = the company disbanded: its executive loses its Culture traits (Pat 04:00Z).
+# Root = country, scope:company = the company disbanded: its executive loses its Culture traits (Pat 04:00Z); a
+# subsidiary leaves its parent's list, a parent's subsidiaries go their own way (subsidiaries.py).
 pmr_cc_on_company_disbanded = {
 	effect = {
 		scope:company ?= {
@@ -1564,15 +1576,17 @@ pmr_cc_on_company_disbanded = {
 				pmr_cc_strip = yes
 			}
 		}
+		pmr_sb_disbanded = yes
 	}
 }
 '''
 
 EVENTS = '''namespace = pmr_cc
 
-# Country, every 7 days while one of its companies runs a research grant (pmr_cc_gclock starts it): each grant's
-# week (pmr_cc_grant_week, both goods lines'), and the week's total for the Private tab (pmr_cc_gweek). 1.14.5 runs no weekly
-# on_action for script, so the event re-arms itself.
+# Country, every 7 days while one of its companies runs a research grant or pays for a subsidiary bundle
+# (pmr_cc_gclock starts it): each grant's week (pmr_cc_grant_week, both goods lines'), each bundle's (pmr_sb_week), and
+# the week's total for the Private tab (pmr_cc_gweek). 1.14.5 runs no weekly on_action for script, so the event re-arms
+# itself.
 pmr_cc.1 = {
 	type = country_event
 	hidden = yes
@@ -1580,11 +1594,18 @@ pmr_cc.1 = {
 		set_variable = { name = pmr_cc_gweek value = 0 }
 		every_company = {
 			# read in at this CAL_VERSION: a save's grant from before q35 is carried over first (pmr_cc_init)
-			limit = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 var:pmr_cc_on ?= CAL_VERSION }
-			pmr_cc_grant_week = yes
+			limit = { pmr_cc_weekly = yes var:pmr_cc_on ?= CAL_VERSION }
+			if = {
+				limit = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 }
+				pmr_cc_grant_week = yes
+			}
+			if = {
+				limit = { pmr_sb_paying = yes }
+				pmr_sb_week = yes
+			}
 		}
 		if = {
-			limit = { any_company = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 } }
+			limit = { any_company = { pmr_cc_weekly = yes } }
 			set_variable = { name = pmr_cc_gclock days = 9 }
 			trigger_event = { id = pmr_cc.1 days = 7 }
 		}
@@ -1649,8 +1670,8 @@ pmr_cc_test_grants_start_decision = {{
 }}
 
 # Test builds only (Pat 2026-10-19 12:02Z, "I only see industry rights 1 for krupp"): each of the player's companies
-# without the Industry Charter node takes it free (the node's points are given back), so its card shows both charter
-# buttons, Industry Rights and Industry Rights II (SECOND_CHARTER). Writes PMR;rec=CC_BUY lines (pmr_cc_buy_ch).
+# without the Industry Charter node takes it free (the node's points are given back), so its card shows the charter
+# button and the subsidiary bundles (subsidiaries.py). Writes PMR;rec=CC_BUY lines (pmr_cc_buy_ch).
 pmr_cc_test_charter_decision = {{
 	is_shown = {{ always = yes }}
 	possible = {{ always = yes }}
@@ -1710,12 +1731,6 @@ def charters(game, p):
         fail(CHARTER_FILE, f'found {len(edits) // 2} of the {len(CHARTERS)} charter types')
     for at, ins in sorted(edits, reverse=True):
         text = text[:at] + ins + text[at:]
-    # Pat 2026-10-19 04:02Z ("lets test this right away"): a second industry charter, a copy of vanilla's under its own
-    # key (SECOND_CHARTER). 1.14.5 refuses a company a second industry charter ("already has other Industry Rights");
-    # whether it counts by definition or by kind is the test.
-    ic = next(n for n in pdx.parse(text) if n.is_block and n.key == 'industry_charter')
-    text += (f'\n# PMR test: a second industry charter (company_culture.SECOND_CHARTER)\n{SECOND_CHARTER}'
-             + text[ic.start + len('industry_charter'):ic.end] + '\n')
     return ('# PMR Company Culture (company_culture.py): vanilla\'s charter types, each possible only for a company that\n'
             '# holds its node on the Company Culture wheel. The engine drops a charter whose possible fails.\n' + text)
 
@@ -1780,7 +1795,7 @@ def custom_loc(p):
             out.append(entry(f'pmr_cc_why_{ln.key}_{t}', why_cases(ln, t), 'PMR_CC_WHY_LOCKED'))
     out.append(entry('pmr_cc_fx_xs_2', [('var:pmr_cc_k_xg2 ?= 0', 'PMR_EMPTY')], 'PMR_CC_XS_GOOD2'))
     out.append(entry('pmr_cc_fx_pg', [('var:pmr_cc_k_pg ?= 0', 'PMR_EMPTY')], 'PMR_CC_FX_pg_YES'))
-    return '\n'.join(out)
+    return '\n'.join(out) + subsidiaries.custom_loc(p)
 
 
 def why_cases(ln, t):
@@ -1909,10 +1924,6 @@ def localization(p):
         ' pmr_cc_test_grants_start_decision_desc:0 "Each of your companies with goods lines founds Engineering if it can and starts both grants."',
         ' pmr_cc_test_charter_decision:0 "PMR test: open the Industry Charter node"',
         ' pmr_cc_test_charter_decision_desc:0 "Each of your companies takes the Industry Charter node free."',
-        f' {SECOND_CHARTER}:0 "$industry_charter$ II"',
-        f' {SECOND_CHARTER}_desc:0 "$industry_charter_desc$"',
-        f' {SECOND_CHARTER}_type_desc:0 "$industry_charter_type_desc$"',
-        f' {SECOND_CHARTER}_effects:0 "$industry_charter_effects$"',
     ]
     for bk in sorted(p.works):
         for t in T3:
@@ -2002,7 +2013,8 @@ def write_all(game, write, header_text, report, p, out_dir):
     write('common/script_values/pmr_cc_values.txt', header_text + viewing_value())
     write('common/script_values/pmr_cw_values.txt', header_text + works_values(p))
     write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST'))
-          .replace('{LOG_GRANT}', log_line('CC_TEST_GRANT')).replace('{LOG_START}', log_line('CC_TEST_GRANTS')))
+          .replace('{LOG_GRANT}', log_line('CC_TEST_GRANT')).replace('{LOG_START}', log_line('CC_TEST_GRANTS'))
+          + subsidiaries.TEST_DECISION)
     write('common/customizable_localization/pmr_cc_custom_loc.txt', header_text + custom_loc(p))
     write(CHARTER_FILE, charters(game, p))
     write('common/defines/zz_pmr_cc.txt', header_text + DEFINE)
@@ -2023,4 +2035,7 @@ def write_all(game, write, header_text, report, p, out_dir):
         'industry_charter': {c: [v['chb'], v['chb_in']] for c, v in sorted(p.comp.items())}}
     print(f'company culture: {len(p.comp)} companies, {n_traits} traits, {len(p.works)} goods-line buildings '
           f'({sum(1 for v in p.comp.values() if not v["g"])} companies without a goods line), {n_tex} textures')
-    return localization(p) + goods_mult_loc(p, game)
+    sb_loc = subsidiaries.write_all(game, write, header_text, p)
+    report['subsidiaries'] = {c: v['sb'] for c, v in sorted(p.comp.items()) if v['sb']}
+    print(f'subsidiaries: {sum(len(v["sb"]) for v in p.comp.values())} bundles over {len(p.sb_types)} building types')
+    return localization(p) + goods_mult_loc(p, game) + sb_loc

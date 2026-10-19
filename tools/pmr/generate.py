@@ -69,6 +69,7 @@ import icons  # noqa: E402
 import pdx  # noqa: E402
 import private_investment  # noqa: E402
 import company_culture  # noqa: E402
+import subsidiaries  # noqa: E402
 import company_panel  # noqa: E402
 import methods_row  # noqa: E402
 import localise  # noqa: E402
@@ -1746,6 +1747,9 @@ def main():
             d for d in (os.path.join(TEST_PROBES, p, 'common', 'company_types') for p in sorted(os.listdir(TEST_PROBES)))
             if os.path.isdir(d)] if os.path.isdir(TEST_PROBES) else []
     owners_of = private_investment.company_owners(game) if mv_keys else {}
+    if owners_of and cc_plan:   # and the subsidiaries their bundles found (subsidiaries.py, test builds)
+        for bk, types in subsidiaries.owners(cc_plan).items():
+            owners_of.setdefault(bk, []).extend(types)
     ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of)
                 + ([('works', None)] if not args.release and bk in owners_of else []) for bk in ai_of}
     write('common/customizable_localization/pmr_custom_loc.txt', header +

@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 import company_culture as cc   # circular: company_culture imports this module; used inside functions only
 import icons
+import subsidiaries   # the Industry Charter node's bundles; it uses this module inside functions only
 
 TEX = 'gfx/interface/pmr_company_culture'
 WHITE = 'gfx/interface/backgrounds/white.dds'
@@ -425,6 +426,8 @@ def node(p, ln, t, x, y, cands):
                 f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\nalwaystransparent = yes\n}}\n{goods}}}\n')
     if k in CHARTER_TEST:
         out += charter_plate(k)
+    if k == 'ch':   # the subsidiary bundles above the charter button (subsidiaries.py)
+        out += subsidiaries.node_gui(p)
     return out + '}\n'
 
 
@@ -449,10 +452,7 @@ def charter_plate(k):
     "COMPANY CHARTER BUTTONS - DO NOT OWN DLC"), which q27 hides (Pat 20:37Z). It sits in the card under the bullets.
     A charter aimed at regions or buildings opens vanilla's target menu; the others ask to confirm."""
     size = f'size = {{ {NODE_W - TX0 - 6} 56 }}\n'
-    # Industry Charter lists two industry charters, vanilla's and Industry Rights II (company_culture.SECOND_CHARTER),
-    # so its buttons start a button higher to stay on the card
-    up = 60 if k == 'ch' else 0
-    return (f'flowcontainer = {{\n{_vis(AND(LOCAL, ST(k, 1, 4)))}position = {{ {TX0 - 8} {NODE_H - 72 - up} }}\n'
+    return (f'flowcontainer = {{\n{_vis(AND(LOCAL, ST(k, 1, 4)))}position = {{ {TX0 - 8} {NODE_H - 72} }}\n'
             'direction = vertical\nignoreinvisible = yes\ndatamodel = "[GetCompanyCharterTypes]"\nitem = {\n'
             f'container = {{\n{_vis(f"CompanyCharterType.{CHARTER_TEST[k]}")}'
             f'company_charter_button_horizontal = {{\n{_vis(TARGETS)}{size}'
