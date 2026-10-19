@@ -1772,16 +1772,22 @@ def ai_groups(game):
     return {f'building_{s}': keys[g] for s, g, _c in invest_types(game)}
 
 
-def grant_line(ind):
-    """Under the pool, while a research grant runs: the week's grants paid from it (pmr_cc.1 sums pmr_cc_gweek and
-    zeroes it once no grant runs)."""
+# Pat, 2026-10-19 02:32Z ("can we get the research grants added to this tool tip instead?"): the week's research
+# grants (pmr_cc.1 sums pmr_cc_gweek on the country and zeroes it once no grant runs) are a line of the investment
+# pool's own tooltip, in its style, while one runs, in place of a line under the pool. The tooltip's text is vanilla's
+# INVESTMENT_POOL_BREAKDOWN, which ends with INVESTMENT_POOL_CHANGE, the same data functions in every language, so
+# that key gets the line, from localization/<lang>/replace (generate.py): wherever vanilla shows the tooltip, it
+# shows the grants (the Private tab, the budget panel, the construction queue).
+POOL_CHANGE = ('[GetPlayer.GetInvestmentPoolChangeFromConstructionDesc]\\n'
+               '[GetPlayer.GetInvestmentPoolChangeFromInvestmentDesc]')   # vanilla's, 1.14.5
+
+
+def replace_loc():
+    """Vanilla keys PMR rewrites, as loc lines (English text inside them falls back per language)."""
+    if not GRANT_LINE:
+        return []
     on = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_cc_gweek').GetValue, '(CFixedPoint)0')"
-    i1, i2 = ind + '\t', ind + '\t\t'
-    return (f'{ind}widget = {{\n{i1}visible = "[{on}]"\n{i1}size = {{ 540 34 }}\n{i1}parentanchor = hcenter\n'
-            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}text = "PMR_PI_GRANTS"\n{i2}align = left|nobaseline\n'
-            f'{i2}parentanchor = vcenter\n{i2}margin_left = 20\n{i1}}}\n'
-            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}text = "PMR_PI_GRANTS_VALUE"\n{i2}align = right|nobaseline\n'
-            f'{i2}parentanchor = right|vcenter\n{i2}margin_right = 20\n{i1}}}\n{ind}}}\n')
+    return [f' INVESTMENT_POOL_CHANGE:1 "{POOL_CHANGE}[SelectLocalization({on}, \'PMR_PI_GRANTS_TT\', \'PMR_EMPTY\')]"']
 
 
 def private_tab():
@@ -1815,7 +1821,6 @@ def private_tab():
         f'{i1}\t\traw_text = "#v @money![{COUNTRY}.GetInvestmentPool|D+]#! ([{COUNTRY}.GetInvestmentPoolChange|=+D])"\n'
         f'{i1}\t\tparentanchor = right|vcenter\n{i1}\t\talign = right|nobaseline\n{i1}\t\tmargin_right = 20\n'
         f'{i1}\t\tusing = investment_pool_tooltip_with_graph\n{i1}\t}}\n{i1}}}\n'
-        + (grant_line(i1) if GRANT_LINE else '') +
         f'{i1}textbox = {{\n{i1}\tvisible = "[{COUNTRY}.ShowInvestmentPoolPredictedNextBuilding]"\n{i1}\tparentanchor = hcenter\n'
         f'{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 10 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = hcenter|nobaseline\n{i1}\ttext = "NEXT_PRIVATE_CONSTRUCTION"\n'
@@ -1934,8 +1939,8 @@ def patch_retool_ai(text, btype, parent, invest):
 
 # Set by generate.py in test builds: company types -> lines that end pmr_ai_value_<b> (company_culture.ai_value_tail).
 AI_TAIL = None
-# Set by generate.py in test builds: the Private tab shows the week's research grants under the pool (Company Culture,
-# company_culture.py; Pat 2026-10-19 00:04Z "also where is the cost?")
+# Set by generate.py in test builds: the investment pool's tooltip shows the week's research grants (Company Culture,
+# company_culture.py; Pat 2026-10-19 00:04Z "also where is the cost?", 02:32Z: in the tooltip; replace_loc)
 GRANT_LINE = False
 
 # Pat, 2026-10-18 21:10Z: "Can we have this ai weighting dynamic based on its profitability average?", and 21:32Z:
@@ -2124,8 +2129,9 @@ def localization(types):
         ' PMR_TAB_GOVERNMENT:0 "Government"',
         ' PMR_TAB_PRIVATE:0 "Private"',
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
-        ' PMR_PI_GRANTS:0 "Research grants"',
-        f' PMR_PI_GRANTS_VALUE:0 "#N @money!-[{COUNTRY}.MakeScope.Var(\'pmr_cc_gweek\').GetValue|D]#! weekly"',
+        # the pool tooltip's line (replace_loc), in the style of vanilla's Reinvestment line
+        f' PMR_PI_GRANTS_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_gweek\').GetValue)|D+=]#! '
+        'Research grants"',
         ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
         ' PMR_RW_EMPTY:0 "No historical data"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',

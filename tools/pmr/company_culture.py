@@ -57,6 +57,7 @@ import re
 import pdx
 import cc_icons
 import cc_wheel
+import company_panel
 
 TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
@@ -1397,66 +1398,13 @@ def ai_value_tail(company_types):
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Methods sub-heading (kept from the 10-14 tab: every recipe of the company's buildings)
+# The tab's Methods table is company_panel.py's (Pat 2026-10-19 02:32Z: the Policies tab's grid for the company's
+# own building types), in place of the 10-14 tab's list of every recipe of the company's buildings.
 
-def method_rows(report, pms, comps):
-    listed = {b for bts, _pv in comps.values() for b in bts}
-    elec = {a['building']: a['electric_recipe'] for a in report['automation'] if a.get('electric_recipe')}
-    split = {a['building'] for a in report['automation'] if a.get('split')}
-    rows = {}
-    for t in report['treated']:
-        b = t['building']
-        if b not in listed:
-            continue
-        out, last = [], []
-        for key in t['recipes']:
-            if b in split and key not in pms:
-                continue
-            if key in pms:
-                tex, techs = pms[key]
-                last = techs
-            elif b in elec and key == elec[b]['key']:
-                auto = elec[b]['automation']
-                tex = pms.get(auto[0], (None, []))[0] if auto else None
-                techs = sorted(set(last) | set(elec[b]['technologies']))
-            else:
-                fail('methods', f'{b}: no production method {key}')
-            out.append((key, tex or 'gfx/interface/icons/generic_icons/mixed_icon_base.dds', techs))
-        rows[b] = out
-    return rows, sorted(listed - set(rows)), split
-
-
-def pm_info(game):
-    out = {}
-    for path in glob.glob(os.path.join(game, 'common', 'production_methods', '*.txt')):
-        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
-            if n.is_block and n.key:
-                tex = pdx.get(n.value, 'texture')
-                ut = pdx.get(n.value, 'unlocking_technologies')
-                out[n.key] = (tex.value if tex else None, pdx.items(ut) if ut else [])
-    return out
-
-
-def unlock_values(rows):
-    out = ['# Company Culture Methods list (company_culture.py). Country scope.\n'
-           '# pmr_cc_unl_<recipe>: 1 once the country has researched every technology the recipe needs.\n'
-           '# pmr_cc_new_<b>: the newest recipe of the building type the country can run (its index, from 1).\n\n'
-           '# 1 once the player has opened a Company Culture tab (pmr_cc_view_sgui): the full-screen wheel shows only then.\n'
-           'pmr_cc_viewing = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { has_variable = pmr_cc_exec }\n\t\tvalue = 1\n\t}\n}\n\n']
-    seen = set()
-    for b, recipes in sorted(rows.items()):
-        for key, _tex, techs in recipes:
-            if techs and key not in seen:
-                seen.add(key)
-                lim = ' '.join(f'has_technology_researched = {t}' for t in techs)
-                out.append(f'pmr_cc_unl_{key} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{ {lim} }}\n\t\tvalue = 1\n\t}}\n}}\n\n')
-        body = '\tvalue = 1\n'
-        for i, (key, _tex, techs) in enumerate(recipes, 1):
-            if i > 1 and techs:
-                lim = ' '.join(f'has_technology_researched = {t}' for t in techs)
-                body += f'\tif = {{\n\t\tlimit = {{ {lim} }}\n\t\tvalue = {i}\n\t}}\n'
-        out.append(f'pmr_cc_new_{b[len("building_"):]} = {{\n{body}}}\n\n')
-    return ''.join(out)
+def viewing_value():
+    return ('# Company Culture (company_culture.py). Country scope.\n'
+            '# 1 once the player has opened a Company Culture tab (pmr_cc_view_sgui): the full-screen wheel shows only then.\n'
+            'pmr_cc_viewing = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { has_variable = pmr_cc_exec }\n\t\tvalue = 1\n\t}\n}\n\n')
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1574,7 +1522,7 @@ def fx_lines(k, t):
     return out.get((k, t), [])
 
 
-def localization(p, rows, kept_split):
+def localization(p):
     co = '[Company.GetNameNoFormatting]'
     loc = [
         ' PMR_CC_TAB:0 "Company Culture"',
@@ -1612,7 +1560,6 @@ def localization(p, rows, kept_split):
         f' PMR_CC_GRANT_TT:0 "#bold @money!{money("pmr_cc_gpay")}#! a week#!\\n{V("pmr_cc_glv")} levels × @money!{money("pmr_cc_gper")}#!\\nFrom the investment pool"',
         ' PMR_CC_COST_TT:0 "Culture points"',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
-        ' PMR_CC_METHODS_NONE:0 "No recipes to retool"',
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
         f' pmr_cc_test_points_decision_desc:0 "Each of your companies gets {TEST_POINTS} Culture points."',
         ' pmr_cc_test_grant_decision:0 "PMR test: finish your companies\' research grants"',
@@ -1696,18 +1643,6 @@ def localization(p, rows, kept_split):
             nm = 'Wage cut cap'   # pmr_cc_wcap_<n>: holds the wage cuts at WAGE_CUT_CAP (Pat 01:07Z asked what it was)
         loc += [f' {key}:0 "{nm}"',
                 f' {key}_desc:0 "Company Culture"']
-    # Methods list.
-    done = set()
-    for b, recipes in rows.items():
-        for key, _tex, techs in recipes:
-            if key in done:
-                continue
-            done.add(key)
-            need = ['Needs ' + ', '.join(f'${tk}$' for tk in techs) + '.'] if techs else []
-            if key.startswith('pm_pmr_elec_'):
-                need.append('Runs only where the state produces electricity.')
-            need = ('\\n' + ' '.join(need)) if need else ''
-            loc.append(f' PMR_CC_PM_{key}:0 "#header ${key}$#!{need}"')
     return loc
 
 
@@ -1716,8 +1651,6 @@ def localization(p, rows, kept_split):
 def write_all(game, write, header_text, report, p, out_dir):
     """Writes every file of the feature (test builds for now) and returns its loc lines."""
     comps = companies(game)
-    pms = pm_info(game)
-    rows, untreated, split = method_rows(report, pms, comps)
     write('common/character_traits/pmr_cc_traits.txt', header_text + traits(p))
     write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + modifier_types(p, game))
     write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(p, comps))
@@ -1725,14 +1658,15 @@ def write_all(game, write, header_text, report, p, out_dir):
     write('common/scripted_guis/pmr_cc_sguis.txt', header_text + sguis())
     write('common/on_actions/pmr_cc_on_actions.txt', header_text + ON_ACTIONS)
     write('events/pmr_cc_events.txt', header_text + EVENTS)
-    write('common/script_values/pmr_cc_values.txt', header_text + unlock_values(rows))
+    write('common/script_values/pmr_cc_values.txt', header_text + viewing_value())
     write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST'))
           .replace('{LOG_GRANT}', log_line('CC_TEST_GRANT')))
     write('common/customizable_localization/pmr_cc_custom_loc.txt', header_text + custom_loc(p))
     write(CHARTER_FILE, charters(game))
     write('common/defines/zz_pmr_cc.txt', header_text + DEFINE)
-    write(PANEL_GUI, cc_wheel.patch_panel(open(os.path.join(game, PANEL_GUI), encoding='utf-8-sig').read(), TAB), bom=False)
-    write(OWN_GUI, cc_wheel.tab(p, rows, untreated, split), bom=False)
+    write(PANEL_GUI, cc_wheel.patch_panel(company_panel.patch_company_panel(   # without the retool sites
+        open(os.path.join(game, PANEL_GUI), encoding='utf-8-sig').read()), TAB), bom=False)
+    write(OWN_GUI, cc_wheel.tab(p), bom=False)
     write(cc_wheel.HUD_GUI, cc_wheel.patch_hud(open(os.path.join(game, cc_wheel.HUD_GUI), encoding='utf-8-sig').read()),
           bom=False)
     n_tex = cc_wheel.textures(out_dir)
@@ -1742,8 +1676,7 @@ def write_all(game, write, header_text, report, p, out_dir):
         'goods_lines': {c: v['g'] for c, v in sorted(p.comp.items())},
         'supply': {c: v['xg'] for c, v in sorted(p.comp.items())},
         'no_goods_line': sorted(c for c, v in p.comp.items() if not v['g']),
-        'works': {bk: {k: w[k] for k in ('out', 'in', 'row', 'techs')} for bk, w in sorted(p.works.items())},
-        'method_rows': len(rows), 'untreated': untreated}
+        'works': {bk: {k: w[k] for k in ('out', 'in', 'row', 'techs')} for bk, w in sorted(p.works.items())}}
     print(f'company culture: {len(p.comp)} companies, {n_traits} traits, {len(p.works)} goods-line buildings '
           f'({sum(1 for v in p.comp.values() if not v["g"])} companies without a goods line), {n_tex} textures')
-    return localization(p, rows, split) + goods_mult_loc(p, game)
+    return localization(p) + goods_mult_loc(p, game)
