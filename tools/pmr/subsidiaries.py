@@ -271,12 +271,14 @@ def effects(p):
     found_log = ("sub=[THIS.Var('pmr_sb_last').GetCompany.GetNameNoFormatting];"
                  "levels=[THIS.Var('pmr_sb_lastlv').GetValue|0];")
     o.append('# The subsidiary being paid for is paid: it is founded (pmr_sb_found_one), listed under this company (pmr_subs,\n'
-             '# company_panel.SUB_LINKS), and its country gets its company slot. The saved scopes are cleared first: one weekly\n'
-             '# event can found several.\n'
+             '# company_panel.SUB_LINKS), and its country gets its company slot. One weekly event can found several, so a\n'
+             '# founding is read from pmr_sb_newco, set by this call\'s pmr_sb_found_one, not from a saved scope an earlier one\n'
+             '# left (GBR\'s oil rig without Pumpjacks, q48).\n'
              'pmr_sb_found = {\n\tsave_scope_as = pmr_sb_par\n'
-             + ''.join(f'\tclear_saved_scope = {x}\n' for x in ['pmr_sb_new'] + [f'pmr_sb_st{j}' for j in SLOTS])
+             '\tclear_saved_scope = pmr_sb_new\n'
+             '\tif = { limit = { has_variable = pmr_sb_newco } remove_variable = pmr_sb_newco }\n'
              + chain
-             + '\tif = {\n\t\tlimit = { exists = scope:pmr_sb_new }\n'
+             + '\tif = {\n\t\tlimit = { has_variable = pmr_sb_newco }\n\t\tvar:pmr_sb_newco = { save_scope_as = pmr_sb_new }\n'
              + ''.join(f'\t\tif = {{ limit = {{ var:pmr_sb_pick = {n} }} set_variable = {{ name = pmr_sb_d{n} value = 1 }} }}\n'
                        for n in NUMS)
              + '\t\tadd_to_variable_list = { name = pmr_subs target = scope:pmr_sb_new }\n'
@@ -287,7 +289,7 @@ def effects(p):
              '\t\tset_variable = { name = pmr_sb_w value = 0 }\n'
              '\t\tset_variable = { name = pmr_sb_pay value = 0 }\n'
              '\t\towner ?= { pmr_sb_slots = yes }\n'
-             '\t\tpmr_cc_derive = yes\n\t}\n'
+             '\t\tpmr_cc_derive = yes\n\t\tremove_variable = pmr_sb_newco\n\t}\n'
              f'\telse = {{\n\t\t{player_log("SB_NO_STATE")}\n\t}}\n}}\n\n')
     lv = ''.join(f'\t\t\t{"if" if m == 3 * SB_LEVELS else "else_if"} = {{ limit = {{ company_owned_levels >= {m} }} '
                  f'set_variable = {{ name = pmr_sb_lv value = {m} }} }}\n' for m in range(3 * SB_LEVELS, 0, -1))
@@ -296,34 +298,39 @@ def effects(p):
              f'# subsidiary $N$) with {SB_LEVELS} levels of the first of {bs} a state can take (pmr_sb_seed); the next one\n'
              f'# too if the company still owns fewer than {SB_LEVELS} (a mine past its resources). scope:pmr_sb_new: the company.\n'
              'pmr_sb_found_one = {\n'
-             + ''.join(f'\tpmr_sb_seed = {{ B = $B{j}$ I = {j} }}\n' for j in SLOTS)
-             + '\tif = {\n\t\tlimit = { OR = { ' + ' '.join(f'exists = scope:pmr_sb_st{j}' for j in SLOTS) + ' } }\n'
+             + ''.join(f'\tpmr_sb_seed = {{ T = $T$ B = $B{j}$ I = {j} }}\n' for j in SLOTS)
+             + '\tif = {\n\t\tlimit = { OR = { ' + ' '.join(f'exists = scope:pmr_sb_st{j}_$T$' for j in SLOTS) + ' } }\n'
              '\t\tset_variable = pmr_sb_ok_$T$\n'
              '\t\tif = { limit = { NOT = { has_company = company_type:$T$ } } add_company = company_type:$T$ }\n'
              '\t\tcompany:$T$ ?= {\n\t\t\tsave_scope_as = pmr_sb_new\n'
+             '\t\t\tscope:pmr_sb_par = { set_variable = { name = pmr_sb_newco value = scope:pmr_sb_new } }\n'
              '\t\t\tset_variable = { name = pmr_sub value = 1 }\n'
              '\t\t\tset_variable = { name = pmr_parent value = scope:pmr_sb_par }\n'
              '\t\t\tset_variable = { name = pmr_sb_n value = $N$ }\n\t\t}\n'
              + ''.join(f'\t\tpmr_sb_levels = {{ T = $T$ B = $B{j}$ I = {j} }}\n' for j in SLOTS)
              + '\t\tscope:pmr_sb_new ?= {\n\t\t\tset_variable = { name = pmr_sb_lv value = 0 }\n' + lv
              + '\t\t}\n\t}\n}\n\n')
-    o.append('# Country scope: scope:pmr_sb_st$I$, an incorporated state that can take a level of $B$ (can_construct_building:\n'
-             '# resources; the technology by pmr_sb_tech_$B$, which it does not check), one without the building first.\n'
+    o.append('# Country scope: scope:pmr_sb_st$I$_$T$, an incorporated state that can take a level of $B$ (can_construct_building:\n'
+             '# resources; the technology by pmr_sb_tech_$B$, which it does not check), one without the building first. Named\n'
+             '# by the type, so no state saved for another subsidiary in the same event is taken for this one.\n'
              'pmr_sb_seed = {\n\tif = {\n\t\tlimit = { pmr_sb_tech_$B$ = yes }\n'
              '\t\trandom_scope_state = {\n'
              '\t\t\tlimit = { is_incorporated = yes can_construct_building = $B$ NOT = { any_scope_building = { is_building_type = $B$ } } }\n'
-             '\t\t\tsave_scope_as = pmr_sb_st$I$\n\t\t}\n'
-             '\t\tif = {\n\t\t\tlimit = { NOT = { exists = scope:pmr_sb_st$I$ } }\n'
+             '\t\t\tsave_scope_as = pmr_sb_st$I$_$T$\n\t\t}\n'
+             '\t\tif = {\n\t\t\tlimit = { NOT = { exists = scope:pmr_sb_st$I$_$T$ } }\n'
              '\t\t\trandom_scope_state = {\n\t\t\t\tlimit = { is_incorporated = yes can_construct_building = $B$ }\n'
-             '\t\t\t\tsave_scope_as = pmr_sb_st$I$\n\t\t\t}\n\t\t}\n\t}\n}\n\n')
-    o.append(f'# Country scope: {SB_LEVELS} levels of $B$ owned by the new company in scope:pmr_sb_st$I$, while it owns fewer;\n'
-             '# its headquarters there, at the first.\n'
+             '\t\t\t\tsave_scope_as = pmr_sb_st$I$_$T$\n\t\t\t}\n\t\t}\n\t}\n}\n\n')
+    o.append(f'# Country scope: {SB_LEVELS} levels of $B$ owned by the new company in scope:pmr_sb_st$I$_$T$, while it owns fewer;\n'
+             '# its headquarters there, at the first. The technology and the state are checked again here, as create_building\n'
+             '# logs an error and builds anyway without them.\n'
              'pmr_sb_levels = {\n\tif = {\n'
-             f'\t\tlimit = {{ exists = scope:pmr_sb_st$I$ scope:pmr_sb_new ?= {{ company_owned_levels < {SB_LEVELS} }} }}\n'
+             f'\t\tlimit = {{\n\t\t\texists = scope:pmr_sb_st$I$_$T$\n\t\t\tpmr_sb_tech_$B$ = yes\n'
+             '\t\t\tscope:pmr_sb_st$I$_$T$ = { can_construct_building = $B$ }\n'
+             f'\t\t\tscope:pmr_sb_new ?= {{ company_owned_levels < {SB_LEVELS} }}\n\t\t}}\n'
              '\t\tscope:pmr_sb_new = {\n\t\t\tif = {\n\t\t\t\tlimit = { NOT = { has_variable = pmr_sb_hq } }\n'
-             '\t\t\t\tset_company_state_region = scope:pmr_sb_st$I$.state_region\n'
+             '\t\t\t\tset_company_state_region = scope:pmr_sb_st$I$_$T$.state_region\n'
              '\t\t\t\tset_variable = pmr_sb_hq\n\t\t\t}\n\t\t}\n'
-             '\t\tscope:pmr_sb_st$I$ = {\n\t\t\tcreate_building = {\n\t\t\t\tbuilding = $B$\n'
+             '\t\tscope:pmr_sb_st$I$_$T$ = {\n\t\t\tcreate_building = {\n\t\t\t\tbuilding = $B$\n'
              '\t\t\t\tadd_ownership = {\n\t\t\t\t\tcompany = {\n\t\t\t\t\t\ttype = $T$\n\t\t\t\t\t\tcountry = ROOT\n'
              f'\t\t\t\t\t\tlevels = {SB_LEVELS}\n\t\t\t\t\t}}\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n\t}}\n}}\n\n')
     o.append('# Country scope: one company slot per subsidiary the country has (Pat 2026-10-19 14:44Z), the static modifier\n'

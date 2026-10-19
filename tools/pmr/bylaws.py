@@ -12,10 +12,11 @@ multiplies the AI weight of the company's industries and its subsidiaries' (ai_v
 
 Passing (Pat 14:43Z: "an law passing system; come up with some generalized mapping of opinions"): the board's seats
 back (+1), oppose (-1) or don't care (0) about a change, by their view of the bylaw it brings against the one it
-replaces. Seats: the executive (3), each subsidiary's executive (1), the shareholders (by the Industrialists' clout: 1, 2 at
-5%, 3 at 15%, 4 at 25%; Pat 18:03Z), and the Workers Council where the Trade Unions have 5% clout or more (2, 3 at 15%, 4
-at 25%; Pat 14:43Z). A seat's character adds its popularity (POP: +1 at 25, +2 at 75, as much off below -25 and -75;
-Pat 18:03Z), and a seat keeps at least 1 vote. Pat 16:53Z: the shareholders' seat is the
+replaces. Seats (Pat 18:26Z): the executive (the chairman), each subsidiary's executive (its chairman), the
+shareholders, and the Workers Council where the Trade Unions have 5% clout or more (Pat 14:43Z). The chairmen and the
+shareholders share VOTE_POOL votes by the week's profit each makes (pmr_bl_wealth); each chairman adds CHAIR_BONUS; the
+council has TU_SCALE x the Trade Unions' clout; a seat's character's popularity multiplies its votes (1 + popularity /
+100). Pat 16:53Z: the shareholders' seat is the
 country's Industrialists' leader, and a character's view is its ideology's (IDEOLOGY_VIEWS; an ideology not listed
 falls back to its interest group's, VIEWS, as does a country without an Industrialists' leader). Pat 17:44Z: the
 council's seat is the Trade Unions' leader, by its ideology, else the Trade Unions' view. Support = the sum of weight x view; a change at BLOCK or below can't start;
@@ -31,9 +32,10 @@ a country modifier: Trade Unions approval -1 and political strength +5% for each
 Company variables: pmr_bl_<g> the group's bylaw (1-based), pmr_bl_pg / pmr_bl_pv the change under way (group, bylaw;
 0 none), pmr_bl_pp its bar, pmr_bl_sup its support, pmr_bl_rt its monthly gain, pmr_bl_s_<code> each bylaw's support,
 pmr_bl_v_ex / _sh / _wc the executive's, shareholders' and council's vote on the change (a subsidiary's own vote is
-its pmr_bl_v, its weight pmr_bl_w, its popularity's votes pmr_bl_pa), pmr_bl_w_x / _h / _w the executive's,
-shareholders' and council's weights (pmr_bl_pa_x / _h / _w their popularity's votes, pmr_bl_wb_h the shareholders' by
-clout), pmr_bl_wc the council's weight by clout (0: no council), pmr_bl_shl the Industrialists' leader (pmr_bl_shx 1 while there is
+its pmr_bl_v, its votes pmr_bl_w, its popularity multiplier pmr_bl_pm, its wealth pmr_bl_wl and share pmr_bl_ws),
+pmr_bl_w_x / _h / _w the executive's, shareholders' and council's votes (pmr_bl_pm_* their popularity multipliers,
+pmr_bl_wl_x / _h their wealth, pmr_bl_ws_x / _h their shares of it, pmr_bl_wt the board's), pmr_bl_tc the Trade
+Unions' clout, pmr_bl_wc the council's votes before popularity (0: no council), pmr_bl_shl the Industrialists' leader (pmr_bl_shx 1 while there is
 one), pmr_bl_wcl the Trade Unions' leader (pmr_bl_wcx), pmr_bl_<seat>_<code> each seat's weighted vote on each bylaw
 (SEATS), pmr_bl_ns the subsidiaries' seats, pmr_bl_harsh, pmr_bl_ai (Focus's AI factor). Mirrored onto the executive for the window with company_culture's
 numbers.
@@ -123,14 +125,20 @@ IG_TEX = {'ig_industrialists': 'industrialists', 'ig_landowners': 'landowners',
           'ig_petty_bourgeoisie': 'petty_bourgeoisie', 'ig_trade_unions': 'trade_unions',
           'ig_intelligentsia': 'intelligensia', 'ig_devout': 'devout', 'ig_rural_folk': 'rural_folk',
           'ig_armed_forces': 'armed_forces'}
-EXEC_W, SUB_W = 3, 1
-COUNCIL = [(0.25, 4), (0.15, 3), (0.05, 2)]   # Trade Unions clout -> the council's weight
-# Pat 18:03Z ("clout of the share holders, board member extc influenced by their popularity and relative power"): the
-# shareholders weigh by the Industrialists' clout as the council by the Trade Unions' (1 below 5%), and a seat's
-# character adds its popularity's step (vanilla's 25 and 75 marks); a seat keeps at least 1 vote
-SHARE = [(0.25, 4), (0.15, 3), (0.05, 2)]
-SHARE_LOW = 1
-POP = [(75, 2), (25, 1), (-75, -2), (-25, -1)]   # popularity at least (or, negative, at most) -> votes
+# Pat 18:26Z: "popularity should be a multiplier on their clout which should be a calculated by the wealth they make
+# relative to share holders. So shareholders get clout from fin districts, chairman get clout from ch's. Chairmen get a
+# flat bonus for beeing a chairmen and then trade unions get scaling bonuses based on their regular clout * popularity".
+# Wealth is a week's profit: the company's own levels (its headquarters') and, for the shareholders, the privately held
+# levels of its industries in its country that aren't its own (the financial districts'), each at its industries'
+# profit per level (pmr_bl_wealth). The shareholders and the chairmen share VOTE_POOL votes by it; each chairman (the
+# company's executive and each subsidiary's) adds CHAIR_BONUS; the council has TU_SCALE votes per unit of Trade Unions
+# clout; then each seat's character's popularity multiplies its votes by 1 + popularity / 100 (POP_STEP steps).
+VOTE_POOL = 10
+CHAIR_BONUS = 2
+TU_SCALE = 20
+COUNCIL_MIN = 0.05                    # Trade Unions clout a Workers Council needs
+POP_STEP = 10
+OWNED_STEPS = (2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1)   # company_owned_levels, read by halving
 BLOCK = -6
 VOTED = [c for c in CODES if c // 10 != FOCUS]   # the bylaws interest groups have views on
 RATE = (20, 2, 5, 50)                # base, per net vote of support, least, most (Pat 16:39-16:40Z)
@@ -145,9 +153,98 @@ TRAIT_FILE = 'common/character_traits/pmr_bl_traits.txt'
 SEATS = ('x', 'b', 'h', 'w')
 VARS = ([f'pmr_bl_{g}' for g, _n, _o in GROUPS] + ['pmr_bl_pg', 'pmr_bl_pv', 'pmr_bl_pp', 'pmr_bl_sup', 'pmr_bl_rt',
         'pmr_bl_v_ex', 'pmr_bl_v_sh', 'pmr_bl_v_wc', 'pmr_bl_wc', 'pmr_bl_ai', 'pmr_bl_shx', 'pmr_bl_wcx', 'pmr_bl_ns',
-        'pmr_bl_pa', 'pmr_bl_w_b', 'pmr_bl_wb_h'] + [f'pmr_bl_{x}_{k}' for x in ('w', 'pa') for k in ('x', 'h', 'w')]
+        'pmr_bl_pm', 'pmr_bl_w_b', 'pmr_bl_tc', 'pmr_bl_wt'] + [f'pmr_bl_{x}_{k}' for x in ('w', 'pm') for k in ('x', 'h', 'w')]
+        + [f'pmr_bl_{x}_{k}' for x in ('wl', 'ws', 'bv') for k in ('x', 'h')]
         + [f'pmr_bl_s_{c}' for c in CODES] + [f'pmr_bl_{k}_{c}' for k in SEATS for c in VOTED])
 MIRRORED = VARS + ['pmr_bl_shl', 'pmr_bl_wcl']
+
+
+def highest(ns, cond, leaf, ind='\t'):
+    """Bisection over a monotone ladder (generate.highest): leaf(x) for the largest x of ns whose cond(x) holds,
+    leaf(None) if none does."""
+    def find(lo, hi, ind):
+        if lo > hi:
+            return f'{ind}{leaf(ns[lo - 1] if lo > 0 else None)}\n'
+        mid = (lo + hi) // 2
+        return (f'{ind}if = {{ limit = {{ {cond(ns[mid])} }}\n' + find(mid + 1, hi, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid - 1, ind + '\t') + f'{ind}}}\n')
+    return find(0, len(ns) - 1, ind)
+
+
+def lookup(var, ns, body, ind='\t'):
+    """body(x) for the x of ns (ascending integers) that var holds, by binary search (generate.lookup)."""
+    def find(lo, hi, ind):
+        if lo == hi:
+            return f'{ind}if = {{ limit = {{ {var} = {ns[lo]} }} {body(ns[lo])} }}\n'
+        mid = (lo + hi) // 2
+        return (f'{ind}if = {{\n{ind}\tlimit = {{ {var} <= {ns[mid]} }}\n' + find(lo, mid, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{\n' + find(mid + 1, hi, ind + '\t') + f'{ind}}}\n')
+    return find(0, len(ns) - 1, ind) if ns else ''
+
+
+def short_b(bk):
+    return bk[len('building_'):] if bk.startswith('building_') else bk
+
+
+def wealth(p, nums, slots):
+    """pmr_bl_wealth (company scope): the week's profit the company's own levels make (Pat 18:26Z: the chairman's clout
+    from its headquarters'), as pmr_bl_cl, its owned levels (company_owned_levels, by halving), and pmr_bl_pl, its
+    industries' profit per level in its country (the books' pmr_bpl_<b>, for the PMR types that keep them; at least 1);
+    pmr_bl_iv, the privately held levels of its industries there (the shareholders' and its own, to an eighth of each
+    building, pmr_po_rest_levels). A parent's industries are its type's building_types (pmr_cc_k_id, the plan's
+    order), a subsidiary's its parent's list for it (pmr_cc_k_sb<n>_<j>). pmr_bl_mt_<building> (country scope) adds
+    one building type's levels to scope:pmr_bl_m."""
+    o = ['# Company board wealth (bylaws.wealth).\n\n']
+    types = sorted({b for v in p.comp.values() for b in v['bts']} | set(p.sb_types))
+    for bk in types:
+        o.append(f'pmr_bl_mt_{bk} = {{\n\tevery_scope_state = {{\n\t\tlimit = {{ has_building = {bk} }}\n'
+                 '\t\tsave_temporary_scope_as = pmr_bl_st\n'
+                 f'\t\tb:{bk} = {{\n\t\t\tif = {{\n\t\t\t\tlimit = {{ level > 0 }}\n'
+                 '\t\t\t\tsave_temporary_scope_value_as = { name = pmr_bl_l value = { value = this.level } }\n'
+                 '\t\t\t\tsave_temporary_scope_value_as = { name = pmr_bl_q value = { value = pmr_po_rest_levels } }\n'
+                 '\t\t\t\tscope:pmr_bl_m = {\n'
+                 '\t\t\t\t\tchange_variable = { name = pmr_bl_il add = scope:pmr_bl_l }\n'
+                 '\t\t\t\t\tchange_variable = { name = pmr_bl_iv add = scope:pmr_bl_q }\n\t\t\t\t}\n'
+                 f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ scope:pmr_bl_st = {{ has_variable = pmr_bpl_{short_b(bk)} }} }}\n'
+                 '\t\t\t\t\tsave_temporary_scope_value_as = { name = pmr_bl_p value = { '
+                 f'value = scope:pmr_bl_st.var:pmr_bpl_{short_b(bk)} multiply = this.level }} }}\n'
+                 '\t\t\t\t\tscope:pmr_bl_m = {\n'
+                 '\t\t\t\t\t\tchange_variable = { name = pmr_bl_ip add = scope:pmr_bl_p }\n'
+                 '\t\t\t\t\t\tchange_variable = { name = pmr_bl_iq add = scope:pmr_bl_l }\n\t\t\t\t\t}\n\t\t\t\t}\n'
+                 '\t\t\t}\n\t\t}\n\t}\n}\n\n')
+    comps = sorted(p.comp.items())
+    own = lookup('var:pmr_cc_k_id', list(range(1, len(comps) + 1)),
+                 lambda i: ' '.join(f'owner ?= {{ pmr_bl_mt_{b} = yes }}' for b in comps[i - 1][1]['bts']) or 'pmr_bl_none = yes',
+                 '\t\t')
+    sb = lambda i: f'owner ?= {{ pmr_bl_mt_{p.sb_types[i - 1]} = yes }}'   # noqa: E731
+    subs = ''
+    for n in nums:
+        subs += f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_sb_n ?= {n} }}\n'
+        for j in slots:
+            subs += ('\t\t\tset_variable = { name = pmr_bl_k value = 0 }\n'
+                     f'\t\t\tif = {{ limit = {{ scope:pmr_bl_par ?= {{ has_variable = pmr_cc_k_sb{n}_{j} }} }} '
+                     f'set_variable = {{ name = pmr_bl_k value = scope:pmr_bl_par.var:pmr_cc_k_sb{n}_{j} }} }}\n'
+                     + lookup('var:pmr_bl_k', list(range(1, len(p.sb_types) + 1)), sb, '\t\t\t'))
+        subs += '\t\t}\n'
+    owned = ''.join('\tset_variable = { name = pmr_bl_t value = var:pmr_bl_cl }\n'
+                    f'\tchange_variable = {{ name = pmr_bl_t add = {st} }}\n'
+                    '\tif = { limit = { company_owned_levels >= var:pmr_bl_t } set_variable = { name = pmr_bl_cl value = var:pmr_bl_t } }\n'
+                    for st in OWNED_STEPS)
+    o.append('pmr_bl_none = {\n}\n\n'
+             'pmr_bl_wealth = {\n\tsave_temporary_scope_as = pmr_bl_m\n'
+             + ''.join(f'\tset_variable = {{ name = pmr_bl_{x} value = 0 }}\n' for x in ('il', 'iv', 'ip', 'iq', 'cl'))
+             + '\tif = {\n\t\tlimit = { has_variable = pmr_sub }\n'
+             '\t\tvar:pmr_parent ?= { save_temporary_scope_as = pmr_bl_par }\n'
+             '\t\tif = {\n\t\t\tlimit = { exists = scope:pmr_bl_par }\n' + subs.replace('\n\t\t', '\n\t\t\t').replace('\t\tif = {\n\t\t\t\tlimit = { var:pmr_sb_n', '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_sb_n', 1)
+             + '\t\t}\n\t}\n'
+             '\telse_if = {\n\t\tlimit = { has_variable = pmr_cc_k_id }\n' + own + '\t}\n'
+             + owned
+             + '\tset_variable = { name = pmr_bl_pl value = 1 }\n'
+             '\tif = {\n\t\tlimit = { var:pmr_bl_iq > 0 }\n'
+             '\t\tset_variable = { name = pmr_bl_pl value = var:pmr_bl_ip }\n'
+             '\t\tchange_variable = { name = pmr_bl_pl divide = var:pmr_bl_iq }\n'
+             '\t\tif = { limit = { var:pmr_bl_pl < 1 } set_variable = { name = pmr_bl_pl value = 1 } }\n\t}\n}\n\n')
+    return ''.join(o)
 
 
 def trait_key(c):
@@ -241,16 +338,17 @@ def effects(log_line):
                    + f' }} }} }} pmr_bl_row_i_{row} = yes }}\n' for j, row in enumerate(IDEOLOGY_ROWS))
     disp += ''.join(f'\telse_if = {{ limit = {{ scope:pmr_bl_ch = {{ is_interest_group_type = {ig} }} }} '
                     f'pmr_bl_row_{short(ig)} = yes }}\n' for ig in VIEWS)
-    pop = ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ scope:pmr_bl_ch = {{ popularity {">=" if p > 0 else "<="} {p} }} }} '
-                  f'set_variable = {{ name = pmr_bl_pa value = {v} }} }}\n' for j, (p, v) in enumerate(POP))
-    o.append('# The votes of character scope:pmr_bl_ch: its ideology\'s, else its interest group\'s; its popularity\'s votes\n'
-             '# (pmr_bl_pa, POP).\n'
-             'pmr_bl_row_ch = {\n' + disp + '\telse = { pmr_bl_row_none = yes }\n'
-             '\tset_variable = { name = pmr_bl_pa value = 0 }\n' + pop + '}\n\n')
-    o.append('# A seat\'s weight pmr_bl_$V$: $B$ and its character\'s popularity (pmr_bl_pa, 0 for a seat with none), at least 1.\n'
+    pop = highest(list(range(-100, 101, POP_STEP)), lambda x: f'scope:pmr_bl_ch = {{ popularity >= {x} }}',
+                  lambda x: f'set_variable = {{ name = pmr_bl_pm value = {fmt(1 + x / 100) if x is not None else 0} }}')
+    o.append('# The votes of character scope:pmr_bl_ch: its ideology\'s, else its interest group\'s; its popularity as a\n'
+             '# multiplier of its seat\'s votes (pmr_bl_pm, 1 + popularity / 100).\n'
+             'pmr_bl_row_ch = {\n' + disp + '\telse = { pmr_bl_row_none = yes }\n' + pop + '}\n\n')
+    o.append('# A seat\'s votes pmr_bl_$V$: its base $B$ times its character\'s popularity multiplier (pmr_bl_pm, 1 for a seat\n'
+             '# with none), to the nearest vote.\n'
              'pmr_bl_weigh = {\n\tset_variable = { name = pmr_bl_$V$ value = $B$ }\n'
-             '\tchange_variable = { name = pmr_bl_$V$ add = var:pmr_bl_pa }\n'
-             '\tif = { limit = { var:pmr_bl_$V$ < 1 } set_variable = { name = pmr_bl_$V$ value = 1 } }\n}\n\n')
+             '\tchange_variable = { name = pmr_bl_$V$ multiply = var:pmr_bl_pm }\n'
+             '\tround_variable = { name = pmr_bl_$V$ nearest = 1 }\n'
+             '\tif = { limit = { var:pmr_bl_$V$ < 0 } set_variable = { name = pmr_bl_$V$ value = 0 } }\n}\n\n')
     o.append('# The votes of company $WHO$\'s executive.\npmr_bl_row_of = {\n'
              '\tif = {\n\t\tlimit = { $WHO$ = { exists = executive } }\n'
              '\t\t$WHO$ = { executive = { save_scope_as = pmr_bl_ch } }\n\t\tpmr_bl_row_ch = yes\n\t}\n'
@@ -264,55 +362,88 @@ def effects(log_line):
     o.append('# A seat of weight $W$ (its votes in pmr_bl_d_*): its weight on each bylaw\'s support and on its own line $K$\n'
              '# (SEATS), and its vote on the change under way (pmr_bl_vt).\npmr_bl_seat = {\n' + acc
              + '\tset_variable = { name = pmr_bl_vt value = 0 }\n' + vote + '}\n\n')
-    council = ''.join(f'\t\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ ig_clout >= {fmt(cl)} }} '
-                      f'scope:pmr_bl_co = {{ set_variable = {{ name = pmr_bl_wc value = {w} }} }} }}\n'
-                      for j, (cl, w) in enumerate(COUNCIL))
-    share = ''.join(f'\t\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ ig_clout >= {fmt(cl)} }} '
-                    f'scope:pmr_bl_co = {{ set_variable = {{ name = pmr_bl_wb_h value = {w} }} }} }}\n'
-                    for j, (cl, w) in enumerate(SHARE))
+    clout = highest([round(COUNCIL_MIN + k / 100, 2) for k in range(0, 61)], lambda x: f'ig_clout >= {fmt(x)}',
+                    lambda x: f'scope:pmr_bl_co = {{ set_variable = {{ name = pmr_bl_tc value = {fmt(x) if x else 0} }} }}',
+                    '\t\t\t')
     pend = ''.join(f'\tif = {{ limit = {{ var:pmr_bl_pg = {c // 10} var:pmr_bl_pv = {c % 10} }} '
                    f'set_variable = {{ name = pmr_bl_sup value = var:pmr_bl_s_{c} }} }}\n' for c in VOTED)
-    o.append('# The board counts: each bylaw\'s support (pmr_bl_s_*), each seat\'s vote on the change under way, its support.\n'
+    share = lambda wl, out: (f'\tset_variable = {{ name = {out} value = 0 }}\n'   # noqa: E731
+                             f'\tif = {{ limit = {{ var:pmr_bl_wt > 0 }} set_variable = {{ name = {out} value = {wl} }} '
+                             f'change_variable = {{ name = {out} divide = var:pmr_bl_wt }} }}\n')
+    o.append('# The board counts: each seat\'s votes (Pat 18:26Z: the wealth seats share VOTE_POOL by the week\'s profit\n'
+             '# they make, pmr_bl_wealth; the chairmen add CHAIR_BONUS; the council TU_SCALE x the Trade Unions\' clout;\n'
+             '# popularity multiplies each), each bylaw\'s support (pmr_bl_s_*), each seat\'s vote on the change under way.\n'
              'pmr_bl_count = {\n\tsave_scope_as = pmr_bl_co\n'
              + ''.join(f'\tset_variable = {{ name = pmr_bl_s_{c} value = 0 }}\n' for c in CODES)
              + ''.join(f'\tset_variable = {{ name = pmr_bl_{k}_{c} value = 0 }}\n' for k in SEATS for c in VOTED)
              + '\tset_variable = { name = pmr_bl_ns value = 0 }\n'
-             '\tset_variable = { name = pmr_bl_wc value = 0 }\n'
-             '\towner ?= {\n\t\tig:ig_trade_unions ?= {\n' + council + '\t\t}\n\t}\n'
-             f'\tset_variable = {{ name = pmr_bl_wb_h value = {SHARE_LOW} }}\n'
-             '\towner ?= {\n\t\tig:ig_industrialists ?= {\n' + share + '\t\t}\n\t}\n'
-             f'\t# the executive ({EXEC_W} and its popularity)\n'
-             '\tset_variable = { name = pmr_bl_pa value = 0 }\n'
+             '\t# wealth: the company\'s own levels (its chairman\'s) and the rest of the privately held levels of its\n'
+             '\t# industries (the shareholders\'), at its industries\' profit per level; each subsidiary\'s own levels at theirs\n'
+             '\tpmr_bl_wealth = yes\n'
+             '\tset_variable = { name = pmr_bl_wl_x value = var:pmr_bl_cl }\n'
+             '\tchange_variable = { name = pmr_bl_wl_x multiply = var:pmr_bl_pl }\n'
+             '\tset_variable = { name = pmr_bl_wl_h value = var:pmr_bl_iv }\n'
+             '\tchange_variable = { name = pmr_bl_wl_h subtract = var:pmr_bl_cl }\n'
+             '\tif = { limit = { var:pmr_bl_wl_h < 0 } set_variable = { name = pmr_bl_wl_h value = 0 } }\n'
+             '\tchange_variable = { name = pmr_bl_wl_h multiply = var:pmr_bl_pl }\n'
+             '\tset_variable = { name = pmr_bl_wt value = var:pmr_bl_wl_x }\n'
+             '\tchange_variable = { name = pmr_bl_wt add = var:pmr_bl_wl_h }\n'
+             '\tevery_in_list = {\n\t\tvariable = pmr_subs\n\t\tsave_scope_as = pmr_bl_sub\n\t\tpmr_bl_wealth = yes\n'
+             '\t\tset_variable = { name = pmr_bl_wl value = var:pmr_bl_cl }\n'
+             '\t\tchange_variable = { name = pmr_bl_wl multiply = var:pmr_bl_pl }\n'
+             '\t\tscope:pmr_bl_co = { change_variable = { name = pmr_bl_wt add = scope:pmr_bl_sub.var:pmr_bl_wl } }\n\t}\n'
+             '\t# with no wealth to go by (no levels yet), the chairman and the shareholders halve the pool\n'
+             + share('var:pmr_bl_wl_x', 'pmr_bl_ws_x') + share('var:pmr_bl_wl_h', 'pmr_bl_ws_h')
+             + '\tif = {\n\t\tlimit = { var:pmr_bl_wt <= 0 }\n'
+             '\t\tset_variable = { name = pmr_bl_ws_x value = 0.5 }\n\t\tset_variable = { name = pmr_bl_ws_h value = 0.5 }\n\t}\n'
+             + ''.join(f'\tset_variable = {{ name = pmr_bl_bv_{k} value = var:pmr_bl_ws_{k} }}\n'
+                       f'\tchange_variable = {{ name = pmr_bl_bv_{k} multiply = {VOTE_POOL} }}\n' for k in ('x', 'h'))
+             + '\t# the Trade Unions\' clout (pmr_bl_tc, 0 under COUNCIL_MIN: no council) and the council\'s votes before popularity\n'
+             '\tset_variable = { name = pmr_bl_tc value = 0 }\n'
+             '\towner ?= {\n\t\tig:ig_trade_unions ?= {\n' + clout + '\t\t}\n\t}\n'
+             '\tset_variable = { name = pmr_bl_wc value = var:pmr_bl_tc }\n'
+             f'\tchange_variable = {{ name = pmr_bl_wc multiply = {TU_SCALE} }}\n'
+             f'\t# the chairman: its share of the pool times its popularity, and {CHAIR_BONUS}\n'
+             '\tset_variable = { name = pmr_bl_pm value = 1 }\n'
              '\tpmr_bl_row_of = { WHO = scope:pmr_bl_co }\n'
-             f'\tpmr_bl_weigh = {{ V = w_x B = {EXEC_W} }}\n'
-             '\tset_variable = { name = pmr_bl_pa_x value = var:pmr_bl_pa }\n'
+             '\tpmr_bl_weigh = { V = w_x B = var:pmr_bl_bv_x }\n'
+             f'\tchange_variable = {{ name = pmr_bl_w_x add = {CHAIR_BONUS} }}\n'
+             '\tset_variable = { name = pmr_bl_pm_x value = var:pmr_bl_pm }\n'
              '\tpmr_bl_seat = { W = var:pmr_bl_w_x K = x }\n'
              '\tset_variable = { name = pmr_bl_v_ex value = var:pmr_bl_vt }\n'
-             f'\t# each subsidiary\'s executive ({SUB_W} and its popularity), its vote and weight on the subsidiary\n'
+             '\t# each subsidiary\'s chairman likewise; its vote, votes, popularity, wealth and share on the subsidiary\n'
              '\tevery_in_list = {\n\t\tvariable = pmr_subs\n\t\tsave_scope_as = pmr_bl_sub\n'
-             '\t\tscope:pmr_bl_co = {\n\t\t\tset_variable = { name = pmr_bl_pa value = 0 }\n'
+             '\t\tset_variable = { name = pmr_bl_ws value = 0 }\n'
+             '\t\tif = {\n\t\t\tlimit = { scope:pmr_bl_co.var:pmr_bl_wt > 0 }\n'
+             '\t\t\tset_variable = { name = pmr_bl_ws value = var:pmr_bl_wl }\n'
+             '\t\t\tchange_variable = { name = pmr_bl_ws divide = scope:pmr_bl_co.var:pmr_bl_wt }\n\t\t}\n'
+             '\t\tscope:pmr_bl_co = {\n'
+             '\t\t\tset_variable = { name = pmr_bl_t value = scope:pmr_bl_sub.var:pmr_bl_ws }\n'
+             f'\t\t\tchange_variable = {{ name = pmr_bl_t multiply = {VOTE_POOL} }}\n'
+             '\t\t\tset_variable = { name = pmr_bl_pm value = 1 }\n'
              '\t\t\tpmr_bl_row_of = { WHO = scope:pmr_bl_sub }\n'
-             f'\t\t\tpmr_bl_weigh = {{ V = w_b B = {SUB_W} }}\n'
+             '\t\t\tpmr_bl_weigh = { V = w_b B = var:pmr_bl_t }\n'
+             f'\t\t\tchange_variable = {{ name = pmr_bl_w_b add = {CHAIR_BONUS} }}\n'
              '\t\t\tpmr_bl_seat = { W = var:pmr_bl_w_b K = b }\n\t\t\tchange_variable = { name = pmr_bl_ns add = 1 }\n\t\t}\n'
              '\t\tset_variable = { name = pmr_bl_v value = scope:pmr_bl_co.var:pmr_bl_vt }\n'
              '\t\tset_variable = { name = pmr_bl_w value = scope:pmr_bl_co.var:pmr_bl_w_b }\n'
-             '\t\tset_variable = { name = pmr_bl_pa value = scope:pmr_bl_co.var:pmr_bl_pa }\n\t}\n'
-             '\t# the shareholders (the Industrialists\' clout, SHARE): the Industrialists\' leader, else their view\n'
-             '\tset_variable = { name = pmr_bl_pa value = 0 }\n'
+             '\t\tset_variable = { name = pmr_bl_pm value = scope:pmr_bl_co.var:pmr_bl_pm }\n\t}\n'
+             '\t# the shareholders: the Industrialists\' leader, else their view; their share of the pool\n'
+             '\tset_variable = { name = pmr_bl_pm value = 1 }\n'
              '\tif = {\n\t\tlimit = { owner ?= { ig:ig_industrialists ?= { exists = leader } } }\n'
              '\t\towner = { ig:ig_industrialists = { leader = { save_scope_as = pmr_bl_ch } } }\n'
              '\t\tset_variable = { name = pmr_bl_shl value = scope:pmr_bl_ch }\n'
              '\t\tset_variable = { name = pmr_bl_shx value = 1 }\n\t\tpmr_bl_row_ch = yes\n\t}\n'
              '\telse = {\n\t\tif = { limit = { has_variable = pmr_bl_shl } remove_variable = pmr_bl_shl }\n'
              '\t\tset_variable = { name = pmr_bl_shx value = 0 }\n\t\tpmr_bl_row_industrialists = yes\n\t}\n'
-             '\tpmr_bl_weigh = { V = w_h B = var:pmr_bl_wb_h }\n'
-             '\tset_variable = { name = pmr_bl_pa_h value = var:pmr_bl_pa }\n'
+             '\tpmr_bl_weigh = { V = w_h B = var:pmr_bl_bv_h }\n'
+             '\tset_variable = { name = pmr_bl_pm_h value = var:pmr_bl_pm }\n'
              '\tpmr_bl_seat = { W = var:pmr_bl_w_h K = h }\n'
              '\tset_variable = { name = pmr_bl_v_sh value = var:pmr_bl_vt }\n'
              '\t# the Workers Council: the Trade Unions\' leader (Pat 17:44Z), else the Trade Unions\' view\n'
              '\tset_variable = { name = pmr_bl_v_wc value = 0 }\n'
              '\tset_variable = { name = pmr_bl_wcx value = 0 }\n'
-             '\tset_variable = { name = pmr_bl_pa value = 0 }\n'
+             '\tset_variable = { name = pmr_bl_pm value = 1 }\n'
              '\tset_variable = { name = pmr_bl_w_w value = 0 }\n'
              '\tif = {\n\t\tlimit = { var:pmr_bl_wc > 0 owner ?= { ig:ig_trade_unions ?= { exists = leader } } }\n'
              '\t\towner = { ig:ig_trade_unions = { leader = { save_scope_as = pmr_bl_ch } } }\n'
@@ -324,7 +455,7 @@ def effects(log_line):
              '\t\tpmr_bl_weigh = { V = w_w B = var:pmr_bl_wc }\n'
              '\t\tpmr_bl_seat = { W = var:pmr_bl_w_w K = w }\n'
              '\t\tset_variable = { name = pmr_bl_v_wc value = var:pmr_bl_vt }\n\t}\n'
-             '\tset_variable = { name = pmr_bl_pa_w value = var:pmr_bl_pa }\n'
+             '\tset_variable = { name = pmr_bl_pm_w value = var:pmr_bl_pm }\n'
              '\tset_variable = { name = pmr_bl_sup value = 0 }\n' + pend
              + '\tset_variable = { name = pmr_bl_rt value = var:pmr_bl_sup }\n'
              f'\tchange_variable = {{ name = pmr_bl_rt multiply = {RATE[1]} }}\n'
@@ -497,14 +628,17 @@ def localization():
            '[Character.MakeScope.Var(\'pmr_bl_rt\').GetValue|+=0] a month"']
     for g, name, _o in GROUPS:
         loc.append(f' PMR_BL_GROUP_{g}:0 "{name}"')
-    # a seat's votes, what they come from (Pat 18:03Z)
-    pa = lambda v: f"\\nPopularity [{v}.GetValue|+=0]"   # noqa: E731
-    cv = lambda n: f"Character.MakeScope.Var('{n}')"   # noqa: E731
-    sub_pa = "Company.MakeScope.Var('pmr_bl_pa')"
-    loc += [f' PMR_BL_VOTES_X:0 "Executive {EXEC_W}{pa(cv("pmr_bl_pa_x"))}"',
-            f' PMR_BL_VOTES_B:0 "Subsidiary {SUB_W}{pa(sub_pa)}"',
-            f' PMR_BL_VOTES_H:0 "Industrialists\' clout [{_gv("pmr_bl_wb_h")}|0]{pa(cv("pmr_bl_pa_h"))}"',
-            f' PMR_BL_VOTES_W:0 "Trade Unions\' clout [{_gv("pmr_bl_wc")}|0]{pa(cv("pmr_bl_pa_w"))}"']
+    # a seat's votes, what they come from (Pat 18:26Z): its wealth and share of the board's, its popularity's multiplier,
+    # a chairman's bonus; the council's clout
+    cv = lambda n: f"Character.MakeScope.Var('{n}').GetValue"   # noqa: E731
+    sv = lambda n: f"Company.MakeScope.Var('{n}').GetValue"   # noqa: E731
+    wl = lambda v, sh: f'Wealth @money![{v}|K] ([{sh}|%0])'   # noqa: E731
+    pm = lambda v: f'\\nPopularity ×[{v}|1]'   # noqa: E731
+    chair = f'\\nChairman +{CHAIR_BONUS}'
+    loc += [f' PMR_BL_VOTES_X:0 "{wl(cv("pmr_bl_wl_x"), cv("pmr_bl_ws_x"))}{pm(cv("pmr_bl_pm_x"))}{chair}"',
+            f' PMR_BL_VOTES_B:0 "{wl(sv("pmr_bl_wl"), sv("pmr_bl_ws"))}{pm(sv("pmr_bl_pm"))}{chair}"',
+            f' PMR_BL_VOTES_H:0 "{wl(cv("pmr_bl_wl_h"), cv("pmr_bl_ws_h"))}{pm(cv("pmr_bl_pm_h"))}"',
+            f' PMR_BL_VOTES_W:0 "Trade Unions\' clout [{cv("pmr_bl_tc")}|%0]{pm(cv("pmr_bl_pm_w"))}"']
     # a seat's ideology: its name and its views (custom_loc)
     for k, who in WHO.items():
         loc.append(f' PMR_BL_IDEO_{k}:0 "[Ideology.GetName]\\n[{who}.GetCustom(\'pmr_bl_views\')]"')
@@ -531,7 +665,7 @@ def localization():
                     f' PMR_BL_TT_H_{c}:0 "\\nShareholders {vote("h")}"',
                     f' PMR_BL_TT_WL_{c}:0 "\\n[{WHO["WC"]}.GetFullNameNoFormatting] {vote("w")}"',
                     f' PMR_BL_TT_W_{c}:0 "\\nWorkers Council {vote("w")}"']
-        loc += [f' PMR_BL_NAME_{c}:0 "{NAME[c]}"', f' PMR_BL_TT_{c}:0 "{sup}"',
+        loc += [f' PMR_BL_NAME_{c}:0 "{NAME[c]}"', f' PMR_BL_ROW_{c}:0 "#bold {NAME[c]}#!"', f' PMR_BL_TT_{c}:0 "{sup}"',
                 f' PMR_BL_SUP_{c}:0 "[Character.MakeScope.Var(\'pmr_bl_s_{c}\').GetValue|+=0]"']
         if fx(c):
             loc.append(f' PMR_BL_FX_{c}:0 "' + '\\n'.join(fx(c)) + '"')

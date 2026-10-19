@@ -5,7 +5,7 @@ The spec is /mnt/project-files/pmr/company-rework/SPEC.md (the build thread's, f
 and subsidiaries.py the subsidiaries. Test builds only until Pat ships it.
 
 The window splits 70 / 30 (Pat 14:43Z): the Expansion and Engineering trees on the left, the board on the right (the
-company's executive and its subsidiaries' executives; the bylaws come next). Each tree is a free root, its principle,
+company's executive and its subsidiaries' executives; the bylaws come next). Each tree is a root, its principle,
 and three levels under it (Pat 14:58Z: "3 levels deep + their parent principle so 4 total"). Expansion's levels are two
 branches of which a company takes one: Vertical (Vertical Integration founds the supply subsidiary, the industries
 making the key building's inputs; then an input cut with the Trade charter, throughput with the Monopoly charter) or
@@ -50,9 +50,10 @@ TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
 PANEL_GUI = 'gui/company_panel.gui'
 CHARTER_FILE = 'common/company_charter_types/00_company_charter_types.txt'
-CAL_VERSION = 8                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
+CAL_VERSION = 9                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
                                     # 5: a grant per goods line; 6: the subsidiary bundles; 7: the two trees (an older
-                                    # company's nodes are points again); 8: q45 (the trees' nodes kept)
+                                    # company's nodes are points again); 8: q45 (the trees' nodes kept); 9: q49, the
+                                    # type's id for the board's wealth (pmr_cc_k_id)
 TREES_SINCE = 7                     # a company read in before this gets its nodes back as points
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -130,7 +131,7 @@ class Line:
 
 
 LINES = [
-    Line(1, 'xr', 'exp', ('Expansion',), (INVENTION.format('manufacturies'),), (0,), root=True),
+    Line(1, 'xr', 'exp', ('Expansion',), (INVENTION.format('manufacturies'),), (1,), root=True),   # 1 point (Pat 18:30Z)
     Line(2, 'vx', 'exp', ('Vertical Integration', 'Supply Contracts', 'Captive Supply'),
          (INVENTION.format('corporate_charters'), INVENTION.format('international_diplomacy'),
           INVENTION.format('shaft_mining')), (1, 2, 3), sub=1,
@@ -345,6 +346,7 @@ def plan(game, plain, goods_cost, goods_tex=None):
         for b in ranked:
             p.good_sec.setdefault(main[b][0], sector(groups.get(b)))
         p.comp[c] = {'key': key, 'eg': eg[:2], 'pvars': pvars, 'pg': pg, 'sec': sector(groups.get(key)) if key else 1,
+                     'bts': sorted(b for b in bts if b in groups),
                      'sb': [vert[:subsidiaries.SB_SIZE], horiz[:subsidiaries.SB_SIZE]]}
     subsidiaries.plan_types(p, game)
     p.goods = sorted({g for v in p.comp.values() for g in v['eg']})
@@ -465,7 +467,7 @@ def player_log(rec, extra=''):
     return f'if = {{ limit = {{ owner ?= {{ is_player = yes }} }} {log_line(rec, extra)} }}'
 
 
-KVARS = ['pmr_cc_k_eg1', 'pmr_cc_k_eg2', 'pmr_cc_k_pg', 'pmr_cc_k_sec'] + subsidiaries.KVARS
+KVARS = ['pmr_cc_k_eg1', 'pmr_cc_k_eg2', 'pmr_cc_k_pg', 'pmr_cc_k_sec', 'pmr_cc_k_id'] + subsidiaries.KVARS
 PARENT_VARS = [f'pmr_cc_p{k}' for k in KEYS]          # a subsidiary's copy of its parent's tiers
 STATE_VARS = [f'pmr_cc_st_{ln.key}_{t}' for ln, t in NODES]
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mth',
@@ -555,7 +557,8 @@ def effects(p):
     for i, (c, v) in enumerate(sorted(p.comp.items())):
         eg = v['eg']
         vals = {'pmr_cc_k_eg1': gi(p, eg[0]) if eg else 0, 'pmr_cc_k_eg2': gi(p, eg[1]) if len(eg) > 1 else 0,
-                'pmr_cc_k_pg': 1 if v['pg'] else 0, 'pmr_cc_k_sec': v['sec'], **subsidiaries.kvals(p, v)}
+                'pmr_cc_k_pg': 1 if v['pg'] else 0, 'pmr_cc_k_sec': v['sec'], 'pmr_cc_k_id': i + 1,
+                **subsidiaries.kvals(p, v)}
         sets = ' '.join(f'set_variable = {{ name = {k} value = {x} }}' for k, x in vals.items() if x)
         if sets:
             chain += f'\t{"if" if not chain else "else_if"} = {{\n\t\tlimit = {{ is_company_type = company_type:{c} }}\n\t\t{sets}\n\t}}\n'
@@ -671,12 +674,12 @@ def effects(p):
              '\t\t\trandom_list = {\n\t\t\t\t1 = { pmr_cc_buy_vx = yes }\n\t\t\t\t1 = { pmr_cc_buy_hx = yes }\n\t\t\t}\n\t\t}\n\t}\n'
              + step('vx', 1) + step('hx', 1)
              + ''.join(step(k, t) for k, t in AI_ORDER))
-    o.append('# AI companies: both roots (free) and a gone subsidiary paid for again at once; with points, Vertical or Horizontal\n'
+    o.append('# AI companies: both roots when affordable and a gone subsidiary paid for again at once; with points, Vertical or Horizontal\n'
              '# at random where both are open (the investment pool holding a week of the subsidiary), then the first open step\n'
              '# of AI_ORDER, bought when affordable, otherwise saved for.\n'
              'pmr_cc_ai_step = {\n' + steps + '}\n\n'
              'pmr_cc_ai_buy = {\n'
-             '\tif = { limit = { pmr_cc_open_xr = yes } pmr_cc_buy_xr = yes }\n'
+             '\tif = { limit = { pmr_cc_open_xr = yes pmr_cc_afford_xr = yes } pmr_cc_buy_xr = yes }\n'
              '\tif = { limit = { pmr_cc_open_er = yes pmr_cc_afford_er = yes } pmr_cc_buy_er = yes }\n'
              + ''.join(f'\tif = {{ limit = {{ pmr_sb_again_{n} = yes }} pmr_sb_start = {{ N = {n} }} }}\n' for n in subsidiaries.NUMS)
              + '\tif = {\n\t\tlimit = { var:pmr_cc_pts >= 1 }\n\t\tpmr_cc_ai_step = yes\n'
@@ -826,7 +829,8 @@ def effects(p):
     o.append('# Character scope (an executive, from the window): the owner\'s company this character runs, scope:line kept.\n'
              'pmr_cc_with_company = {\n\tsave_scope_as = pmr_cc_exec\n'
              '\towner ?= {\n\t\tevery_company = {\n\t\t\tlimit = { executive ?= scope:pmr_cc_exec }\n\t\t\t$EFFECT$ = yes\n\t\t}\n\t}\n}\n\n')
-    return ''.join(o) + subsidiaries.effects(p) + bylaws.effects(player_log)
+    return (''.join(o) + subsidiaries.effects(p) + bylaws.effects(player_log)
+            + bylaws.wealth(p, subsidiaries.NUMS, subsidiaries.SLOTS))
 
 
 # The order AI companies buy in after the roots and their branch (a step whose line is not open is passed over; the

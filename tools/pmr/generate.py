@@ -298,6 +298,7 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 'pmg_explosives_building_lead_mine', 'pmg_explosives_building_sulfur_mine',
                 'pmg_explosives_building_gold_mine')
 TRADE_GAIN = 1.0
+PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal entries (test builds: off)
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
 # building type, the share of the world's levels whose best-paying option at their state's prices
@@ -1612,6 +1613,26 @@ def main():
                 report['company_types'].append({'company': ck, 'file': csrc.name, 'added': [rbx for _, rbx in new]})
             if csrc.inserts:
                 write(f'common/company_types/{csrc.name}', csrc.render())
+        # Pat 2026-10-19 18:45Z ("why is this still active as a je?", the Hudson's Bay Company's Select Fish): in the
+        # test build Hallmark Goods gives a company its prestige goods, so vanilla's prestige goods journal entries
+        # never start, and one already running is dropped (invalid).
+        if not args.release:
+            je = load_dir(game, 'journal_entries', only={PRESTIGE_JE_FILE})
+            if not je:
+                raise SystemExit(f'common/journal_entries/{PRESTIGE_JE_FILE} is missing from the game copy')
+            for jsrc in je:
+                for jk, jn in jsrc.objects().items():
+                    if not jk.startswith('je_prestige_goods_'):
+                        continue
+                    for key in ('is_shown_when_inactive', 'possible', 'invalid'):
+                        kn = pdx.get(jn.value, key)
+                        if kn:
+                            jsrc.cuts.append(line_span(jsrc.text, kn))
+                    jsrc.inserts.append((jn.end - 1, '\tis_shown_when_inactive = { always = no }  # PMR\n'
+                                                     '\tpossible = { always = no }  # PMR\n'
+                                                     '\tinvalid = { always = yes }  # PMR: Hallmark Goods gives prestige goods\n'))
+                    report.setdefault('prestige_je_off', []).append(jk)
+                write(f'common/journal_entries/{jsrc.name}', jsrc.render())
     # the panels listing a company's industries hide them (Pat 2026-10-19 02:32Z, company_panel.py)
     company_panel.RETOOL_TYPES = sorted({rbx for c in report['company_types'] for rbx in c['added']})
     if COMPANY_RETOOL and cc_plan:   # each subsidiary type lists the retooling of its industries (subsidiaries.py)
@@ -1669,7 +1690,8 @@ def main():
           '# or the switching lock pm_pmr_key_<b>_<recipe>_any is active.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
-    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods)) + '\n'.join(tick_effects)
+    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods))
+          + ''.join(trade_budget(g) for g in budget_goods(options)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-'))
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'))
@@ -1731,7 +1753,7 @@ def main():
           + '\n# State scope. A note after an option the state can\'t run (technology, laws, electricity), or is short of an\n'
           + '# input for (pmr_xsh).\n'
           + ''.join(f'pmr_xlk_{short(bk)}_{o.j} = {{\n\ttype = state\n\trandom_valid = no\n'
-                    f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xav_{o.j}_{short(bk)} = 0 }}\n'
+                    f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xav_{o.j}_{short(bk)} ?= 0 }}\n'   # unset below level 1 (bug review q48, P3-1)
                     f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
                     + (f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xsh_{o.j}_{short(bk)} ?= 1 }}\n'
                        '\t\tlocalization_key = PMR_OPT_SHORT\n\t}\n' if mode == 'market' else '')
@@ -1784,8 +1806,12 @@ def main():
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
         extra=browser_bars, also=also), dispatch), list(mv_keys))), bom=False)
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
-    write('gui/states_panel_buildings.gui', hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types),
-          bom=False)
+    write('gui/states_panel_buildings.gui',
+          urban_list_gui(hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types)), bom=False)
+    urb_trig, urb_value, urb_eff = urban_list_script(urban_types(game, report))
+    write('common/scripted_triggers/pmr_urb_triggers.txt', header + urb_trig)
+    write('common/script_values/pmr_urb_values.txt', header + urb_value)
+    write('common/scripted_effects/pmr_urb_effects.txt', header + urb_eff)
     # The company panels without the retool sites that companies list (Pat 2026-10-19 02:32Z, company_panel.py); in the
     # test build company_culture.write_all writes company_panel.gui, with its Company Culture tab.
     company_panel.SUB_LINKS = not args.release   # the Regional HQs subsidiary probe (pmr/test_probes/sub_hq)
@@ -2167,6 +2193,7 @@ def wage_effect(bk, b, econ):
                    f'change_variable = {{ name = pmr_t multiply = {fmt(wu)} }} '
                    f'change_variable = {{ name = pmr_bk_u add = var:pmr_t }} }}\n'
                    for i, (_gd, wu) in enumerate(econ, 1))
+    drop = f'if = {{ limit = {{ has_variable = pmr_bpl_{b} }} remove_variable = pmr_bpl_{b} }}'
     keep = ('' if RELEASE else
             ''.join(f'\t\t\tset_variable = {{ name = pmr_bk{x}_{b} value = var:pmr_bk_{x} }}\n' for x in 'epo'))
     return (f'pmr_wage_{b} = {{\n\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_wgd_{b} }} }}\n'
@@ -2203,7 +2230,9 @@ def wage_effect(bk, b, econ):
             f'\t\t\t\tset_variable = {{ name = pmr_bpl_{b} value = var:pmr_bk_p }}\n'
             f'\t\t\t\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_bk_o }}\n'
             f'\t\t\t\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_level_{b} }}\n'
-            '\t\t\t}\n\t\t}\n\t}\n}\n\n')
+            # bug review q48, P2-3: a building whose books can't be read (subsidised, emptied, no earnings) drops its
+            # last reading and is priced from its recipes, not frozen at an old profit
+            f'\t\t\t}}\n\t\t\telse = {{ {drop} }}\n\t\t}}\n\t\telse = {{ {drop} }}\n\t}}\n}}\n\n')
 
 
 # 1.14.5's building_group_bg_<g>_throughput_add types and the fishing wharf's own (most in
@@ -2247,6 +2276,36 @@ def option_goods(options):
                    for o in opts for g in o.goods})
 
 
+LOCAL_GOODS = ('services', 'transportation', 'electricity')   # local = yes: no market order book to share out
+TRADE_BUDGET = (1, 1000000, 1.25)   # the spare supply ladder: least, most, ratio (units a week)
+
+
+def budget_goods(options):
+    """The market goods a trade-off option takes as an input (trade_budget)."""
+    return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
+                   for o in opts for g, amt in o.goods.items() if amt < 0 and g not in LOCAL_GOODS})
+
+
+def trade_budget(good):
+    """State scope, scope:pmr_xmo its market's owner: pmr_xb_<good> on the owner, the market's spare supply of the
+    good this month in units a week (sell less buy orders, market_goods_delta, to the TRADE_BUDGET rung below; 0 with
+    none), read once a month (pmr_xbm_<good>) and drawn down by the steps onto options using it (option_effects)."""
+    lo, hi, r = TRADE_BUDGET
+    ns, x = [], lo
+    while x <= hi:
+        v = float(f'{x:.3g}')
+        if not ns or v > ns[-1]:
+            ns.append(v)
+        x *= r
+    ladder = highest(ns, lambda v: f'market ?= {{ mg:{good} ?= {{ market_goods_delta >= {fmt(v)} }} }}',
+                     lambda v: f'scope:pmr_xmo = {{ set_variable = {{ name = pmr_xb_{good} value = {fmt(v) if v else 0} }} }}',
+                     '\t\t')
+    return (f'pmr_xbud_{good} = {{\n\tif = {{\n'
+            f'\t\tlimit = {{ exists = scope:pmr_xmo NOT = {{ scope:pmr_xmo = {{ has_variable = pmr_xbm_{good} }} }} }}\n'
+            f'\t\tscope:pmr_xmo = {{ set_variable = {{ name = pmr_xbm_{good} value = yes days = 28 }} }}\n'
+            + ladder + '\t}\n}\n\n')
+
+
 def option_effects(bk, b, conv, goods_cost, recipes):
     """State scope, for one building type with converted second groups: pmr_opts_<b>, run by every
     tick after the recipe blend. Sets each option's share (pmr_x_<j>_<b>, 0..SHARE_STEPS) at first
@@ -2276,6 +2335,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                      f'\tif = {{ limit = {{ {can(none)} }} set_variable = {{ name = {xv("pmr_xas", gi)} value = 1 }} }}\n')
     o.append('}\n\n')
 
+    def inputs(x):
+        return sorted(g for g, amt in x.goods.items() if amt < 0 and goods_cost.get(g) and g not in LOCAL_GOODS)
+
     # Market options: value per level at local prices; an option that can't run sheds its share first.
     market = [x for x in opts if x.mode == 'market']
     if market:
@@ -2296,18 +2358,17 @@ def option_effects(bk, b, conv, goods_cost, recipes):
             o.append(f'\tset_variable = {{ name = {xv("pmr_xw", x.j)} value = var:{xv("pmr_xv", x.j)} }}\n'
                      f'\tif = {{ limit = {{ var:{xv("pmr_xav", x.j)} = 0 }} '
                      f'set_variable = {{ name = {xv("pmr_xv", x.j)} value = -1000000 }} }}\n')
-            # Pat 2026-10-19 18:09Z (an iron mine on 100% Nitroglycerin while explosives were short): an option using
-            # an input its market or the owner's states are short of is worth least, so it sheds TRADE_STEP_MAX
-            # points a month (pmr_xsh_<j>_<b>: 1 while short, for the panel)
-            short_of = sorted(g for g, amt in x.goods.items() if amt < 0 and goods_cost.get(g))
+            # an option using an input its market or the owner's states are short of says so in the panel
+            # (pmr_xsh_<j>_<b>). Pat 18:24Z: no shedding for it ("not that it needs to reduce its pm target"); the
+            # step holds its gains to the market's spare supply instead (trade_budget)
+            short_of = inputs(x)
             if short_of:
                 o.append(f'\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 0 }}\n'
                          '\tif = {\n\t\tlimit = {\n\t\t\tmarket ?= {\n\t\t\t\tOR = {\n'
                          + ''.join(f'\t\t\t\t\tmg:{g} ?= {{ OR = {{ market_goods_has_goods_shortage = yes '
                                    'country_has_local_shortage = scope:pmr_xown } }\n' for g in short_of)
                          + '\t\t\t\t}\n\t\t\t}\n\t\t}\n'
-                         f'\t\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 1 }}\n'
-                         f'\t\tset_variable = {{ name = {xv("pmr_xv", x.j)} value = -1000000 }}\n\t}}\n')
+                         f'\t\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 1 }}\n\t}}\n')
         o.append('}\n\n')
 
     def none_share(gi, os_):
@@ -2340,11 +2401,45 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                     'set_variable = { name = pmr_t value = 0 } }\n')
         return out
 
+    # Pat 2026-10-19 18:24Z (mines across a market moved onto explosives together and ran it short): "explosives should
+    # be like hardwood". A step onto an option using an input good gains no more points than the market's spare supply
+    # of it covers: the surplus (sell less buy orders) read once a month into the market owner's pmr_xb_<good>
+    # (pmr_xbud_<good>, trade_budget), and each gain takes its demand (points x level x input per level) off it, so
+    # the market's buildings move onto it a surplus at a time. Prices do the rest, as for hardwood.
+    def budget_cap(x):
+        out = f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_bi = {x.j} }}\n'
+        for g in inputs(x):
+            per = -x.goods[g] / SHARE_STEPS
+            out += (f'\t\t\t\tpmr_xbud_{g} = yes\n'
+                    '\t\t\t\tset_variable = { name = pmr_t value = 0 }\n'
+                    f'\t\t\t\tif = {{ limit = {{ exists = scope:pmr_xmo }} set_variable = {{ name = pmr_t value = scope:pmr_xmo.var:pmr_xb_{g} }} }}\n'
+                    f'\t\t\t\tset_variable = {{ name = pmr_u value = var:pmr_level_{b} }}\n'
+                    f'\t\t\t\tchange_variable = {{ name = pmr_u multiply = {fmt(per)} }}\n'
+                    '\t\t\t\tif = { limit = { var:pmr_u > 0 } change_variable = { name = pmr_t divide = var:pmr_u } }\n'
+                    '\t\t\t\tchange_variable = { name = pmr_t subtract = 0.5 }\n'
+                    '\t\t\t\tround_variable = { name = pmr_t nearest = 1 }\n'
+                    '\t\t\t\tif = { limit = { var:pmr_t < var:pmr_m } set_variable = { name = pmr_m value = var:pmr_t } }\n')
+        return out + '\t\t\t\tif = { limit = { var:pmr_m < 0 } set_variable = { name = pmr_m value = 0 } }\n\t\t\t}\n'
+
+    def budget_use(x):
+        out = f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_bi = {x.j} var:pmr_m > 0 exists = scope:pmr_xmo }}\n'
+        for g in inputs(x):
+            out += (f'\t\t\t\tset_variable = {{ name = pmr_u value = var:pmr_level_{b} }}\n'
+                    f'\t\t\t\tchange_variable = {{ name = pmr_u multiply = {fmt(-x.goods[g] / SHARE_STEPS)} }}\n'
+                    '\t\t\t\tchange_variable = { name = pmr_u multiply = var:pmr_m }\n'
+                    f'\t\t\t\tset_variable = {{ name = pmr_t value = scope:pmr_xmo.var:pmr_xb_{g} }}\n'
+                    '\t\t\t\tchange_variable = { name = pmr_t subtract = var:pmr_u }\n'
+                    f'\t\t\t\tscope:pmr_xmo = {{ set_variable = {{ name = pmr_xb_{g} value = scope:pmr_xst.var:pmr_t }} }}\n')
+        return out + '\t\t\t}\n'
+
     # Monthly market step, group by group.
     for g, gi, mode, none, os_, std in conv:
         if mode != 'market':
             continue
-        o.append(f'pmr_xstep_{gi}_{b} = {{\n' + none_share(gi, os_) + best(os_)
+        scopes = ('\tsave_temporary_scope_as = pmr_xst\n'
+                  '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
+                  if any(inputs(x) for x in os_) else '')
+        o.append(f'pmr_xstep_{gi}_{b} = {{\n' + scopes + none_share(gi, os_) + best(os_)
                  + '\t# the worst-paying option that holds a share (none, worth 0, included)\n'
                  '\tset_variable = { name = pmr_wi value = -1 }\n\tset_variable = { name = pmr_wv value = 0 }\n'
                  f'\tif = {{ limit = {{ var:{xv("pmr_xn", gi)} > 0 }} set_variable = {{ name = pmr_wi value = 0 }} }}\n'
@@ -2365,17 +2460,19 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                  f'set_variable = {{ name = pmr_m value = var:{xv("pmr_xn", gi)} }} }}\n'
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} var:{xv("pmr_x", x.j)} < var:pmr_m }} '
                            f'set_variable = {{ name = pmr_m value = var:{xv("pmr_x", x.j)} }} }}\n' for x in os_)
+                 + ''.join(budget_cap(x) for x in os_ if inputs(x))
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} }} '
                            f'change_variable = {{ name = {xv("pmr_x", x.j)} subtract = var:pmr_m }} }}\n' for x in os_)
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_bi = {x.j} }} '
                            f'change_variable = {{ name = {xv("pmr_x", x.j)} add = var:pmr_m }} }}\n' for x in os_)
+                 + ''.join(budget_use(x) for x in os_ if inputs(x))
                  + '\t\t}\n\t}\n}\n\n')
         # First sight: the option the vanilla marker runs (game start), or for a building built
         # during the game the best-paying one, if it beats none by the dead band.
         o.append(f'pmr_xinit_{gi}_{b} = {{\n'
                  + ''.join(f'\tset_variable = {{ name = {xv("pmr_x", x.j)} value = 0 }}\n' for x in os_)
                  + f'\tif = {{\n\t\tlimit = {{ has_variable = {bv("pmr_xnew")} }}\n'
-                 + best(os_, '\t\t')
+                 + best([x for x in os_ if not inputs(x)], '\t\t')
                  + f'\t\tif = {{ limit = {{ var:pmr_bv <= {fmt(band)} }} set_variable = {{ name = pmr_bi value = 0 }} }}\n'
                  + ''.join(f'\t\tif = {{ limit = {{ var:pmr_bi = {x.j} }} set_variable = {{ name = {xv("pmr_x", x.j)} value = {SHARE_STEPS} }} }}\n'
                            for x in os_)
@@ -2687,7 +2784,7 @@ def gov_retool_sgui(bk):
             '# ticks the building so the room, and with it the button, drops to what is left.\n'
             f'pmr_gov_retool_tick_{b}_sgui = {{\n\tscope = state\n'
             f'\tis_shown = {{ exists = b:{bk} }}\n'
-            f'\tis_valid = {{ has_variable = pmr_abroad_{b} }}\n'
+            f'\tis_valid = {{ has_variable = pmr_abroad_{b} b:{bk} ?= {{ level >= 1 }} }}\n'
             f'\teffect = {{ pmr_tick_{b} = yes }}\n}}\n\n')
 
 
@@ -2695,8 +2792,8 @@ def gov_retool_country_sgui(bk):
     """The Buildings tab's upgrade button on a building type row: every state at once."""
     b = short(bk)
     return (f'pmr_gov_retool_c_{b}_sgui = {{\n\tscope = country\n'
-            f'\tis_valid = {{ any_scope_state = {{ has_variable = pmr_retool_open_gov_{b} }} }}\n'
-            f'\teffect = {{\n\t\tevery_scope_state = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} }}\n'
+            f'\tis_valid = {{ any_scope_state = {{ has_variable = pmr_retool_open_gov_{b} b:{bk} ?= {{ level >= 1 }} }} }}\n'
+            f'\teffect = {{\n\t\tevery_scope_state = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} b:{bk} ?= {{ level >= 1 }} }}\n'
             '\t\t\tset_variable = pmr_bulk\n'
             f'\t\t\tpmr_queue_gov_{b} = yes\n'
             '\t\t\tremove_variable = pmr_bulk\n\t\t}\n'
@@ -3199,6 +3296,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'NOT = {{ has_building = {rbga} }} NOT = {{ exists = b:{rbga} }} }}\n'
              f'\t\tcreate_building = {{\n\t\t\tbuilding = {rbga}\n'
              '\t\t\tadd_ownership = { country = { country = global_var:pmr_player levels = 1 } }\n\t\t}\n'
+             '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n'
              f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_seen_gov")} }} }} {setv("pmr_seen_gov", 0)} }}\n'
              f'\t\t{chg("pmr_seen_gov", "add", 1)}\n'
              f'\t\t{chg("pmr_cap_gov", "add", 1)}\n\t}}\n'
@@ -3598,14 +3696,14 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # the building still needs, as if the player had built them one by one, then tick so the room,
     # and with it the button, drops to nothing.
     o.append(f'pmr_queue_gov_{b} = {{\n'
-             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} NOT = {{ has_variable = pmr_abroad_{b} }} }}\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} NOT = {{ has_variable = pmr_abroad_{b} }} b:{bk} ?= {{ level >= 1 }} }}\n'
              f'\t\t{setv("pmr_q", "var:" + v("pmr_room_gov"))}\n'
              f'\t\t{log("GOV_QUEUE", bk, b, k, extra=";queueing=" + f("pmr_q"))}\n'
              f'\t\twhile = {{\n\t\t\tlimit = {{ var:{v("pmr_q")} > 0 }}\n'
              f'\t\t\tstart_building_construction = {rbg}\n'
              f'\t\t\t{chg("pmr_q", "subtract", 1)}\n\t\t}}\n'
              f'\t\tremove_variable = {v("pmr_q")}\n'
-             f'\t\tpmr_tick_{b} = yes\n\t}}\n}}\n\n')
+             f'\t\tpmr_tick_{b} = yes\n\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n\t}}\n}}\n\n')
     return ''.join(o)
 
 
@@ -4104,8 +4202,18 @@ def dispatch_effects(buildings):
              'pmr_state_tick = {\n\tset_variable = pmr_bulk\n'
              '\t# electricity once for every building of the state (pmr_tick_body_<b> skips its own read)\n'
              '\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
+    # bug review q48, P2-2: a building gone mid-retool (downsized to nothing) leaves no open retool, no stale recipe mix
+    # (a rebuild starts on the newest recipe, as a new one) and no abroad flag. pmr_close_retool_<b> drops the gate once
+    # nothing is pending; until then this runs again each month.
     for bk in buildings:
-        o.append(f'\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{short(bk)} = yes }}\n')
+        b = short(bk)
+        o.append(f'\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n'
+                 f'\telse_if = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_retool_gate_{b} has_variable = pmr_mix_{b} '
+                 f'has_variable = pmr_abroad_{b} }} NOT = {{ exists = b:{bk} }} }}\n'
+                 f'\t\tpmr_close_retool_{b} = yes\n'
+                 + ''.join(f'\t\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
+                           for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}'))
+                 + '\t}\n')
     o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
              '# State scope (on_acquired_technology): tick only the buildings whose best recipe the research\n'
              '# changed, and any not seen yet. The rest wait for the month; until then a newly unlocked\n'
@@ -4635,6 +4743,131 @@ def patch_hud_flags(text, site_types):
                         + flags + '\t\t}\n\t}\n\n' + HUD_ANCHOR)
 
 
+# The state Buildings tab's own urban list (Pat 2026-10-19 18:27Z, "push this in as well"). A hidden site keeps its cell:
+# 1.14.5's dynamicgridbox places item i at (i % wrap, i / wrap) whether or not it is visible, and the "+" tile after
+# the count of every item (StatesPanel.CalcBuildUrbanBuildingsButtonPosition, exe 0x1422dbde0). So a state with a
+# site shows a list script keeps instead (pmr_urb on the state, pmr_urb_refresh): its urban buildings in the tab's
+# order, then the state itself, which the grid draws as the "+" tile. A state without one keeps vanilla's grid.
+SITE_GROUPS = ('bg_pmr_retool', 'bg_pmr_retool_abroad', 'bg_pmr_retool_gov', 'bg_pmr_retool_gov_abroad')
+URBAN_HQ_GROUPS = ('bg_company_headquarter', 'bg_company_regional_headquarter')
+URB_ON = ("And(GreaterThan_CFixedPoint(State.MakeScope.Var('pmr_urb_on').GetValue, '(CFixedPoint)0'), "
+          "Not(IsDataModelEmpty(State.MakeScope.GetList('pmr_urb'))))")
+URB_END = "GreaterThan_CFixedPoint(Scope.Var('pmr_urb_on').GetValue, '(CFixedPoint)0')"
+
+
+def urban_types(game, report):
+    """The building types the tab lists as urban (State.AccessUrbanBuildings, exe filter 0x141a8c560): category urban up
+    the group chain, no land_usage = urban and no is_subsistence on it, and buildable, expandable or downsizeable unless
+    a company or regional headquarters. In the tab's order among equal levels (comparator 0x141a53120): the group's
+    name, then the type's, in English (the other languages fall back to it until finalization)."""
+    groups, types, loc = {}, [], {}
+    for path in sorted(glob.glob(os.path.join(game, 'common', 'building_groups', '*.txt'))):
+        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
+            if n.is_block and n.key and n.key.startswith('bg_'):
+                groups[n.key] = {k: (pdx.get(n.value, k).value if pdx.get(n.value, k) else None)
+                                 for k in ('parent_group', 'category', 'land_usage', 'is_subsistence')}
+    for path in sorted(glob.glob(os.path.join(game, 'common', 'buildings', '*.txt'))):
+        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
+            if n.is_block and n.key and n.key.startswith('building_'):
+                g = pdx.get(n.value, 'building_group')
+                flags = [pdx.get(n.value, k) for k in ('buildable', 'expandable', 'downsizeable')]
+                types.append((n.key, g.value if g else None, all(f and f.value == 'no' for f in flags)))
+    yml = os.path.join(game, 'localization', 'english', 'buildings_l_english.yml')
+    if os.path.exists(yml):
+        for line in open(yml, encoding='utf-8-sig'):
+            m = re.match(r'\s*([\w.]+):\d*\s*"(.*)"', line)
+            if m:
+                loc[m.group(1)] = m.group(2)
+    else:
+        report['urban_order'] = 'no buildings_l_english.yml: types ordered by key among equal levels'
+
+    def chain(g):
+        while g:
+            yield groups.get(g, {})
+            g = groups.get(g, {}).get('parent_group')
+    out = []
+    for bk, g, fixed in types:
+        cat = next((x['category'] for x in chain(g) if x.get('category')), None)
+        if cat != 'urban' or g in SITE_GROUPS or any(x.get('land_usage') == 'urban' or x.get('is_subsistence') == 'yes'
+                                                     for x in chain(g)):
+            continue
+        if fixed and g not in URBAN_HQ_GROUPS:
+            continue
+        out.append((loc.get(g, g).lower(), loc.get(bk, bk).lower(), bk))
+    if not out:
+        raise SystemExit('urban_types: no urban building types found; the building groups moved')
+    return [bk for _g, _n, bk in sorted(out)]
+
+
+def urban_list_script(order):
+    """(triggers, values, effects) for the state's own urban list (see URB_ON)."""
+    n = len(order)
+    trig = ('# PMR: the state Buildings tab\'s own urban list (generate.py, SITE_GROUPS). Building scope: a retool site.\n'
+            'pmr_urb_site = { OR = { ' + ' '.join(f'is_building_group = {g}' for g in SITE_GROUPS) + ' } }\n\n'
+            '# Building scope: a type the tab lists as urban.\n'
+            'pmr_urb_type = {\n\tOR = {\n' + ''.join(f'\t\tis_building_type = {bk}\n' for bk in order) + '\t}\n}\n')
+    value = ('# Building scope: its place in the tab, highest first: its level, then its group\'s name and its own.\n'
+             'pmr_urb_key = {\n\tvalue = 0\n\tadd = this.level\n\tmultiply = 100\n'
+             + ''.join(f'\t{"if" if i == 0 else "else_if"} = {{ limit = {{ is_building_type = {bk} }} add = {n - i} }}\n'
+                       for i, bk in enumerate(order)) + '}\n')
+    eff = ('# State scope: pmr_urb, the urban buildings in the tab\'s order and then the state (the "+" tile), while the state\n'
+           '# has a retool site (pmr_urb_on); none without one, and the tab shows vanilla\'s grid.\n'
+           'pmr_urb_refresh = {\n\tif = { limit = { has_variable_list = pmr_urb } clear_variable_list = pmr_urb }\n'
+           '\tif = {\n\t\tlimit = { any_scope_building = { pmr_urb_site = yes } }\n'
+           '\t\tset_variable = { name = pmr_urb_on value = 1 }\n\t\tsave_temporary_scope_as = pmr_urb_st\n'
+           '\t\tordered_scope_building = {\n\t\t\tlimit = { pmr_urb_type = yes }\n\t\t\torder_by = pmr_urb_key\n'
+           '\t\t\tmax = 99\n\t\t\tcheck_range_bounds = no\n\t\t\tsave_temporary_scope_as = pmr_urb_b\n'
+           '\t\t\tscope:pmr_urb_st = { add_to_variable_list = { name = pmr_urb target = scope:pmr_urb_b } }\n\t\t}\n'
+           '\t\tadd_to_variable_list = { name = pmr_urb target = this }\n\t}\n'
+           '\telse_if = { limit = { has_variable = pmr_urb_on } remove_variable = pmr_urb_on }\n}\n\n'
+           '# State scope: refresh it where a site stands or stood (monthly, and after PMR places one).\n'
+           'pmr_urb_check = {\n\tif = {\n\t\tlimit = { OR = { has_variable = pmr_urb_on any_scope_building = { pmr_urb_site = yes } } }\n'
+           '\t\tpmr_urb_refresh = yes\n\t}\n}\n\n'
+           '# Building scope (a level built or started): refresh its state\'s list if it is a site or the list is in use.\n'
+           'pmr_urb_built = {\n\tif = {\n\t\tlimit = { OR = { pmr_urb_site = yes state ?= { has_variable = pmr_urb_on } } }\n'
+           '\t\tstate ?= { pmr_urb_refresh = yes }\n\t}\n}\n')
+    return trig, value, eff
+
+
+def urban_list_gui(text):
+    """states_panel_buildings.gui after hide_retool_sites: vanilla's urban grid and "+" tile only while the state keeps
+    no list of its own (URB_ON), and the list's grid beside them."""
+    grid = '\t\t\t\tdynamicgridbox = {\n\t\t\t\t\tname = "urban_building_list"\n'
+    plus_vis = '\t\t\t\t\tvisible = "[GetPlayer.HasForeignInvestmentRights(State.GetOwner)]"\n'
+    pos = '\t\t\t\t\tposition = "[StatesPanel.CalcBuildUrbanBuildingsButtonPosition]"\n'
+    for what, old in (('the urban grid', grid), ('the "+" tile\'s visibility', plus_vis), ('the "+" tile\'s position', pos)):
+        if text.count(old) != 1:
+            raise SystemExit(f'states_panel_buildings.gui: expected one {what}, found {text.count(old)}; update urban_list_gui')
+    a = text.index(plus_vis)
+    w0 = text.rindex('\t\t\t\twidget = {\n', 0, a)
+    w1 = block_end(text, w0)   # just past its closing brace
+    plus = text[w0:w1]
+    if not plus.endswith('}') or pos not in plus:
+        raise SystemExit('states_panel_buildings.gui: the "+" tile moved; update urban_list_gui')
+    # the tile as a grid item: no position of its own, one level deeper
+    item = '\n'.join(('\t\t\t\t' + ln if ln.strip() else ln) for ln in plus.replace(pos, '').split('\n'))
+    ours = ('\t\t\t\t# PMR: the state\'s own list while it has a retool site, the "+" tile its last item\n'
+            '\t\t\t\tdynamicgridbox = {\n'
+            f'\t\t\t\t\tvisible = "[{URB_ON}]"\n'
+            '\t\t\t\t\tdatamodel = "[State.MakeScope.GetList(\'pmr_urb\')]"\n'
+            '\t\t\t\t\tdatamodel_wrap = 4\n\t\t\t\t\tflipdirection = yes\n\n'
+            '\t\t\t\t\titem = {\n\t\t\t\t\t\twidget = {\n\t\t\t\t\t\t\tsize = { 135 210 }\n\n'
+            '\t\t\t\t\t\t\twidget = {\n'
+            f'\t\t\t\t\t\t\t\tvisible = "[Not({URB_END})]"\n'
+            '\t\t\t\t\t\t\t\tsize = { 135 210 }\n'
+            '\t\t\t\t\t\t\t\tbuilding_item = {\n\t\t\t\t\t\t\t\t\tdatacontext = "[Scope.GetBuilding]"\n'
+            '\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n\n'
+            '\t\t\t\t\t\t\twidget = {\n'
+            f'\t\t\t\t\t\t\t\tvisible = "[{URB_END}]"\n'
+            '\t\t\t\t\t\t\t\tsize = { 135 210 }\n'
+            + item + '\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t}\n')
+    mark = '\0PMR_URB\0'
+    text = text[:w1] + mark + text[w1:]
+    text = text.replace(plus_vis, f'\t\t\t\t\tvisible = "[And(GetPlayer.HasForeignInvestmentRights(State.GetOwner), Not({URB_ON}))]"\n')
+    text = text.replace(grid, grid + f'\t\t\t\t\tvisible = "[Not({URB_ON})]"   # PMR: the state\'s own list instead\n')
+    return text.replace(mark, '\n\n' + ours)
+
+
 def hide_retool_sites(text, site_types):
     """states_panel_buildings.gui: the state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
 
@@ -4655,7 +4888,8 @@ def hide_retool_sites(text, site_types):
              'the urban grid'),
             ('\t\tdynamicgridbox = {\n\t\t\tblock "datamodel" {}\n\n\t\t\titem = {\n'
              '\t\t\t\tbuildings_list_item = {}\n',
-             '\t\tdynamicgridbox = {\n\t\t\tblock "datamodel" {}\n\t\t\t# PMR: no retool sites\n'
+             '\t\tflowcontainer = {   # PMR: a flow, which closes the row a hidden site leaves (a grid keeps it)\n'
+             '\t\t\tdirection = vertical\n\t\t\tblock "datamodel" {}\n\t\t\t# PMR: no retool sites\n'
              '\t\t\tignoreinvisible = yes\n\n\t\t\titem = {\n'
              f'\t\t\t\tbuildings_list_item = {{\n\t\t\t\t\tvisible = "[{hidden}]"\n\t\t\t\t}}\n',
              'the list view')]:
@@ -6310,6 +6544,7 @@ pmr_on_building_built = {
 		pmr_pi_on_done = yes
 		pmr_built_building = yes
 		pmr_auto_building = yes   # AUTO_BEST: a new building starts on the best methods
+		pmr_urb_built = yes   # the state Buildings tab's own list
 		# Last: the parent's tick can remove this retool building once its level is counted.
 		pmr_tick_parent_of_retool = yes
 	}
@@ -6323,6 +6558,7 @@ pmr_on_building_expanded = {
 		# investors built (pmr_pi_effects.txt; retool buildings are not counted).
 		pmr_pi_on_done = yes
 		pmr_built_building = yes
+		pmr_urb_built = yes   # the state Buildings tab's own list (its order is by level)
 		# Last: the parent's tick can remove this retool building once its level is counted.
 		pmr_tick_parent_of_retool = yes
 	}
@@ -6369,6 +6605,7 @@ pmr_on_monthly_pulse_state = {
 		pmr_auto_best = yes
 		pmr_principle_bonus = yes
 		pmr_probe_state = yes
+		pmr_urb_check = yes   # the state Buildings tab's own list
 	}
 }
 

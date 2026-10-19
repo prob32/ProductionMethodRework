@@ -760,7 +760,8 @@ def on_actions():
             '\t\t\tpmr_pi_start_clock = yes\n\t\t}\n'
             '\t}\n}\n\n'
             '# Root = building, a level of it starting construction (the Recent Investments bars).\n'
-            'pmr_pi_on_start = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }\n\teffect = {\n\t\tpmr_pi_start = yes\n\t}\n}\n')
+            'pmr_pi_on_start = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }\n\teffect = {\n\t\tpmr_pi_start = yes\n'
+            '\t\tpmr_urb_built = yes   # the state Buildings tab\'s own list (generate.py, urban_list_script)\n\t}\n}\n')
 
 
 def pf_effects(shorts):
