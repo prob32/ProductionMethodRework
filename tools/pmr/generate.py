@@ -1115,8 +1115,9 @@ def main():
                 goods_cost[gk] = num(c.value, f'{gk} cost')
 
     # Company Culture (test builds until Pat ships it): each building type making one of a company's top two output
-    # goods gets two more blend members, the works members (company_culture.works_members), whose share is the
-    # company levels that hold a completed goods tier there. Listed last in the building's production method groups.
+    # goods gets three more blend members, the works members (company_culture.works_members, one per goods tier, named
+    # after its special method), whose share is the company levels built to that tier there through private retool
+    # levels (Pat 2026-10-19 02:32Z: built, not applied). Listed last in the building's production method groups.
     cc_plan, works_of = None, {}
     if not args.release:
         cc_plan = company_culture.plan(game, {bk: (split_info[bk]['plain'] if bk in split_info else
@@ -1129,6 +1130,10 @@ def main():
             plain_ = split_info[bk]['plain'] if bk in split_info else recipes
             works_of[bk] = [(j0 + n, kind, wm, mods) for n, (kind, wm, mods)
                             in enumerate(company_culture.works_members(cc_plan, bk, plain_[-1].texture), 1)]
+            # its private retool sites, where the special method's levels are built (company_culture.works_effect)
+            cc_plan.sites[bk] = [(j, rbx, (f'has_variable = pmr_abroad_{short(bk)}' if j == ABROAD_SLOT else
+                                           f'NOT = {{ has_variable = pmr_abroad_{short(bk)} }}') if ABROAD_SLOT else None)
+                                 for j, rbx in enumerate(priv_slots(short(bk)), 1)]
             s_.inserts.append((pg.end - 1, ''.join(
                 f'\tpmg_pmr_share_{short(bk)}_{j}  # PMR: Company Culture works {kind}\n\t'
                 f'\tpmg_pmr_key_{short(bk)}_{j}  # PMR: lock for that share\n\t'
@@ -1367,9 +1372,9 @@ def main():
         retool_cost = base_cost * RETOOL_SHARE / N
         costs.append(f'pmr_retool_cost_{b} = {fmt(retool_cost)}  # {rc.value} = {fmt(base_cost)} x {RETOOL_SHARE} / {N}')
         icon = pdx.get(bn.value, 'icon').value
-        retools.append(retool_buildings(b, bk, icon))
+        retools.append(retool_buildings(b, bk, icon, works=bk in works_of))
         site_types += priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
-        triggers.append(retool_triggers(b, bk))
+        triggers.append(retool_triggers(b, bk, works=bk in works_of))
         costs.append(retool_values(b))
 
         for rbx in priv_slots(b):
@@ -1566,7 +1571,7 @@ def main():
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
                                           econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk),
                                           [(j, company_culture.works_steps(kind)) for j, kind, *_r in works_of.get(bk, [])])
-                            + (company_culture.works_effect(cc_plan, bk, *[j for j, *_r in works_of[bk]], *([None] * (2 - len(works_of[bk]))))
+                            + (company_culture.works_effect(cc_plan, bk, [j for j, *_r in works_of[bk]])
                                if bk in works_of else ''))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
@@ -1675,7 +1680,7 @@ def main():
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods)) + '\n'.join(tick_effects)
-          + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
+          + dispatch_effects(dispatch, works=set(works_of)) + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-'))
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'))
     write('events/pmr_events.txt', header + EVENTS)
@@ -2499,16 +2504,23 @@ def priv_slots(b):
     return [f'building_pmr_retool_{b}_{j}' for j in range(1, RETOOL_SLOTS + 1)]
 
 
-def retool_buildings(b, bk, icon):
+def retool_buildings(b, bk, icon, works=False):
+    """works: Company Culture's special method is built on the private sites too (company_culture.works_effect), open
+    on its own flag (pmr_cw_open_<b>_<j>) while plain retooling has nothing waiting."""
     out = []
     sides = [('priv', 'bg_pmr_retool_abroad' if j == ABROAD_SLOT else 'bg_pmr_retool', rbx, j)
              for j, rbx in enumerate(priv_slots(b), 1)]
     sides.append(('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}', 0))
     sides.append(('gova', 'bg_pmr_retool_gov_abroad', f'building_pmr_retool_gova_{b}', 0))
     for side, group, rb, j in sides:
+        pot = f'has_variable = pmr_retool_gate_{b}'
         if side == 'priv':
             flag = f'pmr_retool_open_priv_{b}_{j}'
-            ai_limit = f'has_variable = {flag}'
+            open_ = f'has_variable = {flag}'
+            if works:
+                open_ = f'OR = {{ {open_} has_variable = {company_culture.works_open(b, j)} }}'
+                pot = f'OR = {{ {pot} has_variable = {company_culture.works_open(b, j)} }}'
+            ai_limit = open_
             who = ('\t# Private investors only, for the privately owned share. Every building vanilla lets private\n'
                    '\t# investors build says ownership_type = self.\n'
                    '\townership_type = self\n'
@@ -2519,7 +2531,7 @@ def retool_buildings(b, bk, icon):
                       if j == ABROAD_SLOT else
                       '; where the player owns levels abroad, also the host\'s (pmr_retool_investor_abroad_<b>)'
                       if not ABROAD_SLOT else '') + '.\n'
-                   f'\tcan_build_private = {{\n\t\thas_variable = {flag}\n\t\tpmr_retool_room_priv_{b}_{j} = yes\n'
+                   f'\tcan_build_private = {{\n\t\t{open_}\n\t\tpmr_retool_room_priv_{b}_{j} = yes\n'
                    + (f'\t\tpmr_retool_investor{"_abroad" if j == ABROAD_SLOT else ""}_{b} = yes\n\t}}\n' if ABROAD_SLOT else
                       f'\t\ttrigger_if = {{\n\t\t\tlimit = {{ has_variable = pmr_abroad_{b} }}\n\t\t\tpmr_retool_investor_abroad_{b} = yes\n\t\t}}\n'
                       f'\t\ttrigger_else = {{ pmr_retool_investor_{b} = yes }}\n\t}}\n'))
@@ -2548,8 +2560,9 @@ def retool_buildings(b, bk, icon):
             '\t# Retool levels come only from the funders below, never from auto-expansion.\n'
             '\tshould_auto_expand = { always = no }\n'
             f'\t# Open only while script is retooling a {bk} in this state'
-            + (', where the player owns levels abroad' if j == ABROAD_SLOT else '') + '.\n'
-            f'\tpotential = {{ has_variable = pmr_retool_gate_{b} }}\n'
+            + (', where the player owns levels abroad' if j == ABROAD_SLOT else '')
+            + (', or a company\'s special method is built here' if works and side == 'priv' else '') + '.\n'
+            f'\tpotential = {{ {pot} }}\n'
             + who +
             ('\t# Only ever the player\'s click: no AI scores it.\n\tai_value = 0\n' if side == 'gova' else
              '\t# While there is room: what an expansion of the building would score from its earnings\n'
@@ -2566,7 +2579,7 @@ def retool_buildings(b, bk, icon):
     return '\n'.join(out)
 
 
-def retool_triggers(b, bk):
+def retool_triggers(b, bk, works=False):
     rbg = f'building_pmr_retool_gov_{b}'
     rbga = f'building_pmr_retool_gova_{b}'
     cap = f'pmr_cap_gov_{b}'
@@ -2590,17 +2603,22 @@ def retool_triggers(b, bk):
         '\t}\n'
         f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
         '}\n']
-    # A private retool building takes levels up to the cap the tick gives it (pmr_cap_priv<j>_<b>).
+    # A private retool building takes levels up to the cap the tick gives it (pmr_cap_priv<j>_<b>), or, where a
+    # company's special method is built (works), up to the cap company_culture.works_effect gives it.
     for j, rbx in enumerate(priv_slots(b), 1):
         cap = f'pmr_cap_priv{j}_{b}'
-        out.append(f'pmr_retool_room_priv_{b}_{j} = {{\n'
-                   f'\thas_variable = {cap}\n'
-                   '\ttrigger_if = {\n'
-                   f'\t\tlimit = {{ exists = b:{rbx} }}\n'
-                   f'\t\tb:{rbx} = {{ level_after_queued_constructions <= pmr_room_value_priv_{b}_{j} }}\n'
-                   '\t}\n'
-                   f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
-                   '}\n')
+        plain = (f'\thas_variable = {cap}\n'
+                 '\ttrigger_if = {\n'
+                 f'\t\tlimit = {{ exists = b:{rbx} }}\n'
+                 f'\t\tb:{rbx} = {{ level_after_queued_constructions <= pmr_room_value_priv_{b}_{j} }}\n'
+                 '\t}\n'
+                 f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n')
+        if works:
+            plain = ('\tOR = {\n\t\tAND = {\n'
+                     + f'\t\t\thas_variable = pmr_retool_open_priv_{b}_{j}\n'
+                     + plain.replace('\n\t', '\n\t\t\t').replace('\t', '\t\t\t', 1)
+                     + '\t\t}\n' + company_culture.works_room_trigger(b, rbx, j) + '\t}\n')
+        out.append(f'pmr_retool_room_priv_{b}_{j} = {{\n' + plain + '}\n')
     # levels_owned_by_country counts "a country or investors in that country" (triggers.log), so for
     # the state's own country it includes the government's levels: its investors need more than those.
     # Vanilla compares the same trigger against c:RUS for the Manchurian railway.
@@ -2610,9 +2628,20 @@ def retool_triggers(b, bk):
         f'\texists = b:{bk}\n'
         '\ttrigger_if = {\n'
         '\t\tlimit = { owner = scope:investor_country }\n'
-        f'\t\thas_variable = pmr_gov_levels_{b}\n'
-        f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
-        '\t}\n'
+        + (f'\t\thas_variable = pmr_gov_levels_{b}\n'
+           f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
+           if not works else
+           # the government's levels are dropped once plain retooling is done; a special method's site reads the
+           # tick's copy (company_culture.works_gov)
+           '\t\tOR = {\n\t\t\tAND = {\n'
+           f'\t\t\t\thas_variable = pmr_gov_levels_{b}\n'
+           f'\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
+           '\t\t\t}\n\t\t\tAND = {\n'
+           f'\t\t\t\tNOT = {{ has_variable = pmr_gov_levels_{b} }}\n'
+           f'\t\t\t\thas_variable = {company_culture.works_gov(b)}\n'
+           f'\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:{company_culture.works_gov(b)} }} }}\n'
+           '\t\t\t}\n\t\t}\n')
+        + '\t}\n'
         f'\ttrigger_else = {{\n\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value >= 1 }} }}\n\t}}\n'
         '}\n')
     # The abroad slot (ABROAD_SLOT): any investors who own part of the building, and the host's own whatever they
@@ -3926,7 +3955,8 @@ pmr_read_elec = {
                 for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n')
 
 
-def dispatch_effects(buildings):
+def dispatch_effects(buildings, works=()):
+    """works: the building types Company Culture's special method is built on (company_culture.works_level_effect)."""
     def live(bk):
         return f'has_building = {bk} b:{bk} = {{ level >= 1 }}'
     o = ['# ===== dispatch\n\n'
@@ -3948,14 +3978,20 @@ def dispatch_effects(buildings):
                  f'\t\t\tif = {{ limit = {{ has_variable = pmr_new_build_{b} }} remove_variable = pmr_new_build_{b} }}\n'
                  '\t\t}\n\t}\n')
     o.append('}\n\n'
-             '# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n'
-             'pmr_tick_parent_of_retool = {\n')
+             + ('# Building scope, for a retool pseudo-building that just completed a level: tick its parent. A private\n'
+                '# one\'s level on a building a company\'s special method is built on goes to that method first, once plain\n'
+                '# retooling has nothing waiting (company_culture.works_level_effect).\n' if works else
+                '# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n')
+             + 'pmr_tick_parent_of_retool = {\n')
     for i, bk in enumerate(buildings):
         b = short(bk)
         kw = 'if' if i == 0 else 'else_if'
         types = priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
+        cw = (f'\t\t\tif = {{ limit = {{ root = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in priv_slots(b))
+              + f' }} }} }} pmr_cw_level_{b} = yes }}\n' if bk in works else '')
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in types) + ' } }\n'
                  f'\t\tstate = {{\n\t\t\t{flush_log("RETOOL_LEVEL", bk, mine=f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}")}\n'
+                 + cw +
                  f'\t\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t\t}}\n\t}}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'

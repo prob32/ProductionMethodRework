@@ -19,9 +19,9 @@ small dot icons along its curve, in three colourings (done, open, locked) of whi
 behind a node that can be bought and no orbit dots.
 
 A node reads its state from the executive's mirror, pmr_cc_st_<line>_<tier> (company_culture.effects, pmr_cc_states):
-0 locked, 1 can be bought now, 2 next but short of points (or another grant running), 3 its arm not chosen,
-4 bought, 5 ruled out by the opposed arm, 6 its research grant running, 7 not for this company, 8 waiting for the
-technology of its base recipe.
+0 locked, 1 can be bought now (or, a goods tier whose technology the owner has, taken free), 2 next but short of
+points (or the investment pool short of a grant's week), 3 its arm not chosen, 4 bought, 5 ruled out by the opposed arm,
+6 its research grant running, 7 not for this company.
 """
 import math
 import os
@@ -125,7 +125,7 @@ def ST(k, t, *vals):
     return OR(*(EQ(f'pmr_cc_st_{k}_{t}', v) for v in vals))
 
 
-CLASSES = {'active': (1,), 'pending': (2, 6, 8), 'bought': (4,), 'locked': (0, 3, 5, 7)}
+CLASSES = {'active': (1,), 'pending': (2, 6), 'bought': (4,), 'locked': (0, 3, 5, 7)}
 
 
 def hidden(k, t):
@@ -282,7 +282,7 @@ def link_gui(pos, a, b, ox, oy):
     pts = link_points(pos, a, b)
     bk, bt = b
     done = ST(bk, bt, 4) if a is None else AND(ST(bk, bt, 4), ST(a[0], a[1], 4))
-    active = ST(bk, bt, 1, 2, 6, 8)
+    active = ST(bk, bt, 1, 2, 6)
     modes = {'locked': f'Not({OR(done, active)})', 'active': active, 'done': done}
     hide = [h for h in (hidden(bk, bt), hidden(*a) if a else None) if h]
     out = ''
@@ -401,7 +401,10 @@ def node(p, ln, t, x, y, cands):
         out += (badge.replace('{VIS}', _vis(AND(f'Not({cls["bought"]})', GT('pmr_cc_fcost', 0))))
                 .replace('{TEXT}', f'raw_text = "[{V("pmr_cc_fcost")}|0]"'))
     elif ln.cost[t - 1]:
-        out += badge.replace('{VIS}', '').replace('{TEXT}', f'raw_text = "{ln.cost[t - 1]}"')
+        # a goods tier whose technology the owner has costs nothing (company_culture.known): no badge
+        free = (_vis(f"Not({OR(GT(f'pmr_cc_g{ln.goods}tk', t - 1), GT(f'pmr_cc_g{ln.goods}fr', t - 1))})")
+                if ln.goods else '')
+        out += badge.replace('{VIS}', free).replace('{TEXT}', f'raw_text = "{ln.cost[t - 1]}"')
     # bought: the tech node's ticks
     out += (f'widget = {{\n{_vis(cls["bought"])}size = {{ 50 50 }}\nparentanchor = bottom|right\nposition = {{ 20 20 }}\n'
             f'icon = {{\nsize = {{ 50 50 }}\ntexture = "{ROUND_BG}"\nparentanchor = center\n}}\n'
@@ -469,18 +472,26 @@ def charter_plate(k):
             '}\n}\n}\n}\n}\n}\n}\n}\n}\n')
 
 
+GRANT_BAR_H = 46
+ARROW_DENSITY = 4     # vanilla's arrow_texture_density "to match height of progressbar": 6 on a 30 px bar, 13 on 10 px
+
+
 def grant_gui(ln, t, x, y):
-    """A goods tier's research grant while it runs (state 6): vanilla's progress bar (default_progressbar_horizontal,
-    as the construction queue and the research bar; Pat 2026-10-19 00:04Z "the normal v3 types used") under the card,
-    filling week by paid week, its tooltip the weekly cost (Pat 00:04Z: "hover over explaining the costs")."""
+    """A goods tier's research grant while it runs (state 6), one per goods line: vanilla's green bar with the moving
+    arrows (changed_value_increased_progressbar_horizontal, its blue second bar dropped as the building panels' cash
+    reserves bar does; Pat 2026-10-19 02:32Z) under the card, filling week by paid week, its tooltip the weekly cost
+    (Pat 00:04Z: "hover over explaining the costs")."""
+    gl = ln.goods
     bw = CW - 20
-    bar_value = f'FixedPointToFloat({V("pmr_cc_grw")})'
-    return (f'default_progressbar_horizontal = {{\n{_vis(ST(ln.key, t, 6))}'
-            f'position = {{ {x + NODE_W - CW + 8} {y + NODE_H + 12} }}\nsize = {{ {bw} 46 }}\n'
-            'tooltip = "PMR_CC_GRANT_TT"\n'
+    bar_value = f'FixedPointToFloat({V(f"pmr_cc_grw{gl}")})'
+    return (f'changed_value_increased_progressbar_horizontal = {{\n{_vis(ST(ln.key, t, 6))}'
+            f'position = {{ {x + NODE_W - CW + 8} {y + NODE_H + 12} }}\nsize = {{ {bw} {GRANT_BAR_H} }}\n'
+            f'tooltip = "PMR_CC_GRANT_TT_g{gl}"\n'
+            'blockoverride "second_progressbar" {}\n'
             f'blockoverride "values" {{\nmin = 0\nmax = {cc.GRANT_WEEKS}\nvalue = "[{bar_value}]"\n}}\n'
+            f'blockoverride "arrow_texture_density" {{\ntexture_density = {ARROW_DENSITY}\n}}\n'
             f'textbox = {{\nsize = {{ 100% 100% }}\nalign = center|nobaseline\nfontsize = 23\n'
-            'text = "PMR_CC_GRANT_BAR"\nalwaystransparent = yes\n}\n}\n')
+            f'text = "PMR_CC_GRANT_BAR_g{gl}"\nalwaystransparent = yes\n}}\n}}\n')
 
 
 def hub_gui(ox, oy):
