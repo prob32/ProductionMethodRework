@@ -7,8 +7,8 @@ generate.py. Pat, 2026-10-13: new games start each trade-off near where games ta
 
 The option map comes from the generated mod's GENERATION_REPORT.json and the dead bands from its
 pmr_effects.txt (the `pmr_gap > X` of each pmr_xstep_<gi>_<b>). Shares are read from each building's
-active share methods (pm_pmr_x_<b>_<j>_<n>), values and availability from its state's variables
-(pmr_xv_<j>_<b>, pmr_xav_<j>_<b>). The save must be plain text (Victoria 3 writes these unless ironman
+active share digits (tens pm_pmr_x_<b>_<j>_<10t> plus units pm_pmr_xu_<b>_<j>_<u>), values and
+availability from its state's variables (pmr_xv_<j>_<b>, pmr_xav_<j>_<b>). The save must be plain text (Victoria 3 writes these unless ironman
 or compressed saves are on); it streams the file, so a 200 MB save takes a few seconds.
 """
 import argparse
@@ -22,7 +22,7 @@ SECTIONS = ('states', 'building_manager', 'country_manager')
 
 def read_save(path):
     state_re = re.compile(r'^(\d+)=\{$')
-    pm_re = re.compile(r'"pm_pmr_x_[a-z_]+?_(\d+)_(\d+)"')
+    pm_re = re.compile(r'"pm_pmr_xu?_[a-z_]+?_(\d+)_(\d+)"')   # tens and units digits add up
     states, buildings, countries = {}, [], {}
     section = cur = flag = None
     depth = 0
@@ -73,7 +73,9 @@ def read_save(path):
                 elif line.startswith('\tstate='):
                     cur['state'] = int(s.split('=')[1])
                 elif line.startswith('\tproduction_methods='):
-                    cur['x'] = {int(j): int(n) for j, n in pm_re.findall(line)}
+                    cur['x'] = collections.Counter()
+                    for j, n in pm_re.findall(line):
+                        cur['x'][int(j)] += int(n)
             elif line.startswith('\tdefinition='):
                 cur['tag'] = s.split('=')[1].strip('"')
     return states, buildings, countries
