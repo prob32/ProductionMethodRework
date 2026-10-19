@@ -30,11 +30,11 @@ What it does, building by building (see pmr/README.md for the design):
    The state tracks how many levels run each recipe; the tick activates, in each share group, the
    method for that recipe's share of the levels. So the building's goods are the level-weighted mix
    of its recipes, in its own production figures, scaled by employment and throughput like any
-   recipe. Each digit unlocks only while it runs itself or while the building's one lock
-   ``pm_pmr_lock_<b>_any`` (in ``pmg_pmr_lock_<b>``, ``_any`` first, ``_shut`` the default) is active, so with the
-   lock shut the AI has no second digit to pick. The tick opens the lock, sets the digits that differ and shuts it.
-   No two groups depend on each other, so methods a new building inherits from different buildings always settle
-   (16 August 1838: mutual share/lock pairs with ``_any`` last froze the game).
+   recipe. Each digit unlocks only while it runs itself (``unlocking_production_methods`` is checked against
+   the building's active methods), so the AI and the player never have a second digit to pick, and the tick
+   sets a digit with activate_production_method, which checks no unlock. No group depends on another, so
+   methods a new building inherits from different buildings always settle (16 August 1838: mutual share/lock
+   pairs with ``_any`` last froze the game).
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
    building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, built
    by investors who own part of the building (with ABROAD_SLOT, that one only where the player owns
@@ -98,10 +98,10 @@ RETOOL_AI_MULT = 2
 RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
 # A share of n% runs two methods the engine adds: tens (pm_pmr_share_<b>_<i>_<10t>, t = 0..10) and units
-# (pm_pmr_shu_<b>_<i>_<u>, u = 0..9); options pm_pmr_x_ / pm_pmr_xu_. Each digit unlocks while it runs itself or
-# while the building's pm_pmr_lock_<b>_any runs. pmg_pmr_lock_<b> = { _any (first), _shut (the default) } is the
-# building's only lock group: with it shut each digit group offers only the digit it runs. The tick opens it, sets
-# every digit that differs and shuts it. 21 methods where 203 were (101 shares + 102 locks), still in 1% steps.
+# (pm_pmr_shu_<b>_<i>_<u>, u = 0..9); options pm_pmr_x_ / pm_pmr_xu_. Each digit unlocks only while it runs
+# itself: 1.14.5 checks unlocking_production_methods against the building's active methods (the player's
+# command, the AI switcher, can_activate and the repair pass alike), and activate_production_method checks
+# nothing, so only script moves a digit and no lock group is needed. 21 methods where 203 were, still 1% steps.
 TENS = list(range(0, SHARE_STEPS + 1, 10))
 UNITS = list(range(10))
 RETOOL_SLOTS = 2           # private retool buildings per building type: one at home, one abroad (ABROAD_SLOT)
@@ -1153,7 +1153,7 @@ def main():
         s.inserts.append((pg.end - 1, ''.join(
             f'\tpmg_pmr_share_{short(bk)}_{i}  # PMR: share of levels on {key} (tens)\n\t'
             f'\tpmg_pmr_shu_{short(bk)}_{i}  # PMR: share of levels on {key} (units)\n\t'
-            for i, key in blend_of) + f'\tpmg_pmr_lock_{short(bk)}  # PMR: opens the shares for the tick\n\t'))
+            for i, key in blend_of)))
 
     goods_tex, goods_cost = {}, {}
     for gsrc in load_dir(game, 'goods'):
@@ -1432,16 +1432,12 @@ def main():
 
         # Blended recipe: per recipe i, a tens and a units group whose two running digits carry recipe i's
         # workforce-scaled modifiers x n / SHARE_STEPS, so the building's goods are the level-weighted
-        # mix of its recipes, scaled by workforce and throughput like any recipe. A digit unlocks while it
-        # runs itself or while the building's lock _any runs (unlocking_production_methods is any-of, as
-        # vanilla's pm_sewing_machines / pm_electric_sewing_machines lists show). With the lock shut only
-        # the running digit of each group is available, so the AI cannot move a share; the lock carries
-        # nothing, and vanilla's AI keeps the current method when a change gains nothing
-        # (PRODUCTION_METHOD_STICKINESS_*).
-        # _any comes FIRST in the lock group (LOCK_ANY_FIRST): when the game finds a method unavailable it
-        # takes the first available one of its group. 16 August 1838: with mutual share/lock pairs and _any
-        # last, a new rye farm given one farm's share and another's lock switched methods without end and
-        # the game froze. Digits depend only on themselves and the lock, the lock on nothing, so nothing loops.
+        # mix of its recipes, scaled by workforce and throughput like any recipe. A digit unlocks only while
+        # it runs itself, so only the running digit of each group is ever available and the AI cannot move a
+        # share. When the game finds a method unavailable (its repair pass, repeated until nothing changes)
+        # it keeps the current one if available, else the default, else the first available. 16 August
+        # 1838: mutual share/lock pairs with _any last swapped without end and froze the game. A digit
+        # depends on nothing but itself, so nothing loops.
         elec_tiers = []
         fold_techs = {}   # tier -> the technologies of the methods folded into it (pmr_best_<b> asks the owner)
         econ = []         # per recipe: (goods per level, wage units per level), for pmr_profit_<b>
@@ -1509,13 +1505,12 @@ def main():
                         {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
                        for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
         def ladder(sh, values, default_v, body_of, tex, loc_share, gname):
-            """digit methods <sh>_<v> carrying v% (body_of(v / SHARE_STEPS)); each unlocks while it runs
-            itself or while the building's lock pm_pmr_lock_<b>_any runs"""
+            """digit methods <sh>_<v> carrying v% (body_of(v / SHARE_STEPS)); each unlocks only while it runs"""
             shares = []
             for val in values:
                 dflt = '\tis_default = yes\n' if val == default_v else ''
                 blend_pms.append(f'{sh}_{val} = {{\n\ttexture = "{tex}"\n{dflt}'
-                                 f'\tunlocking_production_methods = {{ {sh}_{val} pm_pmr_lock_{b}_any }}\n'
+                                 f'\tunlocking_production_methods = {{ {sh}_{val} }}\n'
                                  f'{body_of(val / SHARE_STEPS) if val else ""}}}\n')
                 shares.append(f'{sh}_{val}')
                 loc.append(f' {sh}_{val}:0 "{loc_share(val)}"')
@@ -1544,11 +1539,6 @@ def main():
                        lambda val, r=r: f'${r.key}$ ({val}% of levels)',
                        (gs, f'${r.key}$ share of levels'))
             report['blended'].append({'building': bk, 'recipe': r.key, **rep, 'blend': blend, 'employment': emp})
-        # the building's only lock group, _any FIRST (LOCK_ANY_FIRST) and _shut the default; hidden, no names
-        blend_pms.append(f'pm_pmr_lock_{b}_any = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n'
-                         f'pm_pmr_lock_{b}_shut = {{\n\ttexture = "{GENERIC_ICON}"\n\tis_default = yes\n}}\n')
-        blend_groups.append(f'pmg_pmr_lock_{b} = {{\n\ttexture = "{GENERIC_ICON}"\n'
-                            f'\tproduction_methods = {{\n\t\tpm_pmr_lock_{b}_any\n\t\tpm_pmr_lock_{b}_shut\n\t}}\n}}\n')
 
         # Option shares: the same share / lock / switching-lock pattern as the recipes, carrying the
         # option's every effect x n / SHARE_STEPS. n = 0 is the default: a new building starts on none.
@@ -1703,7 +1693,7 @@ def main():
     write('common/production_methods/pmr_blend_production_methods.txt', header +
           '# Share methods: pm_pmr_share_<b>_<recipe>_<n> carries the recipe\'s workforce-scaled\n'
           f'# modifiers x n / {SHARE_STEPS}, n = 0, 10 .. 100; pm_pmr_shu_<b>_<recipe>_<u> its units, u = 0..9. Each\n'
-          '# unlocks while it runs itself or while the building\'s lock pm_pmr_lock_<b>_any runs.\n\n'
+          '# unlocks only while it runs itself; the tick sets digits with activate_production_method.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods))
@@ -2035,8 +2025,8 @@ L0_TRIP = 20
 
 def trace_pm_effects(game, out, since):
     """--trace-from: pmr_trace_pms (building scope) logs a building's active methods, one PM line each;
-    pmr_l0_guard (building scope, below level 1) opens the building's share lock (pmg_pmr_lock_ to _any) on
-    the L0_TRIP-th method change in a day and writes a flushed L0_TRIP line. 16 August 1838: the engine
+    pmr_l0_guard (building scope, below level 1) writes a flushed L0_TRIP line on the L0_TRIP-th method
+    change in a day (it opened the share locks while there were any). 16 August 1838: the engine
     switched an unbuilt Hanoverian rye farm's methods without end while PMR's own handler did nothing."""
     groups = {}
     for d in (os.path.join(game, 'common', 'production_method_groups'),
@@ -2059,20 +2049,16 @@ def trace_pm_effects(game, out, since):
                               f'debug_log = "PMR;rec=PM;group={g};pm={p}" }}\n' for g in gs for p in groups[g])
                     + '\t}\n')
         b = short(bk)
-        locks = [p for g in gs if g.startswith('pmg_pmr_lock_') for p in groups[g] if p.endswith('_any')]
         guards.append(f'\t{kw} = {{\n\t\tlimit = {{ is_building_type = {bk} }}\n\t\tstate = {{\n'
                       f'\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_l0_day_{b} }} }} '
                       f'set_variable = {{ name = pmr_l0_day_{b} value = yes days = 1 }} set_variable = {{ name = pmr_l0_runs_{b} value = 0 }} }}\n'
                       f'\t\t\tchange_variable = {{ name = pmr_l0_runs_{b} add = 1 }}\n'
                       f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_l0_runs_{b} = {L0_TRIP} }}\n'
-                      f'\t\t\t\t{flush_log("L0_TRIP", bk)}\n\t\t\t\tset_variable = pmr_l0_busy\n'
-                      + ''.join(f'\t\t\t\tif = {{ limit = {{ NOT = {{ is_production_method_active = {{ building_type = {bk} production_method = {p} }} }} }} '
-                                f'activate_production_method = {{ building_type = {bk} production_method = {p} }} }}\n' for p in locks)
-                      + '\t\t\t\tremove_variable = pmr_l0_busy\n\t\t\t}\n\t\t}\n\t}\n')
+                      f'\t\t\t\t{flush_log("L0_TRIP", bk)}\n'
+                      '\t\t\t}\n\t\t}\n\t}\n')
     return ('# --trace-from only (see trace_pm_effects in tools/pmr/generate.py).\n\n'
             'pmr_trace_pms = {\n' + ''.join(logs) + '}\n\n'
-            'pmr_l0_guard = {\n\tif = {\n\t\tlimit = { state = { NOT = { has_variable = pmr_l0_busy } } }\n'
-            + ''.join('\t' + line + '\n' for line in ''.join(guards).rstrip('\n').split('\n')) + '\t}\n}\n')
+            'pmr_l0_guard = {\n' + ''.join(guards) + '}\n')
 
 
 def add_trace(rel, text, since):
@@ -2567,7 +2553,6 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                 + f'{ind}}}\n{ind}else = {{\n' + bisect(var, leaf, ind, mid + 1, hi) + f'{ind}}}\n')
     # each option's tens (pmr_xqt, 0..10) and units (pmr_xqu, 0..9) of its share in % (pmr_x)
     halves = (('pmr_xqt', 'pmr_xat', 'x', 10, lambda d: 10 * d), ('pmr_xqu', 'pmr_xau', 'xu', 9, lambda d: d))
-    lock_any, lock_shut = f'pm_pmr_lock_{b}_any', f'pm_pmr_lock_{b}_shut'
     o.append(f'pmr_xapply_{b} = {{\n')
     # a none with effects of its own (Simple Ranch's wool) runs under every share: its marker stays on
     for g, gi, mode, none, os_, std in conv:
@@ -2585,17 +2570,12 @@ def option_effects(bk, b, conv, goods_cost, recipes):
             o.append(f'\tset_variable = {{ name = {xv(av, x.j)} value = -1 }}\n'
                      + bisect(xv(qv, x.j), lambda d, x=x, sh=sh, av=av, val=val: f'if = {{ limit = {{ {is_on(f"pm_pmr_{sh}_{b}_{x.j}_{val(d)}")} }} '
                               f'set_variable = {{ name = {xv(av, x.j)} value = {d} }} }}', '\t', hi=hi))
-    o.append('\t# any digit not the one wanted: open the lock (every digit unlocks), switch them, shut it\n'
-             '\tif = {\n\t\tlimit = { OR = { '
-             + ' '.join(f'var:{xv(av, x.j)} = -1' for x in opts for av in ('pmr_xat', 'pmr_xau')) + ' } }\n'
-             f'\t\tif = {{ limit = {{ NOT = {{ {is_on(lock_any)} }} }} {act(lock_any)} }}\n')
+    o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
     for x in opts:
         for qv, av, sh, hi, val in halves:
-            o.append(f'\t\tif = {{\n\t\t\tlimit = {{ var:{xv(av, x.j)} = -1 }}\n'
-                     + bisect(xv(qv, x.j), lambda d, x=x, sh=sh, val=val: act(f'pm_pmr_{sh}_{b}_{x.j}_{val(d)}'), '\t\t\t', hi=hi)
-                     + f'\t\t\tset_variable = {{ name = {xv(av, x.j)} value = var:{xv(qv, x.j)} }}\n\t\t}}\n')
-    o.append('\t}\n'
-             f'\t# shut again, also after the AI opened it\n\tif = {{ limit = {{ {is_on(lock_any)} }} {act(lock_shut)} }}\n')
+            o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv(av, x.j)} = -1 }}\n'
+                     + bisect(xv(qv, x.j), lambda d, x=x, sh=sh, val=val: act(f'pm_pmr_{sh}_{b}_{x.j}_{val(d)}'), '\t\t', hi=hi)
+                     + f'\t\tset_variable = {{ name = {xv(av, x.j)} value = var:{xv(qv, x.j)} }}\n\t}}\n')
     for x in opts:
         # the share in % both digits run (the OPT log line's running=), -1 while either is off
         o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
@@ -2961,9 +2941,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # method of that recipe's share group. Recipes other than the target are rounded to the nearest
     # step, oldest first and never past the whole; the target takes what is left, so the shares
     # always add up to exactly SHARE_STEPS steps. Step n runs as two digits, tens and units, each
-    # unlocked while it runs or while the building's lock _any is active. To change shares the lock
-    # opens, the digits that differ move, and the lock shuts: no step ever locks out a running digit,
-    # so the game never has to replace one itself.
+    # unlocked only while it runs. The digits that differ move by activate_production_method, which
+    # checks no unlock; the new digit then unlocks itself, so the game never has to replace one.
     # Only a digit that is not running is activated (pmr_read_blend_<b> finds out first): activating
     # a running method again counted its goods twice (see pmr_tick_<b>). Each digit is found by
     # bisection, about four comparisons a digit.
@@ -3042,26 +3021,18 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         o.append(f'\t# {grp}\n\t{setv("pmr_gcum", 0)}\n'
                  + ''.join(step(i, 'pmr_gcum') for i, _, g2 in bm if g2 == grp))
     o.append(f'\tpmr_read_blend_{b} = yes\n')
-    lock_on = f'is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_lock_{b}_any }}'
     if not RELEASE:   # each member's reading before the blend (pmr_a_<i> is read again after it, for the log)
         o.append(''.join(f'\t{setv(f"pmr_sl_a_{i}", "var:" + v(f"pmr_a_{i}"))}\n' for i in range(1, nb + 1)))
-    o.append('\t# any digit not the one wanted: open the lock (every digit unlocks), switch them, shut it\n'
-             '\tif = {\n\t\tlimit = { OR = { ' + ' '.join(f'var:{v(f"pmr_a_{i}")} = -1' for i in range(1, nb + 1)) + ' } }\n'
-             f'\t\tif = {{ limit = {{ NOT = {{ {lock_on} }} }} activate_production_method = {{ building_type = {bk} '
-             f'production_method = pm_pmr_lock_{b}_any }} }}\n')
+    o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
     for i in range(1, nb + 1):
         for nv, av, sh, hi, val in halves:
-            o.append(f'\t\tif = {{\n\t\t\tlimit = {{ var:{v(f"{av}_{i}")} = -1 }}\n'
-                     + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, val=val: act(sh, i, val(d)), '\t\t\t', hi=hi) + '\t\t}\n')
-    o.append('\t}\n'
-             f'\t# shut again, also after the AI opened it\n\tif = {{ limit = {{ {lock_on} }} '
-             f'activate_production_method = {{ building_type = {bk} production_method = pm_pmr_lock_{b}_shut }} }}\n')
+            o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"{av}_{i}")} = -1 }}\n'
+                     + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, val=val: act(sh, i, val(d)), '\t\t', hi=hi) + '\t}\n')
     if not RELEASE:
         # SELFLOCK smoke test (test builds). moved: members found off their step at the start of a tick although the
         # step wanted had not changed since the last tick (the engine moved a digit the shut lock should hold). Once
         # a month the player's buildings (in an observer game the largest economy's: pmr_logged) log it, with
-        # can_activate on both digits member 1 runs (run_can) and on another of its tens digits (other_can), the
-        # lock shut.
+        # can_activate on both digits member 1 runs (run_can) and on another of its tens digits (other_can).
         fv = lambda name: f"[THIS.Var('{v(name)}').GetValue|0]"   # noqa: E731
         can = lambda kind, n: f'can_activate_production_method = {{ building_type = {bk} production_method = {pm(kind, 1, n)} }}'   # noqa: E731
         o.append(f'\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_sl_moved")} }} }} {setv("pmr_sl_moved", 0)} }}\n'
