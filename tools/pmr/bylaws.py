@@ -269,8 +269,14 @@ def wealth(p, nums, slots):
                       'scope:pmr_bl_cty = { set_variable = { name = pmr_bl_x value = var:pmr_bl_t } } }\n'
                       for st in OWNED_STEPS)
     o.append('# Country scope: pmr_bl_prv, the share of the country\'s building levels its Manor Houses and Financial Districts\n'
-             '# own (the shareholders\' votes), at most once a month (pmr_bl_prvm).\n'
-             'pmr_bl_private = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_bl_prvm } }\n'
+             '# own (the shareholders\' votes), cached in pmr_bl_prvm.\n'
+             '# Performance review 6, S-12: a player\'s country takes the Private tab\'s weekly By owner share (pmr_po_share_3,\n'
+             '# private_investment.chart_effect, the same count); an AI country\'s read stands a year, as its boards count yearly.\n'
+             'pmr_bl_private = {\n'
+             '\tif = {\n\t\tlimit = { is_player = yes has_variable = pmr_po_share_3 }\n'
+             '\t\tset_variable = { name = pmr_bl_prv value = var:pmr_po_share_3 }\n'
+             '\t\tif = { limit = { NOT = { has_variable = pmr_bl_prvm } } set_variable = { name = pmr_bl_prvm value = yes days = 28 } }\n\t}\n'
+             '\telse_if = {\n\t\tlimit = { NOT = { has_variable = pmr_bl_prvm } }\n'
              '\t\tsave_temporary_scope_as = pmr_bl_cty\n'
              + ''.join(f'\t\tset_variable = {{ name = pmr_bl_{x} value = 0 }}\n' for x in ('pa', 'pv_', 'pc'))
              + f'\t\tevery_scope_building = {{\n\t\t\tlimit = {{ level > 0 OR = {{ {groups} }} NOR = {{ {excl} }} }}\n'
@@ -289,7 +295,8 @@ def wealth(p, nums, slots):
              '\t\t\tchange_variable = { name = pmr_bl_prv divide = var:pmr_bl_pa }\n'
              '\t\t\tclamp_variable = { name = pmr_bl_prv min = 0 max = 1 }\n\t\t}\n'
              # a read with no levels (seen nowhere yet, kept as a guard) is not cached, so the next count reads again
-             + '\t\tif = { limit = { var:pmr_bl_pa > 0 } set_variable = { name = pmr_bl_prvm value = yes days = 28 } }\n'
+             + '\t\tif = { limit = { var:pmr_bl_pa > 0 is_player = yes } set_variable = { name = pmr_bl_prvm value = yes days = 28 } }\n'
+             '\t\telse_if = { limit = { var:pmr_bl_pa > 0 } set_variable = { name = pmr_bl_prvm value = yes days = 365 } }\n'
              '\t\tif = { limit = { pmr_logged = yes } debug_log = "PMR;rec=BL_PRIVATE;date=[TimeKeeper.GetCurrentDate.GetString];'
              'country=[THIS.GetCountry.GetNameNoFormatting];levels=[THIS.Var(\'pmr_bl_pa\').GetValue|1];'
              'companies=[THIS.Var(\'pmr_bl_pc\').GetValue|1];private=[THIS.Var(\'pmr_bl_pv_\').GetValue|1];'
@@ -419,13 +426,15 @@ def effects(log_line):
              '\t\t$WHO$ = { executive = { save_scope_as = pmr_bl_ch } }\n\t\tpmr_bl_row_ch = yes\n\t}\n'
              '\telse = { pmr_bl_row_none = yes }\n}\n\n')
     acc = ''.join(f'\tset_variable = {{ name = pmr_bl_t value = var:pmr_bl_d_{c} }}\n'
-                  '\tchange_variable = { name = pmr_bl_t multiply = $W$ }\n'
+                  '\tchange_variable = { name = pmr_bl_t multiply = var:pmr_bl_wr }\n'
                   f'\tchange_variable = {{ name = pmr_bl_s_{c} add = var:pmr_bl_t }}\n'
                   f'\tchange_variable = {{ name = pmr_bl_$K$_{c} add = var:pmr_bl_t }}\n' for c in VOTED)
     vote = ''.join(f'\tif = {{ limit = {{ var:pmr_bl_pg = {c // 10} var:pmr_bl_pv = {c % 10} }} '
                    f'set_variable = {{ name = pmr_bl_vt value = var:pmr_bl_d_{c} }} }}\n' for c in VOTED)
     o.append('# A seat of weight $W$ (its votes in pmr_bl_d_*): its weight on each bylaw\'s support and on its own line $K$\n'
-             '# (SEATS), and its vote on the change under way (pmr_bl_vt).\npmr_bl_seat = {\n' + acc
+             '# (SEATS), and its vote on the change under way (pmr_bl_vt). Its votes count rounded, as its badge shows them\n'
+             '# (bug review q51, P3-2: trending votes are fractional; AI_MIN and BLOCK count whole votes).\npmr_bl_seat = {\n'
+             '\tset_variable = { name = pmr_bl_wr value = $W$ }\n\tround_variable = { name = pmr_bl_wr nearest = 1 }\n' + acc
              + '\tset_variable = { name = pmr_bl_vt value = 0 }\n' + vote + '}\n\n')
     clout = highest([round(COUNCIL_MIN + k / 100, 2) for k in range(0, 61)], lambda x: f'ig_clout >= {fmt(x)}',
                     lambda x: f'scope:pmr_bl_co = {{ set_variable = {{ name = pmr_bl_tc value = {fmt(x) if x else 0} }} }}',
@@ -438,6 +447,12 @@ def effects(log_line):
                 + highest(list(PROFIT_STEPS), lambda x: f'var:{src} >= {x}',
                           lambda x: '' if x is None else f'set_variable = {{ name = {out} value = {PROFIT_STEPS.index(x) + 1} }}',
                           ind))
+    o.append('# Company scope: pmr_bl_wealth, held half a year for an AI company (pmr_bl_wm).\n'
+             'pmr_bl_wealth_held = {\n'
+             '\tif = {\n\t\tlimit = { OR = { owner ?= { is_player = yes } NOT = { has_variable = pmr_bl_wm } } }\n'
+             '\t\tpmr_bl_wealth = yes\n'
+             '\t\tif = { limit = { NOT = { owner ?= { is_player = yes } } } set_variable = { name = pmr_bl_wm value = yes days = 182 } }\n'
+             '\t}\n}\n\n')
     o.append('# The board counts: each seat\'s votes (Pat 19:23Z: the chairmen a base and a vote for each PROFIT_STEPS step\n'
              '# their company\'s week\'s profit reaches, pmr_bl_wealth; the shareholders SH_SCALE x the private owners\' share of\n'
              '# the economy, pmr_bl_private; the council TU_SCALE x the Trade Unions\' clout; popularity multiplies each), each\n'
@@ -447,7 +462,8 @@ def effects(log_line):
              + ''.join(f'\tset_variable = {{ name = pmr_bl_{k}_{c} value = 0 }}\n' for k in SEATS for c in VOTED)
              + '\tset_variable = { name = pmr_bl_ns value = 0 }\n'
              '\t# the company\'s week\'s profit: its own levels at its industries\' profit per level\n'
-             '\tpmr_bl_wealth = yes\n'
+             # performance review 6, S-13: an AI company's industries are read twice a year (pmr_bl_wm), a player's at each count
+             '\tpmr_bl_wealth_held = yes\n'
              '\tset_variable = { name = pmr_bl_wl_x value = var:pmr_bl_cl }\n'
              '\tchange_variable = { name = pmr_bl_wl_x multiply = var:pmr_bl_pl }\n'
              + ladder('pmr_bl_wl_x', 'pmr_bl_pr_x', '\t')
@@ -471,7 +487,7 @@ def effects(log_line):
              '\tset_variable = { name = pmr_bl_v_ex value = var:pmr_bl_vt }\n'
              f'\t# each subsidiary\'s chairman likewise, from {SUB_BASE}; its vote, votes, popularity, profit and its steps on the\n'
              '\t# subsidiary\n'
-             '\tevery_in_list = {\n\t\tvariable = pmr_subs\n\t\tsave_scope_as = pmr_bl_sub\n\t\tpmr_bl_wealth = yes\n'
+             '\tevery_in_list = {\n\t\tvariable = pmr_subs\n\t\tsave_scope_as = pmr_bl_sub\n\t\tpmr_bl_wealth_held = yes\n'
              '\t\tset_variable = { name = pmr_bl_wl value = var:pmr_bl_cl }\n'
              '\t\tchange_variable = { name = pmr_bl_wl multiply = var:pmr_bl_pl }\n'
              + ladder('pmr_bl_wl', 'pmr_bl_pr', '\t\t')
@@ -591,13 +607,15 @@ def effects(log_line):
     o.append('# Monthly, a parent company (company_culture.pmr_cc_tick): the board counts (a player\'s company, or one with a\n'
              '# change under way), the change gains, an AI company proposes one once a year, the harsh bylaws are counted.\n'
              'pmr_bl_month = {\n\tpmr_bl_init = yes\n\tpmr_bl_focus = yes\n\tset_variable = pmr_bl_step\n'
-             '\tif = {\n\t\tlimit = { var:pmr_bl_pg > 0 }\n\t\tpmr_bl_count = yes\n'
+             # bug review q51, P3-1: the step serves the month's first count only, not the count a pass or a start adds
+             '\tif = {\n\t\tlimit = { var:pmr_bl_pg > 0 }\n\t\tpmr_bl_count = yes\n\t\tremove_variable = pmr_bl_step\n'
              '\t\tchange_variable = { name = pmr_bl_pp add = var:pmr_bl_rt }\n'
              '\t\tif = { limit = { var:pmr_bl_pp >= 100 } pmr_bl_pass = yes }\n\t}\n'
              '\telse_if = {\n\t\tlimit = { owner ?= { is_player = yes } }\n\t\tpmr_bl_count = yes\n\t}\n'
              '\telse_if = {\n\t\tlimit = { NOT = { has_variable = pmr_bl_ai_t } }\n'
-             '\t\tset_variable = { name = pmr_bl_ai_t days = 365 }\n\t\tpmr_bl_count = yes\n\t\tpmr_bl_ai_pick = yes\n\t}\n'
-             '\tremove_variable = pmr_bl_step\n'
+             '\t\tset_variable = { name = pmr_bl_ai_t days = 365 }\n\t\tpmr_bl_count = yes\n\t\tremove_variable = pmr_bl_step\n'
+             '\t\tpmr_bl_ai_pick = yes\n\t}\n'
+             '\tif = { limit = { has_variable = pmr_bl_step } remove_variable = pmr_bl_step }\n'
              f'\t{log_line("BL_COUNT", count_log)}\n'
              '\tset_variable = { name = pmr_bl_harsh value = 0 }\n' + harsh + '}\n\n')
     o.append(f'# Country scope, monthly: the harsh bylaws of its companies employing {TU_LEVELS} levels or more, at most {TU_CAP},\n'

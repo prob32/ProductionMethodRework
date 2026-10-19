@@ -1725,7 +1725,7 @@ def main():
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'
                    f'\t\tif = {{ limit = {{ has_global_variable = pmr_obs gdp_ranking <= {OBS_TOP} }} pmr_obs_report = yes }}\n'))
     if not RELEASE:
-        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch))
+        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch))
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -2225,6 +2225,11 @@ def wage_effect(bk, b, econ):
                    f'change_variable = {{ name = pmr_bk_u add = var:pmr_t }} }}\n'
                    for i, (_gd, wu) in enumerate(econ, 1))
     drop = f'if = {{ limit = {{ has_variable = pmr_bpl_{b} }} remove_variable = pmr_bpl_{b} }}'
+    # bug review q51, P2-1: books unreadable because the building is subsidised or under BOOKS_OCC staffed say nothing
+    # good about it (pmr_bsx_<b>), unlike a building with no reading yet; profit_effect's pmr_ok tells them apart
+    unsx = f'if = {{ limit = {{ has_variable = pmr_bsx_{b} }} remove_variable = pmr_bsx_{b} }}'
+    sx = (f'if = {{ limit = {{ NOT = {{ has_global_variable = pmr_setup }} exists = b:{bk} b:{bk} = {{ OR = {{ is_subsidized = yes '
+          f'occupancy < {fmt(BOOKS_OCC)} }} }} }} set_variable = pmr_bsx_{b} }} else = {{ {unsx} }}')
     keep = ('' if RELEASE else
             ''.join(f'\t\t\tset_variable = {{ name = pmr_bk{x}_{b} value = var:pmr_bk_{x} }}\n' for x in 'epo'))
     return (f'pmr_wage_{b} = {{\n\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_wgd_{b} }} }}\n'
@@ -2260,10 +2265,10 @@ def wage_effect(bk, b, econ):
             '\t\t\t\t# the books\' weekly profit per level at full staffing, which the profit calculation is held to\n'
             f'\t\t\t\tset_variable = {{ name = pmr_bpl_{b} value = var:pmr_bk_p }}\n'
             f'\t\t\t\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_bk_o }}\n'
-            f'\t\t\t\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_level_{b} }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_level_{b} }}\n\t\t\t\t{unsx}\n'
             # bug review q48, P2-3: a building whose books can't be read (subsidised, emptied, no earnings) drops its
             # last reading and is priced from its recipes, not frozen at an old profit
-            f'\t\t\t}}\n\t\t\telse = {{ {drop} }}\n\t\t}}\n\t\telse = {{ {drop} }}\n\t}}\n}}\n\n')
+            f'\t\t\t}}\n\t\t\telse = {{ {drop} {unsx} }}\n\t\t}}\n\t\telse = {{ {drop} {sx} }}\n\t}}\n}}\n\n')
 
 
 # 1.14.5's building_group_bg_<g>_throughput_add types and the fishing wharf's own (most in
@@ -3894,7 +3899,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ''.join(f'\t\t\t{"if" if i == k else "else_if"} = {{ limit = {{ {active(recipes[i - 1])} }} '
                        f'set_variable = {{ name = pmr_fl value = {i} }} }}\n' for i in range(k, 0, -1))
              + '\t\t}\n\t}\n'
-             f'\tif = {{ limit = {{ var:pmr_fl > 0 OR = {{ NOT = {{ has_variable = pmr_bpl_{b} }} var:pmr_bpl_{b} >= 0 }} }} '
+             f'\tif = {{ limit = {{ var:pmr_fl > 0 OR = {{ AND = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 }} '
+             f'NOR = {{ has_variable = pmr_bpl_{b} has_variable = pmr_bsx_{b} }} }} }} '
              'set_variable = { name = pmr_ok value = 1 } }\n'
              f'\tif = {{\n\t\tlimit = {{ var:pmr_fl > 0 has_variable = {now} var:{now} > 0 }}\n'
              + lookup('var:pmr_fl', list(range(1, k + 1)), put('pmr_fa'), '\t\t')
@@ -4009,6 +4015,14 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                  f'change_variable = {{ name = pmr_t subtract = var:pmr_hu }} }}\n'
                  f'\t\tif = {{ limit = {{ var:pmr_t > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:pmr_t }} '
                  f'set_variable = {{ name = pmr_pk value = {i} }} }}\n\t}}\n')
+    # bug review q51, P2-2: the pick sits below the default on some axis (pmr_pdn_<b>): a step down, whatever the index
+    # order says (food industry 2 -> 3 drops automation), for the red bar and the floor's pmr_dn_<b> (switch_effect)
+    o.append(f'\t{setv("pmr_pdn", 0)}\n'
+             f'\tif = {{\n\t\tlimit = {{ var:pmr_pk > 0 has_variable = {now} var:{now} > 0 NOT = {{ var:pmr_pk = var:{now} }} }}\n'
+             + lookup('var:pmr_pk', list(range(1, k + 1)), put('pmr_pa'), '\t\t')
+             + lookup(f'var:{now}', list(range(1, k + 1)), put('pmr_da'), '\t\t')
+             + '\t\tif = { limit = { OR = { ' + ' '.join(f'var:pmr_pa_{d} < var:pmr_da_{d}' for d in range(1, nd + 1))
+             + f' }} }} {setv("pmr_pdn", 1)} }}\n\t}}\n')
     o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n\t{setv("pmr_prm", 0)}\n'
              + ''.join(f'\tif = {{ limit = {{ var:pmr_pk = {i} }} {setv("pmr_prm", "var:" + xv("pmr_rm", i))} }}\n'
                        for i in range(1, k + 1))
@@ -4110,17 +4124,28 @@ def switch_effect(b, bk, k, setv, v, var):
              f'state=[THIS.GetState.GetNameNoFormatting];building={bk}')
     return (f'pmr_switch_{b} = {{\n'
             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {now} }} }}\n' + take + '\t}\n'
-            f'\telse_if = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_sw_inst {dead} }} }}\n' + take + '\t}\n'
+            # bug review q51, P2-2: a default the first pick at market prices lowers is marked like one a red bar lowered
+            f'\telse_if = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_sw_inst {dead} }} }}\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ var:{pick} > 0 NOT = {{ var:{pick} = var:{now} }} }}\n'
+            f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
+            f"from={var(now)};to={var(pick)};dir={var(v('pmr_pdn'))};months=0\" }}\n"
+            f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} set_variable = pmr_dn_{b} }}\n'
+            f'\t\t\telse_if = {{ limit = {{ has_variable = pmr_dn_{b} }} remove_variable = pmr_dn_{b} }}\n\t\t}}\n'
+            + take + '\t}\n'
             f'\telse_if = {{\n\t\tlimit = {{ OR = {{ var:{pick} = 0 var:{pick} = var:{now} }} }}\n' + clear + '\t}\n'
             '\telse = {\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ var:{v("pmr_swto")} = var:{pick} }} }}\n'
             f'\t\t\t{setv("pmr_swto", "var:" + pick)}\n\t\t\t{setv("pmr_sw", 0)}\n'
-            f'\t\t\tif = {{ limit = {{ var:{pick} > var:{now} }} {setv("pmr_swd", 1)} }}\n'
-            f'\t\t\telse = {{ {setv("pmr_swd", -1)} }}\n'
+            f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} {setv("pmr_swd", -1)} }}\n'
+            f'\t\t\telse = {{ {setv("pmr_swd", 1)} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=SWITCH_START;{where};'
             f"default={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};gain={var(v('pmr_swg'), 2)};pts={var(v('pmr_swr'), 2)}\" }}\n\t\t}}\n"
+            # bug review q51, P2-3: a red bar stops once the books show no loss (Pat 19:30Z), and the next tick prices again
+            f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_swd")} = -1 has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 }}\n'
+            + clear.replace('\t\t', '\t\t\t')
+            + f'\t\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n\t\t}}\n'
             # Pat 12:59Z: the bigger the gain over the default, the more points a month (pmr_swr_<b>, profit_effect)
-            f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_month }}\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_month NOT = {{ var:{v("pmr_swd")} = 0 }} }}\n'
             f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} change_variable = {{ name = {v("pmr_sw")} add = var:{v("pmr_swr")} }} }}\n'
             f'\t\t\telse = {{ change_variable = {{ name = {v("pmr_sw")} add = 1 }} }}\n\t\t}}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_sw")} >= {SWITCH_MONTHS} }}\n'
@@ -4306,16 +4331,18 @@ def dispatch_effects(buildings):
              '\t# electricity once for every building of the state (pmr_tick_body_<b> skips its own read)\n'
              '\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
     # bug review q48, P2-2: a building gone mid-retool (downsized to nothing) leaves no open retool, no stale recipe mix
-    # (a rebuild starts on the newest recipe, as a new one) and no abroad flag. pmr_close_retool_<b> drops the gate once
-    # nothing is pending; until then this runs again each month.
+    # (a rebuild starts on the newest recipe, as a new one), no abroad flag, no books and no step-down mark. It runs once,
+    # as it removes pmr_mix_<b>.
     for bk in buildings:
         b = short(bk)
         o.append(f'\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n'
-                 f'\telse_if = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_retool_gate_{b} has_variable = pmr_mix_{b} '
-                 f'has_variable = pmr_abroad_{b} }} NOT = {{ exists = b:{bk} }} }}\n'
+                 # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up
+                 f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_mix_{b} NOT = {{ exists = b:{bk} }} }}\n'
+                 # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
+                 f'\t\tif = {{ limit = {{ has_variable = pmr_pending_{b} }} set_variable = {{ name = pmr_pending_{b} value = 0 }} }}\n'
                  f'\t\tpmr_close_retool_{b} = yes\n'
                  + ''.join(f'\t\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
-                           for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}'))
+                           for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}'))
                  + '\t}\n')
     o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
              '# State scope (on_acquired_technology): tick only the buildings whose best recipe the research\n'
@@ -6603,12 +6630,13 @@ pmr_logged = {{
 
 def obs_report(dispatch):
     """Country scope, monthly in an observer game (test builds): one OBS line for each of the OBS_TOP largest
-    economies. types = building types it has in a state, loss = those whose books show a loss (pmr_bpl_<b> < 0),
+    economies. types = building types it has in a state (pmr_mix_<b>), loss = those whose books show a loss (pmr_bpl_<b>
+    < 0) or can't be read as it is subsidised or nearly empty (pmr_bsx_<b>),
     up / down = switching bars filling toward a newer / older default, lowered = defaults a loss lowered (pmr_dn_<b>)."""
     keys = ('types', 'loss', 'up', 'down', 'lowered')
-    per = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_level_{b} }}\n'
+    per = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_mix_{b} }}\n'
                   '\t\t\tscope:pmr_obs_c = { change_variable = { name = pmr_obs_types add = 1 } }\n'
-                  f'\t\t\tif = {{ limit = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} < 0 }} '
+                  f'\t\t\tif = {{ limit = {{ OR = {{ has_variable = pmr_bsx_{b} AND = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} < 0 }} }} }} '
                   'scope:pmr_obs_c = { change_variable = { name = pmr_obs_loss add = 1 } } }\n'
                   f'\t\t\tif = {{ limit = {{ var:pmr_swd_{b} ?= 1 }} scope:pmr_obs_c = {{ change_variable = {{ name = pmr_obs_up add = 1 }} }} }}\n'
                   f'\t\t\telse_if = {{ limit = {{ var:pmr_swd_{b} ?= -1 }} scope:pmr_obs_c = {{ change_variable = {{ name = pmr_obs_down add = 1 }} }} }}\n'
@@ -6621,7 +6649,67 @@ def obs_report(dispatch):
             + '\tevery_scope_state = {\n' + per + '\t}\n'
             '\tdebug_log = "PMR;rec=OBS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
             'gdp=[THIS.GetCountry.GetGDP|0];sol=[THIS.GetCountry.GetAverageSoLByPopulation|1];' + fields + '"\n'
-            + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '}\n')
+            + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '\tpmr_obs_methods = yes\n}\n\n')
+
+
+# Pat 2026-10-19 21:20Z: the observer run tracks the ranches' wool, the mines' explosives and the plantations' processing
+# methods. Each row: a label, its building types, and per option a label and how a state's building reads it: a trade-off
+# option's share (pmr_x_<j>_<b>, 0..SHARE_STEPS) or a vanilla method's marker (all its levels while active).
+OBS_METHODS = [
+    ('ranch', ['building_livestock_ranch'], [('sheep', 'pm_sheep_farms'), ('grazing', 'pm_intensive_grazing_ranch')]),
+    ('mines', ['building_coal_mine', 'building_iron_mine', 'building_lead_mine', 'building_sulfur_mine',
+               'building_gold_mine'], [('nitro', 'nitroglycerin'), ('dynamite', 'dynamite')]),
+    ('coffee', ['building_coffee_plantation'], [('mech', 'coffee_plantation_mechanical_drying')]),
+    ('tobacco', ['building_tobacco_plantation'], [('molds', 'molds'), ('electric', 'electric_rollers')]),
+    ('sugar', ['building_sugar_plantation'], [('vacuum', 'vacuum_pan_sugar'), ('steam', 'steam_powered_evaporation_sugar'),
+                                              ('centrifugal', 'centrifugal_machine_sugar')]),
+]
+
+
+def obs_methods(options, dispatch):
+    """Country scope, after pmr_obs_report: one OBSPM line, each row's levels in the country (ranch=) and each option's
+    share of them in percent (ranch_sheep=). A trade-off option counts its share of a building's levels, a vanilla method
+    all of them while active."""
+    vars_, body, fields = [], [], []
+    for row, bks, opts in OBS_METHODS:
+        lv = f'pmr_obs_{row}_l'
+        vars_.append(lv)
+        for bk in bks:
+            if bk not in dispatch:
+                raise SystemExit(f'OBS_METHODS: {bk} is not a PMR building')
+            b = short(bk)
+            conv = {o.key: o for *_g, os_, _std in options.get(bk, []) for o in os_}
+            add = []
+            for lab, key in opts:
+                x = next((o for k2, o in conv.items() if key in k2), None)
+                ov = f'pmr_obs_{row}_{lab}'
+                if x is not None:      # a trade-off option: its share of the levels
+                    add.append(f'\t\t\tif = {{ limit = {{ has_variable = pmr_x_{x.j}_{b} }} '
+                               f'set_variable = {{ name = pmr_t value = var:pmr_level_{b} }} '
+                               f'change_variable = {{ name = pmr_t multiply = var:pmr_x_{x.j}_{b} }} '
+                               f'change_variable = {{ name = pmr_t divide = {SHARE_STEPS} }} '
+                               f'scope:pmr_obs_c = {{ change_variable = {{ name = {ov} add = scope:pmr_obs_s.var:pmr_t }} }} }}\n')
+                else:                  # a vanilla method: all the levels while its marker runs
+                    add.append(f'\t\t\tif = {{ limit = {{ is_production_method_active = {{ building_type = {bk} production_method = {key} }} }} '
+                               f'scope:pmr_obs_c = {{ change_variable = {{ name = {ov} add = scope:pmr_obs_s.var:pmr_level_{b} }} }} }}\n')
+            body.append(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_mix_{b} has_variable = pmr_level_{b} }}\n'
+                        f'\t\t\tscope:pmr_obs_c = {{ change_variable = {{ name = {lv} add = scope:pmr_obs_s.var:pmr_level_{b} }} }}\n'
+                        + ''.join(add) + '\t\t}\n')
+        vars_ += [f'pmr_obs_{row}_{lab}' for lab, _k in opts]
+        fields.append(f"{row}=[THIS.Var('{lv}').GetValue|0];"
+                      + ';'.join(f"{row}_{lab}=[THIS.Var('pmr_obs_{row}_{lab}').GetValue|0]" for lab, _k in opts))
+    pct = ''.join(f'\tif = {{ limit = {{ var:pmr_obs_{row}_l > 0 }}\n'
+                  + ''.join(f'\t\tchange_variable = {{ name = pmr_obs_{row}_{lab} multiply = 100 }}\n'
+                            f'\t\tchange_variable = {{ name = pmr_obs_{row}_{lab} divide = var:pmr_obs_{row}_l }}\n'
+                            for lab, _k in opts) + '\t}\n' for row, _b, opts in OBS_METHODS)
+    return (''.join(f'# {ln.strip()}\n' for ln in obs_methods.__doc__.splitlines()) +
+            'pmr_obs_methods = {\n\tsave_scope_as = pmr_obs_c\n'
+            + ''.join(f'\tset_variable = {{ name = {n} value = 0 }}\n' for n in vars_)
+            + '\tevery_scope_state = {\n\t\tsave_scope_as = pmr_obs_s\n' + ''.join(body) + '\t}\n'
+            + pct
+            + '\tdebug_log = "PMR;rec=OBSPM;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            + ';'.join(fields) + '"\n'
+            + ''.join(f'\tremove_variable = {n}\n' for n in vars_) + '}\n')
 
 
 ON_ACTIONS = '''# Appended to vanilla on_actions the documented way (_on_actions.md, MODDING INFO):

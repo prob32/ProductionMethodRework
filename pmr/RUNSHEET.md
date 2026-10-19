@@ -16,8 +16,13 @@ From the build thread, after your 20:34Z, 20:35Z, 20:39Z and 21:12Z messages.
 
 - An observer game (no player) now logs: each month an `OBS` line for each of the 8 largest economies (GDP, average
   standard of living, how many of its building types are in a state, how many show a loss on their books, how many
-  switching bars fill up or down, how many defaults a loss lowered), and the largest economy's `SWITCH_START`,
-  `DEFAULT` and `FLOOR` lines. Nothing changes in a game with a player.
+  switching bars fill up or down, how many defaults a loss lowered), an `OBSPM` line with the share of levels on Sheep
+  Farms and Intensive Grazing, on nitroglycerin and dynamite (the five mines together), and on the coffee, tobacco and
+  sugar processing methods, and the largest economy's `SWITCH_START`, `DEFAULT` and `FLOOR` lines. Nothing changes in
+  a game with a player.
+- From the bug review: a building whose books can't be read because it is subsidised or nearly empty no longer counts
+  as making money; a red bar stops once the books show no loss; a default lowered at once by the first pick at market
+  prices is marked so the floor leaves it to finish.
 - Livestock ranches' wool (Simple Ranch, Sheep Farms, Intensive Grazing) is blended by local prices like hardwood,
   with its own bar under the ranch card: Sheep Farms and Intensive Grazing take grain for more wool and fertilizer, on
   top of Simple Ranch's own wool. The mines' explosives (nitroglycerin, dynamite) already blend this way since q49.
@@ -26,8 +31,8 @@ From the build thread, after your 20:34Z, 20:35Z, 20:39Z and 21:12Z messages.
   instead of jumping (a player's companies count monthly; an AI company's yearly, or monthly while a bylaw change is
   under way). Hovering a seat's bar shows its votes, all the board's votes and its target.
 
-1. Start a new observer game in PMR Test. Run it at speed for ten years or more; open one company's Company Culture
-   window in the first days and hover its bars.
+1. Start a new observer game in PMR Test. Run it at speed for ten years or more. In the first days, Ctrl+click a
+   country with companies, open one company's Company Culture window and hover its bars.
 2. Close the game and tell the build thread.
 
 | # | Do | Pass | A null means |
@@ -39,7 +44,8 @@ From the build thread, after your 20:34Z, 20:35Z, 20:39Z and 21:12Z messages.
 | V5 | Step 1 | The window opened in the first days shows the shareholders with votes and a share above 0% | Shareholders 0: the day-after count didn't run (no `pmr_cc.2`) or read 0 (see V4) |
 | V6 | Step 1 | Hovering any seat's bar shows "n of m votes" and "Target t" | No tooltip: the bar's wrapper doesn't take the hover |
 | V7 | Step 1 | A ranch card shows a wool bar; where grain is cheap and fabric dear, Sheep Farms' share grows a few points a month once Intensive Agriculture is researched | No bar: the ranch's trade-off groups weren't added; the bar stuck at Simple Ranch with the tech known: the options read as unavailable (`pmr_xav`) |
-| V8 | Step 2 | No new `pmr_` line in error.log | A new line: read it before anything else |
+| V8 | Step 1 | `PMR;rec=OBSPM` lines: `ranch_sheep` above 0 in countries with Intensive Agriculture, `mines_nitro` / `mines_dynamite` above 0 once their technologies are in, and the plantations' `coffee_mech`, `tobacco_*`, `sugar_*` above 0 somewhere by the 1850s | `ranch_sheep` and `ranch_grazing` 0 everywhere for ten years: the wool blend never moves (check `pmr_xav`); `mines_*` 0 with the techs known: explosives never pay or the spare-supply cap holds them at 0; the plantation figures 0: the AI doesn't switch those vanilla methods either (they move to retooling next batch) |
+| V9 | Step 2 | No new `pmr_` line in error.log | A new line: read it before anything else |
 
 In a game you play (any later save), `PMR;rec=BL_COUNT` lines each month show each seat as `votes>target`, the votes
 closing a quarter of the gap each month.
