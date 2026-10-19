@@ -24,7 +24,8 @@ industries than its one Industry Rights allows, so that one pick can open a bund
 - Both write `RIGHTS_TEST` lines at once, the next day and every 30 days. q38's `SUB_TEST` lines carry on.
 
 1. Load your latest PMR Test save.
-2. Open the Companies panel and find PMR Test Subsidiary C. Note whether Subsidiary B still shows and whether C's
+2. If Subsidiary B isn't in this save, take "PMR test: found two test companies" first. Open the Companies panel
+   and find PMR Test Subsidiary C. Note whether Subsidiary B still shows and whether C's
    Establish button is active (hover it). If it is active, establish C there.
 3. If C wasn't established in step 2, take the decision "PMR test: Subsidiary C replaces B". Open the Companies
    panel again and hover C.
