@@ -34,6 +34,11 @@ From the build thread, after your 01:07Z to 01:23Z messages on q33.
 - "Wage floor" is now "Wage cut cap"; a works input reads +5.0% instead of +4.8%.
 - On the details panel's Process view, an input with a modifier (Fabric input +5%) shows that value beside its
   amount on the left.
+- The building screens are lighter (your 01:23Z message): every per-type piece PMR adds (recipe bars, pick and
+  automation rows, owners' recipe icons, type-row bars, upgrade buttons) is now built only for the building on screen,
+  not hidden 44 times over. The details panel builds about 870 widgets instead of 3,100 (vanilla: 290), the Buildings
+  list about 160 a row instead of 750, and the cards are built only while Policies is open. The pick's price-cap
+  veto checks about 36 cases instead of 1,260 on a ranch.
 
 1. Start a new game on the PMR Test playset as France. Open the Buildings panel and click Policies. Look at a coal
    mine, a wheat farm and a cotton plantation card, and hover the small bars under their grids and the bar at the
@@ -56,6 +61,7 @@ From the build thread, after your 01:07Z to 01:23Z messages on q33.
 | H1 | Step 4 | The company's prestige good is locked, its tooltip naming "Hallmark Goods" | Producible: the gate isn't installed (the old files) |
 | F1 | debug.log | `CC_FRONTIER` lines for companies whose line's next recipe France already knows, with `tier=` the tier they reached | No `CC_FRONTIER` line in the first month: no French company is behind the frontier on 1 January, which can be right; tell the build thread if a company's wheel shows a goods tier locked whose recipe France already runs |
 | I1 | Step 5 | "+5%" beside the input on the left, matching the right-hand modifier | Nothing on the left: the game doesn't take the modifier's name from the good (error.log naming `GetValueFor` or `Concatenate3`) |
+| PF1 | Steps 1-3 | The details panel, the Buildings list (expanded type rows too) and the Policies cards show the same bars, rows, owner icons and upgrade buttons as in q33, and open faster than in q33, most of all for a building with many owners | A bar or row missing that q33 showed: a piece built for its own type can't read its building from inside the list it now sits in (error.log naming `DataModelRepeatedItem` or the missing piece's variable); tell the build thread. Opening no faster: the cost is elsewhere (a monthly tick at the same moment); tell the build thread which screen |
 | E7 | error.log | No line naming `pmr_switch_`, `pmr_cc_frontier`, `pmr_cc_free_`, `pmr_c_sw`, `PMR_MV_AUTO_TT` or `PMR_MV_OPT_TT` | Any such line: that part never ran, and the rows above it are not results |
 
 ## Earlier: the policy window, weekly research grants, who buys, company marks, nested Policy, AI weight sort (q33, test mod; not yet seen)

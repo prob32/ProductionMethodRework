@@ -1734,17 +1734,19 @@ def main():
               bom=False)
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
-    write('gui/building_details_panel.gui', patch_building_panel(
+    write('gui/building_details_panel.gui', gate_type_copies(patch_building_panel(
         recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(),
-        opt_ui, also, auto_ui, pick_ui), bom=False)
+        opt_ui, also, auto_ui, pick_ui)), bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     # The Buildings tab: the building type row's grid (the first of three) becomes the country recipe
     # bar, and the upgrade button goes left of nationalize. Expanded, each building's row is the
     # details panel's condensed_building_information, recipe row and button included.
-    write('gui/production_methods.gui', patch_type_row_buttons(patch_type_grids(
+    # (the second grid, buildings_production_method_item_potential, is shown nowhere: vanilla sets it visible = no)
+    write('gui/production_methods.gui', gate_type_copies(patch_type_row_buttons(patch_type_grids(
         vanilla_gui('production_methods.gui'), dispatch, 'production_methods.gui', 3,
-        replace={0: lambda bk, gind, vis: type_bar(bk, recipe_tex[bk])(bk, gind, vis)}, also=also), dispatch), bom=False)
+        replace={0: lambda bk, gind, vis: type_bar(bk, recipe_tex[bk])(bk, gind, vis)}, also=also, skip=(1,)),
+        dispatch)), bom=False)
     # Building browser rows: the labour icon with the recipe bar beside it in the production method
     # column (220 wide), and the government upgrade button left of nationalize.
     browser_bars = ''.join(
@@ -1753,13 +1755,14 @@ def main():
         f'\t\t\t\t\tsize = {{ 156 24 }}\n\t\t\t\t\tparentanchor = vcenter\n'
         + stacked_bar(short(bk), recipe_tex[bk], ('100%', '100%'), 18, '\t\t\t\t\t') + '\t\t\t\t}\n'
         for bk in dispatch)
-    write('gui/building_browser_panel.gui', patch_browser_tabs(patch_browser_actions(patch_grid_instance(
+    write('gui/building_browser_panel.gui', gate_type_copies(patch_browser_tabs(patch_browser_actions(patch_grid_instance(
         patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
-        extra=browser_bars, also=also), dispatch), list(mv_keys)), bom=False)
+        extra=browser_bars, also=also), dispatch), list(mv_keys))), bom=False)
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
     write('gui/states_panel_buildings.gui', hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types),
           bom=False)
+    report['gated_type_copies'] = list(GATED)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts, opt_ui, auto_ui)
@@ -3033,9 +3036,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         # the electric recipe: its newest recipe's and its automation's technologies, all of them; any
         # recipe: its folded automation's
         owner_techs = list(dict.fromkeys(list(getattr(r, 'techs', None) or []) + fold_techs.get(i, [])))
-        if owner_techs:
-            can = (f'AND = {{ {can} owner = {{ '
-                   + ' '.join(f'has_technology_researched = {t}' for t in owner_techs) + ' } }')
+        if owner_techs:   # the technologies first: they rule out most of a split type's pairs before the engine's check
+            can = (f'AND = {{ owner = {{ '
+                   + ' '.join(f'has_technology_researched = {t}' for t in owner_techs) + f' }} {can} }}')
         if with_abroad and abroad(r, i):
             can = f'OR = {{ {can} {abroad(r, i)} }}'
         if i in elec_tiers:
@@ -3349,23 +3352,29 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ''.join(f'\t\telse_if = {{ limit = {{ {active(r)} }} {setv("pmr_pbest", i)} }}\n'
                        for i, r in enumerate(recipes, 1) if i > 1)
              + '\t}\n')
-    # the veto: an input recipe i needs more of than the pick c, at the price cap
+    # the veto: an input recipe i needs more of than the pick c, at the price cap. One branch per pick c, so a run
+    # tests about k/2 picks and then k recipes, not k x (k-1) (perf review 3, S1)
     inputs = [{g: -q for g, q in gd.items() if q < 0 and goods_cost.get(g)} for gd, _ in econ]
-    for i in range(1, k + 1):
-        o.append(f'\tset_variable = {{ name = {xv("pmr_rveto", i)} value = 0 }}\n')
-        for c in range(1, k + 1):
+    o += [f'\tset_variable = {{ name = {xv("pmr_rveto", i)} value = 0 }}\n' for i in range(1, k + 1)]
+
+    def capped(gs, i):
+        return (f'\t\tif = {{ limit = {{ OR = {{ ' + ' '.join(f'var:pmr_px_{g} >= {top}' for g in gs)
+                + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
+    first = True
+    for c in range(1, k + 1):
+        body = ''
+        for i in range(1, k + 1):
             more = [g for g, q in sorted(inputs[i - 1].items()) if q > inputs[c - 1].get(g, 0) + 1e-9]
             if c != i and more:
-                o.append(f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {c} OR = {{ '
-                         + ' '.join(f'var:pmr_px_{g} >= {top}' for g in more)
-                         + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
+                body += capped(more, i)
         # the pick itself, when it needs more of a capped input than an older recipe
-        own = [g for g, q in sorted(inputs[i - 1].items())
-               if any(q > inputs[j - 1].get(g, 0) + 1e-9 for j in range(1, i))]
+        own = [g for g, q in sorted(inputs[c - 1].items())
+               if any(q > inputs[j - 1].get(g, 0) + 1e-9 for j in range(1, c))]
         if own:
-            o.append(f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {i} OR = {{ '
-                     + ' '.join(f'var:pmr_px_{g} >= {top}' for g in own)
-                     + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
+            body += capped(own, c)
+        if body:
+            o.append(f'\t{"if" if first else "else_if"} = {{\n\t\tlimit = {{ var:{v("pmr_pbest")} = {c} }}\n{body}\t}}\n')
+            first = False
     # the pick, against the current one's hurdles (pmr_hu newer, pmr_hd older); a pick that can't run sets none
     o.append('\tset_variable = { name = pmr_hu value = 0 }\n\tset_variable = { name = pmr_hd value = 0 }\n'
              '\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
@@ -4039,6 +4048,43 @@ def any_type(buildings):
     for bk in reversed(buildings[:-1]):
         expr = f'Or({is_type(bk)}, {expr})'
     return expr
+
+
+TYPE_TEST = re.compile(r"ObjectsEqual\((?:Building\.GetBuildingType|BuildingType\.Self), GetBuildingType\('building_\w+'\)\.Self\)")
+TYPE_COPY = re.compile(r'^(\t*)([A-Za-z_]\w*) = \{\n\1\tvisible = "\[(.*)\]"[^\n]*\n', re.M)
+MOVED = ('position =', 'parentanchor =', 'widgetanchor =')
+GATED = []   # copies gated per file, for the report
+
+
+def gate_type_copies(text):
+    """Perf review 3 (G1, Pat 2026-10-19 01:23Z: "its gotten a bit bad on opening the building screen"): PMR writes a
+    copy of a widget per building type and hides the others with visible, but the game builds a hidden widget all the
+    same. Each copy whose visible starts with its type test becomes the one item of a list that has an item only for
+    that type (DataModelRepeatedItem, as pmr_methods_cards), so a panel builds one gate per other type, not its
+    whole copy. The gate takes the copy's visible, position and anchors, so it sits and hides where the copy did;
+    a copy sized in % of its parent, or reading its parents, stays as it is."""
+    n = 0
+    for m in reversed(list(TYPE_COPY.finditer(text))):
+        ind, cond = m.group(1), m.group(3)
+        test = TYPE_TEST.match(cond, 4 if cond.startswith('And(') else 0)
+        if not test or not (cond == test.group(0) or cond.startswith(f'And({test.group(0)}, ')):
+            continue
+        start, end = m.start() + len(ind), block_end(text, m.start())
+        lines = text[start:end].split('\n')
+        head, body = lines[0], lines[2:]
+        direct = [l for l in body if l.startswith(ind + '\t') and not l.startswith(ind + '\t\t')]
+        if 'AccessParent' in text[start:end] or any(l.strip().startswith('size =') and '%' in l for l in direct):
+            continue
+        moved = [l for l in direct if l.strip().startswith(MOVED)]
+        item = '\n'.join('\t\t' + l if l.strip() else l for l in [ind + head] + [l for l in body if l not in moved])
+        gate = (f"{ind}flowcontainer = {{  # PMR: built for its own type only\n{ind}\tvisible = \"[{cond}]\"\n"
+                + ''.join(f'{ind}\t{l.strip()}\n' for l in moved)
+                + f"{ind}\tdatamodel = \"[DataModelRepeatedItem(Select_int32({test.group(0)}, '(int32)1', '(int32)0'))]\"\n"
+                f'{ind}\titem = {{\n{item}\n{ind}\t}}\n{ind}}}')
+        text = text[:m.start()] + gate + text[end:]
+        n += 1
+    GATED.append(n)
+    return text
 
 
 def any_of(exprs):
@@ -5060,7 +5106,7 @@ def patch_browser_actions(text, buildings):
     once('\t\t\t\t\t\t\t\t\tsize = { 191 30 }\n', f'\t\t\t\t\t\t\t\t\tsize = {{ {191 + BROWSER_EXTRA} 30 }}  # PMR\n')
     once('\t\t\tsize = { 180 @spreadsheet_height }\n', f'\t\t\tsize = {{ {180 + BROWSER_EXTRA} @spreadsheet_height }}  # PMR\n')
     ind = '\t\t\t\t\t'
-    buttons = ''.join(f'{ind}\twidget = {{\n{ind}\t\tvisible = "[{is_type(bk)}]"\n{ind}\t\tsize = {{ 100% 100% }}\n'
+    buttons = ''.join(f'{ind}\twidget = {{\n{ind}\t\tvisible = "[{is_type(bk)}]"\n{ind}\t\tsize = {{ 35 35 }}\n'
                       + gov_button(short(bk), 35, ind + '\t\t', f'{ind}\t\t\tparentanchor = center\n')
                       + f'{ind}\t}}\n' for bk in buildings)
     once('\t\t\t\tflowcontainer = {\n\t\t\t\t\t### NATIONALIZE\n',
@@ -5168,10 +5214,26 @@ def patch_browser_tabs(text, types):
          '\t\t\t\t\t\t\tdatacontext = "[BuildingBrowserBuildingTypeItem.GetBuildingType]"  # PMR\n'
          f'\t\t\t\t\t\t\tvisible = "[Or({hidden}, And(And({has_rows}, {carded}), Not({ai_on})))]"  # PMR\n'
          '\t\t\t\t\t\t\t# PMR: a card per building type on Investments\n'
-         f'\t\t\t\t\t\t\tpmr_methods_cards = {{\n\t\t\t\t\t\t\t\tvisible = "[{shown}]"\n\t\t\t\t\t\t\t}}\n'
+         # perf review 3 (G2): the cards are built only while Policies is open
+         f'\t\t\t\t\t\t\tflowcontainer = {{\n\t\t\t\t\t\t\t\tvisible = "[{shown}]"\n\t\t\t\t\t\t\t\tposition = {{ 7 0 }}\n'
+         f"\t\t\t\t\t\t\t\tdatamodel = \"[DataModelRepeatedItem(Select_int32({shown}, '(int32)1', '(int32)0'))]\"\n"
+         '\t\t\t\t\t\t\t\titem = {\n\t\t\t\t\t\t\t\t\tpmr_methods_cards = {\n\t\t\t\t\t\t\t\t\t\tposition = { 0 0 }\n'
+         '\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n'
          '\t\t\t\t\t\t\tbuildings_production_method_item = {\n'
          f'\t\t\t\t\t\t\t\tblockoverride "visible" {{\n\t\t\t\t\t\t\t\t\tvisible = "[And({has_rows}, {hidden})]"  # PMR\n'
          '\t\t\t\t\t\t\t\t}\n')
+    # perf review 3 (G2): vanilla's row is built only while Buildings is open
+    row = '\t\t\t\t\t\t\tbuildings_production_method_item = {\n\t\t\t\t\t\t\t\tblockoverride "visible" {\n'
+    if text.count(row) != 1:
+        raise SystemExit('building_browser_panel.gui: expected one patched type row; update patch_browser_tabs')
+    r0 = text.index(row)
+    r1 = block_end(text, r0)
+    i7 = '\t' * 7
+    text = (text[:r0] + f'{i7}flowcontainer = {{  # PMR\n{i7}\tvisible = "[{hidden}]"\n'
+            f"{i7}\tdatamodel = \"[DataModelRepeatedItem(Select_int32({hidden}, '(int32)1', '(int32)0'))]\"\n"
+            f'{i7}\titem = {{\n'
+            + '\n'.join('\t\t' + l if l.strip() else l for l in text[r0:r1].split('\n'))
+            + f'\n{i7}\t}}\n{i7}}}' + text[r1:])
     # the policy window pops out to the right of the panel, under the map mode button (Pat 2026-10-19 00:06Z); the
     # panel's root allows children outside it (default_block_window allow_outside)
     modes = ('\t\tblockoverride "map_modes_button" {\n\t\t\tmap_modes_single_button_minimized = {\n'
@@ -5293,7 +5355,7 @@ def patch_type_row_buttons(text, buildings):
                         f'{ind}### nationalize\n{ind}building_type_nationalize_button = {{\n')
 
 
-def patch_type_grids(text, buildings, name, expected, replace=None, also=()):
+def patch_type_grids(text, buildings, name, expected, replace=None, also=(), skip=()):
     """A vanilla GUI file's per-building-type production method grids (the building browser's,
     which switch every building of a type at once): for PMR building types the whole grid is
     hidden and one static fixed-labour icon takes its place. Asserted per file.
@@ -5315,6 +5377,11 @@ def patch_type_grids(text, buildings, name, expected, replace=None, also=()):
         grid = text.rfind('fixedgridbox = {', 0, m.start())
         inner = text.index('\n', grid) + 1
         end = block_end(text, grid)
+        if n in skip:   # a grid no screen shows: left as vanilla's
+            out.append(text[pos:end])
+            pos = end
+            n += 1
+            continue
         gind = text[text.rfind('\n', 0, grid) + 1:grid]
         # place the icon where the grid's first cell is: copy the grid's own position and anchor
         head = text[grid:m.start()] + text[m.end():text.index('item = {', m.end())]
