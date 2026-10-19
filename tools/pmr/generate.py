@@ -1617,6 +1617,19 @@ def main():
                 listed = pdx.items(bt)
                 ext = pdx.get(cn.value, 'extension_building_types')
                 extra = [x for x in (pdx.items(ext) if ext and ext.is_block else []) if x not in listed]
+                # Pat 2026-10-19 04:00Z: the Industry Charter offers the building of each input of the company's
+                # industries too (company_culture.plan, 'chx'; test builds)
+                more = [x for x in (cc_plan.comp.get(ck, {}).get('chx', []) if cc_plan else [])
+                        if x not in listed and x not in extra]
+                if more:
+                    note = '  # PMR: makes an input of its industries'
+                    if ext and ext.is_block:
+                        csrc.inserts.append((ext.end - 1, ''.join(f'\t{x}{note}\n\t' for x in more)))
+                    else:
+                        csrc.inserts.append((cn.end - 1, '\textension_building_types = {\n'
+                                             + ''.join(f'\t\t{x}{note}\n' for x in more) + '\t}\n'))
+                    extra += more
+                    report.setdefault('charter_extra', {})[ck] = more
                 new = [(x, rbx) for x in listed + extra if x in retool_of for rbx in retool_of[x] if rbx not in listed]
                 if not new:
                     continue
@@ -2145,8 +2158,8 @@ def wage_effect(bk, b, econ):
     wage units, read at most once a day (pmr_wgd_<b>). From its books (pmr_read_books) and the full workforce and wage
     units of the levels on each recipe (pmr_lv_<i>_<b>, TARGET_EMPLOYEES, econ):
       wage = (earnings x employees per level / 52 - weekly profit / occupancy / level) x 10,000 / wage units per level
-    A building that can't be read (none yet, game setup, subsidised, or under BOOKS_OCC staffed) keeps its last wage,
-    or AUTOMATION_WAGE before the first. Test builds keep the reads for the PROFIT line (pmr_bke/bkp/bko_<b>)."""
+    A building that can't be read (none yet, game setup, subsidised, under BOOKS_OCC staffed, or no earnings yet) keeps
+    its last wage, or AUTOMATION_WAGE before the first. Test builds keep the reads for the PROFIT line (pmr_bke/bkp/bko_<b>)."""
     emps = TARGET_EMPLOYEES.get(bk, [])
     k = len(econ)
     sums = ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_lv_{i}_{b} > 0 }} '
@@ -2170,7 +2183,10 @@ def wage_effect(bk, b, econ):
             + '\t\t\t# the levels\' full workforce (pmr_bk_n) and wage units (pmr_bk_u) per level, from the recipes they run\n'
             '\t\t\tset_variable = { name = pmr_bk_l value = 0 }\n\t\t\tset_variable = { name = pmr_bk_n value = 0 }\n'
             '\t\t\tset_variable = { name = pmr_bk_u value = 0 }\n' + sums
-            + '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_bk_l > 0 var:pmr_bk_u > 0 var:pmr_bk_o > 0 }\n'
+            # q35 (Pat's Prussia, 2026-10-19 03:51Z): in a building's first days its books hold no sales, earnings read 0
+            # and the formula took the week's whole loss as wages (739 against 360 a month later), so every recipe looked
+            # like a loss and the cheapest became the default at once. No earnings: no reading.
+            + '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_bk_l > 0 var:pmr_bk_u > 0 var:pmr_bk_o > 0 var:pmr_bk_e > 0 }\n'
             '\t\t\t\tchange_variable = { name = pmr_bk_n divide = var:pmr_bk_l }\n'
             '\t\t\t\tchange_variable = { name = pmr_bk_u divide = var:pmr_bk_l }\n'
             '\t\t\t\t# the margin a level makes at full staffing, less its profit at full staffing: its wages\n'
@@ -3820,16 +3836,25 @@ def switch_effect(b, bk, k, setv, v, var):
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};months={var(v('pmr_sw'))}\" }}\n"
             f'\t\t\t{setv("pmr_best_now", "var:" + pick)}\n'
             + clear.replace('\t\t', '\t\t\t') + '\t\t}\n\t}\n'
-            '\tif = { limit = { has_variable = pmr_sw_inst } remove_variable = pmr_sw_inst }\n}\n\n')
+            '\tif = { limit = { has_variable = pmr_sw_inst } remove_variable = pmr_sw_inst }\n'
+            # Pat 2026-10-19 03:51Z: the card showed a finished bar for a month, as the country's copy (pmr_c_sum_<b>, the
+            # state with the most levels) waited for the country's monthly pulse. That state's bar now reaches it at once.
+            f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_level")} owner = {{ is_player = yes has_variable = pmr_c_swm_{b} }} }}\n'
+            '\t\tsave_temporary_scope_as = pmr_sws\n'
+            f'\t\towner = {{\n\t\t\tif = {{\n\t\t\t\tlimit = {{ scope:pmr_sws.var:{v("pmr_level")} >= var:pmr_c_swm_{b} }}\n'
+            + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_c_{n}_{b} value = scope:pmr_sws.var:{v(x)} }}\n'
+                      for n, x in (('sw', 'pmr_sw'), ('swd', 'pmr_swd'), ('swto', 'pmr_swto'), ('now', 'pmr_best_now')))
+            + '\t\t\t}\n\t\t}\n\t}\n}\n\n')
 
 
 def vanilla_score(bk, b, econ, goods_cost, setv, v):
     """Inside pmr_profit_<b>, after the pick: pmr_pvs_<b>, what vanilla's investment pool would add to the type's
     ai_value for a new level of the pick at this state's prices (VANILLA_*_W): its profit per level a week
     (pmr_prm_<b>) / the target's employees per level x 7500 (x 10000 for a loss), plus its outputs at base value
-    x 0.3125. 0 without a pick."""
+    x 0.3125. 0 without a pick. pmr_pvp_<b>: the profit (or loss) term alone, for the Policies tooltip's lines."""
     emps = TARGET_EMPLOYEES.get(bk, [])
-    o = [f'\t# vanilla\'s profit and output terms for the pick (vanilla_score)\n\t{setv("pmr_pvs", 0)}\n']
+    o = [f'\t# vanilla\'s profit and output terms for the pick (vanilla_score); pmr_pvp_<b> the profit term alone\n'
+         f'\t{setv("pmr_pvs", 0)}\n\t{setv("pmr_pvp", 0)}\n']
     for i, (gd, _wu) in enumerate(econ, 1):
         e = max(emps[i - 1] if i <= len(emps) else 0, 1)
         out = sum(q * goods_cost[g] for g, q in gd.items() if q > 0 and goods_cost.get(g))
@@ -3837,6 +3862,7 @@ def vanilla_score(bk, b, econ, goods_cost, setv, v):
                  f'\t\tif = {{ limit = {{ var:{v("pmr_pvs")} > 0 }} '
                  f'change_variable = {{ name = {v("pmr_pvs")} multiply = {fmt(VANILLA_PROFIT_W / e)} }} }}\n'
                  f'\t\telse = {{ change_variable = {{ name = {v("pmr_pvs")} multiply = {fmt(VANILLA_DEFICIT_W / e)} }} }}\n'
+                 f'\t\t{setv("pmr_pvp", "var:" + v("pmr_pvs"))}\n'
                  f'\t\tchange_variable = {{ name = {v("pmr_pvs")} add = {fmt(out * VANILLA_OUTPUT_W)} }}\n\t}}\n')
     return ''.join(o)
 

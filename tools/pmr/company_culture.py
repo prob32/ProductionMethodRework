@@ -71,6 +71,7 @@ TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
 PANEL_GUI = 'gui/company_panel.gui'
 CHARTER_FILE = 'common/company_charter_types/00_company_charter_types.txt'
+SECOND_CHARTER = 'pmr_industry_charter_2'   # charters(): Industry Rights II, beside vanilla's (test builds)
 CAL_VERSION = 5                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
                                     # 5: a grant per goods line, the Industry Charter's building (pmr_cc_k_chb)
 
@@ -551,6 +552,20 @@ def plan(game, plain, goods_cost, goods_tex=None):
                     v['chb'], v['chb_in'] = mk[0], good
                     break
     p.charter = sorted({v['chb'] for v in p.comp.values() if v['chb']})
+    # Pat 2026-10-19 04:00Z ("I'd like to give krupp an option to charter up iron and coal and tools"): the Industry
+    # Charter's list is the company's extension_building_types, so each company's gets the building making each input
+    # of its industries (every recipe's, by value), its own industries aside. generate.py adds them (charter_extra).
+    for c, (bts, _pv) in comps.items():
+        need = {}
+        for b in bts:
+            for good, val in in_val.get(b, {}).items():
+                need[good] = need.get(good, 0) + val
+        ext = []
+        for good in sorted(need, key=lambda g: -need[g]):
+            mk = [x for x in sorted(maker.get(good, []), key=lambda x: -out_val[x].get(good, 0)) if x not in bts]
+            if mk and mk[0] not in ext:
+                ext.append(mk[0])
+        p.comp[c]['chx'] = ext
     goods = set()
     for v in p.comp.values():
         goods.update(v['gout'] + [x for x in v['gin'] if x] + v['xg'])
@@ -1217,6 +1232,9 @@ def effects(p, comps):
                     n += 1
             take += ('\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods), or PMR\'s own\n'
                      '\tset_variable = pmr_cc_hallmark\n' + pchain)
+        if ln.goods:   # the grant's start on its own, for the test decision too (Pat 2026-10-19 03:48Z)
+            o.append(f'pmr_cc_grant_start_{k} = {{\n{take}}}\n\n')
+            take = f'\tpmr_cc_grant_start_{k} = yes\n'
         o.append(f'pmr_cc_buy_{k} = {{\n{pay}{take}\tpmr_cc_after_buy = yes\n'
                  f'\t{player_log("CC_BUY", f"line={k};")}\n}}\n\n')
     o.append('pmr_cc_after_buy = {\n\tpmr_cc_derive = yes\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n}\n\n')
@@ -1598,6 +1616,38 @@ pmr_cc_test_points_decision = {{
 	ai_chance = {{ value = 0 }}
 }}
 
+# Test builds only (Pat 2026-10-19 03:48Z, run sheet E3: "can we make this a decision?"): each of the player's companies
+# with a goods line founds Engineering if it has founded nothing, takes the goods tiers it already has the technology
+# for, then starts a research grant on each goods line that can take one, points aside. Writes PMR;rec=CC_TEST_GRANTS.
+pmr_cc_test_grants_start_decision = {{
+	is_shown = {{ always = yes }}
+	possible = {{ always = yes }}
+	when_taken = {{
+		every_company = {{
+			save_scope_as = pmr_cc_co
+			if = {{
+				limit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}
+				pmr_cc_init = yes
+			}}
+			if = {{
+				limit = {{ OR = {{ var:pmr_cc_k_g1b > 0 var:pmr_cc_k_g2b > 0 }} }}
+				pmr_cc_derive = yes
+				if = {{
+					limit = {{ var:pmr_cc_nf = 0 pmr_cc_open_fe = yes }}
+					pmr_cc_buy_fe = yes
+				}}
+				pmr_cc_frontier = yes
+				if = {{ limit = {{ pmr_cc_open_g1 = yes }} pmr_cc_grant_start_g1 = yes }}
+				if = {{ limit = {{ pmr_cc_open_g2 = yes }} pmr_cc_grant_start_g2 = yes }}
+				pmr_cc_after_buy = yes
+				pmr_cc_mirror = yes
+				{{LOG_START}}
+			}}
+		}}
+	}}
+	ai_chance = {{ value = 0 }}
+}}
+
 # Test builds only: every running research grant of the player's companies completes at its next paid week, so the
 # special method can be checked without waiting {GRANT_MONTHS} months. Writes PMR;rec=CC_TEST_GRANT lines.
 pmr_cc_test_grant_decision = {{
@@ -1616,16 +1666,6 @@ pmr_cc_test_grant_decision = {{
 '''
 
 
-def charter_target(p, ind):
-    """The Industry Charter test (Pat 2026-10-19 02:37Z, "Test the limit"): only the building type making the main input
-    of the company's first goods line (pmr_cc_k_chb, plan()). Unknown whether `possible` sees the building being picked:
-    without a scope:target, or for a company without such a building, the charter is as before."""
-    alts = ''.join(f'{ind}\tAND = {{ var:pmr_cc_k_chb ?= {i} scope:target = bt:{bk} }}\n' for i, bk in enumerate(p.charter, 1))
-    return (f'\n{ind}# PMR test: only the building type making the main input of the first goods line (pmr_cc_k_chb)\n'
-            f'{ind}OR = {{\n{ind}\tNOT = {{ exists = scope:target }}\n{ind}\tNOT = {{ has_variable = pmr_cc_k_chb }}\n'
-            f'{ind}\tvar:pmr_cc_k_chb ?= 0\n' + alts + f'{ind}}}')
-
-
 def charters(game, p):
     """The vanilla charter types, each possible only for a company holding its node (BUILD-SPEC section 3)."""
     text = open(os.path.join(game, CHARTER_FILE), encoding='utf-8-sig').read()
@@ -1636,8 +1676,6 @@ def charters(game, p):
             continue
         k = var[n.key]
         check = f'var:pmr_cc_{k} ?= 1  # PMR Company Culture: the {BY_KEY[k].names[0]} node'
-        if k == 'ch':
-            check += charter_target(p, '\t\t')
         pos = pdx.get(n.value, 'possible')
         if pos:
             edits.append((pos.start + text[pos.start:].index('{') + 1, f'\n\t\t{check}'))
@@ -1651,6 +1689,12 @@ def charters(game, p):
         fail(CHARTER_FILE, f'found {len(edits) // 2} of the {len(CHARTERS)} charter types')
     for at, ins in sorted(edits, reverse=True):
         text = text[:at] + ins + text[at:]
+    # Pat 2026-10-19 04:02Z ("lets test this right away"): a second industry charter, a copy of vanilla's under its own
+    # key (SECOND_CHARTER). 1.14.5 refuses a company a second industry charter ("already has other Industry Rights");
+    # whether it counts by definition or by kind is the test.
+    ic = next(n for n in pdx.parse(text) if n.is_block and n.key == 'industry_charter')
+    text += (f'\n# PMR test: a second industry charter (company_culture.SECOND_CHARTER)\n{SECOND_CHARTER}'
+             + text[ic.start + len('industry_charter'):ic.end] + '\n')
     return ('# PMR Company Culture (company_culture.py): vanilla\'s charter types, each possible only for a company that\n'
             '# holds its node on the Company Culture wheel. The engine drops a charter whose possible fails.\n' + text)
 
@@ -1840,6 +1884,12 @@ def localization(p):
         f' pmr_cc_test_points_decision_desc:0 "Each of your companies gets {TEST_POINTS} Culture points."',
         ' pmr_cc_test_grant_decision:0 "PMR test: finish your companies\' research grants"',
         ' pmr_cc_test_grant_decision_desc:0 "Running grants finish next week."',
+        ' pmr_cc_test_grants_start_decision:0 "PMR test: start a research grant on both goods lines"',
+        ' pmr_cc_test_grants_start_decision_desc:0 "Each of your companies with goods lines founds Engineering if it can and starts both grants."',
+        f' {SECOND_CHARTER}:0 "$industry_charter$ II"',
+        f' {SECOND_CHARTER}_desc:0 "$industry_charter_desc$"',
+        f' {SECOND_CHARTER}_type_desc:0 "$industry_charter_type_desc$"',
+        f' {SECOND_CHARTER}_effects:0 "$industry_charter_effects$"',
     ]
     for bk in sorted(p.works):
         for t in T3:
@@ -1929,7 +1979,7 @@ def write_all(game, write, header_text, report, p, out_dir):
     write('common/script_values/pmr_cc_values.txt', header_text + viewing_value())
     write('common/script_values/pmr_cw_values.txt', header_text + works_values(p))
     write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST'))
-          .replace('{LOG_GRANT}', log_line('CC_TEST_GRANT')))
+          .replace('{LOG_GRANT}', log_line('CC_TEST_GRANT')).replace('{LOG_START}', log_line('CC_TEST_GRANTS')))
     write('common/customizable_localization/pmr_cc_custom_loc.txt', header_text + custom_loc(p))
     write(CHARTER_FILE, charters(game, p))
     write('common/defines/zz_pmr_cc.txt', header_text + DEFINE)
