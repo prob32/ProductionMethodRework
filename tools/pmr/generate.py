@@ -69,6 +69,7 @@ import icons  # noqa: E402
 import pdx  # noqa: E402
 import private_investment  # noqa: E402
 import company_culture  # noqa: E402
+import company_panel  # noqa: E402
 import methods_row  # noqa: E402
 import localise  # noqa: E402
 
@@ -1613,6 +1614,8 @@ def main():
                 report['company_types'].append({'company': ck, 'file': csrc.name, 'added': [rbx for _, rbx in new]})
             if csrc.inserts:
                 write(f'common/company_types/{csrc.name}', csrc.render())
+    # the panels listing a company's industries hide them (Pat 2026-10-19 02:32Z, company_panel.py)
+    company_panel.RETOOL_TYPES = sorted({rbx for c in report['company_types'] for rbx in c['added']})
 
     write('common/production_methods/pmr_labour_production_methods.txt', header + '\n'.join(labour_pms))
     write('common/production_method_groups/pmr_labour_groups.txt', header + '\n'.join(labour_groups))
@@ -1691,7 +1694,9 @@ def main():
           + '# The same for every state at once, from the Buildings tab\'s building type row. Country scope.\n\n'
           + ''.join(gov_retool_country_sgui(bk) for bk in dispatch)
           + ('# The Buildings panel\'s Owners\' Methods tab, recounted from the cached picks when the tab is clicked.\n'
-             'pmr_mv_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pf_all = yes\n\t\tpmr_mv_refresh = yes\n\t}\n}\n'
+             'pmr_mv_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pf_all = yes\n\t\tpmr_mv_refresh = yes\n'
+             # a company panel opening skips its own recount today (company_panel.REFRESH_SGUI)
+             f'\t\tset_variable = {{ name = {company_panel.TODAY} value = yes days = 1 }}\n\t}}\n}}\n'
              if PROFIT_TARGET else ''))
     # the panel's second group bars, per building type
     def pm_tex(key):
@@ -1764,6 +1769,11 @@ def main():
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
     write('gui/states_panel_buildings.gui', hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types),
           bom=False)
+    # The company panels without the retool sites that companies list (Pat 2026-10-19 02:32Z, company_panel.py); in the
+    # test build company_culture.write_all writes company_panel.gui, with its Company Culture tab.
+    write('gui/companies_panel.gui', company_panel.patch_companies_panel(vanilla_gui('companies_panel.gui')), bom=False)
+    if args.release:
+        write('gui/company_panel.gui', company_panel.patch_company_panel(vanilla_gui('company_panel.gui')), bom=False)
     report['gated_type_copies'] = list(GATED)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
@@ -1788,10 +1798,13 @@ def main():
                             body = f.read().split('\n', 1)[1]
                         for lang in OTHER_LANGUAGES:
                             write(f'localization/{lang}/{fn[:-len("english.yml")]}{lang}.yml', f'l_{lang}:\n' + body)
+        # Its tab's Methods table: the Policies grid of the company's own building types (Pat 2026-10-19 02:32Z)
+        loc += company_panel.write_methods(write, header, mv_keys, recipe_tex, pair_ui, pair_options, mv_read,
+                                           mv_cols(mv_keys, pair_ui) if mv_keys else 1, cc_plan.works)
         # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, in the test build until Pat ships it.
         loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
         private_investment.AI_TAIL = company_culture.ai_value_tail   # Expanded Works (company_culture.py)
-        private_investment.GRANT_LINE = True                         # research grants under the pool
+        private_investment.GRANT_LINE = True                         # research grants in the pool's tooltip
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
@@ -1807,6 +1820,10 @@ def main():
         write(f'localization/{lang}/pmr_l_{lang}.yml',
               f'l_{lang}:\n' + '\n'.join(localise.translate(loc, lang, missing)) + '\n')
         report['untranslated'][lang] = sorted(missing)
+    # Vanilla text PMR rewrites, the same in every language (private_investment.replace_loc)
+    replace = private_investment.replace_loc()
+    for lang in ('english',) + OTHER_LANGUAGES if replace else ():
+        write(f'localization/{lang}/replace/pmr_replace_l_{lang}.yml', f'l_{lang}:\n' + '\n'.join(replace) + '\n')
 
     # A test build for its own mod folder (--test-name) carries its own name and id, so the launcher lists it
     # beside the published mod and a playset holds one or the other.
