@@ -1911,12 +1911,17 @@ def group_of(bk, btype, parent):
     return GROUP_OF.get(g)
 
 
+EXTRA_COMPANY_DIRS = []   # set by generate.py in test builds: the test probes' company_types folders
+
+
 def company_owners(game):
-    """building type -> company types that list it in building_types (vanilla files)."""
+    """building type -> company types that list it in building_types (vanilla files, and in test builds the test
+    probes' companies, so a test subsidiary counts as a buyer: Pat 2026-10-19 14:10Z)."""
     owners = {}
-    cdir = os.path.join(game, 'common', 'company_types')
-    for name in sorted(os.listdir(cdir)):
-        t = open(os.path.join(cdir, name), encoding='utf-8-sig').read()
+    paths = [os.path.join(d, n) for d in [os.path.join(game, 'common', 'company_types')] + EXTRA_COMPANY_DIRS
+             for n in sorted(os.listdir(d))]
+    for path in paths:
+        t = open(path, encoding='utf-8-sig').read()
         for k, _s, o, c in top_blocks(t):
             bt = re.search(r'\n\s*building_types\s*=\s*\{([^}]*)\}', t[o:c])
             for bk in (bt.group(1).split() if bt else []):

@@ -1,3 +1,4 @@
 ﻿l_english:
  pmr_subhq_test_decision:0 "PMR test: Subsidiary B under a parent company"
  pmr_subhq_test_decision_desc:0 "Lists Subsidiary B under the Regional HQs of one of your companies."
+ PMR_SUB_HQ_HEADER:0 "[Company.GetName] in [Building.GetState.GetName]"

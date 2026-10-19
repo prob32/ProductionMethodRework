@@ -123,13 +123,30 @@ def sub_regional_hqs(text, where):
                         + sub_list(EXEC_SUBS, f'IsDataModelEmpty({SUBS})', False, '\t\t\t\t') + hqs)
 
 
+def sub_assets(text, where):
+    """Pat 2026-10-19 14:10Z ("It doesn't look like the regional subsidiary is listed as under the company hq"): the
+    Assets tab lists each subsidiary's HQ with its buildings, as vanilla's company_hq_assets_item, after the company's
+    own HQ."""
+    hqs = '\t\t### REGIONAL HQs\n\t\tflowcontainer = {\n'
+    if text.count(hqs) != 1:
+        fail(where, 'the Assets tab\'s Regional HQs moved; update sub_assets')
+    block = ('\t\t### PMR: subsidiaries under the company HQ (company_panel.py, test build)\n\t\tflowcontainer = {\n'
+             '\t\t\tusing = default_list_position\n\t\t\tdirection = vertical\n'
+             f'\t\t\tdatamodel = "[{SUBS}]"\n\t\t\titem = {{\n\t\t\t\tflowcontainer = {{\n'
+             '\t\t\t\t\tdirection = vertical\n\t\t\t\t\tdatacontext = "[Scope.GetCompany]"\n'
+             '\t\t\t\t\tcompany_hq_assets_item = {\n\t\t\t\t\t\tdatacontext = "[Company.GetBuilding]"\n'
+             '\t\t\t\t\t\tblockoverride "header_text" {\n\t\t\t\t\t\t\ttext = "PMR_SUB_HQ_HEADER"\n'
+             '\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\n')
+    return text.replace(hqs, block + hqs)
+
+
 def patch_company_panel(text):
     """company_panel.gui: Available Industries without the retool sites; with the Methods table, the panel's opening
     recounts its figures (REFRESH_SGUI); in test builds, the parent's subsidiaries under its Regional HQs."""
     where = 'company_panel.gui'
     text = hide_sites(text, where, 1)
     if SUB_LINKS:
-        text = sub_regional_hqs(text, where)
+        text = sub_assets(sub_regional_hqs(text, where), where)
     if not REFRESH:
         return text
     show = '\t\tblockoverride "animation_state_block" {\n\t\t\tstate = {\n\t\t\t\tname = _show\n'

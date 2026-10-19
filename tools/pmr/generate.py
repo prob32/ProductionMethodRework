@@ -1741,6 +1741,10 @@ def main():
     ai_of = private_investment.ai_groups(game) if mv_keys else {}   # each row's AI weight (Pat 18:40Z)
     # the policy parts of each AI weight, for its tooltip's nested Policy line (Pat 2026-10-19 00:01Z); in the test
     # build a company type's Expanded Works (company_culture.ai_value_tail) is what is left of Policy
+    if not args.release:    # the test probes' companies buy levels like any other (Pat 2026-10-19 14:10Z)
+        private_investment.EXTRA_COMPANY_DIRS[:] = [
+            d for d in (os.path.join(TEST_PROBES, p, 'common', 'company_types') for p in sorted(os.listdir(TEST_PROBES)))
+            if os.path.isdir(d)] if os.path.isdir(TEST_PROBES) else []
     owners_of = private_investment.company_owners(game) if mv_keys else {}
     ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of)
                 + ([('works', None)] if not args.release and bk in owners_of else []) for bk in ai_of}
