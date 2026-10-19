@@ -1,4 +1,4 @@
-# PMR run sheet: the Policies tab, a 6-month bar before a new default, automation on 38 types, explosives by price, Hallmark Goods for every company, the policy window pops out, research grants paid every week, who buys each type, company marks and a nested Policy tooltip on the cards, Production Methods cards sorted by AI weight, Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: profit figures from the buildings' own books, built special methods, a cleaner Policies tab, faster months, the Policies tab, a 6-month bar before a new default, automation on 38 types, explosives by price, Hallmark Goods for every company, the policy window pops out, research grants paid every week, who buys each type, company marks and a nested Policy tooltip on the cards, Production Methods cards sorted by AI weight, Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,68 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: Policies tab, the 6-month switching bar, automation on 38 types, explosives, Hallmark Goods (q34, test mod; a new game is needed)
+## Latest: profit figures from the buildings' own books, built special methods, a cleaner Policies tab, faster months (q35, test mod; a new game is needed)
+
+From the build thread, after your 02:32Z to 02:47Z messages on q34.
+
+- The profit figures now use what each building really pays. The wage comes from its own books (productivity ×
+  employees ÷ 52 − weekly balance) instead of a fixed £390 per 10,000 wage units, and goods count with the building's
+  throughput. A state's figures are redone at the next monthly pulse when a price or the wage moves 10% or more.
+- The investment chance tooltip adds up: Base + Policy + Profit and output = the total. Expanded Works shows only
+  when one of the type's companies holds it.
+- Policies cards: the company icon sits on the building icon's top-right corner. The bars under the grid line up
+  with it. The switching bar shows only while a switch is under way, thicker, with the target's icon, and the card
+  grows and shrinks with it. The sort row reads Name | Size | Investment chance.
+- The details panel has no "Most profitable" line. Its switching bar shows only while a switch is under way.
+- The company panel lists each industry once (retooling sites are hidden, still owned). Company Culture's Methods
+  shows the Policies grid for the types the company owns, and a row per goods line with each special method's
+  profit. "Research grants" moved into the Investment Pool tooltip.
+- Engineering special methods are built: a company's levels move onto its special method one at a time, as private
+  retooling levels finish there. The building's modifiers name the method ("Steam Winding"), not "Company works
+  output". A goods tier whose technology your country has unlocks free at once. Grants now research tiers ahead of
+  your technology, one per goods line at a time, on a green arrow bar.
+- The Industry Charter tries to offer only the building that makes the company's main input (Krupp: iron mines).
+- Months are cheaper: a building finds its target with fewer checks, and skips its level accounting in months when
+  nothing changed (a ranch costs about half). Other countries' log lines no longer carry padding, so debug.log keeps
+  more of your game.
+
+1. Start a new game on the PMR Test playset as Prussia. Open the Buildings panel and click Policies. Look at the
+   sort row, a card with a company icon, and the bars under the grids.
+2. Open Westfalen's steel mill. Note its productivity (the £ under the graph), Weekly Balance, Wages and Throughput,
+   and hover its Steel output modifier.
+3. Open a company with a goods line (Companies). Look at Available Industries and the Company Culture tab's Methods.
+   Found Engineering if the company hasn't. Take the decision "PMR test: 6 Culture points for each of your companies" if you need points, and
+   start a research grant on each goods line. Hover the Private tab's Investment Pool.
+4. Play to 1 January 1837. Open a card or a details panel whose type shows a switching bar, and hover it.
+5. Whenever a company holds the Industry Charter node, open its charter window and look at the building list.
+6. Close the game and tell the build thread; it reads debug.log and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| W1 | Step 2, debug.log | The steel mill's `PROFIT` line: `earn=` matches the productivity, `bal=` the weekly balance, and the running recipe's `rw` × levels × `occ` is close to the panel's Wages | `wage=390` everywhere, or `earn`, `bal` or `occ` 0: the books weren't read, and the figures still use the old fixed wage |
+| W2 | Step 2, debug.log | `thr=` is close to 1 + the panel's Throughput | `thr=1.00` on a building with several levels: the throughput read sees nothing |
+| W3 | debug.log, a year | At least one `PROFIT` line with `why=price` | None in a year: the price check never fires, so figures can still go stale |
+| W4 | Steps 1, 4 | Each card's gold figure has the same sign as that type's buildings' weekly balance (steel, ranch) | A negative card while the buildings make money: tell the build thread which type and state |
+| W5 | Step 1 | The investment chance tooltip's Base + Policy + Profit and output equals its total; no Expanded Works line when no company holds it | An Expanded Works line without the node: the parts were still read at different times |
+| C1 | Step 1 | The company icon on the building icon's top-right corner; the level number and productivity fully visible; clicking it opens the company | The icon over the level number: the old files are installed |
+| C2 | Step 4 | A card with a switch under way: a thick green (newer) or red (older) arrow bar under the grid, the target's icon at its end, "Default → Pick" and "N of 6 months" on hover. A card without one: no bar and no gap at its foot | No bar anywhere by 1837: check debug.log for `SWITCH_START`; none means no switch started (fine). A strip or gap at a card's foot: the card didn't shrink |
+| C3 | Step 1 | The sort row reads Name, Size, Investment chance, three equal buttons; the Buildings tab still has Productivity | Four buttons on Policies: the old files |
+| C4 | Steps 2, 4 | No "Most profitable" line on the details panel; its switching bar only while that state switches | — |
+| P1 | Step 3 | Each industry once in Available Industries, the companies list and the company tooltip | Each still doubled: the filter didn't match the retooling sites |
+| P2 | debug.log | `RETOOL_LEVEL` lines for company-owned buildings still appear | None: hiding the sites stopped retooling (tell the build thread) |
+| P3 | Step 3 | Methods lists only the types the company owns, with the same figures and gold square as the Policies card; a row per goods line with each special method and its £ a week | An empty Methods: the copies weren't refreshed (debug.log `CM_REFRESH` at most once a day) |
+| P4 | Step 3 | The Investment Pool tooltip has a "Research grants" line while a grant runs; nothing under the pool itself | No line while a grant runs: the tooltip override didn't load |
+| E1 | Step 3, debug.log | Founding Engineering gives the goods tiers whose technology Prussia has at once: `CC_FRONTIER;line=g1;tier=N`, points unchanged | A `CC` line with `g1tk` at or above N but no `CC_FRONTIER`: the free unlock never fires |
+| E2 | Step 3, then play | `WORKS` lines show held and built per tier; investors queue the building's retooling site; each `RETOOL_LEVEL` there is followed by `WORKS_LEVEL tier=N` and built + 1. Step 2's Steel output reads "from" the method's name once built | Built stays 0 for a year while `RETOOL_LEVEL` lines appear: the hook doesn't run. `queued=0` with `cap>0` for months: investors are never offered the site |
+| E3 | Step 3, debug.log | `CC_GRANT_WEEK` lines with `line=g1` and `line=g2` every week; the pool tooltip's Research grants is their sum | Only one line paid: the second grant didn't start |
+| E4 | Step 3 | A green bar with moving arrows under each node with a grant, filling by paid weeks | A blue bar: the old files |
+| E5 | Step 5 | Only the company's input building in the charter's list (Krupp: Iron Mine) | Every building listed: the charter's check can't see the building being picked, so no restriction is possible. No building listed, or the charter missing: tell the build thread |
+| S1 | debug.log, monthly | A `SKIP` line each month with `skip`, `ran`, `checked`; after the first month `skip` is the larger | No `SKIP` line: the count never ran (error.log `pmr_`). `skip=0` every month: the skip never fires |
+| S2 | debug.log, 13+ months | `checked` above 0; no `SKIP_MISS` line ever | Any `SKIP_MISS` line is a bug: it names the building and the value. `checked=0` throughout proves nothing |
+| S3 | logs folder | debug.log lasts much longer than a minute of play; `TECH` lines only for Prussia | Files still rotating every minute: tell the build thread |
+| E8 | error.log | No line naming `pmr_wage_`, `pmr_read_books`, `pmr_moved_`, `pmr_recount_`, `pmr_skip_`, `pmr_cw_`, `pmr_works_`, `pmr_cm_` or `PMR_CM_` | Any such line: that part never ran, and the rows above it are not results |
+
+## Earlier: Policies tab, the 6-month switching bar, automation on 38 types, explosives, Hallmark Goods (q34, test mod; played 2026-10-19 as France and Prussia, feedback 02:32Z)
 
 From the build thread, after your 01:07Z to 01:23Z messages on q33.
 
