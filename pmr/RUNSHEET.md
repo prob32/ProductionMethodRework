@@ -1,4 +1,4 @@
-# PMR run sheet: the policy window pops out, research grants paid every week, who buys each type, company marks and a nested Policy tooltip on the cards, Production Methods cards sorted by AI weight, Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the Policies tab, a 6-month bar before a new default, automation on 38 types, explosives by price, Hallmark Goods for every company, the policy window pops out, research grants paid every week, who buys each type, company marks and a nested Policy tooltip on the cards, Production Methods cards sorted by AI weight, Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,55 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the policy window, weekly research grants, who buys, company marks, nested Policy, AI weight sort (q33, test mod; a new game is needed)
+## Latest: Policies tab, the 6-month switching bar, automation on 38 types, explosives, Hallmark Goods (q34, test mod; a new game is needed)
+
+From the build thread, after your 01:07Z to 01:23Z messages on q33.
+
+- The Investments tab is now Policies. The Building type sort button is gone. AI weight reads "Investment chance".
+- Each card shows the country's levels on the building icon and the type's productivity under it. Under the grid
+  sit the automation bar (types with automation) and one small bar per trade-off group, as on the details panel.
+- A new pick no longer becomes the default at once. A bar fills over 6 monthly pulses, green toward a newer recipe
+  and red toward an older one, and the default changes when it is full. A pick that changes starts the bar again.
+  The default changes at once the first time a building is seen, on its first pick at market prices, and when the
+  default can no longer run. The bar shows under "Most profitable" on the details panel, under each type row on the
+  Buildings list (biggest state), and at the foot of each card.
+- The pick is re-checked every 5 to 7 months instead of 10 to 14. A recipe whose own extra input sits at the +75%
+  price cap is skipped, even when it is the current pick.
+- Every vanilla labour saver is now its own automation axis: farms' harvesting, plantation railroads, ranches,
+  logging camps, fishing and whaling, oil rigs, glassworks, munitions and motor industry join the 15 types from q25.
+- Mine explosives (nitroglycerin, dynamite) are a trade-off again, blended by price.
+- The 59 companies that vanilla let make their prestige good whenever prosperous (Krupp, Schneider-Creusot,
+  Saint-Étienne, Maison Worth...) now wait for Hallmark Goods like the rest.
+- A company's goods tier unlocks at once, with no points or grant, when your country already has the technology for
+  the recipe after its base one.
+- "Wage floor" is now "Wage cut cap"; a works input reads +5.0% instead of +4.8%.
+- On the details panel's Process view, an input with a modifier (Fabric input +5%) shows that value beside its
+  amount on the left.
+
+1. Start a new game on the PMR Test playset as France. Open the Buildings panel and click Policies. Look at a coal
+   mine, a wheat farm and a cotton plantation card, and hover the small bars under their grids and the bar at the
+   foot of a card.
+2. Hover a card's building icon and its productivity line.
+3. Unpause and play to 1 August 1836. Open a building that shows a bar under "Most profitable" on its details panel
+   and hover the bar.
+4. Open Schneider-Creusot or Saint-Étienne (Companies) and look at its prestige good.
+5. Whenever a building's Process view lists an input modifier on the right, look at that input on the left.
+6. Then do q33's steps below.
+7. Close the game and tell the build thread; it reads debug.log and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| T1 | Step 1 | The tab reads Policies; no Building type sort button; the last sort button reads Investment chance | "Investments": the old files are still installed |
+| K1 | Step 1 | Every card: the level count on the building icon's bottom-left, the productivity under the icon, the bars under the grid, a thin grey bar at the foot | A card with no level count: the building type couldn't be read from the card (error.log naming `GetBuildingType` or `GetNumLevelsInCountryFormatted`) |
+| K2 | Step 1 | The coal mine has a bar for explosives (grey for none), the wheat farm and cotton plantation an automation bar; hovering a bar names the group and lists each option above 0 | The bars all grey or empty on 1 January is expected on types France doesn't run; empty on a type it runs means the card's copies never ran (error.log naming `pmr_mv_refresh`) |
+| X1 | Step 1, debug.log | `PROFIT` lines for coal, iron, lead and sulfur mines include `explosives:` in `px=`, and the farms' and plantations' lines show `pair=` with two numbers | No `pair=` on farms: the wider split didn't reach them; tell the build thread |
+| D1 | Step 3 | A green or red bar under "Most profitable" while the pick differs from the default; its tooltip reads "Default → Pick" and "N of 6 months". debug.log has `SWITCH_START` lines, then `DEFAULT` lines with `months=6` | No `SWITCH_START` line by August: every pick matched its default (fine if the cards' gold squares match the defaults); a `SWITCH_START` but no `DEFAULT` after 6 months: the month count never advanced (tell the build thread) |
+| H1 | Step 4 | The company's prestige good is locked, its tooltip naming "Hallmark Goods" | Producible: the gate isn't installed (the old files) |
+| F1 | debug.log | `CC_FRONTIER` lines for companies whose line's next recipe France already knows, with `tier=` the tier they reached | No `CC_FRONTIER` line in the first month: no French company is behind the frontier on 1 January, which can be right; tell the build thread if a company's wheel shows a goods tier locked whose recipe France already runs |
+| I1 | Step 5 | "+5%" beside the input on the left, matching the right-hand modifier | Nothing on the left: the game doesn't take the modifier's name from the good (error.log naming `GetValueFor` or `Concatenate3`) |
+| E7 | error.log | No line naming `pmr_switch_`, `pmr_cc_frontier`, `pmr_cc_free_`, `pmr_c_sw`, `PMR_MV_AUTO_TT` or `PMR_MV_OPT_TT` | Any such line: that part never ran, and the rows above it are not results |
+
+## Earlier: the policy window, weekly research grants, who buys, company marks, nested Policy, AI weight sort (q33, test mod; not yet seen)
 
 From the build thread, after your 23:53Z to 00:06Z messages on q32.
 

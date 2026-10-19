@@ -185,6 +185,20 @@ AUTOMATION_FROM_TIER = 3
 # so new levels and retooling follow the most profitable pair. The blend stays per axis: one share group per
 # recipe and one per automation method (split_members), so a building carries as many share groups as before.
 SPLIT_AUTOMATION = True
+# Pat, 2026-10-19 01:07Z ("some buildings are missing their Automation PM's", "are there no railroads for these
+# buildings?"): every labour saver is automation, whatever its group is called, and splits however few recipes the
+# building has. Vanilla draws them all with the automation icon: the plantations' and vineyards' rail transport,
+# glass bottle blowers, farm harvesting, logging equipment and transport, oil rig transport, ranch fencing and
+# refrigeration, wharf and whaling refrigeration (AUTOMATION_GROUPS, read from the group files).
+AUTOMATION_ICON = 'gfx/interface/icons/generic_icons/mixed_icon_automation.dds'
+AUTOMATION_GROUPS = set()
+
+
+def is_automation(g):
+    """a labour-saver group; AUTO_BEST's (the trade centre's trade quantity) run the newest method instead"""
+    return ('automation' in g or g in AUTOMATION_GROUPS) and not any(g in gs for gs in AUTO_BEST.values())
+
+
 SPLIT_BARS = {}   # short name -> plain recipes of a split building: its bars read pmr_rs_<j> (recipe j's share), not pmr_sh_<i>
 # Pat, 2026-10-18 14:48Z: every automation method pays for itself at 1836 wages with its goods at the +75%
 # price cap (buff_automation). Vanilla's lose GBP 220 to 900 a level a week there: they save 1,000 to 3,000
@@ -202,12 +216,17 @@ AUTOMATION_GOODS_STEP = 0.1    # goods rounded down to this, never below it, so 
 # wages at pmr_wage (AUTOMATION_WAGE until a measured local wage replaces it), the best one in pmr_pbest_<b>.
 # A recipe other than the current pick must beat it by PROFIT_STICK_UP of its margin when newer and
 # PROFIT_STICK_DOWN when older (vanilla's x0.95 and x0.75 stickiness, ai:1010-1011), and a recipe needing more
-# of an input whose price is at the +75% cap is vetoed (vanilla's x0.01 for shortages, ai:1001).
+# of an input whose price is at the +75% cap is vetoed (vanilla's x0.01 for shortages, ai:1001). Pat,
+# 2026-10-19 01:07Z ("diesel pumps when we have little to no oil"): the pick itself is vetoed too when it needs
+# more of a capped input than an older recipe, so a shortage moves the pick down.
 # Pat, 17:14Z: the pick decides how new builds and retooling go (PROFIT_TARGET; False puts back the newest
-# runnable recipe), computed only when something changed or on a re-check about once a year (profit_effect).
+# runnable recipe), computed only when something changed or on a re-check every six months (profit_effect).
+# Pat, 2026-10-19 01:07Z: a new pick becomes that default (pmr_best_now_<b>) only once a bar has filled for
+# SWITCH_MONTHS monthly pulses, green up to a newer recipe, red down to an older one (pmr_switch_<b>).
 PROFIT_TARGET = True
-PROFIT_RECHECK_DAYS = 365
-PROFIT_RECHECK_SPREAD = 120    # re-checks fall 60 days either side, in 7 steps
+PROFIT_RECHECK_DAYS = 182
+PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
+SWITCH_MONTHS = 6
 PROFIT_STICK_UP = 0.05
 PROFIT_STICK_DOWN = 0.25
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
@@ -235,8 +254,7 @@ FLUSH_PAD = 4500
 # of the building, in 1% steps, through share methods built like the recipe ones; the do-nothing method
 # is the remainder. The vanilla group stays on the building as a marker that carries nothing: it keeps
 # the game's history setup readable at game start and lets can_activate_production_method gate each
-# option by technology, law and recipe as vanilla would. Tech ladders (automation, rail, explosives,
-# ...) are not converted yet.
+# option by technology, law and recipe as vanilla would.
 # Trade-offs (pmr/second-groups.md): once a month each option is valued at local prices (outputs minus
 # inputs per level, goods only), and points move from the worst-paying option with a share to the
 # best-paying one, when the gap beats TRADE_DEAD_BAND of the building's output value per level. Pat,
@@ -249,7 +267,13 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 'pmg_aeroplanes', 'pmg_tanks', 'pmg_synthetic_silk', 'pmg_radios_category',
                 'pmg_secondary_building_rye_farm', 'pmg_secondary_building_wheat_farm',
                 'pmg_secondary_building_rice_farm', 'pmg_secondary_building_maize_farm',
-                'pmg_secondary_building_millet_farm')
+                'pmg_secondary_building_millet_farm',
+                # the mines' explosives (none, nitroglycerin, dynamite) trade explosives for ore. Left vanilla,
+                # they lost their selector with the rest of the hidden method grid, so the player's mines never
+                # used them (#2). Pat, 2026-10-19 01:18Z: blended by price like the other trade-offs.
+                'pmg_explosives_building_coal_mine', 'pmg_explosives_building_iron_mine',
+                'pmg_explosives_building_lead_mine', 'pmg_explosives_building_sulfur_mine',
+                'pmg_explosives_building_gold_mine')
 TRADE_GAIN = 1.0
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
@@ -695,11 +719,11 @@ def buff_automation(game, p_srcs, groups, b_srcs):
             if not gl:
                 continue
             g0 = gl[0]
-            ag = [g for g in gl if g != g0 and 'automation' in g]
+            ag = [g for g in gl if g != g0 and is_automation(g)]
             recipes = [rec(p) for p in groups.get(g0, []) if p not in DROP_RECIPES and p in pms]
             if not ag or not recipes:
                 continue
-            if len(recipes) >= AUTOMATION_FROM_TIER and SPLIT_AUTOMATION:
+            if SPLIT_AUTOMATION:
                 # every recipe with every automation option, the option's methods running together
                 for opt in automation_options(ag, groups, pms)[1:]:
                     autos = [a for a in opt if a.employment]
@@ -898,6 +922,9 @@ def main():
             pm = pdx.get(n.value, 'production_methods')
             groups[k] = pdx.items(pm) if pm else []
             group_src[k] = (s, pm)
+            tex = pdx.get(n.value, 'texture')
+            if tex is not None and tex.value == AUTOMATION_ICON:
+                AUTOMATION_GROUPS.add(k)
     report_automation_buff = buff_automation(game, p_srcs, groups, b_srcs)
     pms = {}
     for s in p_srcs:
@@ -996,8 +1023,8 @@ def main():
                 r.strip_blend()
                 r.strip_required()
                 stripped.add(r.key)
-        auto_groups = [g for g in pdx.items(pg) if g != g0 and 'automation' in g]
-        if len(recipes) >= AUTOMATION_FROM_TIER and auto_groups:
+        auto_groups = [g for g in pdx.items(pg) if g != g0 and is_automation(g)]
+        if auto_groups and (SPLIT_AUTOMATION or len(recipes) >= AUTOMATION_FROM_TIER):
             # Pat, 2026-10-13: recipes from AUTOMATION_FROM_TIER fold the best automation that runs
             # without electricity; automation that needs it (assembly lines, power looms) becomes a
             # recipe of its own on top of the newest one (ElectricRecipe).
@@ -1438,7 +1465,7 @@ def main():
         # base recipe), in WORKS_STEPS steps of the full share, on the company levels that hold a tier (works_effect).
         for j, kind, wm, mods in works_of.get(bk, []):
             members.append((j, wm, {'building_modifiers': mods}, {}, 0,
-                            {'member': j, 'kind': 'works', 'works': kind, 'steps': company_culture.WORKS_STEPS}))
+                            {'member': j, 'kind': 'works', 'works': kind, 'steps': company_culture.works_steps(kind)}))
         if bk in works_of and cc_plan.works[bk]['in']:
             profit_goods.add(cc_plan.works[bk]['in'])   # works_effect reads its price (pmr_px_<good>)
         for i, r, blend, emp, default_n, rep in members:
@@ -1473,7 +1500,7 @@ def main():
                 shares.append(f'pm_pmr_share_{b}_{i}_{n}')
                 keys.append(f'pm_pmr_key_{b}_{i}_{n}')
                 pct = round(100 * f)
-                loc += ([f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({n}/{steps})"',
+                loc += ([f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$"',   # Pat 01:07Z read "13/40" as levels
                          f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({n}/{steps})"'] if works else
                         [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
                          f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"'])
@@ -1530,7 +1557,7 @@ def main():
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, plain)
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
                                           econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk),
-                                          [(j, company_culture.WORKS_STEPS) for j, *_r in works_of.get(bk, [])])
+                                          [(j, company_culture.works_steps(kind)) for j, kind, *_r in works_of.get(bk, [])])
                             + (company_culture.works_effect(cc_plan, bk, *[j for j, *_r in works_of[bk]], *([None] * (2 - len(works_of[bk]))))
                                if bk in works_of else ''))
         recipe_elec[bk] = elec_tiers
@@ -1563,6 +1590,14 @@ def main():
                      for t in treated}
         for csrc in load_dir(game, 'company_types'):
             for ck, cn in csrc.objects().items():
+                # Pat, 2026-10-19 01:21Z (Krupp making Krupp Guns with no Hallmark Goods): in the test build every
+                # company's prestige goods wait for Company Culture's Hallmark Goods. The 66 vanilla lets make them
+                # whenever prosperous get a trigger; the rest already wait for the variable the node sets.
+                if (not args.release and pdx.get(cn.value, 'possible_prestige_goods')
+                        and not pdx.get(cn.value, 'prestige_goods_trigger')):
+                    csrc.inserts.append((cn.end - 1, '\tprestige_goods_trigger = { custom_tooltip = { '
+                                                     'text = PMR_CC_PG_REQ has_variable = pmr_cc_hallmark } }  # PMR\n'))
+                    report.setdefault('hallmark_gate', []).append(ck)
                 bt = pdx.get(cn.value, 'building_types')
                 if not bt or not bt.is_block:
                     continue
@@ -1688,9 +1723,15 @@ def main():
         # who would buy a new private level of each type (Pat 2026-10-19 00:01Z; private_investment.buyer_odds)
         bo_vals, bo_eff = private_investment.buyer_odds(game, [bk for bk in mv_keys if bk in ai_of], owners_of)
         write('common/script_values/pmr_bo_values.txt', header + bo_vals)
-        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys, pair_ui, ai_of, ai_parts, owners_of)
-              + bo_eff)
-        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex, pair_ui, ai_of, owners_of), bom=False)
+        mv_extra = {bk: ([f'pmr_ash_{a}_{short(bk)}' for a in range(1, len(auto_ui[bk][1]) + 1)]
+                         if bk in auto_ui and pair_ui.get(bk, {}).get('split') else [])
+                    + [x for gi, _m, _n, _t, os_ in opt_ui.get(bk, [])
+                       for x in [f'pmr_xn_{gi}_{short(bk)}'] + [f'pmr_x_{o.j}_{short(bk)}' for o in os_]]
+                    for bk in mv_keys}
+        write('common/scripted_effects/pmr_mv_effects.txt', header
+              + methods_view_effects(mv_keys, pair_ui, ai_of, ai_parts, owners_of, mv_extra) + bo_eff)
+        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex, pair_ui, ai_of, owners_of, opt_ui, auto_ui),
+              bom=False)
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
@@ -1721,7 +1762,7 @@ def main():
           bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
-    loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts)
+    loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts, opt_ui, auto_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
@@ -2494,7 +2535,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     bm = split['members'] if split else [(i, [i], 'recipe') for i in range(1, k + 1)]
     nb = len(bm)
     # Company Culture's works members (company_culture.works_members), after bm: their steps come from
-    # pmr_works_<b> (pmr_wn_<j>_<b>), WORKS_STEPS of them, not from the levels' recipes.
+    # pmr_works_<b> (pmr_wn_<j>_<b>), company_culture.works_steps of them, not from the levels' recipes.
     hi_of = {j: n for j, n in works}
     nb_all = nb + len(works)
     rec_of = {i: j for j, idxs, grp in bm if grp == 'recipe' for i in idxs}   # target -> its recipe member
@@ -3179,10 +3220,18 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              '\tsave_temporary_scope_as = pmr_ctry\n'
              + ''.join(f'\tset_variable = {{ name = pmr_c_{n}_{b} value = 0 }}\n'
                        for n in ['level', 'need', 'room_gov'] + [f'lv_{i}' for i in range(1, k + 1)])
+             + ''.join(f'\tset_variable = {{ name = pmr_c_{n}_{b} value = 0 }}\n' for n in ('swm', 'sw', 'swd', 'swto', 'now'))
              + f'\tevery_scope_state = {{\n\t\tlimit = {{ {live} }}\n'
              '\t\tsave_temporary_scope_as = pmr_st\n\t\towner = {\n'
              + adds
              + '\t\t}\n'
+             # the switching bar (pmr_switch_<b>) of the state with the most levels (Pat, 2026-10-19 01:07Z)
+             + f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_swd_{b} var:pmr_level_{b} > scope:pmr_ctry.var:pmr_c_swm_{b} }}\n'
+             '\t\t\towner = {\n'
+             + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_c_{n}_{b} value = scope:pmr_st.var:{x}_{b} }}\n'
+                       for n, x in (('swm', 'pmr_level'), ('sw', 'pmr_sw'), ('swd', 'pmr_swd'), ('swto', 'pmr_swto'),
+                                    ('now', 'pmr_best_now')))
+             + '\t\t\t}\n\t\t}\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} has_variable = pmr_room_gov_{b} }}\n'
              f'\t\t\towner = {{ change_variable = {{ name = pmr_c_room_gov_{b} add = scope:pmr_st.var:pmr_room_gov_{b} }} }}\n'
              '\t\t}\n\t}\n'
@@ -3310,6 +3359,13 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                 o.append(f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {c} OR = {{ '
                          + ' '.join(f'var:pmr_px_{g} >= {top}' for g in more)
                          + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
+        # the pick itself, when it needs more of a capped input than an older recipe
+        own = [g for g, q in sorted(inputs[i - 1].items())
+               if any(q > inputs[j - 1].get(g, 0) + 1e-9 for j in range(1, i))]
+        if own:
+            o.append(f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {i} OR = {{ '
+                     + ' '.join(f'var:pmr_px_{g} >= {top}' for g in own)
+                     + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
     # the pick, against the current one's hurdles (pmr_hu newer, pmr_hd older); a pick that can't run sets none
     o.append('\tset_variable = { name = pmr_hu value = 0 }\n\tset_variable = { name = pmr_hd value = 0 }\n'
              '\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
@@ -3364,10 +3420,49 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
              f'\t\trandom_list = {{ {spread} }}\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ {first} }}\n\t\t\tset_variable = pmr_pmkt_{b}\n'
+             '\t\t\tset_variable = pmr_sw_inst  # the first pick at market prices stands at once (pmr_switch)\n'
              f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=first_month" }}\n\t\t}}\n'
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
-             + f'\t{setv("pmr_best_now", "var:" + v("pmr_pbest"))}\n}}\n\n')
-    return ''.join(o)
+             + f'\tpmr_switch_{b} = yes\n}}\n\n')
+    return switch_effect(b, bk, k, setv, v, var) + ''.join(o)
+
+
+def switch_effect(b, bk, k, setv, v, var):
+    """State scope, after each pick: pmr_switch_<b> (Pat, 2026-10-19 01:07Z: "a progress bar ... towards setting a new
+    PM default ... if it wants to downgrade because goods are too expensive it has to also fill up the same bar in
+    red; it should take 6 months"). The pick (pmr_pbest_<b>) becomes the default new levels and retooling follow
+    (pmr_best_now_<b>) once it has stood for SWITCH_MONTHS monthly pulses:
+      pmr_swto_<b>  the pick the bar fills toward (0: none)     pmr_sw_<b>   monthly pulses so far
+      pmr_swd_<b>   1 toward a newer recipe (green), -1 an older one (red), 0 none
+    A pick that changes starts the bar again; one back on the default empties it. The default takes the pick at once
+    the first time, at the building's first pick at market prices (pmr_sw_inst), and when the default can no longer
+    run here."""
+    now, pick = v('pmr_best_now'), v('pmr_pbest')
+    clear = f'\t\t{setv("pmr_sw", 0)}\n\t\t{setv("pmr_swd", 0)}\n\t\t{setv("pmr_swto", 0)}\n'
+    take = (f'\t\tif = {{ limit = {{ var:{pick} > 0 }} {setv("pmr_best_now", "var:" + pick)} }}\n'
+            f'\t\telse_if = {{ limit = {{ NOT = {{ has_variable = {now} }} }} {setv("pmr_best_now", "var:" + v("pmr_new_now"))} }}\n'
+            + clear)
+    dead = ' '.join(f'AND = {{ var:{now} = {i} var:pmr_rav_{i}_{b} = 0 }}' for i in range(1, k + 1))
+    where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+             f'state=[THIS.GetState.GetNameNoFormatting];building={bk}')
+    return (f'pmr_switch_{b} = {{\n'
+            f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {now} }} }}\n' + take + '\t}\n'
+            f'\telse_if = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_sw_inst {dead} }} }}\n' + take + '\t}\n'
+            f'\telse_if = {{\n\t\tlimit = {{ OR = {{ var:{pick} = 0 var:{pick} = var:{now} }} }}\n' + clear + '\t}\n'
+            '\telse = {\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ var:{v("pmr_swto")} = var:{pick} }} }}\n'
+            f'\t\t\t{setv("pmr_swto", "var:" + pick)}\n\t\t\t{setv("pmr_sw", 0)}\n'
+            f'\t\t\tif = {{ limit = {{ var:{pick} > var:{now} }} {setv("pmr_swd", 1)} }}\n'
+            f'\t\t\telse = {{ {setv("pmr_swd", -1)} }}\n'
+            f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=SWITCH_START;{where};'
+            f"default={var(now)};to={var(pick)};dir={var(v('pmr_swd'))}\" }}\n\t\t}}\n"
+            f'\t\tif = {{ limit = {{ has_variable = pmr_month }} change_variable = {{ name = {v("pmr_sw")} add = 1 }} }}\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_sw")} >= {SWITCH_MONTHS} }}\n'
+            f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
+            f"from={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};months={var(v('pmr_sw'))}\" }}\n"
+            f'\t\t\t{setv("pmr_best_now", "var:" + pick)}\n'
+            + clear.replace('\t\t', '\t\t\t') + '\t\t}\n\t}\n'
+            '\tif = { limit = { has_variable = pmr_sw_inst } remove_variable = pmr_sw_inst }\n}\n\n')
 
 
 def vanilla_score(bk, b, econ, goods_cost, setv, v):
@@ -4056,6 +4151,30 @@ def slice_bar(slices, size, icon, ind, tips):
             + f'{ind}}}\n')
 
 
+def switch_bar(sw, swd, size, ind, tip, idle_tip=None, place=''):
+    """Pat, 2026-10-19 01:07Z: the bar a new pick fills for SWITCH_MONTHS months before it becomes the default new
+    levels and retooling follow (pmr_switch_<b>): green with vanilla's moving arrows toward a newer recipe, red toward an
+    older one (the cash reserve bar's changed_value_increased_progressbar_horizontal and its _bad twin). sw and swd are
+    the months filled and the direction (1, -1, 0); with idle_tip an empty bar stands in while nothing is pending."""
+    i1, i2 = ind + '\t', ind + '\t\t'
+    val = f"FixedPointToFloat(Add_CFixedPoint({sw}, '(CFixedPoint)0.25'))"
+
+    def bar(kind, vis, key):
+        return (f'{ind}{kind} = {{\n{place}{i1}visible = "[{vis}]"\n{i1}size = {{ {size[0]} {size[1]} }}\n'
+                f'{i1}blockoverride "second_progressbar" {{}}\n'
+                f'{i1}blockoverride "values" {{\n{i2}min = 0\n{i2}max = {SWITCH_MONTHS}\n{i2}value = "[{val}]"\n{i1}}}\n'
+                f'{i1}blockoverride "arrow_texture_density" {{\n{i2}texture_density = {max(2, size[1] // 4)}\n{i1}}}\n'
+                f'{i1}tooltip = "{key}"\n{i1}using = tooltip_above\n{ind}}}\n')
+    out = (bar('changed_value_increased_progressbar_horizontal', f"GreaterThan_CFixedPoint({swd}, '(CFixedPoint)0')", tip)
+           + bar('changed_value_increased_progressbar_horizontal_bad', f"LessThan_CFixedPoint({swd}, '(CFixedPoint)0')", tip))
+    if idle_tip:
+        out += (f'{ind}default_progressbar_horizontal = {{\n{place}{i1}visible = "[EqualTo_CFixedPoint({swd}, '
+                f"'(CFixedPoint)0')]\"\n{i1}size = {{ {size[0]} {size[1]} }}\n"
+                f'{i1}blockoverride "values" {{\n{i2}min = 0\n{i2}max = 1\n{i2}value = 0\n{i1}}}\n'
+                f'{i1}tooltip = "{idle_tip}"\n{i1}using = tooltip_above\n{ind}}}\n')
+    return out
+
+
 GOV_ABROAD_CLICKS = 8   # most government retool levels one click queues abroad; more take another click
 
 
@@ -4226,10 +4345,13 @@ def automation_bar(bk, group, levels, ind):
             f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
 
 
+SW_ROW_H, SW_BAR_H = 16, 12   # the details panel's switching bar row
+
+
 def pick_row(bk, ind):
     """The details panel's pick row (Pat, 2026-10-18 17:49Z: where a building shows its preferred recipe): the
-    most profitable recipe, the target its new levels and retooling follow, and its profit per level a week;
-    the tooltip lists every recipe's (pick_loc)."""
+    most profitable recipe, the target its new levels and retooling follow, and its profit per level a week. No
+    tooltip: the Policies cards show every recipe's (Pat, 2026-10-19 01:07Z)."""
     b = short(bk)
     i2 = ind + '\t\t'
     return (f'{ind}# PMR: most profitable recipe of {bk}\n'
@@ -4237,8 +4359,13 @@ def pick_row(bk, ind):
             f"GreaterThan_CFixedPoint({state_var(b, 'pmr_pbest')}, '(CFixedPoint)0'))]\"\n"
             f'{ind}\tsize = {{ @panel_width {OPTION_ROW_H} }}\n'
             f'{ind}\ttextbox = {{\n{i2}position = {{ {ROW_X} 0 }}\n{i2}size = {{ {ROW_W + 235} {OPTION_ROW_H} }}\n'
-            f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "PMR_PICK_ROW_{b}"\n{i2}tooltip = "PMR_PICK_TOOLTIP_{b}"\n'
-            f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
+            f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "PMR_PICK_ROW_{b}"\n{ind}\t}}\n{ind}}}\n'
+            # Pat, 2026-10-19 01:07Z: the switching bar under it while a new pick fills it
+            f'{ind}widget = {{\n{ind}\tvisible = "[And({is_type(bk)}, Not(EqualTo_CFixedPoint({state_var(b, "pmr_swd")}, '
+            f"'(CFixedPoint)0')))]\"\n{ind}\tsize = {{ @panel_width {SW_ROW_H} }}\n"
+            + switch_bar(state_var(b, 'pmr_sw'), state_var(b, 'pmr_swd'), (ROW_W, SW_BAR_H), ind + '\t', f'PMR_SW_TT_{b}',
+                         place=f'{ind}\t\tposition = {{ {ROW_X} {(SW_ROW_H - SW_BAR_H) // 2} }}\n')
+            + f'{ind}}}\n')
 
 
 # The Private tab's Methods view (Pat, 2026-10-18 18:00Z): what financial districts and manor houses build and
@@ -4270,15 +4397,15 @@ def company_mark(bk, ctypes):
             f'\t\tset_variable = {{ name = pmr_mv_cf_{b} value = 1 }}\n\t}}\n')
 
 
-def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, companies=None):
+def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, companies=None, extra=None):
     """Country scope: pmr_mv_<b> per building type and pmr_mv_refresh for all of them. ai: the types with an AI value
     (private_investment.ai_groups), copied from the same state as pmr_mv_aiv_<b> and its vanilla base as pmr_mv_aib_<b>;
     parts: each type's policy parts (private_investment.ai_parts), copied as pmr_mv_p<key>_<b>; companies: building
     type -> the company types listing it (private_investment.company_owners): the country's company with the type,
     if any, as its executive in pmr_mv_co_<b> (the GUI reaches a company through a character, cc_wheel.VIEWED) and
     pmr_mv_cf_<b> = 1."""
-    pair_ui, ai, parts, companies = pair_ui or {}, ai or {}, parts or {}, companies or {}
-    o = ['# Country scope. The Buildings panel\'s Owners\' Methods tab (methods_view_effects in generate.py).\n\n']
+    pair_ui, ai, parts, companies, extra = pair_ui or {}, ai or {}, parts or {}, companies or {}, extra or {}
+    o = ['# Country scope. The Buildings panel\'s Policies tab (methods_view_effects in generate.py).\n\n']
     for bk, keys in recipe_keys.items():
         b, k = short(bk), len(keys)
         split = pair_ui.get(bk, {}).get('split')
@@ -4309,6 +4436,9 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                  + ''.join(f'\t\t\t\tset_variable = {{ name = {n} value = scope:pmr_st.var:{n} }}\n'
                            for n in per + ([f'pmr_mv_aiv_{b}', f'pmr_mv_aib_{b}'] if bk in ai else [])
                            + [f'pmr_mv_p{key}_{b}' for key in pk])
+                 # the bars under the card's grid (card_bars): copied where the state has them
+                 + ''.join(f'\t\t\t\tif = {{ limit = {{ scope:pmr_st = {{ has_variable = {n} }} }} '
+                           f'set_variable = {{ name = {n} value = scope:pmr_st.var:{n} }} }}\n' for n in extra.get(bk, []))
                  + '\t\t\t}\n\t\t}\n\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 }}\n'
                  + ''.join(f'\t\tchange_variable = {{ name = pmr_mv_ps_{i}_{b} divide = var:pmr_mv_lv_{b} }}\n'
@@ -4384,6 +4514,9 @@ AI_W = 100   # the AI weight column's text
 BUY_ICON = 20  # an owner's icon in the AI column's who-buys cells
 CO_SIZE = 30   # the company's round icon on a card's building icon
 AI_H = 82      # the AI column's height: label, weight and two rows of who-buys cells
+LEFT_H = 78    # the icon column: the icon with the country's levels on it, its productivity under it (Pat 01:07Z)
+MINI_H, MINI_GAP = 10, 4   # the automation and trade-off bars under the grid (Pat 01:07Z: "smaller bars")
+CSW_H = 10     # the switching bar across the card's foot
 
 
 def mv_cols(recipe_keys, pair_ui):
@@ -4422,6 +4555,52 @@ def ai_column(bk, h, x, ind):
             + cells + f'{ind}}}\n')
 
 
+def card_left(bk, ind):
+    """Pat, 2026-10-19 01:07Z ("add level amount and productivity to the building cards"): the building's icon with
+    the country's levels on it, as the company panel shows them, and the type's productivity span under it, as the
+    Buildings list's header shows it."""
+    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
+    return (f'{ind}widget = {{\n{i1}size = {{ {ICON_W} {LEFT_H} }}\n{i1}datacontext = "[GetBuildingType(\'{bk}\')]"\n'
+            f'{i1}icon = {{\n{i2}position = {{ 3 0 }}\n{i2}size = {{ 54 54 }}\n{i2}texture = "[BuildingType.GetIcon]"\n'
+            f'{i2}tooltipwidget = {{\n{i3}FancyTooltip_BuildingType = {{}}\n{i2}}}\n'
+            f'{i2}textbox = {{\n{i3}text = "[BuildingType.GetNumLevelsInCountryFormatted(GetPlayer.Self)]"\n'
+            f'{i3}autoresize = yes\n{i3}position = {{ 2 -1 }}\n{i3}parentanchor = bottom\n{i3}align = left|nobaseline\n'
+            f'{i3}alwaystransparent = yes\n{i2}}}\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}position = {{ -{CARD_PAD} 57 }}\n{i2}size = {{ {ICON_W + CARD_PAD + ICON_GAP} 20 }}\n'
+            f'{i2}align = hcenter|nobaseline\n{i2}using = fontsize_small\n'
+            f'{i2}text = "[BuildingType.GetProductivitySpanDesc(GetPlayer.Self)]"\n'
+            f'{i2}tooltip = "PRODUCTIVITY_SPAN_TOOLTIP"\n{i2}using = tooltip_above\n{i1}}}\n{ind}}}\n')
+
+
+def card_bars(bk, opt_groups, auto, width, ind):
+    """Pat, 2026-10-19 01:07Z ("add the automation and pm2 trade offs below the pm cards as smaller bars"): under the
+    grid, the country's automation bar (split types: each automation option's share of the levels) and one bar per
+    second group (trade-offs, treatment), as the details panel draws them, at the state the grid's figures come from
+    (methods_view_effects copies pmr_ash_* and pmr_x*_*). Returns (gui, height)."""
+    b = short(bk)
+    gt = lambda e, n: f"GreaterThan_CFixedPoint({e}, '(CFixedPoint){n}')"    # noqa: E731
+    bars = []
+    if auto:
+        _group, levels = auto
+        sl = []
+        for a, (key, _tex, _) in enumerate(levels, 1):
+            name, rgb = AUTO_COLORS[round((a - 1) * (len(AUTO_COLORS) - 1) / max(1, len(levels) - 1))]
+            e = mv_read(f'pmr_ash_{a}_{b}')
+            sl.append((f'{key}, {name.lower()}', gt(e, 0), f"FixedPointToInt(Multiply_CFixedPoint({e}, '(CFixedPoint)100'))",
+                       'no', rgb, None))
+        bars.append((sl, f'PMR_MV_AUTO_TT_{b}'))
+    for gi, _mode, none, _none_tex, os_ in opt_groups:
+        e = mv_read(f'pmr_xn_{gi}_{b}')
+        sl = [(f'{none}, grey', gt(e, 0), f'FixedPointToInt({e})', 'no', OPTION_NONE_COLOR, None)]
+        for k, o in enumerate(os_):
+            name, rgb = OPTION_COLORS[k % len(OPTION_COLORS)]
+            e = mv_read(f'pmr_x_{o.j}_{b}')
+            sl.append((f'{o.key}, {name.lower()}', gt(e, 0), f'FixedPointToInt({e})', 'no', rgb, None))
+        bars.append((sl, f'PMR_MV_OPT_TT_{b}_{gi}'))
+    out = ''.join(slice_bar(sl, (width, MINI_H), 0, ind, [(None, tip)]) for sl, tip in bars)
+    return out, len(bars) * (MINI_H + MINI_GAP)
+
+
 def company_badge(bk, h, ind):
     """The card's company mark (company_mark): vanilla's static selection outline round the card, and its company's
     icon, a round button that opens the company (as production_methods.gui's company_owned_button), on the building
@@ -4433,7 +4612,7 @@ def company_badge(bk, h, ind):
             f'{i1}texture = "gfx/interface/selections/selected_square_selection.dds"\n{i1}spriteType = Corneredtiled\n'
             f'{i1}spriteborder = {{ 22 22 }}\n{i1}texture_density = 2\n{i1}alwaystransparent = yes\n{ind}}}\n'
             f'{ind}button_icon_round = {{\n{i1}visible = "[{on}]"\n'
-            f'{i1}position = {{ {CARD_PAD + ICON_W - CO_SIZE + 6} {h - CARD_PAD - CO_SIZE + 4} }}\n'
+            f'{i1}position = {{ {CARD_PAD + 3 + 54 - CO_SIZE + 6} {CARD_PAD + 54 - CO_SIZE + 6} }}\n'
             f'{i1}size = {{ {CO_SIZE} {CO_SIZE} }}\n'
             f'{i1}datacontext = "[{MV_COUNTRY}.MakeScope.Var(\'pmr_mv_co_{b}\').GetCharacter]"\n'
             f'{i1}datacontext = "[Character.GetCompany]"\n'
@@ -4443,13 +4622,13 @@ def company_badge(bk, h, ind):
             f'{i1}blockoverride "icon_size" {{\n{i2}size = {{ 75% 75% }}\n{i1}}}\n{ind}}}\n')
 
 
-def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=None):
+def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=None, opt_ui=None, auto_ui=None):
     """One card per building type the player has (pmr_mv_card_<b>): the building's icon, then its grid, the recipe x
     automation pairs where the type has them (Pat, 2026-10-18 18:17Z) or one row of recipes, every grid box MV_COLS
     columns wide so all cards line up (Pat 23:22Z), with the AI weight beside it (ai_column). pmr_methods_cards stands in
     each item of the side Buildings panel's list (patch_browser_tabs), under the item's building type, and makes only
     that type's card: a card per item per type would be thousands of widgets."""
-    pair_ui, ai, companies = pair_ui or {}, ai or {}, companies or {}
+    pair_ui, ai, companies, opt_ui, auto_ui = pair_ui or {}, ai or {}, companies or {}, opt_ui or {}, auto_ui or {}
     cols = mv_cols(recipe_keys, pair_ui)
     box_w = methods_row.pairs_size(cols, 1)[0]
     ai_x = CARD_PAD + ICON_W + ICON_GAP + box_w + 14
@@ -4471,15 +4650,22 @@ def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=N
                 lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', '\t\t\t\t',
                 cols=cols)
             gh += (6 if gh else 0) + methods_row.pairs_size(cols, len(pr['options']))[1]
-        grid = f'\t\t\tflowcontainer = {{\n\t\t\t\tdirection = vertical\n\t\t\t\tspacing = 6\n{grid}\t\t\t}}\n'
-        h = max(methods_row.ROW_H, gh, AI_H if bk in ai else 0) + 2 * CARD_PAD
+        mini, mh = card_bars(bk, opt_ui.get(bk, []), auto_ui.get(bk) if pr and pr.get('split') else None,
+                             box_w, '\t\t\t\t')
+        grid = f'\t\t\tflowcontainer = {{\n\t\t\t\tdirection = vertical\n\t\t\t\tspacing = {MINI_GAP}\n{grid}{mini}\t\t\t}}\n'
+        inner = max(LEFT_H, gh + mh, AI_H if bk in ai else 0)
+        h = inner + 2 * CARD_PAD + CSW_H + MINI_GAP
+        # Pat, 2026-10-19 01:07Z: the switching bar across the card's foot (switch_bar), at the country's biggest state
+        foot = switch_bar(mv_read(f'pmr_c_sw_{b}'), mv_read(f'pmr_c_swd_{b}'), (CARD_W - 2 * CARD_PAD, CSW_H), '\t\t',
+                          f'PMR_CSW_TT_{b}', f'PMR_CSW_IDLE_{b}',
+                          place=f'\t\t\tposition = {{ {CARD_PAD} {h - CARD_PAD - CSW_H} }}\n') if bk in recipe_keys else ''
         cards += (f'\ttype pmr_mv_card_{b} = widget {{\n\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
                   f'\t\tsize = {{ {CARD_W} {h} }}\n'
                   '\t\tbackground = {\n\t\t\tusing = entry_bg_simple\n\t\t}\n'
                   f'\t\tflowcontainer = {{\n\t\t\tposition = {{ {CARD_PAD} {CARD_PAD} }}\n\t\t\tspacing = {ICON_GAP}\n'
-                  + methods_row.type_icon(bk, '\t\t\t') + grid + '\t\t}\n'
-                  + (ai_column(bk, h, ai_x, '\t\t') if bk in ai else '')
-                  + (company_badge(bk, h, '\t\t') if bk in companies else '') + '\t}\n\n')
+                  + card_left(bk, '\t\t\t') + grid + '\t\t}\n'
+                  + (ai_column(bk, inner + 2 * CARD_PAD, ai_x, '\t\t') if bk in ai else '')
+                  + (company_badge(bk, h, '\t\t') if bk in companies else '') + foot + '\t}\n\n')
         same = f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
         picks += (f'\t\tflowcontainer = {{\n\t\t\tdatamodel = "[DataModelRepeatedItem(Select_int32({same}, '
                   "'(int32)1', '(int32)0'))]\"\n"
@@ -4523,12 +4709,12 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
     return ''.join(out)
 
 
-def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None):
+def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None, auto_ui=None):
     loc = [' PMR_MV_HEADER:0 "Production Methods"',   # Pat 21:53Z, with no explainer text under it
-           ' PMR_BB_TAB_INVEST:0 "Investments"',
+           ' PMR_BB_TAB_INVEST:0 "Policies"',   # Pat 2026-10-19 01:07Z
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
            ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
-           ' PMR_MV_AI_LABEL:0 "AI weight"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_POL_WORKS:0 "Expanded Works"']
+           ' PMR_MV_AI_LABEL:0 "Investment chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_POL_WORKS:0 "Expanded Works"']
     for bk, keys in recipe_keys.items():
         b = short(bk)
         if (pair_ui or {}).get(bk, {}).get('split'):
@@ -4563,7 +4749,7 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None):
             nonzero = f"Or(GreaterThan_CFixedPoint({val}, '(CFixedPoint)0.5'), LessThan_CFixedPoint({val}, '(CFixedPoint)-0.5'))"
             pol.append(f"[SelectLocalization({nonzero}, 'PMR_MV_POL_{key}_{b}', 'PMR_EMPTY')]")
         loc.append(f' PMR_MV_POL_TT_{b}:0 "' + ''.join(pol) + '"')
-        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold AI weight [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
+        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold $PMR_MV_AI_LABEL$ [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
                    f'Base: [{aib}|0]\\n'
                    f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],PMR_MV_POL_TT_{b} $PMR_MV_POLICY$#!: [{policy}|=+0]\\n'
                    f'Profit and output: [{term}|=+0]\\n'
@@ -4582,29 +4768,50 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None):
             loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${names[i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!\\n'
                        f"@money![{mv_read(f'pmr_cp_{i}_{a}_{b}')}|0] per level a week"
                        f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]{more}\"")
+    # the bars under the grid (card_bars): the group's name, then each option that holds a share
+    def shares(tip, head, rows):
+        body = []
+        for n, (key, e, f) in enumerate(rows):
+            loc.append(f' {tip}_{n}:0 "\\n${key}$: #bold [{e}|{f}#!"')
+            body.append(f"[SelectLocalization({methods_row.gt(e, 0)}, '{tip}_{n}', 'PMR_EMPTY')]")
+        loc.append(f' {tip}:0 "#bold ${head}$#!' + ''.join(body) + '"')
+    for bk, (group, levels) in (auto_ui or {}).items():
+        b = short(bk)
+        if bk in recipe_keys and (pair_ui or {}).get(bk, {}).get('split'):
+            shares(f'PMR_MV_AUTO_TT_{b}', group,
+                   [(key, mv_read(f'pmr_ash_{a}_{b}'), '%0]') for a, (key, _t, _) in enumerate(levels, 1)])
+    for bk, groups in (opt_ui or {}).items():
+        b = short(bk)
+        if bk not in recipe_keys:
+            continue
+        for gi, _mode, none, _tex, os_ in groups:
+            shares(f'PMR_MV_OPT_TT_{b}_{gi}', os_[0].group,
+                   [(none, mv_read(f'pmr_xn_{gi}_{b}'), '0]%')] + [(o.key, mv_read(f'pmr_x_{o.j}_{b}'), '0]%') for o in os_])
     return loc
 
 
 def pick_custom_loc(pick_ui):
-    """State scope: pmr_pick_<b>, the pick's name, and pmr_pnote_<b>_<i>, a note after each recipe's profit."""
+    """State scope: pmr_pick_<b>, the pick's name; pmr_sw_now_<b> and pmr_sw_to_<b>, the default and the pick the
+    switching bar fills toward (switch_effect); country scope pmr_csw_now_<b> and pmr_csw_to_<b>, the same at the
+    country's biggest state (pmr_c_now_<b>, pmr_c_swto_<b>)."""
     out = []
     for bk, keys in pick_ui.items():
         b = short(bk)
+        for name, typ, var in (('sw_now', 'state', f'pmr_best_now_{b}'), ('sw_to', 'state', f'pmr_swto_{b}'),
+                               ('csw_now', 'country', f'pmr_c_now_{b}'), ('csw_to', 'country', f'pmr_c_swto_{b}')):
+            out.append(f'pmr_{name}_{b} = {{\n\ttype = {typ}\n\trandom_valid = no\n'
+                       + ''.join(f'\ttext = {{\n\t\ttrigger = {{ var:{var} = {i} }}\n\t\tlocalization_key = {key}\n\t}}\n'
+                                 for i, key in enumerate(keys, 1))
+                       + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
         out.append(f'pmr_pick_{b} = {{\n\ttype = state\n\trandom_valid = no\n'
                    + ''.join(f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = {key}\n\t}}\n'
                              for i, key in enumerate(keys, 1))
                    + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
-        for i in range(1, len(keys) + 1):
-            out.append(f'pmr_pnote_{b}_{i} = {{\n\ttype = state\n\trandom_valid = no\n'
-                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = PMR_PICK_NOTE_BEST\n\t}}\n'
-                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rav_{i}_{b} = 0 }}\n\t\tlocalization_key = PMR_PICK_NOTE_LOCKED\n\t}}\n'
-                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rveto_{i}_{b} = 1 }}\n\t\tlocalization_key = PMR_PICK_NOTE_VETO\n\t}}\n'
-                       '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     return ''.join(out)
 
 
 def pick_loc(pick_ui):
-    """The pick row and its tooltip."""
+    """The pick row, and the notes the Policies cards' tooltips put after a recipe's profit."""
     loc = [' PMR_PICK_NOTE_BEST:0 " (most profitable)"', ' PMR_PICK_NOTE_LOCKED:0 " (not available)"',
            ' PMR_PICK_NOTE_VETO:0 " (input at price cap)"']
     for bk, keys in pick_ui.items():
@@ -4614,9 +4821,13 @@ def pick_loc(pick_ui):
             return f"[Building.GetState.MakeScope.Var('{name}').GetValue|{f}]"
         loc.append(f' PMR_PICK_ROW_{b}:0 "Most profitable: #bold [Building.GetState.GetCustom(\'pmr_pick_{b}\')]#!, '
                    f'@money!{var(f"pmr_prm_{b}")} per level a week"')
-        lines = [f"${key}$: @money!{var(f'pmr_rm_{i}_{b}')}"
-                 f"[Building.GetState.GetCustom('pmr_pnote_{b}_{i}')]" for i, key in enumerate(keys, 1)]
-        loc.append(f' PMR_PICK_TOOLTIP_{b}:0 "' + '\\n'.join(lines) + '"')
+        # the switching bar (switch_bar): from, to, months
+        loc.append(f' PMR_SW_TT_{b}:0 "#bold [Building.GetState.GetCustom(\'pmr_sw_now_{b}\')]#! → '
+                   f'#bold [Building.GetState.GetCustom(\'pmr_sw_to_{b}\')]#!\\n{var(f"pmr_sw_{b}")} of {SWITCH_MONTHS} months"')
+        loc.append(f' PMR_CSW_TT_{b}:0 "#bold [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]#! → '
+                   f'#bold [GetPlayer.GetCustom(\'pmr_csw_to_{b}\')]#!\\n'
+                   f"[GetPlayer.MakeScope.Var('pmr_c_sw_{b}').GetValue|0] of {SWITCH_MONTHS} months\"")
+        loc.append(f' PMR_CSW_IDLE_{b}:0 "#bold [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]#!"')
     return loc
 
 
@@ -4714,7 +4925,30 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, p
         raise SystemExit(f'building_details_panel.gui: expected one {anchor.strip()!r}, found '
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
     text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk]) for bk in buildings))
+    text = patch_input_mults(text)
     return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {}, auto_ui or {}, pick_ui or {})
+
+
+def patch_input_mults(text):
+    """Pat, 2026-10-19 01:07Z: the Process view lists an input's modifier (Fabric input +5%) with the outputs' on the
+    right. Beside each input's amount on the left, that good's goods_input_<good>_mult from the same list
+    (Building.GetProducedModifiers), shown while it isn't 0."""
+    dm = 'datamodel = "[Building.AccessConsumedGoods]"\n'
+    at = text.find(dm)
+    amount = 'raw_text = "#bold #n [FixedPointToInt(Building.GetConsumption(Goods.Self))|D]#!#!"\n'
+    if at < 0 or text.find(amount, at) < 0:
+        raise SystemExit('building_details_panel.gui: the Process inputs list changed; update patch_input_mults')
+    box = text.rindex('textbox = {', 0, text.index(amount, at))
+    ind = text[text.rindex('\n', 0, box) + 1:box]
+    end = block_end(text, box)
+    key = "Concatenate3('goods_input_', Goods.GetKey, '_mult')"
+    i1 = ind + '\t'
+    mult = (f'\n{ind}# PMR: this input\'s modifier\n{ind}textbox = {{\n'
+            f'{i1}visible = "[NotZero_CFixedPoint(Building.GetProducedModifiers.GetValueFor({key}))]"\n'
+            f'{i1}raw_text = "[Building.GetProducedModifiers.GetFormattedValueFor({key})]"\n'
+            f'{i1}autoresize = yes\n{i1}parentanchor = left|vcenter\n{i1}widgetanchor = left|vcenter\n'
+            f'{i1}align = left|nobaseline\n{i1}using = fontsize_small\n{ind}}}')
+    return text[:end] + mult + text[end:]
 
 
 # Pat, 2026-10-13: a Production Method column in the Owners list, with the icons of the recipes each
@@ -4903,12 +5137,17 @@ def patch_browser_tabs(text, types):
     ai_off = f"GetVariableSystem.Clear('{MV_AI}')"
     if sorts.count('size = { 135 30 }') != 4 or sorts.count('onclick = "[BuildingBrowserPanel.Sort(') != 4:
         raise SystemExit('building_browser_panel.gui: expected four sort buttons; update patch_browser_tabs')
+    # Pat 2026-10-19 01:07Z: no Building Type sort on Policies
+    d1 = sorts.find("BuildingBrowserPanel.Sort('database_order')")
+    if d1 < 0:
+        raise SystemExit('building_browser_panel.gui: no database_order sort button; update patch_browser_tabs')
+    d0 = sorts.rindex('\n', 0, sorts.rindex('sort_button = {', 0, d1))
     inv_sorts = re.sub(r'(\n(\t+)onclick = "\[BuildingBrowserPanel\.Sort\([^\n]*\n)',
                        lambda m: f'{m.group(1)}{m.group(2)}onclick = "[{ai_off}]"  # PMR\n',
-                       sorts.replace('size = { 135 30 }', 'size = { 108 30 }'))
+                       sorts[:d0] + sorts[block_end(sorts, d0):])
     b4 = '\t\t\t\t'
     inv_sorts = (inv_sorts[:inv_sorts.rindex('}')].rstrip('\t')
-                 + f'\n{b4}# PMR: sorted by AI weight\n{b4}sort_button = {{\n{b4}\tsize = {{ 108 30 }}\n'
+                 + f'\n{b4}# PMR: sorted by AI weight\n{b4}sort_button = {{\n{b4}\tsize = {{ 135 30 }}\n'
                  f'{b4}\ttext = "PMR_MV_AI_LABEL"\n{b4}\talign = nobaseline\n'
                  f'{b4}\tonclick = "[GetVariableSystem.Set(\'{MV_AI}\', \'yes\')]"\n{b4}\tonclick = "[{refresh}]"\n'
                  f'{b4}\tblockoverride "selected_visibility" {{\n{b4}\t\tvisible = "[{ai_on}]"\n{b4}\t}}\n{b4}}}\n'
@@ -5014,6 +5253,10 @@ def type_bar(bk, textures):
                 + stacked_bar(b, textures, (TYPE_BAR_W, 26), 18, gind + '\t',
                               var=lambda name: country_var(b, c_name(name)),
                               tips=[(None, f'PMR_CBAR_TOOLTIP_{b}')])
+                # Pat, 2026-10-19 01:07Z ("can we have this bar be green with progress arrows?"): the switching bar of
+                # the country's biggest state of the type under it, while a new pick fills it
+                + switch_bar(country_var(b, 'pmr_c_sw'), country_var(b, 'pmr_c_swd'), (TYPE_BAR_W, 10), gind + '\t',
+                             f'PMR_CSW_TT_{b}', place=f'{gind}\t\tposition = {{ 0 28 }}\n')
                 + f'{gind}}}\n')
     return make
 

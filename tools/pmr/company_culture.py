@@ -21,7 +21,8 @@ by variables the company type sets at init, so the traits never need a chain ove
 Engineering's goods lines (section 4): each tier is a new production method for the building making one of the
 company's top two output goods. A trait cannot add a real input (works share probe, q19), so the method is a share in
 PMR's blend: generate.py gives each goods-line building two more blend members, `works out` (goods_output_<good>_mult)
-and `works in` (goods_input_<good>_mult), whose steps carry WORKS_OUT[-1] and WORKS_IN[-1] x n / WORKS_STEPS as
+and `works in` (goods_input_<good>_mult), whose steps carry WORKS_OUT[-1] x n / WORKS_STEPS and WORKS_IN[-1] x n /
+WORKS_IN_STEPS as
 unscaled building modifiers. Each completed tier's trait sets the script-only marker building_pmr_cw_<b>_t<tier> to
 1; the engine scales it by the company's share of the building (q19/q20: Krupp's 2 of 5 Westfalen steel levels read
 0.400), so the building reads the levels at each tier with no loop over companies, and PMR's tick (pmr_works_<b>,
@@ -72,7 +73,8 @@ GRANT_COST = (500, 1000, 1500)      # £ per level the company employs, every we
                                     # 00:06Z: "a ticking cost of 500 per level every week")
 WORKS_OUT = (0.15, 0.25, 0.40)      # a goods tier's main output over the base method it replaces
 WORKS_IN = (0.05, 0.10, 0.15)       # and its one extra input
-WORKS_STEPS = 40                    # blend steps of the two works members (2.5% of WORKS_*[-1] each)
+WORKS_STEPS = 40                    # blend steps of the works output member (1% each, so +15/25/40% land exact)
+WORKS_IN_STEPS = 30                 # and of its input member (0.5% each: +5/10/15% exact, q33 read 13/40 = 4.9%)
 PRICE_CAP = 1.75                    # pmr_px_<good> at the price cap: the variant falls back (PM rework's veto rule)
 INPUT_CUT_CAP = 20                  # an input good never more than 20% cheaper in amount from all lines
 WAGE_CUT_CAP = 25                   # wage target never below -25% from all lines
@@ -478,8 +480,10 @@ def plan(game, plain, goods_cost, goods_tex=None):
             iv = in_val.get(bk, {})
             cand = [max(iv, key=iv.get)] if iv else []
         tier = [rs[min(t, len(rs)) - 1] for t in T3]
+        # the recipe after each tier's base recipe: once the owner has it, the tier is behind the frontier (free)
+        nxt = [list(rs[t].unlock_techs) if t < len(rs) else None for t in T3]
         return {'out': good, 'in': cand[0] if cand else None, 'row': row,
-                'techs': [list(r.unlock_techs) for r in tier], 'icons': [r.texture for r in tier]}
+                'techs': [list(r.unlock_techs) for r in tier], 'icons': [r.texture for r in tier], 'next': nxt}
 
     for c, (bts, pvars) in comps.items():
         own = [b for b in bts if b in main]
@@ -536,6 +540,11 @@ class WorksMember:
         self.key, self.texture = key, texture
 
 
+def works_steps(kind):
+    """the blend steps of a works member: 'out' or 'in'"""
+    return WORKS_IN_STEPS if kind == 'in' else WORKS_STEPS
+
+
 def works_members(p, bk, texture):
     """[(kind, WorksMember, {modifier: value at the full share})] for a goods-line building, or []."""
     w = p.works.get(bk)
@@ -567,18 +576,18 @@ def works_effect(p, bk, jout, jin):
                  f'\t\tchange_variable = {{ name = {v(f"pmr_cwl{t}")} multiply = var:{v("pmr_level")} }}\n'
                  f'\t\tround_variable = {{ name = {v(f"pmr_cwl{t}")} nearest = 1 }}\n')
     # steps = sum(levels_t x share_t) / level / max x STEPS, with share_t / max per tier folded into one factor
-    for j, table in ((jout, WORKS_OUT), (jin, WORKS_IN)):
+    for j, table, steps in ((jout, WORKS_OUT, WORKS_STEPS), (jin, WORKS_IN, WORKS_IN_STEPS)):
         if not j:
             continue
         body += f'\t\tset_variable = {{ name = {v(f"pmr_wn_{j}")} value = 0 }}\n'
         for t in T3:
             body += (f'\t\tset_variable = {{ name = {v("pmr_cwt")} value = var:{v(f"pmr_cwl{t}")} }}\n'
-                     f'\t\tchange_variable = {{ name = {v("pmr_cwt")} multiply = {fmt(table[t - 1] / table[-1] * WORKS_STEPS)} }}\n'
+                     f'\t\tchange_variable = {{ name = {v("pmr_cwt")} multiply = {fmt(table[t - 1] / table[-1] * steps)} }}\n'
                      f'\t\tchange_variable = {{ name = {v(f"pmr_wn_{j}")} add = var:{v("pmr_cwt")} }}\n')
         body += (f'\t\tchange_variable = {{ name = {v(f"pmr_wn_{j}")} divide = var:{v("pmr_level")} }}\n'
                  f'\t\tround_variable = {{ name = {v(f"pmr_wn_{j}")} nearest = 1 }}\n'
-                 f'\t\tif = {{ limit = {{ var:{v(f"pmr_wn_{j}")} > {WORKS_STEPS} }} '
-                 f'set_variable = {{ name = {v(f"pmr_wn_{j}")} value = {WORKS_STEPS} }} }}\n')
+                 f'\t\tif = {{ limit = {{ var:{v(f"pmr_wn_{j}")} > {steps} }} '
+                 f'set_variable = {{ name = {v(f"pmr_wn_{j}")} value = {steps} }} }}\n')
     cap = ''
     if w['in']:
         cap = (f'\t\tpmr_price_{w["in"]} = yes\n'
@@ -905,6 +914,24 @@ def effects(p, comps):
                 inner += f' {kw} = {{ limit = {{ owner ?= {{ {lim} }} }} set_variable = {{ name = pmr_cc_g{gl}tk value = {t} }} }}'
             d += f'\t{"if" if first else "else_if"} = {{ limit = {{ var:pmr_cc_k_g{gl}b = {w["idx"]} }}{inner} }}\n'
             first = False
+    # Pat, 2026-10-19 01:07Z: "Old Production methods behind the nations frontier should instantly unlock the special pm
+    # with no required companies points": pmr_cc_g<gl>fr, the highest tier whose base recipe the owner has already
+    # moved past (it has the next recipe's technology); pmr_cc_frontier takes those tiers free and at once
+    for gl in (1, 2):
+        d += f'\tset_variable = {{ name = pmr_cc_g{gl}fr value = 0 }}\n'
+        first = True
+        for bk, w in sorted(p.works.items(), key=lambda kv: kv[1]['idx']):
+            inner = ''
+            for t in (3, 2, 1):
+                techs = w['next'][t - 1]
+                if techs is None:
+                    continue
+                lim = ' '.join(f'has_technology_researched = {x}' for x in techs) or 'always = yes'
+                inner += (f' {"if" if not inner else "else_if"} = {{ limit = {{ owner ?= {{ {lim} }} }} '
+                          f'set_variable = {{ name = pmr_cc_g{gl}fr value = {t} }} }}')
+            if inner:
+                d += f'\t{"if" if first else "else_if"} = {{ limit = {{ var:pmr_cc_k_g{gl}b = {w["idx"]} }}{inner} }}\n'
+                first = False
     # a research grant's weekly cost (Pat 22:28Z, 2026-10-19 00:06Z): GRANT_COST per employed level for each goods
     # line's next tier, which is also the running grant's tier (pmr_cc_gc<gl>), and whether the owner's investment
     # pool holds a week of it (pmr_cc_gok<gl>)
@@ -955,7 +982,8 @@ def effects(p, comps):
                     pchain += (f'\t{"if" if n == 0 else "else_if"} = {{ limit = {{ is_company_type = company_type:{c} }} '
                                + ' '.join(f'set_variable = {x}' for x in v['pvars']) + ' }\n')
                     n += 1
-            take += '\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods)\n' + pchain
+            take += ('\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods), or PMR\'s own\n'
+                     '\tset_variable = pmr_cc_hallmark\n' + pchain)
         o.append(f'pmr_cc_buy_{k} = {{\n{pay}{take}\tpmr_cc_after_buy = yes\n'
                  f'\t{player_log("CC_BUY", f"line={k};")}\n}}\n\n')
     o.append('pmr_cc_after_buy = {\n\tpmr_cc_derive = yes\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n}\n\n')
@@ -1005,6 +1033,22 @@ def effects(p, comps):
              '\t\t\tset_variable = { name = pmr_cc_grw value = 0 }\n'
              '\t\t\tpmr_cc_after_buy = yes\n\t\t}\n'
              '\t\tif = { limit = { owner ?= { is_player = yes } } pmr_cc_mirror = yes }\n\t}\n}\n\n')
+    # Behind the frontier (pmr_cc_g<gl>fr): a goods tier the company could take, points and grants aside, is its at once
+    # and free; a grant running on such a tier completes. Up to three tiers a call.
+    fr = ''
+    for ln in [x for x in LINES if x.goods]:
+        gl = ln.goods
+        done = (f'\t\tpmr_cc_works_on = {{ G = {gl} }}\n'
+                f'\t\t{player_log("CC_FRONTIER", f"line={ln.key};tier=[THIS.Var({chr(39)}pmr_cc_{ln.key}{chr(39)}).GetValue|0];")}\n'
+                '\t\tpmr_cc_after_buy = yes\n')
+        fr += (f'\tif = {{\n\t\tlimit = {{ var:pmr_cc_gr = {ln.code} var:pmr_cc_g{gl}fr >= var:pmr_cc_grt }}\n'
+               f'\t\tset_variable = {{ name = pmr_cc_{ln.key} value = var:pmr_cc_grt }}\n'
+               + ''.join(f'\t\tset_variable = {{ name = pmr_cc_{x} value = 0 }}\n' for x in ('gr', 'grt', 'grm', 'grw'))
+               + done + '\t}\n')
+        for _ in range(ln.tiers):
+            fr += (f'\tif = {{\n\t\tlimit = {{ pmr_cc_free_{ln.key} = yes }}\n'
+                   f'\t\tchange_variable = {{ name = pmr_cc_{ln.key} add = 1 }}\n' + done + '\t}\n')
+    o.append(f'pmr_cc_frontier = {{\n{fr}}}\n\n')
     # A click.
     click = ''
     for i, ln in enumerate(LINES):
@@ -1121,7 +1165,7 @@ def effects(p, comps):
              '# player\'s companies; an AI company\'s is brought up to date when its tab opens (pmr_cc_refresh_sgui).\n'
              'pmr_cc_tick = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
-             '\tpmr_cc_earn = yes\n\tpmr_cc_derive = yes\n'
+             '\tpmr_cc_earn = yes\n\tpmr_cc_derive = yes\n\tpmr_cc_frontier = yes\n'
              '\tif = {\n\t\tlimit = { owner ?= { is_player = no } }\n\t\tpmr_cc_ai_buy = yes\n\t}\n'
              '\tif = {\n\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\tpmr_cc_apply = yes\n\t}\n'
              '\tif = {\n\t\tlimit = { owner ?= { is_player = yes } }\n\t\tpmr_cc_mirror = yes\n'
@@ -1129,7 +1173,7 @@ def effects(p, comps):
     o.append('# The tab was opened, a company was founded or the game started: bring it up to date without earning.\n'
              'pmr_cc_refresh = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
-             '\tpmr_cc_derive = yes\n'
+             '\tpmr_cc_derive = yes\n\tpmr_cc_frontier = yes\n'
              '\tif = {\n\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\tpmr_cc_apply = yes\n\t}\n'
              '\tpmr_cc_mirror = yes\n}\n\n')
     o.append('# Character scope (an executive, from the tab): the owner\'s company this character runs, scope:line kept.\n'
@@ -1156,6 +1200,14 @@ def triggers():
                     + ('\tvar:pmr_cc_gr = 0\n' if ln.goods else '')
                     + f'\tOR = {{\n{alts}\t}}\n')
         o.append(f'pmr_cc_open_{k} = {{\n{body}}}\n\n')
+    o.append('# pmr_cc_free_<goods line>: its next tier can be taken free, being behind the frontier (pmr_cc_frontier): as\n'
+             '# pmr_cc_open, but no grant may run on it and its base recipe is one the owner has moved past.\n')
+    for ln in [x for x in LINES if x.goods]:
+        alts = ''.join(f'\t\tAND = {{ {" ".join(tier_conds(ln, t))} var:pmr_cc_g{ln.goods}fr >= {t} }}\n'
+                       for t in range(1, ln.tiers + 1))
+        o.append(f'pmr_cc_free_{ln.key} = {{\n' + ''.join(f'\t{c}\n' for c in arm_ok(ln))
+                 + f'\tNOT = {{ {not_available(ln)} }}\n\tNOT = {{ var:pmr_cc_gr = {ln.code} }}\n'
+                 f'\tOR = {{\n{alts}\t}}\n}}\n\n')
     o.append('# The points for each line\'s next tier.\n')
     for ln in LINES:
         if ln.founding:
@@ -1547,6 +1599,7 @@ def localization(p, rows, kept_split):
         ' PMR_CC_WHY_POINTS:0 "#N Not enough points#!"',
         ' PMR_CC_WHY_NA:0 "#N Not open to this company.#!"',
         ' PMR_CC_WHY_NA_pg:0 "#N No prestige goods#!"',
+        ' PMR_CC_PG_REQ:0 "Hallmark Goods"',
         f' PMR_CC_WHY_REACH:0 "#N Needs {REACH} nodes in the first arm#!"',
         ' PMR_CC_WHY_LOCKED:0 "#N Locked.#!"',
         ' PMR_CC_ARM_eng:0 "E N G I N E E R I N G"',
@@ -1640,7 +1693,7 @@ def localization(p, rows, kept_split):
             b = key[len('pmr_cc_cw_'):].rsplit('_', 1)
             nm = f'Works method {b[1]}: $building_{b[0]}$'
         else:
-            nm = 'Wage floor'
+            nm = 'Wage cut cap'   # pmr_cc_wcap_<n>: holds the wage cuts at WAGE_CUT_CAP (Pat 01:07Z asked what it was)
         loc += [f' {key}:0 "{nm}"',
                 f' {key}_desc:0 "Company Culture"']
     # Methods list.
