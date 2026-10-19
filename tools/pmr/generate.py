@@ -1788,8 +1788,11 @@ def main():
         f'\t\t\t\t\tsize = {{ 156 24 }}\n\t\t\t\t\tparentanchor = vcenter\n'
         + stacked_bar(short(bk), recipe_tex[bk], ('100%', '100%'), 18, '\t\t\t\t\t') + '\t\t\t\t}\n'
         for bk in dispatch)
+    menu_gui, browser_gui = hide_sites_elsewhere(vanilla_gui('build_urban_buildings_menu.gui'),
+                                                 vanilla_gui('building_browser_panel.gui'), site_types)
+    write('gui/build_urban_buildings_menu.gui', menu_gui, bom=False)
     write('gui/building_browser_panel.gui', gate_type_copies(patch_browser_tabs(patch_browser_actions(patch_grid_instance(
-        patch_type_grids(vanilla_gui('building_browser_panel.gui'), dispatch, 'building_browser_panel.gui', 1, also=also),
+        patch_type_grids(browser_gui, dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
         extra=browser_bars, also=also), dispatch), list(mv_keys))), bom=False)
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
@@ -4556,6 +4559,37 @@ def hide_retool_sites(text, site_types):
     return text
 
 
+def hide_sites_elsewhere(menu, browser, site_types):
+    """Pat 2026-10-19 04:10Z ("all re tooling buildings should be hidden"): the retool sites off the state's Build Urban
+    Buildings menu (build_urban_buildings_menu.gui, Building context) and the Buildings panel's Available Rural / Urban
+    Buildings grids (building_browser_panel.gui's building_panel_potential_buildings, BuildingType context), as
+    hide_retool_sites does for the state's Buildings tab: the item is invisible and its list skips invisible items.
+    Returns (menu, browser)."""
+    in_building = 'Not(' + any_of([is_type(t) for t in site_types]) + ')'
+    in_type = 'Not(' + any_of([f"ObjectsEqual(BuildingType.Self, GetBuildingType('{t}').Self)" for t in site_types]) + ')'
+    for old, new, what in [
+            ('\t\tdatamodel = "[StatesPanel.AccessState.GetPotentialUrbanBuildings]"\n',
+             '\t\tdatamodel = "[StatesPanel.AccessState.GetPotentialUrbanBuildings]"\n'
+             '\t\tignoreinvisible = yes  # PMR: no retool sites\n', 'the menu\'s list'),
+            ('\t\t\t\tblockoverride "properties" {\n\t\t\t\t\ttooltip = "[Building.GetQueueConstructionTooltip]"\n',
+             '\t\t\t\tblockoverride "properties" {\n'
+             f'\t\t\t\t\tvisible = "[{in_building}]"  # PMR: no retool sites\n'
+             '\t\t\t\t\ttooltip = "[Building.GetQueueConstructionTooltip]"\n', 'the menu\'s item')]:
+        if menu.count(old) != 1:
+            raise SystemExit(f'build_urban_buildings_menu.gui: expected one {what}, found {menu.count(old)}; '
+                             'update hide_sites_elsewhere')
+        menu = menu.replace(old, new)
+    old = ('\t\t\tdynamicgridbox = {\n\t\t\t\tblock "potential_building_types" {\n\n\t\t\t\t}\n'
+           '\t\t\t\tflipdirection = yes\n\t\t\t\tdatamodel_wrap = 5\n\n\t\t\t\titem = {\n\t\t\t\t\tcontainer = {\n')
+    if browser.count(old) != 1:
+        raise SystemExit(f'building_browser_panel.gui: expected one potential buildings grid, found {browser.count(old)}; '
+                         'update hide_sites_elsewhere')
+    browser = browser.replace(old, old.replace('\t\t\t\tdatamodel_wrap = 5\n',
+                                               '\t\t\t\tdatamodel_wrap = 5\n\t\t\t\tignoreinvisible = yes  # PMR: no retool sites\n')
+                              + f'\t\t\t\t\t\tvisible = "[{in_type}]"  # PMR: no retool sites\n')
+    return menu, browser
+
+
 def state_var(b, name):
     return f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue"
 
@@ -4937,18 +4971,43 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
         # tail adds (pmr_ai_pre_<b>, private_investment.patch_ai_value), the profit and output term as the value before
         # the tail less base and policy parts (so after the AI_FLOOR), and Policy as the rest (pmr_mv_pt/pworks/pol_<b>)
         tail = bk in ai and any(key == 'works' and not name for key, name in parts.get(bk, []))
+        # Pat 2026-10-19 03:52-03:54Z: the tooltip in sections. Policy = the policy cards' parts (pmr_mv_pol_<b>) and
+        # the priority (methods_view's share block); Companies = Expanded Works (pmr_mv_pworks_<b>); the vanilla terms
+        # as Productivity, Losses and Output (pmr_mv_pprod/ploss/pout_<b>, private_investment.pf_effects). The
+        # foreign-or-domestic part leaves the card's weight (pmr_mv_wb_<b>): it lifts every type in the owner's states
+        # alike, so it moves investment home, not towards one type ("it doesn't increase the building does it?").
+        fd = 'fd' in pk
         snap = ''
         if bk in ai:
-            snap = (f'\t\t\tset_variable = {{ name = pmr_mv_pt_{b} value = {"pmr_ai_pre_" if tail else "pmr_ai_value_"}{b} }}\n'
-                    + (f'\t\t\tset_variable = {{ name = pmr_mv_pworks_{b} value = var:pmr_mv_aiv_{b} }}\n'
-                       f'\t\t\tchange_variable = {{ name = pmr_mv_pworks_{b} subtract = var:pmr_mv_pt_{b} }}\n' if tail else '')
-                    + f'\t\t\tchange_variable = {{ name = pmr_mv_pt_{b} subtract = var:pmr_mv_aib_{b} }}\n'
-                    + ''.join(f'\t\t\tchange_variable = {{ name = pmr_mv_pt_{b} subtract = var:pmr_mv_p{key}_{b} }}\n'
+            sv = lambda n: f'pmr_mv_{n}_{b}'   # noqa: E731
+            snap = (f'\t\t\tset_variable = {{ name = {sv("pt")} value = {"pmr_ai_pre_" if tail else "pmr_ai_value_"}{b} }}\n'
+                    f'\t\t\tset_variable = {{ name = {sv("wb")} value = var:{sv("pt")} }}\n'
+                    + (f'\t\t\tchange_variable = {{ name = {sv("wb")} subtract = var:{sv("pfd")} }}\n' if fd else '')
+                    + f'\t\t\tset_variable = {{ name = {sv("pworks")} value = 0 }}\n'
+                    # what Expanded Works multiplies onto the card's weight: (total / before - 1) x the card's part
+                    + (f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{sv("pt")} > 0 }}\n'
+                       f'\t\t\t\tset_variable = {{ name = {sv("pworks")} value = var:pmr_mv_aiv_{b} }}\n'
+                       f'\t\t\t\tchange_variable = {{ name = {sv("pworks")} subtract = var:{sv("pt")} }}\n'
+                       f'\t\t\t\tchange_variable = {{ name = {sv("pworks")} multiply = var:{sv("wb")} }}\n'
+                       f'\t\t\t\tchange_variable = {{ name = {sv("pworks")} divide = var:{sv("pt")} }}\n\t\t\t}}\n' if tail else '')
+                    + f'\t\t\tchange_variable = {{ name = {sv("wb")} add = var:{sv("pworks")} }}\n'
+                    f'\t\t\tchange_variable = {{ name = {sv("pt")} subtract = var:pmr_mv_aib_{b} }}\n'
+                    + ''.join(f'\t\t\tchange_variable = {{ name = {sv("pt")} subtract = var:pmr_mv_p{key}_{b} }}\n'
                               for key in pk)
-                    + f'\t\t\tset_variable = {{ name = pmr_mv_pol_{b} value = var:pmr_mv_aiv_{b} }}\n'
-                    f'\t\t\tchange_variable = {{ name = pmr_mv_pol_{b} subtract = var:pmr_mv_aib_{b} }}\n'
-                    f'\t\t\tchange_variable = {{ name = pmr_mv_pol_{b} subtract = var:pmr_mv_pt_{b} }}\n')
-        snapped = ([f'pmr_mv_pt_{b}', f'pmr_mv_pol_{b}'] + ([f'pmr_mv_pworks_{b}'] if tail else [])) if bk in ai else []
+                    + f'\t\t\tset_variable = {{ name = {sv("pol")} value = 0 }}\n'
+                    + ''.join(f'\t\t\tchange_variable = {{ name = {sv("pol")} add = var:pmr_mv_p{key}_{b} }}\n'
+                              for key in pk if key != 'fd')
+                    # the vanilla terms (pmr_ai_pt_<b>, after the AI_FLOOR): the country's productivity and output parts,
+                    # losses the rest
+                    + ''.join(f'\t\t\tset_variable = {{ name = {sv(n)} value = 0 }}\n'
+                              f'\t\t\tif = {{ limit = {{ owner = {{ has_variable = {cv}_{b} }} }} '
+                              f'set_variable = {{ name = {sv(n)} value = owner.var:{cv}_{b} }} }}\n'
+                              for n, cv in (('pprod', 'pmr_ptp'), ('pout', 'pmr_pto')))
+                    + f'\t\t\tset_variable = {{ name = {sv("ploss")} value = var:{sv("pt")} }}\n'
+                    f'\t\t\tchange_variable = {{ name = {sv("ploss")} subtract = var:{sv("pprod")} }}\n'
+                    f'\t\t\tchange_variable = {{ name = {sv("ploss")} subtract = var:{sv("pout")} }}\n')
+        snapped = ([f'pmr_mv_{n}_{b}' for n in ('pt', 'pol', 'pworks', 'pprod', 'pout', 'ploss', 'wb')]
+                   if bk in ai else [])
         # each Company Culture special method's profit (works_profit), where the state has it
         cwp = [f'pmr_cwp_{t}_{b}' for t in company_culture.T3] if bk in CC_WORKS else []
         o.append(f'pmr_mv_{b} = {{\n\tsave_temporary_scope_as = pmr_ctry\n'
@@ -4982,27 +5041,43 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                  + '\t}\n' + company_mark(bk, companies.get(bk)) + '}\n\n')
     # Pat 23:22Z: each type's AI weight as its share of the sum over every type on the tab, as the investors pick by
     # weight: the AI value times its priority group's multiplier (pmr_mv_w_<b>), over pmr_mv_wsum, as pmr_mv_sh_<b>
-    shown = [(short(bk), private_investment.VAR.format(ai[bk])) for bk in recipe_keys if bk in ai]
-    share = ('\tset_variable = { name = pmr_mv_wsum value = 0 }\n\tset_variable = { name = pmr_mv_m value = 1 }\n'
+    # weight: the card's weight (pmr_mv_wb_<b>) plus its priority group's share of it (pmr_mv_prio_<b>, Policy's last
+    # line: the slider's +%, private_investment.VAR_pct), over pmr_mv_wsum. The game multiplies each group's score by
+    # its slider over the highest slider (private_investment's pmr_ipw_<g>); the shares are the same either way.
+    groups = {k for k, *_r in private_investment.GROUPS}
+    shown = [(short(bk), ai[bk]) for bk in recipe_keys if bk in ai]
+    share = ('\tset_variable = { name = pmr_mv_wsum value = 0 }\n'
              + ''.join(f'\tset_variable = {{ name = pmr_mv_w_{b} value = 0 }}\n'
-                       f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 has_variable = pmr_mv_aiv_{b} }}\n'
-                       f'\t\tset_variable = {{ name = pmr_mv_m value = {m} }}\n'
-                       f'\t\tset_variable = {{ name = pmr_mv_mx_{b} value = var:pmr_mv_m }}  # the tooltip\'s Priority\n'
-                       f'\t\tset_variable = {{ name = pmr_mv_w_{b} value = var:pmr_mv_aiv_{b} }}\n'
-                       f'\t\tchange_variable = {{ name = pmr_mv_w_{b} multiply = var:pmr_mv_m }}\n'
+                       f'\tset_variable = {{ name = pmr_mv_prio_{b} value = 0 }}\n'
+                       f'\tset_variable = {{ name = pmr_mv_pola_{b} value = 0 }}\n'
+                       f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 has_variable = pmr_mv_wb_{b} }}\n'
+                       + (f'\t\tset_variable = {{ name = pmr_mv_prio_{b} value = var:pmr_mv_wb_{b} }}\n'
+                          f'\t\tchange_variable = {{ name = pmr_mv_prio_{b} multiply = {private_investment.VAR.format(g)}_pct }}\n'
+                          if g in groups else '')
+                       + f'\t\tset_variable = {{ name = pmr_mv_w_{b} value = var:pmr_mv_wb_{b} }}\n'
+                       f'\t\tchange_variable = {{ name = pmr_mv_w_{b} add = var:pmr_mv_prio_{b} }}\n'
+                       f'\t\tset_variable = {{ name = pmr_mv_pola_{b} value = var:pmr_mv_pol_{b} }}\n'
+                       f'\t\tchange_variable = {{ name = pmr_mv_pola_{b} add = var:pmr_mv_prio_{b} }}\n'
                        f'\t\tchange_variable = {{ name = pmr_mv_wsum add = var:pmr_mv_w_{b} }}\n\t}}\n'
-                       for b, m in shown)
+                       for b, g in shown)
              + ''.join(f'\tset_variable = {{ name = pmr_mv_sh_{b} value = 0 }}\n'
                        f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_wsum > 0 }}\n'
                        f'\t\tset_variable = {{ name = pmr_mv_sh_{b} value = var:pmr_mv_w_{b} }}\n'
                        f'\t\tchange_variable = {{ name = pmr_mv_sh_{b} divide = var:pmr_mv_wsum }}\n\t}}\n'
                        for b, _m in shown)
-             + '\tremove_variable = pmr_mv_m\n\tpmr_mv_sort = yes\n'
+             + '\tpmr_mv_sort = yes\n'
              + '\tif = {\n\t\tlimit = { is_player = yes }\n'
              '\t\tdebug_log = "PMR;rec=MV_SHARE;date=[TimeKeeper.GetCurrentDate.GetString];'
              "sum=[THIS.Var('pmr_mv_wsum').GetValue|0];"
              + ';'.join(f"{b}=[THIS.Var('pmr_mv_w_{b}').GetValue|0]/[THIS.Var('pmr_mv_sh_{b}').GetValue|3]"
                         f"/[THIS.Var('pmr_mv_rk_{b}').GetValue|0]" for b, _m in shown)
+             + '"\n'
+             # the tooltip's sections (methods_view_loc), which add up to the weight: base/policy/companies/
+             # productivity/losses/output/weight
+             '\t\tdebug_log = "PMR;rec=MV_PARTS;date=[TimeKeeper.GetCurrentDate.GetString];'
+             + ';'.join(f'{b}=' + '/'.join(f"[THIS.Var('pmr_mv_{n}_{b}').GetValue|0]"
+                                           for n in ('aib', 'pola', 'pworks', 'pprod', 'ploss', 'pout', 'w'))
+                        for b, _m in shown)
              + '"\n\t}\n' if shown else '')
     o.append('pmr_mv_refresh = {\n' + ''.join(f'\tpmr_mv_{short(bk)} = yes\n' for bk in recipe_keys)
              + ('\tpmr_bo_refresh = yes\n' if shown else '')
@@ -5266,7 +5341,9 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
            ' PMR_BB_TAB_INVEST:0 "Policies"',   # Pat 2026-10-19 01:07Z
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
            ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
-           ' PMR_MV_AI_LABEL:0 "Investment chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_POL_WORKS:0 "Expanded Works"']
+           ' PMR_MV_AI_LABEL:0 "Investment chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_BASE:0 "Base"',
+           ' PMR_MV_COMPANIES:0 "Companies"', ' PMR_MV_PROD:0 "Productivity"', ' PMR_MV_LOSS:0 "Losses"',
+           ' PMR_MV_OUT:0 "Output"']
     for bk, keys in recipe_keys.items():
         b = short(bk)
         if (pair_ui or {}).get(bk, {}).get('split'):
@@ -5280,32 +5357,36 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
         if bk not in recipe_keys:
             continue
         b = short(bk)
-        # Pat 2026-10-19 02:32Z: every figure from the same refresh (methods_view_effects): Base + Policy + Profit and
-        # output make the weight, and Priority multiplies it
-        mult = mv_read(f'pmr_mv_mx_{b}')
+        # Pat 2026-10-19 03:52-03:54Z: every figure from the same refresh (methods_view_effects), in sections that add
+        # up to the weight: Base, Policy (the policy cards and the priority, nested), Companies, Productivity, Losses,
+        # Output. A section that reads 0 is left out, Base and Policy aside.
         aib = mv_read(f'pmr_mv_aib_{b}')
-        term = mv_read(f'pmr_mv_pt_{b}')
-        policy = mv_read(f'pmr_mv_pol_{b}')
+        pola = mv_read(f'pmr_mv_pola_{b}')
         # Pat 21:53Z: less text, on the card and in the tooltip; 23:22Z: the card shows the share of all weights
         loc.append(f' PMR_MV_AI_{b}:0 "#bold [{mv_read(f"pmr_mv_sh_{b}")}|%1]#!"')
         loc += [f' PMR_MV_BUY_{key}_{b}:0 "[{mv_read(f"pmr_mv_b{key}_{b}")}|%0]"' for key, *_r in private_investment.BUYERS]
-        # Pat 2026-10-19 00:01Z: Policy opens a nested tooltip with each policy's part, the ones not 0; Expanded Works
-        # (test build) is what the tail adds, so it shows only while a company holds it
-        pol = [f'#bold $PMR_MV_POLICY$ [{policy}|=+0]#!']
-        for key, name in (parts or {}).get(bk, []):
-            if name:
-                val = mv_read(f'pmr_mv_p{key}_{b}')
-            else:
-                val, name = mv_read(f'pmr_mv_pworks_{b}'), 'PMR_MV_POL_WORKS'
-            loc.append(f' PMR_MV_POL_{key}_{b}:0 "\\n${name}$: [{val}|=+0]"')
-            nonzero = f"Or(GreaterThan_CFixedPoint({val}, '(CFixedPoint)0.5'), LessThan_CFixedPoint({val}, '(CFixedPoint)-0.5'))"
-            pol.append(f"[SelectLocalization({nonzero}, 'PMR_MV_POL_{key}_{b}', 'PMR_EMPTY')]")
+
+        def nonzero(val):
+            return f"Or(GreaterThan_CFixedPoint({val}, '(CFixedPoint)0.5'), LessThan_CFixedPoint({val}, '(CFixedPoint)-0.5'))"
+
+        def line(key, label, val):
+            loc.append(f' {key}:0 "\\n{label}: [{val}|=+0]"')
+            return f"[SelectLocalization({nonzero(val)}, '{key}', 'PMR_EMPTY')]"
+        # Pat 2026-10-19 00:01Z: Policy opens a nested tooltip with each policy's part, the ones not 0, then the
+        # priority group's (Pat 03:52Z: "everything I change to augment the ai weightings should show up in policies")
+        pol = [f'#bold $PMR_MV_POLICY$ [{pola}|=+0]#!']
+        pol += [line(f'PMR_MV_POL_{key}_{b}', f'${name}$', mv_read(f'pmr_mv_p{key}_{b}'))
+                for key, name in (parts or {}).get(bk, []) if name and key != 'fd']
+        pol.append(line(f'PMR_MV_POL_PRIO_{b}', f'$PMR_IPW_GROUP_{group}$', mv_read(f'pmr_mv_prio_{b}')))
         loc.append(f' PMR_MV_POL_TT_{b}:0 "' + ''.join(pol) + '"')
+        tail = any(key == 'works' and not name for key, name in (parts or {}).get(bk, []))
+        rest = ([line(f'PMR_MV_CO_{b}', '$PMR_MV_COMPANIES$', mv_read(f'pmr_mv_pworks_{b}'))] if tail else []) + [
+            line(f'PMR_MV_{x.upper()}_{b}', f'$PMR_MV_{lab}$', mv_read(f'pmr_mv_{x}_{b}'))
+            for x, lab in (('pprod', 'PROD'), ('ploss', 'LOSS'), ('pout', 'OUT'))]
         loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold $PMR_MV_AI_LABEL$ [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
-                   f'Base: [{aib}|0]\\n'
-                   f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],PMR_MV_POL_TT_{b} $PMR_MV_POLICY$#!: [{policy}|=+0]\\n'
-                   f'Profit and output: [{term}|=+0]\\n'
-                   f'Priority: ×[{mult}|2] from $PMR_IPW_GROUP_{group}$"')
+                   f'$PMR_MV_BASE$: [{aib}|0]\\n'
+                   f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],PMR_MV_POL_TT_{b} $PMR_MV_POLICY$#!: [{pola}|=+0]'
+                   + ''.join(rest) + '"')
     for bk, pr in (pair_ui or {}).items():
         b = short(bk)
         for a, opt in enumerate(pr['options'], 1):
