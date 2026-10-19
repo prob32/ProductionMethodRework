@@ -1668,6 +1668,11 @@ def main():
     pick_ui = {bk: recipe_keys[bk] for bk in dispatch} if PROFIT_TARGET else {}
     mv_keys = pick_ui   # the Private tab's Methods view covers the same types
     ai_of = private_investment.ai_groups(game) if mv_keys else {}   # each row's AI weight (Pat 18:40Z)
+    # the policy parts of each AI weight, for its tooltip's nested Policy line (Pat 2026-10-19 00:01Z); in the test
+    # build a company type's Expanded Works (company_culture.ai_value_tail) is what is left of Policy
+    owners_of = private_investment.company_owners(game) if mv_keys else {}
+    ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of)
+                + ([('works', None)] if not args.release and bk in owners_of else []) for bk in ai_of}
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
@@ -1680,8 +1685,12 @@ def main():
           + '\n# State scope. The profit pick\'s name and each recipe\'s note on the pick row (pick_row).\n'
           + pick_custom_loc(pick_ui) + (methods_view_custom_loc(mv_keys, pair_ui) if mv_keys else ''))
     if mv_keys:
-        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys, pair_ui, ai_of))
-        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex, pair_ui, ai_of), bom=False)
+        # who would buy a new private level of each type (Pat 2026-10-19 00:01Z; private_investment.buyer_odds)
+        bo_vals, bo_eff = private_investment.buyer_odds(game, [bk for bk in mv_keys if bk in ai_of], owners_of)
+        write('common/script_values/pmr_bo_values.txt', header + bo_vals)
+        write('common/scripted_effects/pmr_mv_effects.txt', header + methods_view_effects(mv_keys, pair_ui, ai_of, ai_parts, owners_of)
+              + bo_eff)
+        write('gui/pmr_methods_view.gui', methods_view_gui(mv_keys, recipe_tex, pair_ui, ai_of, owners_of), bom=False)
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
     write('gui/building_details_panel.gui', patch_building_panel(
@@ -1712,7 +1721,7 @@ def main():
           bom=False)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
-    loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of)
+    loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
@@ -1736,6 +1745,7 @@ def main():
         # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, in the test build until Pat ships it.
         loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
         private_investment.AI_TAIL = company_culture.ai_value_tail   # Expanded Works (company_culture.py)
+        private_investment.GRANT_LINE = True                         # research grants under the pool
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
@@ -4245,10 +4255,29 @@ def mv_read(name):
     return f"{MV_COUNTRY}.MakeScope.Var('{name}').GetValue"
 
 
-def methods_view_effects(recipe_keys, pair_ui=None, ai=None):
+def company_mark(bk, ctypes):
+    """Pat 2026-10-19 00:01Z: "a company icon and outliner for buildings companies own": the country's company with
+    building type bk (the last of them, so it stays the same between refreshes), by its executive."""
+    if not ctypes:
+        return ''
+    b = short(bk)
+    has = ' '.join(f'is_company_type = company_type:{c}' for c in ctypes)
+    return (f'\tset_variable = {{ name = pmr_mv_cf_{b} value = 0 }}\n'
+            f'\tevery_company = {{\n\t\tlimit = {{ OR = {{ {has} }} }}\n'
+            f'\t\texecutive ?= {{ save_scope_as = pmr_mv_cx_{b} }}\n\t}}\n'
+            f'\tif = {{\n\t\tlimit = {{ exists = scope:pmr_mv_cx_{b} }}\n'
+            f'\t\tset_variable = {{ name = pmr_mv_co_{b} value = scope:pmr_mv_cx_{b} }}\n'
+            f'\t\tset_variable = {{ name = pmr_mv_cf_{b} value = 1 }}\n\t}}\n')
+
+
+def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, companies=None):
     """Country scope: pmr_mv_<b> per building type and pmr_mv_refresh for all of them. ai: the types with an AI value
-    (private_investment.ai_groups), copied from the same state as pmr_mv_aiv_<b> and its vanilla base as pmr_mv_aib_<b>."""
-    pair_ui, ai = pair_ui or {}, ai or {}
+    (private_investment.ai_groups), copied from the same state as pmr_mv_aiv_<b> and its vanilla base as pmr_mv_aib_<b>;
+    parts: each type's policy parts (private_investment.ai_parts), copied as pmr_mv_p<key>_<b>; companies: building
+    type -> the company types listing it (private_investment.company_owners): the country's company with the type,
+    if any, as its executive in pmr_mv_co_<b> (the GUI reaches a company through a character, cc_wheel.VIEWED) and
+    pmr_mv_cf_<b> = 1."""
+    pair_ui, ai, parts, companies = pair_ui or {}, ai or {}, parts or {}, companies or {}
     o = ['# Country scope. The Buildings panel\'s Owners\' Methods tab (methods_view_effects in generate.py).\n\n']
     for bk, keys in recipe_keys.items():
         b, k = short(bk), len(keys)
@@ -4259,6 +4288,7 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None):
         if bk in pair_ui:
             per += [f'pmr_{x}_{i}_{a}_{b}' for i, a in sorted(pair_ui[bk]['econ']) for x in ('cp', 'cav')] \
                 + [f'pmr_cbi_{b}', f'pmr_cba_{b}']
+        pk = [key for key, name in parts.get(bk, []) if name] if bk in ai else []
         o.append(f'pmr_mv_{b} = {{\n\tsave_temporary_scope_as = pmr_ctry\n'
                  f'\tset_variable = {{ name = pmr_mv_lv_{b} value = 0 }}\n\tset_variable = {{ name = pmr_mv_max_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pbest_{b} value = 0 }}\n'
@@ -4273,15 +4303,17 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None):
                  + f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_level_{b} > scope:pmr_ctry.var:pmr_mv_max_{b} }}\n'
                  + (f'\t\t\tset_variable = {{ name = pmr_mv_aiv_{b} value = pmr_ai_value_{b} }}\n'
                     f'\t\t\tset_variable = {{ name = pmr_mv_aib_{b} value = pmr_ai_base_{b} }}\n' if bk in ai else '')
+                 + ''.join(f'\t\t\tset_variable = {{ name = pmr_mv_p{key}_{b} value = pmr_ai_{key}_{b} }}\n' for key in pk)
                  + f'\t\t\towner = {{\n'
                  f'\t\t\t\tset_variable = {{ name = pmr_mv_max_{b} value = scope:pmr_st.var:pmr_level_{b} }}\n'
                  + ''.join(f'\t\t\t\tset_variable = {{ name = {n} value = scope:pmr_st.var:{n} }}\n'
-                           for n in per + ([f'pmr_mv_aiv_{b}', f'pmr_mv_aib_{b}'] if bk in ai else []))
+                           for n in per + ([f'pmr_mv_aiv_{b}', f'pmr_mv_aib_{b}'] if bk in ai else [])
+                           + [f'pmr_mv_p{key}_{b}' for key in pk])
                  + '\t\t\t}\n\t\t}\n\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 }}\n'
                  + ''.join(f'\t\tchange_variable = {{ name = pmr_mv_ps_{i}_{b} divide = var:pmr_mv_lv_{b} }}\n'
                            for i in range(1, k + 1))
-                 + '\t}\n}\n\n')
+                 + '\t}\n' + company_mark(bk, companies.get(bk)) + '}\n\n')
     # Pat 23:22Z: each type's AI weight as its share of the sum over every type on the tab, as the investors pick by
     # weight: the AI value times its priority group's multiplier (pmr_mv_w_<b>), over pmr_mv_wsum, as pmr_mv_sh_<b>
     shown = [(short(bk), private_investment.VAR.format(ai[bk])) for bk in recipe_keys if bk in ai]
@@ -4306,6 +4338,7 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None):
                         f"/[THIS.Var('pmr_mv_rk_{b}').GetValue|0]" for b, _m in shown)
              + '"\n\t}\n' if shown else '')
     o.append('pmr_mv_refresh = {\n' + ''.join(f'\tpmr_mv_{short(bk)} = yes\n' for bk in recipe_keys)
+             + ('\tpmr_bo_refresh = yes\n' if shown else '')
              + (share or '\tpmr_mv_sort = yes\n') + '}\n\n')
     # Pat 23:53Z: the Investments cards sorted by AI weight. Each type with a card gets its place in that order,
     # pmr_mv_rk_<b> (0 first, -1 without a card), over pmr_mv_n places; methods_view_gui's AI sort shows place k's card
@@ -4348,6 +4381,9 @@ def pair_options(bk, pair):
 # type's recipe count, MV_COLS), recipe columns at the same x, the AI weight at the same x.
 CARD_W, CARD_PAD, ICON_W, ICON_GAP = 540, 8, 60, 8
 AI_W = 100   # the AI weight column's text
+BUY_ICON = 20  # an owner's icon in the AI column's who-buys cells
+CO_SIZE = 30   # the company's round icon on a card's building icon
+AI_H = 82      # the AI column's height: label, weight and two rows of who-buys cells
 
 
 def mv_cols(recipe_keys, pair_ui):
@@ -4360,26 +4396,60 @@ def ai_column(bk, h, x, ind):
     as the investors pick by weight. The weight is the type's AI value (pmr_ai_value_<b>: vanilla's with the policy and
     foreign-or-domestic additions, plus vanilla's profit and output terms at the country's average for the type, Pat
     21:10Z/21:32Z) at the state the grid's prices come from, times its priority group's slider (pmr_ipw_<group>). The
-    breakdown is in the tooltip."""
+    breakdown is in the tooltip. Under it (Pat 2026-10-19 00:01Z), who would buy a new private level, two by two:
+    each owner's icon and share (private_investment.buyer_odds), its name the tooltip."""
     b = short(bk)
-    i1, i2 = ind + '\t', ind + '\t\t'
+    i1, i2, i3, i4 = ind + '\t', ind + '\t\t', ind + '\t\t\t', ind + '\t\t\t\t'
+    cells = ''
+    for r in range(2):
+        cells += f'{i2}flowcontainer = {{\n'
+        for key, icon, name in private_investment.BUYERS[2 * r:2 * r + 2]:
+            cells += (f'{i3}flowcontainer = {{\n{i4}minimumsize = {{ {AI_W // 2} -1 }}\n{i4}spacing = 3\n'
+                      f'{i4}tooltip = "{name}"\n{i4}using = tooltip_above\n'
+                      f'{i4}icon = {{\n{i4}\tsize = {{ {BUY_ICON} {BUY_ICON} }}\n{i4}\ttexture = "{icon}"\n{i4}}}\n'
+                      f'{i4}textbox = {{\n{i4}\tautoresize = yes\n{i4}\tparentanchor = vcenter\n{i4}\talign = left|nobaseline\n'
+                      f'{i4}\tusing = fontsize_small\n{i4}\ttext = "PMR_MV_BUY_{key}_{b}"\n{i4}}}\n{i3}}}\n')
+        cells += f'{i2}}}\n'
     return (f'{ind}icon = {{\n{i1}position = {{ {x - 8} {CARD_PAD} }}\n{i1}size = {{ 1 {h - 2 * CARD_PAD} }}\n'
             f'{i1}texture = "{methods_row.WHITE}"\n{i1}color = {{ 1 1 1 0.15 }}\n{i1}alwaystransparent = yes\n{ind}}}\n'
             f'{ind}flowcontainer = {{\n{i1}position = {{ {x} 0 }}\n{i1}parentanchor = vcenter\n{i1}direction = vertical\n'
-            f'{i1}tooltip = "PMR_MV_AI_TT_{b}"\n{i1}using = tooltip_above\n'
-            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_small\n'
-            f'{i2}text = "PMR_MV_AI_LABEL"\n{i1}}}\n'
-            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}align = left|nobaseline\n{i2}using = fontsize_large\n'
-            f'{i2}text = "PMR_MV_AI_{b}"\n{i1}}}\n{ind}}}\n')
+            f'{i1}flowcontainer = {{\n{i2}direction = vertical\n'
+            f'{i2}tooltip = "PMR_MV_AI_TT_{b}"\n{i2}using = tooltip_above\n'
+            f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n{i3}using = fontsize_small\n'
+            f'{i3}text = "PMR_MV_AI_LABEL"\n{i2}}}\n'
+            f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n{i3}using = fontsize_large\n'
+            f'{i3}text = "PMR_MV_AI_{b}"\n{i2}}}\n{i1}}}\n'
+            + cells + f'{ind}}}\n')
 
 
-def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None):
+def company_badge(bk, h, ind):
+    """The card's company mark (company_mark): vanilla's static selection outline round the card, and its company's
+    icon, a round button that opens the company (as production_methods.gui's company_owned_button), on the building
+    icon's corner."""
+    b = short(bk)
+    on = methods_row.gt(mv_read(f'pmr_mv_cf_{b}'), 0)
+    i1, i2 = ind + '\t', ind + '\t\t'
+    return (f'{ind}icon = {{\n{i1}visible = "[{on}]"\n{i1}size = {{ 100% 100% }}\n'
+            f'{i1}texture = "gfx/interface/selections/selected_square_selection.dds"\n{i1}spriteType = Corneredtiled\n'
+            f'{i1}spriteborder = {{ 22 22 }}\n{i1}texture_density = 2\n{i1}alwaystransparent = yes\n{ind}}}\n'
+            f'{ind}button_icon_round = {{\n{i1}visible = "[{on}]"\n'
+            f'{i1}position = {{ {CARD_PAD + ICON_W - CO_SIZE + 6} {h - CARD_PAD - CO_SIZE + 4} }}\n'
+            f'{i1}size = {{ {CO_SIZE} {CO_SIZE} }}\n'
+            f'{i1}datacontext = "[{MV_COUNTRY}.MakeScope.Var(\'pmr_mv_co_{b}\').GetCharacter]"\n'
+            f'{i1}datacontext = "[Character.GetCompany]"\n'
+            f'{i1}onclick = "[InformationPanelBar.OpenCompanyPanel(Company.Self)]"\n'
+            f'{i1}tooltip = "GO_TO_BUTTON_COMPANY"\n{i1}using = tooltip_above\n'
+            f'{i1}blockoverride "icon" {{\n{i2}texture = "[Company.GetCompanyType.GetIcon]"\n{i1}}}\n'
+            f'{i1}blockoverride "icon_size" {{\n{i2}size = {{ 75% 75% }}\n{i1}}}\n{ind}}}\n')
+
+
+def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=None):
     """One card per building type the player has (pmr_mv_card_<b>): the building's icon, then its grid, the recipe x
     automation pairs where the type has them (Pat, 2026-10-18 18:17Z) or one row of recipes, every grid box MV_COLS
     columns wide so all cards line up (Pat 23:22Z), with the AI weight beside it (ai_column). pmr_methods_cards stands in
     each item of the side Buildings panel's list (patch_browser_tabs), under the item's building type, and makes only
     that type's card: a card per item per type would be thousands of widgets."""
-    pair_ui, ai = pair_ui or {}, ai or {}
+    pair_ui, ai, companies = pair_ui or {}, ai or {}, companies or {}
     cols = mv_cols(recipe_keys, pair_ui)
     box_w = methods_row.pairs_size(cols, 1)[0]
     ai_x = CARD_PAD + ICON_W + ICON_GAP + box_w + 14
@@ -4402,13 +4472,14 @@ def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None):
                 cols=cols)
             gh += (6 if gh else 0) + methods_row.pairs_size(cols, len(pr['options']))[1]
         grid = f'\t\t\tflowcontainer = {{\n\t\t\t\tdirection = vertical\n\t\t\t\tspacing = 6\n{grid}\t\t\t}}\n'
-        h = max(methods_row.ROW_H, gh) + 2 * CARD_PAD
+        h = max(methods_row.ROW_H, gh, AI_H if bk in ai else 0) + 2 * CARD_PAD
         cards += (f'\ttype pmr_mv_card_{b} = widget {{\n\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
                   f'\t\tsize = {{ {CARD_W} {h} }}\n'
                   '\t\tbackground = {\n\t\t\tusing = entry_bg_simple\n\t\t}\n'
                   f'\t\tflowcontainer = {{\n\t\t\tposition = {{ {CARD_PAD} {CARD_PAD} }}\n\t\t\tspacing = {ICON_GAP}\n'
                   + methods_row.type_icon(bk, '\t\t\t') + grid + '\t\t}\n'
-                  + (ai_column(bk, h, ai_x, '\t\t') if bk in ai else '') + '\t}\n\n')
+                  + (ai_column(bk, h, ai_x, '\t\t') if bk in ai else '')
+                  + (company_badge(bk, h, '\t\t') if bk in companies else '') + '\t}\n\n')
         same = f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
         picks += (f'\t\tflowcontainer = {{\n\t\t\tdatamodel = "[DataModelRepeatedItem(Select_int32({same}, '
                   "'(int32)1', '(int32)0'))]\"\n"
@@ -4452,12 +4523,12 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
     return ''.join(out)
 
 
-def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
+def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None):
     loc = [' PMR_MV_HEADER:0 "Production Methods"',   # Pat 21:53Z, with no explainer text under it
            ' PMR_BB_TAB_INVEST:0 "Investments"',
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
            ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
-           ' PMR_MV_AI_LABEL:0 "AI weight"']
+           ' PMR_MV_AI_LABEL:0 "AI weight"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_POL_WORKS:0 "Expanded Works"']
     for bk, keys in recipe_keys.items():
         b = short(bk)
         if (pair_ui or {}).get(bk, {}).get('split'):
@@ -4477,9 +4548,24 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None):
         policy = f'Subtract_CFixedPoint(Subtract_CFixedPoint({aiv}, {aib}), {term})'
         # Pat 21:53Z: less text, on the card and in the tooltip; 23:22Z: the card shows the share of all weights
         loc.append(f' PMR_MV_AI_{b}:0 "#bold [{mv_read(f"pmr_mv_sh_{b}")}|%1]#!"')
+        loc += [f' PMR_MV_BUY_{key}_{b}:0 "[{mv_read(f"pmr_mv_b{key}_{b}")}|%0]"' for key, *_r in private_investment.BUYERS]
+        # Pat 2026-10-19 00:01Z: Policy opens a nested tooltip with each policy's part, the ones not 0; Expanded Works
+        # (test build) is what is left of Policy once the parts are taken off
+        rest = policy
+        pol = [f'#bold $PMR_MV_POLICY$ [{policy}|=+0]#!']
+        for key, name in (parts or {}).get(bk, []):
+            if name:
+                val = mv_read(f'pmr_mv_p{key}_{b}')
+                rest = f'Subtract_CFixedPoint({rest}, {val})'
+            else:
+                val, name = rest, 'PMR_MV_POL_WORKS'
+            loc.append(f' PMR_MV_POL_{key}_{b}:0 "\\n${name}$: [{val}|=+0]"')
+            nonzero = f"Or(GreaterThan_CFixedPoint({val}, '(CFixedPoint)0.5'), LessThan_CFixedPoint({val}, '(CFixedPoint)-0.5'))"
+            pol.append(f"[SelectLocalization({nonzero}, 'PMR_MV_POL_{key}_{b}', 'PMR_EMPTY')]")
+        loc.append(f' PMR_MV_POL_TT_{b}:0 "' + ''.join(pol) + '"')
         loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold AI weight [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
                    f'Base: [{aib}|0]\\n'
-                   f'Policy: [{policy}|=+0]\\n'
+                   f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],PMR_MV_POL_TT_{b} $PMR_MV_POLICY$#!: [{policy}|=+0]\\n'
                    f'Profit and output: [{term}|=+0]\\n'
                    f'Priority: ×[{mult}|2] from $PMR_IPW_GROUP_{group}$"')
     for bk, pr in (pair_ui or {}).items():
@@ -4847,6 +4933,13 @@ def patch_browser_tabs(text, types):
          '\t\t\t\t\t\t\tbuildings_production_method_item = {\n'
          f'\t\t\t\t\t\t\t\tblockoverride "visible" {{\n\t\t\t\t\t\t\t\t\tvisible = "[And({has_rows}, {hidden})]"  # PMR\n'
          '\t\t\t\t\t\t\t\t}\n')
+    # the policy window pops out to the right of the panel, under the map mode button (Pat 2026-10-19 00:06Z); the
+    # panel's root allows children outside it (default_block_window allow_outside)
+    modes = ('\t\tblockoverride "map_modes_button" {\n\t\t\tmap_modes_single_button_minimized = {\n'
+             '\t\t\t\tdatacontext = "[BuildingBrowserPanel.GetMapModeList]"\n'
+             '\t\t\t\tusing = map_modes_button_position\n\t\t\t}\n')
+    once(modes, modes + f'\t\t\tpmr_policy_popout = {{  # PMR\n\t\t\t\tvisible = "[{shown}]"\n'
+         '\t\t\t\tposition = { 622 150 }\n\t\t\t}\n')
     # vanilla's lists of buildings that could be built stay on Buildings
     for f in ('is_development', 'is_rural', 'is_urban'):
         once(f'\t\t\t\tbuilding_panel_potential_buildings = {{\n\t\t\t\t\tvisible = "[BuildingBrowserPanel.IsFilterYes(\'{f}\')]"\n',

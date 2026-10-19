@@ -1,4 +1,4 @@
-# PMR run sheet: Production Methods cards sorted by AI weight, Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: the policy window pops out, research grants paid every week, who buys each type, company marks and a nested Policy tooltip on the cards, Production Methods cards sorted by AI weight, Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,27 +10,46 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the Production Methods cards sorted by AI weight (q33, test mod; a new game is needed)
+## Latest: the policy window, weekly research grants, who buys, company marks, nested Policy, AI weight sort (q33, test mod; a new game is needed)
 
-From the build thread, after your 23:53Z message and screenshot on q32.
+From the build thread, after your 23:53Z to 00:06Z messages on q32.
 
-- The game's own list can only sort by name, size, building type and productivity, so on Investments there is a fifth
-  sort button, AI weight. It shows the cards from the heaviest AI weight down. The search and filters don't apply to
-  that order, so they step aside while it is on; any other sort button brings them back with the game's order.
-- Everything from q32 below is still to check.
+- Add Policy now opens the policy window to the right of the Buildings panel instead of down the list, and its
+  "One policy at a time" tooltip is gone.
+- A research grant costs £500 a level each week for tier I (£1,000 tier II, £1,500 tier III), paid from the
+  investment pool for 52 paid weeks (12 months). A week the pool can't cover isn't paid and the grant waits. The
+  bar is the game's own progress bar; its tooltip gives the weekly cost. The Private tab shows "Research grants" under
+  the pool while one runs.
+- Under each card's AI weight: who would buy a new private level, as Manor Houses, Local Shop Owners, Financial
+  Districts and Company HQs. This is PMR's estimate from the game's own rules (00_ai.txt and the owners'
+  investment_scores); the game's pool shares by owner can't be read, so levels stand in for them.
+- A card whose type one of your companies works gets an outline and that company's icon on the building icon.
+- The AI weight tooltip's Policy word opens a nested tooltip with each policy's part.
+- On Investments a fifth sort button, AI weight, shows the cards from the heaviest AI weight down. The search and
+  filters step aside while it is on; any other sort button brings them back.
 
 1. Start a new game on the PMR Test playset as France. Open the Buildings panel from the left sidebar and click
    Investments.
-2. Click the AI weight sort button. Scroll through the cards.
-3. Click Name, then AI weight again.
-4. Then do q32's steps below.
-5. Close the game and tell the build thread; it reads debug.log and error.log.
+2. Click Add Policy. Close the window with its X.
+3. Hover a card's AI weight, then hover the word Policy in that tooltip. Look at the four owner icons under the AI
+   weights and hover one. Find a card with a company icon on its building icon and click the icon.
+4. Click the AI weight sort button and scroll; click Name, then AI weight again.
+5. Take the "PMR test: … Culture points for each of your companies" decision, open a company with a goods line (Company Culture), and buy the first
+   goods tier. Hover its bar. Unpause and play three weeks, then open the construction panel's Private tab.
+6. Then do q32's steps below.
+7. Close the game and tell the build thread; it reads debug.log and error.log.
 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
-| S2 | Step 2 | The AI weight button is highlighted, the search and filters are gone, and the cards run from the highest AI weight percentage down; every card you had in step 1 is there | No cards at all: each slot couldn't read its own place in the list (error.log naming `GetIndexInDataModel` or `pmr_methods_slot`); tell the build thread. Cards in the old order: the sort never ran (debug.log `MV_SHARE` line: each `type=weight/share/place` should have places 0, 1, 2... by falling weight) |
-| S3 | Step 3 | Name brings back the filters and the game's alphabetical order; AI weight sorts again | The filters stay hidden after Name: the button didn't clear the AI order; tell the build thread |
-| E6 | error.log | No line naming `pmr_mv_sort`, `pmr_mv_rk`, `pmr_mv_n`, `pmr_bb_mv_ai` or `pmr_methods_slot` | Any such line: that part never ran, and S2-S3 are not results |
+| P4 | Step 2 | A window with France's economic system's policies opens to the right of the panel, under the map mode button; the X closes it | Nothing opens: the click never set the window's flag or the panel won't draw outside itself; tell the build thread, error.log naming `pmr_policy_popout` or `pmr_policy_window` says which |
+| N1 | Step 3 | Policy is underlined; hovering it shows "Policy" with its total and one line per policy part that isn't 0 (none on 1 January without a policy) | No underline: the nested tooltip markup isn't read in this tooltip; tell the build thread |
+| B1 | Step 3 | Four icons with percentages under each AI weight; on light industry (no collectivization) Local Shop Owners reads 0%, Manor Houses 0%, Financial Districts and Company HQs share the rest. debug.log has an `MV_BUYERS` line per refresh with `type=mh/self/fd/ch` shares | All four 0% everywhere: `MV_BUYERS` missing (the refresh never ran, error.log naming `pmr_bo_refresh`) or `mhl=0;fdl=0` with every share 0 (the owners' scores read 0); tell the build thread |
+| C1 | Step 3 | Cards for types your companies work (textiles, food, iron, ...) have an outline and a round company icon; clicking it opens that company | Outline without an icon: the company couldn't be reached through its executive; no outline anywhere: France has no company working those types yet, which is fine on 1 January |
+| S2 | Step 4 | The AI weight button is highlighted, the search and filters are gone, and the cards run from the highest AI weight percentage down; every card is there | No cards at all: each slot couldn't read its own place in the list (error.log naming `GetIndexInDataModel` or `pmr_methods_slot`). Cards in the old order: the sort never ran (the `MV_SHARE` line's `type=weight/share/place` should have places 0, 1, 2... by falling weight) |
+| S3 | Step 4 | Name brings back the filters and the game's alphabetical order; AI weight sorts again | The filters stay hidden after Name: the button didn't clear the AI order |
+| G3 | Step 5 | The grant's bar is the game's default progress bar, as on the construction queue, with "Grant 0 / 12 months"; its tooltip reads "£X a week", "N levels × £500" and "From the investment pool" | The old green bar: the old files are still installed |
+| G4 | Step 5 | A `CC_GRANT_WEEK` line each week with `paid=1`, `gweek=` the weekly cost and `pool_before` minus `pool_after` close to `gweek`; the Private tab shows "Research grants -£X weekly" under the pool | No `CC_GRANT_WEEK` line after a week: the weekly clock never started (error.log naming `pmr_cc.1` or `pmr_cc_gclock`). `paid=0`: the pool held less than a week's cost |
+| E6 | error.log | No line naming `pmr_mv_sort`, `pmr_mv_rk`, `pmr_bo_`, `pmr_mv_co_`, `pmr_cc_grant_week`, `pmr_cc_pool_read` or `pmr_policy_popout` | Any such line: that part never ran, and the rows above it are not results |
 
 ## Earlier: Production Methods cards in one set of columns, AI weight as a share, base prices at game start (q32, test mod; seen 2026-10-18 23:53Z on 1 January)
 

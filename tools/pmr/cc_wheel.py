@@ -470,17 +470,16 @@ def charter_plate(k):
 
 
 def grant_gui(ln, t, x, y):
-    """A goods tier's research grant while it runs (state 6): the vanilla green bar under the card, filling month by
-    month (BUILD-SPEC section 5; Pat 22:28Z: the bar alone). Drawn over everything, on a dark plate."""
+    """A goods tier's research grant while it runs (state 6): vanilla's progress bar (default_progressbar_horizontal,
+    as the construction queue and the research bar; Pat 2026-10-19 00:04Z "the normal v3 types used") under the card,
+    filling week by paid week, its tooltip the weekly cost (Pat 00:04Z: "hover over explaining the costs")."""
     bw = CW - 20
-    bar_value = f'FixedPointToFloat({V("pmr_cc_grm")})'
-    return (f'widget = {{\n{_vis(ST(ln.key, t, 6))}position = {{ {x + NODE_W - CW - 2} {y + NODE_H + 8} }}\n'
-            f'size = {{ {bw + 24} 70 }}\n'
-            f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{TEX}/cc_card.dds"\n{_rgb((20, 24, 26), 0.92)}alwaystransparent = yes\n}}\n'
-            f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{TEX}/cc_outline.dds"\n{_rgb((120, 108, 84), 0.8)}alwaystransparent = yes\n}}\n'
-            f'green_progressbar_horizontal = {{\nposition = {{ 12 12 }}\nsize = {{ {bw} 46 }}\n'
-            f'blockoverride "values" {{\nmin = 0\nmax = {cc.GRANT_MONTHS}\nvalue = "[{bar_value}]"\n}}\n}}\n'
-            f'textbox = {{\nposition = {{ 12 12 }}\nsize = {{ {bw} 46 }}\nalign = center|nobaseline\nfontsize = 23\n'
+    bar_value = f'FixedPointToFloat({V("pmr_cc_grw")})'
+    return (f'default_progressbar_horizontal = {{\n{_vis(ST(ln.key, t, 6))}'
+            f'position = {{ {x + NODE_W - CW + 8} {y + NODE_H + 12} }}\nsize = {{ {bw} 46 }}\n'
+            'tooltip = "PMR_CC_GRANT_TT"\n'
+            f'blockoverride "values" {{\nmin = 0\nmax = {cc.GRANT_WEEKS}\nvalue = "[{bar_value}]"\n}}\n'
+            f'textbox = {{\nsize = {{ 100% 100% }}\nalign = center|nobaseline\nfontsize = 23\n'
             'text = "PMR_CC_GRANT_BAR"\nalwaystransparent = yes\n}\n}\n')
 
 

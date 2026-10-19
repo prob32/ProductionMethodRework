@@ -1611,7 +1611,7 @@ def policy_card(ind):
               f'{i2}new_principle_slot = {{\n{i3}parentanchor = hcenter\n'
               f'{i3}blockoverride "onclick" {{\n{i3}\tonclick = "[GetVariableSystem.Set(\'{PICK}\', \'yes\')]"\n'
               f'{i3}\tenabled = "[{avail}]"\n{i3}}}\n'
-              f'{i3}blockoverride "slot_tooltip" {{\n{i3}\ttooltip = "PMR_POLICY_ADD_TT"\n{i3}}}\n'
+              f'{i3}blockoverride "slot_tooltip" {{}}\n'
               f'{i3}blockoverride "slot_text" {{\n{i3}\ttext = "PMR_POLICY_ADD"\n{i3}}}\n{i2}}}\n'
               f'{i2}textbox = {{\n{i3}visible = "[Not({avail})]"\n{i3}parentanchor = hcenter\n{i3}autoresize = yes\n'
               f'{i3}multiline = yes\n{i3}max_width = 240\n{i3}align = hcenter|nobaseline\n{i3}using = fontsize_small\n'
@@ -1734,7 +1734,7 @@ def sv_on(name):
 def policy_block():
     """Pat, 2026-10-18 18:40Z: the economic law and policy cards and the investment priorities, moved from the Private
     tab to the top of the side Buildings panel's Investments tab (generate.py patch_browser_tabs; Pat 21:21Z), one
-    under the other at the panel's width, with the policy window opening under them."""
+    under the other at the panel's width; the policy window is pmr_policy_popout, beside the panel."""
     i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
     law = f"{COUNTRY}.GetActiveLawFromGroup('lawgroup_economic_system')"
     law_card = card(i3, card_column(i3 + '\t', card_title('[Law.GetTexture]', '[Law.GetNameNoFormatting]', i3 + '\t\t')
@@ -1757,7 +1757,10 @@ def policy_block():
         + fd_row(i3) +
         f'{i3}widget = {{\n{i3}\tsize = {{ 540 6 }}\n{i3}}}\n'
         + ''.join(priority_row(g, i3) for g, *_r in GROUPS) + f'{i2}}}\n{i1}}}\n'
-        # the policy window, under the cards while it is open
+        + '\t}\n\n'
+        # Pat 2026-10-19 00:06Z ("i can't click get a pop out and add"): the policy window pops out beside the
+        # side panel (generate.py patch_browser_tabs puts this in the panel's root), not down the scrolled list
+        '\ttype pmr_policy_popout = container {\n'
         + ''.join(f'{i1}pmr_policy_window_{lw} = {{}}\n' for lw in policy_laws())
         + '\t}\n\n')
 
@@ -1767,6 +1770,18 @@ def ai_groups(game):
     fails if one lacks it), so the Owners' Methods tab can show each row's AI weight."""
     keys = [k for k, *_r in GROUPS]
     return {f'building_{s}': keys[g] for s, g, _c in invest_types(game)}
+
+
+def grant_line(ind):
+    """Under the pool, while a research grant runs: the week's grants paid from it (pmr_cc.1 sums pmr_cc_gweek and
+    zeroes it once no grant runs)."""
+    on = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_cc_gweek').GetValue, '(CFixedPoint)0')"
+    i1, i2 = ind + '\t', ind + '\t\t'
+    return (f'{ind}widget = {{\n{i1}visible = "[{on}]"\n{i1}size = {{ 540 34 }}\n{i1}parentanchor = hcenter\n'
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}text = "PMR_PI_GRANTS"\n{i2}align = left|nobaseline\n'
+            f'{i2}parentanchor = vcenter\n{i2}margin_left = 20\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}autoresize = yes\n{i2}text = "PMR_PI_GRANTS_VALUE"\n{i2}align = right|nobaseline\n'
+            f'{i2}parentanchor = right|vcenter\n{i2}margin_right = 20\n{i1}}}\n{ind}}}\n')
 
 
 def private_tab():
@@ -1800,6 +1815,7 @@ def private_tab():
         f'{i1}\t\traw_text = "#v @money![{COUNTRY}.GetInvestmentPool|D+]#! ([{COUNTRY}.GetInvestmentPoolChange|=+D])"\n'
         f'{i1}\t\tparentanchor = right|vcenter\n{i1}\t\talign = right|nobaseline\n{i1}\t\tmargin_right = 20\n'
         f'{i1}\t\tusing = investment_pool_tooltip_with_graph\n{i1}\t}}\n{i1}}}\n'
+        + (grant_line(i1) if GRANT_LINE else '') +
         f'{i1}textbox = {{\n{i1}\tvisible = "[{COUNTRY}.ShowInvestmentPoolPredictedNextBuilding]"\n{i1}\tparentanchor = hcenter\n'
         f'{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 10 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = hcenter|nobaseline\n{i1}\ttext = "NEXT_PRIVATE_CONSTRUCTION"\n'
@@ -1918,6 +1934,9 @@ def patch_retool_ai(text, btype, parent, invest):
 
 # Set by generate.py in test builds: company types -> lines that end pmr_ai_value_<b> (company_culture.ai_value_tail).
 AI_TAIL = None
+# Set by generate.py in test builds: the Private tab shows the week's research grants under the pool (Company Culture,
+# company_culture.py; Pat 2026-10-19 00:04Z "also where is the cost?")
+GRANT_LINE = False
 
 # Pat, 2026-10-18 21:10Z: "Can we have this ai weighting dynamic based on its profitability average?", and 21:32Z:
 # "Whatever the true basis for ai scoring is should be reflected." Every investable type with PMR's profit pick
@@ -1927,6 +1946,106 @@ AI_TAIL = None
 # adds the same terms for the state it scores, so profit counts twice: locally and as the country's average.
 PROFIT_TYPES = set()
 AI_FLOOR = 100
+
+
+def ai_parts(bk, owners, invest):
+    """The policy parts of building type bk's pmr_ai_value_<b> (patch_ai_value), as their script value keys
+    (pmr_ai_<key>_<b>) with their names' loc keys, in the order they are added."""
+    out = []
+    if bk in owners:
+        out += [('corp', 'PMR_POLICY_corporations'), ('titans', 'PMR_POLICY_titans')]
+    if bk in invest:
+        out += [('fd', 'PMR_FD_TITLE'), ('bulls', 'PMR_POLICY_bulls')]
+    return out
+
+
+# Pat 2026-10-19 00:01Z: "can we get likelihood of who buys MH,Self,FD or CH?" Each Investments card shows who a new
+# private level of the type would go to, as vanilla's autonomous investment picks an owner (1.14.5 00_ai.txt):
+# self-owned first, AUTONOMOUS_INVESTMENT_SELF_INVESTMENT_CHANCE_FROM_COLLECTIVIZATION (0.5) x the allowed
+# collectivization of the type's building groups (always, at total collectivization) plus the self-investment chance
+# modifiers; then a company that lists the type, OWNER_COMPANY_EXPANSION_CHANCE_MULTIPLIER (0.5) of what is left (its
+# scaling by the companies' share of the pool against their history can't be read, so x 1); then a Manor House or a
+# Financial District by its investment_scores for the type's group x max(its share, AUTONOMOUS_INVESTMENT_MIN_OWNERSHIP_
+# BUILDING_INVESTMENT_SHARE 0.25), the share read as its levels against both (the pool share itself can't be read).
+BUYERS = [   # key, icon, name (loc key)
+    ('mh', 'gfx/interface/icons/building_icons/building_manor_houses.dds', 'building_manor_house'),
+    ('self', 'gfx/interface/icons/production_method_icons/worker_cooperative.dds', 'PMR_PO_NAME_self'),
+    ('fd', 'gfx/interface/icons/building_icons/building_financial_district.dds', 'building_financial_district'),
+    ('ch', 'gfx/interface/icons/building_icons/building_company_hq.dds', 'building_company_headquarter'),
+]
+BUYER_OWNERS = {'mh': 'building_manor_house', 'fd': 'building_financial_district'}
+SELF_FROM_COLLECTIVIZATION, COMPANY_CHANCE, MIN_SHARE = 0.5, 0.5, 0.25
+
+
+def buyer_odds(game, types, owners):
+    """types: the building types with a card and an AI weight; owners: building type -> company types listing it
+    (company_owners). Returns (script values, the country-scope effect pmr_bo_refresh), which set
+    pmr_mv_b<key>_<b> for each type (BUYERS keys; shares of 1)."""
+    btype, parent = building_groups(game)
+    mods = ''.join(open(os.path.join(game, 'common', 'modifier_type_definitions', n), encoding='utf-8-sig').read()
+                   for n in sorted(os.listdir(os.path.join(game, 'common', 'modifier_type_definitions'))))
+    coll = set(re.findall(r'^building_group_(bg_\w+?)_allowed_collectivization_add\s*=', mods, re.M))
+    selfm = set(re.findall(r'^building_group_(bg_\w+?)_self_investment_chance_add\s*=', mods, re.M))
+    vals = ('# Country scope. Investments cards: who buys a new private level (private_investment.buyer_odds). Each owner\n'
+            '# building\'s investment_scores, copied from vanilla, and its levels in the country.\n')
+    scores = {}
+    for key, bk in BUYER_OWNERS.items():
+        t = open(os.path.join(game, 'common', 'buildings', '11_private_infrastructure.txt'), encoding='utf-8-sig').read()
+        blk = next((t[o:c] for k, _s, o, c in top_blocks(t) if k == bk), '')
+        m = re.search(r'\n\s*investment_scores\s*=\s*\{', blk)
+        if not m:
+            raise SystemExit(f'buyer_odds: {bk} has no investment_scores')
+        inv = blk[m.end() - 1:block_end(blk, m.end() - 1) + 1]
+        for gm in re.finditer(r'group\s*=\s*"?(bg_\w+)"?\s*score\s*=\s*\{', inv):
+            so = gm.end() - 1
+            body = inv[so + 1:block_end(inv, so)]
+            name = f'pmr_bo_{key}_{gm.group(1)}'
+            scores.setdefault(key, {})[gm.group(1)] = name
+            vals += f'{name} = {{' + body.rstrip() + '\n}\n'
+        vals += (f'pmr_bo_{key}_levels = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{ is_building_type = {bk} }}\n'
+                 '\t\tadd = this.level\n\t}\n}\n')
+    eff = ('pmr_bo_refresh = {\n'
+           + ''.join(f'\tset_variable = {{ name = pmr_bo_{k}l value = pmr_bo_{k}_levels }}\n' for k in BUYER_OWNERS)
+           + '\tset_variable = { name = pmr_bo_tl value = { value = var:pmr_bo_mhl add = var:pmr_bo_fdl } }\n'
+           + ''.join(f'\tset_variable = {{ name = pmr_bo_{k}s value = {MIN_SHARE} }}\n'
+                     f'\tif = {{ limit = {{ var:pmr_bo_tl > 0 }} set_variable = {{ name = pmr_bo_{k}s value = '
+                     f'{{ value = var:pmr_bo_{k}l divide = var:pmr_bo_tl min = {MIN_SHARE} }} }} }}\n' for k in BUYER_OWNERS))
+    for bk in types:
+        b = bk[len('building_'):]
+        chain, g = [], btype.get(bk)
+        while g:
+            chain.append(g)
+            g = parent.get(g)
+        add = lambda names: ''.join(f' add = modifier:{n}' for n in names)
+        eff += (f'\t# {bk}: {" > ".join(chain)}\n'
+                f'\tset_variable = {{ name = pmr_bo_c value = {{ value = 0{add(f"building_group_{x}_allowed_collectivization_add" for x in chain if x in coll)} }} }}\n'
+                f'\tset_variable = {{ name = pmr_mv_bself_{b} value = {{ value = var:pmr_bo_c multiply = {SELF_FROM_COLLECTIVIZATION} '
+                f'add = modifier:building_self_investment_chance_add{add(f"building_group_{x}_self_investment_chance_add" for x in chain if x in selfm)} '
+                'min = 0 max = 1 } }\n'
+                f'\tif = {{ limit = {{ var:pmr_bo_c >= 1 }} set_variable = {{ name = pmr_mv_bself_{b} value = 1 }} }}\n'
+                f'\tset_variable = {{ name = pmr_mv_bch_{b} value = 0 }}\n')
+        if owners.get(bk):
+            has = ' '.join(f'is_company_type = company_type:{c}' for c in owners[bk])
+            eff += (f'\tif = {{ limit = {{ any_company = {{ OR = {{ {has} }} }} }} set_variable = {{ name = pmr_mv_bch_{b} value = '
+                    f'{{ value = 1 subtract = var:pmr_mv_bself_{b} multiply = {COMPANY_CHANCE} }} }} }}\n')
+        for key in BUYER_OWNERS:
+            sv = next((scores[key][x] for x in chain if x in scores.get(key, {})), None)
+            eff += (f'\tset_variable = {{ name = pmr_bo_w{key} value = {{ value = {sv} multiply = var:pmr_bo_{key}s }} }}\n' if sv
+                    else f'\tset_variable = {{ name = pmr_bo_w{key} value = 0 }}\n')
+        eff += ('\tset_variable = { name = pmr_bo_ws value = { value = var:pmr_bo_wmh add = var:pmr_bo_wfd } }\n'
+                + ''.join(f'\tset_variable = {{ name = pmr_mv_b{key}_{b} value = 0 }}\n' for key in BUYER_OWNERS)
+                + '\tif = {\n\t\tlimit = { var:pmr_bo_ws > 0 }\n'
+                f'\t\tset_variable = {{ name = pmr_bo_r value = {{ value = 1 subtract = var:pmr_mv_bself_{b} '
+                f'subtract = var:pmr_mv_bch_{b} divide = var:pmr_bo_ws }} }}\n'
+                + ''.join(f'\t\tset_variable = {{ name = pmr_mv_b{key}_{b} value = {{ value = var:pmr_bo_w{key} multiply = var:pmr_bo_r }} }}\n'
+                          for key in BUYER_OWNERS) + '\t}\n')
+    log = ';'.join(f"{bk[len('building_'):]}=" + '/'.join(f"[THIS.Var('pmr_mv_b{key}_{bk[len('building_'):]}').GetValue|2]"
+                                                           for key, *_r in BUYERS) for bk in types)
+    eff += ('\tif = {\n\t\tlimit = { is_player = yes }\n'
+            '\t\tdebug_log = "PMR;rec=MV_BUYERS;date=[TimeKeeper.GetCurrentDate.GetString];'
+            "mhl=[THIS.Var('pmr_bo_mhl').GetValue|0];fdl=[THIS.Var('pmr_bo_fdl').GetValue|0];order=mh/self/fd/ch;"
+            + log + '"\n\t}\n}\n\n')
+    return vals, eff
 
 
 def patch_ai_value(text, owners, invest):
@@ -1958,21 +2077,26 @@ def patch_ai_value(text, owners, invest):
             inner = f'\tvalue = {BASE_AI_VALUE}\n'
             edits.append((c, c, f'\t# PMR: vanilla default {BASE_AI_VALUE} + policy and focus\n\tai_value = {name}\n'))
         b = k[len('building_'):]
-        extra = ''
+        extra, parts = '', ''
+        # each policy's share is its own script value, pmr_ai_<part>_<b> (AI_PARTS), so the Investments tab's AI
+        # weight tooltip can list them (Pat 2026-10-19 00:01Z: "nested tool tip hover overs for the policy values")
+        def part(key, limit, add):
+            nonlocal extra, parts
+            parts += (f'pmr_ai_{key}_{b} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{\n{limit}\t\t}}\n'
+                      f'\t\tadd = {add}\n\t}}\n}}\n')
+            extra += f'\tadd = pmr_ai_{key}_{b}\n'
         if k in owners:
             has = ''.join(f'\t\t\t\t\thas_company = company_type:{ct}\n' for ct in owners[k])
-            for card, add in (('corporations', f'{CORP_BONUS}'),
-                              ('titans', f'{{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT}\n'
-                                         f'\t\t\tadd = pmr_ai_base_{b}\n\t\t\tmultiply = 0.5\n\t\t}}')):
-                extra += (f'\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
-                          f'\t\t\t\thas_modifier = pmr_policy_{card}\n\t\t\t\tOR = {{\n{has}\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n'
-                          f'\t\tadd = {add}\n\t}}\n')
+            for key, card, add in (('corp', 'corporations', f'{CORP_BONUS}'),
+                                   ('titans', 'titans', f'{{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT}\n'
+                                                        f'\t\t\tadd = pmr_ai_base_{b}\n\t\t\tmultiply = 0.5\n\t\t}}')):
+                part(key, f'\t\t\towner ?= {{\n\t\t\t\thas_modifier = pmr_policy_{card}\n\t\t\t\tOR = {{\n{has}\t\t\t\t}}\n\t\t\t}}\n', add)
         if k in invest:
-            extra += ('\tif = {\n\t\tlimit = {\n\t\t\towner ?= { has_variable = pmr_fd }\n\t\t}\n'
-                      f'\t\tadd = {{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT}\n'
-                      f'\t\t\tadd = pmr_ai_base_{b}\n\t\t\tmultiply = pmr_fd_gain\n\t\t}}\n\t}}\n'
-                      '\tif = {\n\t\tlimit = {\n\t\t\towner ?= { has_modifier = pmr_policy_bulls }\n\t\t}\n'
-                      f'\t\tadd = {{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT // 2}\n\t\t}}\n\t}}\n')
+            part('fd', '\t\t\towner ?= { has_variable = pmr_fd }\n',
+                 f'{{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT}\n'
+                 f'\t\t\tadd = pmr_ai_base_{b}\n\t\t\tmultiply = pmr_fd_gain\n\t\t}}')
+            part('bulls', '\t\t\towner ?= { has_modifier = pmr_policy_bulls }\n',
+                 f'{{\n\t\t\tvalue = pmr_ai_earn_{b}\n\t\t\tmultiply = {PROFIT_WEIGHT // 2}\n\t\t}}')
         ladder = ''.join(f'\t\t{"else_if" if j else "if"} = {{\n\t\t\tlimit = {{ b:{k} = {{ earnings >= {e} }} }}\n'
                          f'\t\t\tvalue = {e}\n\t\t}}\n' for j, e in enumerate(EARNINGS_LADDER))
         pf = ''
@@ -1984,7 +2108,7 @@ def patch_ai_value(text, owners, invest):
             extra += AI_TAIL(owners[k])
         values.append(pf + f'pmr_ai_base_{b} = {{\n{inner}}}\n'
                       f'pmr_ai_earn_{b} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{ exists = b:{k} }}\n{ladder}\t}}\n}}\n'
-                      f'{name} = {{\n\tvalue = pmr_ai_base_{b}\n{extra}}}\n')
+                      + parts + f'{name} = {{\n\tvalue = pmr_ai_base_{b}\n{extra}}}\n')
     for a, b, ins in sorted(edits, reverse=True):
         text = text[:a] + ins + text[b:]
     return text, values
@@ -2000,6 +2124,8 @@ def localization(types):
         ' PMR_TAB_GOVERNMENT:0 "Government"',
         ' PMR_TAB_PRIVATE:0 "Private"',
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
+        ' PMR_PI_GRANTS:0 "Research grants"',
+        f' PMR_PI_GRANTS_VALUE:0 "#N @money!-[{COUNTRY}.MakeScope.Var(\'pmr_cc_gweek\').GetValue|D]#! weekly"',
         ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
         ' PMR_RW_EMPTY:0 "No historical data"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
@@ -2018,7 +2144,6 @@ def localization(types):
         f' PMR_IV_ABROAD_TT:0 "#header Foreign#!\\n#v [{var("pmr_iv_for")}|0]#! points (#v [{var("pmr_iv_fsh")}|0%]#!)"',
         ' PMR_IV_NONE:0 ""',
         ' PMR_POLICY_ADD:0 "Add Policy"',
-        ' PMR_POLICY_ADD_TT:0 "One policy at a time, kept 5 years."',
         f' PMR_POLICY_LOCKED:0 "Requires {law}, {lf} or [GetLawType(\'law_agrarianism\').GetName]"',
         ' PMR_POLICY_CHANGE:0 "Change Policy"',
         f' PMR_POLICY_CHANGE_SEL_TT:0 "[SelectLocalization({sv_on("pmr_policy_locked")}, \'PMR_POLICY_CHANGE_LOCK_TT\', '

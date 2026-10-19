@@ -29,9 +29,11 @@ works_effect) sizes the two members from them. A company carries only its highes
 building, so a level is never counted twice. While the variant's extra input is at the price cap those levels fall
 back to the base recipe (the members go to 0).
 
-Research grants (section 5): buying a goods tier starts a grant that runs GRANT_MONTHS on the monthly company tick,
-one at a time per company, paid as it starts from the owner's investment pool: GRANT_COST per level the company
-employs (it can't start while the pool holds less). The tier then unlocks: its marker trait goes on, and the building's next tick blends it in.
+Research grants (section 5): buying a goods tier starts a grant that runs GRANT_WEEKS paid weeks, one at a time per
+company, on a weekly clock per country (event pmr_cc.1): each week the owner's investment pool pays GRANT_COST per
+level the company employs (Pat 2026-10-19 00:06Z); a week the pool can't cover is not paid and the grant waits. It
+can't start while the pool holds less than a week. The tier then unlocks: its marker trait goes on, and the
+building's next tick blends it in.
 
 Points (unchanged since 10-14): each month a company earns prosperity x (1 + employed levels / 50, capped at 2)
 funds; a full bar (100 x (level + 1)^1.8 + 700, HoI4's curve) is one point.
@@ -64,8 +66,10 @@ CAL_VERSION = 4                     # bump to make every company re-read its num
 # ---------------------------------------------------------------------------------------------------------------
 # Numbers Pat hasn't confirmed (BUILD-SPEC section 5 and 7): named so they are easy to change.
 GRANT_MONTHS = 12                       # Pat 21:53Z: 12 months, not 24
-GRANT_COST = (500, 1000, 1500)      # £ per level the company employs, paid from its country's investment pool as a
-                                    # grant starts (Pat 22:28Z: money from the investment pool, not input goods)
+GRANT_WEEKS = 52                        # the same 12 months, counted in paid weeks
+GRANT_COST = (500, 1000, 1500)      # £ per level the company employs, every week the grant runs, from its country's
+                                    # investment pool (Pat 22:28Z: the investment pool, not input goods; 2026-10-19
+                                    # 00:06Z: "a ticking cost of 500 per level every week")
 WORKS_OUT = (0.15, 0.25, 0.40)      # a goods tier's main output over the base method it replaces
 WORKS_IN = (0.05, 0.10, 0.15)       # and its one extra input
 WORKS_STEPS = 40                    # blend steps of the two works members (2.5% of WORKS_*[-1] each)
@@ -731,7 +735,7 @@ def log_line(rec, extra=''):
             "level=[THIS.Var('pmr_cc_level').GetValue|0];pts=[THIS.Var('pmr_cc_pts').GetValue|0];"
             "funds=[THIS.Var('pmr_cc_funds').GetValue|0];cost=[THIS.Var('pmr_cc_cost').GetValue|0];"
             "rate=[THIS.Var('pmr_cc_rate').GetValue|1];"
-            "grant=[THIS.Var('pmr_cc_gr').GetValue|0]/[THIS.Var('pmr_cc_grt').GetValue|0]/[THIS.Var('pmr_cc_grm').GetValue|0];"
+            "grant=[THIS.Var('pmr_cc_gr').GetValue|0]/[THIS.Var('pmr_cc_grt').GetValue|0]/[THIS.Var('pmr_cc_grw').GetValue|0];"
             "g1b=[THIS.Var('pmr_cc_k_g1b').GetValue|0];g2b=[THIS.Var('pmr_cc_k_g2b').GetValue|0];"
             + ';'.join(f"{k}=[THIS.Var('pmr_cc_{k}').GetValue|0]" for k in KEYS) + '"')
 
@@ -745,8 +749,9 @@ KVARS = ['pmr_cc_k_g1b', 'pmr_cc_k_g2b', 'pmr_cc_k_g1g', 'pmr_cc_k_g2g', 'pmr_cc
          'pmr_cc_k_ae1', 'pmr_cc_k_ae2', 'pmr_cc_k_ae3', 'pmr_cc_k_pg']
 STATE_VARS = [f'pmr_cc_st_{ln.key}_{t}' for ln in LINES for t in range(1, ln.tiers + 1)]
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mth',
-             'pmr_cc_prosp', 'pmr_cc_size', 'pmr_cc_gr', 'pmr_cc_grt', 'pmr_cc_grm', 'pmr_cc_fcost', 'pmr_cc_nf',
-             'pmr_cc_xsv', 'pmr_cc_aev', 'pmr_cc_gc1', 'pmr_cc_gc2', 'pmr_cc_gok1', 'pmr_cc_gok2']
+             'pmr_cc_prosp', 'pmr_cc_size', 'pmr_cc_gr', 'pmr_cc_grt', 'pmr_cc_grm', 'pmr_cc_grw', 'pmr_cc_fcost',
+             'pmr_cc_nf', 'pmr_cc_xsv', 'pmr_cc_aev', 'pmr_cc_gc1', 'pmr_cc_gc2', 'pmr_cc_gok1', 'pmr_cc_gok2',
+             'pmr_cc_glv', 'pmr_cc_gpay', 'pmr_cc_gper']
             + [f'pmr_cc_{k}' for k in KEYS] + [f'pmr_cc_pick_{k}' for k in KEYS] + STATE_VARS + KVARS)
 
 
@@ -792,7 +797,7 @@ def effects(p, comps):
              '# pmr_cc_on (calibration version), pmr_cc_funds, pmr_cc_level, pmr_cc_pts (unspent), pmr_cc_cost (funds for\n'
              '# the next point), pmr_cc_rate (funds last month), pmr_cc_<line> (tier completed), pmr_cc_k_* (the company\n'
              '# type\'s numbers: goods-line buildings, goods, name rows, engineers), pmr_cc_gr / grt / grm (the research grant\n'
-             '# running: line code, tier, months), pmr_cc_n_<arm>, pmr_cc_nf, pmr_cc_nfirst (founding cultures and nodes),\n'
+             '# running: line code, tier, months; pmr_cc_grw its paid weeks), pmr_cc_n_<arm>, pmr_cc_nf, pmr_cc_nfirst (founding cultures and nodes),\n'
              '# pmr_cc_g1tk / g2tk (the highest goods tier the owner\'s technology allows), pmr_cc_xsv (Supply\'s cut per good,\n'
              '# capped), pmr_cc_wc (the wage target correction, in 5% steps), pmr_cc_aev (Up-skilling\'s engineer jobs).\n'
              '# Everything the tab shows is mirrored onto the executive (pmr_cc_mirror), which also holds pmr_cc_of, the\n'
@@ -813,7 +818,8 @@ def effects(p, comps):
         chain += f'\t{"if" if i == 0 else "else_if"} = {{\n\t\tlimit = {{ is_company_type = company_type:{c} }}\n\t\t{sets}\n\t}}\n'
     dflt = ' '.join(f'set_variable = {{ name = {k} value = 0 }}' for k in KVARS if k != 'pmr_cc_k_xr')
     dflt += f' set_variable = {{ name = pmr_cc_k_xr value = {len(EXP_ROWS)} }} set_variable = {{ name = pmr_cc_k_ar value = 3 }}'
-    zero = (['pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate', 'pmr_cc_gr', 'pmr_cc_grt', 'pmr_cc_grm']
+    zero = (['pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate', 'pmr_cc_gr', 'pmr_cc_grt', 'pmr_cc_grm',
+             'pmr_cc_grw', 'pmr_cc_gpay', 'pmr_cc_gper', 'pmr_cc_glv']
             + [f'pmr_cc_{k}' for k in KEYS])
     o.append('# A company seen for the first time, or after CAL_VERSION changed: zero state where missing, the company\n'
              '# type\'s numbers, its first cost. A company type PMR does not know (another mod) has no goods lines.\n'
@@ -899,10 +905,12 @@ def effects(p, comps):
                 inner += f' {kw} = {{ limit = {{ owner ?= {{ {lim} }} }} set_variable = {{ name = pmr_cc_g{gl}tk value = {t} }} }}'
             d += f'\t{"if" if first else "else_if"} = {{ limit = {{ var:pmr_cc_k_g{gl}b = {w["idx"]} }}{inner} }}\n'
             first = False
-    # a research grant's cost (Pat 22:28Z): GRANT_COST per employed level for each goods line's next tier
-    # (pmr_cc_gc<gl>), and whether the owner's investment pool holds it (pmr_cc_gok<gl>)
+    # a research grant's weekly cost (Pat 22:28Z, 2026-10-19 00:06Z): GRANT_COST per employed level for each goods
+    # line's next tier, which is also the running grant's tier (pmr_cc_gc<gl>), and whether the owner's investment
+    # pool holds a week of it (pmr_cc_gok<gl>)
     d += ('\tset_local_variable = { name = pmr_cc_lv value = 0 }\n'
           + ladder('company_employed_levels', [(n, n) for n in LV_LADDER], 'pmr_cc_lv', '\t')
+          + '\tset_variable = { name = pmr_cc_glv value = local_var:pmr_cc_lv }\n'
           + '\tsave_scope_as = pmr_cc_gco\n')
     for gl in (1, 2):
         d += (f'\tset_variable = {{ name = pmr_cc_gc{gl} value = 0 }}\n'
@@ -925,17 +933,18 @@ def effects(p, comps):
                           f'change_variable = {{ name = pmr_cc_pts subtract = {c} }} }}\n' for t, c in enumerate(ln.cost))
         if ln.goods:
             gc = f'pmr_cc_gc{ln.goods}'
-            take = (f'\t# a research grant, paid from the owner\'s investment pool; the tier unlocks after {GRANT_MONTHS}\n'
-                    '\t# months (pmr_cc_grant_tick)\n'
-                    f'\t{player_log("CC_GRANT_COST", f"gcost=[THIS.Var({chr(39)}{gc}{chr(39)}).GetValue|0];pool=[GetPlayer.GetInvestmentPool|0];")}\n'
-                    f'\tset_variable = {{ name = pmr_cc_gpay value = var:{gc} }}\n'
-                    '\tchange_variable = { name = pmr_cc_gpay multiply = -1 }\n'
-                    '\tsave_scope_as = pmr_cc_gco\n'
-                    '\towner ?= { add_investment_pool = scope:pmr_cc_gco.var:pmr_cc_gpay }\n'
+            per = ''.join(f'\t{"if" if t == 1 else "else_if"} = {{ limit = {{ var:pmr_cc_grt = {t} }} '
+                          f'set_variable = {{ name = pmr_cc_gper value = {GRANT_COST[t - 1]} }} }}\n' for t in T3)
+            take = (f'\t# a research grant: the owner\'s investment pool pays var:{gc} every week for {GRANT_WEEKS} paid\n'
+                    '\t# weeks (pmr_cc_grant_week, from the owner\'s weekly clock pmr_cc.1)\n'
                     f'\tset_variable = {{ name = pmr_cc_gr value = {ln.code} }}\n'
                     f'\tset_variable = {{ name = pmr_cc_grt value = var:pmr_cc_{k} }}\n'
                     '\tchange_variable = { name = pmr_cc_grt add = 1 }\n'
-                    '\tset_variable = { name = pmr_cc_grm value = 0 }\n')
+                    '\tset_variable = { name = pmr_cc_grm value = 0 }\n'
+                    '\tset_variable = { name = pmr_cc_grw value = 0 }\n'
+                    f'\tset_variable = {{ name = pmr_cc_gpay value = var:{gc} }}\n' + per +
+                    '\towner ?= { pmr_cc_gclock = yes }\n'
+                    f'\t{player_log("CC_GRANT_COST", f"gweek=[THIS.Var({chr(39)}{gc}{chr(39)}).GetValue|0];")}\n')
         else:
             take = f'\tchange_variable = {{ name = pmr_cc_{k} add = 1 }}\n'
         if k == 'pg':
@@ -947,9 +956,8 @@ def effects(p, comps):
                                + ' '.join(f'set_variable = {x}' for x in v['pvars']) + ' }\n')
                     n += 1
             take += '\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods)\n' + pchain
-        pool = 'pool=[GetPlayer.GetInvestmentPool|0];' if ln.goods else ''
         o.append(f'pmr_cc_buy_{k} = {{\n{pay}{take}\tpmr_cc_after_buy = yes\n'
-                 f'\t{player_log("CC_BUY", f"line={k};{pool}")}\n}}\n\n')
+                 f'\t{player_log("CC_BUY", f"line={k};")}\n}}\n\n')
     o.append('pmr_cc_after_buy = {\n\tpmr_cc_derive = yes\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n}\n\n')
     # Grants.
     flag = ''.join(f'\t\t{"if" if n == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_k_g$G$b = {w["idx"]} }} '
@@ -957,17 +965,46 @@ def effects(p, comps):
                    for n, (bk, w) in enumerate(sorted(p.works.items(), key=lambda kv: kv[1]['idx'])))
     o.append('# Goods line $G$: its building\'s ticks blend the works members in from now on (works_effect).\n'
              f'pmr_cc_works_on = {{\n{flag}}}\n\n'
-             f'# Monthly: a running grant fills its bar; after {GRANT_MONTHS} months the tier is the company\'s.\n'
-             'pmr_cc_grant_tick = {\n\tif = {\n\t\tlimit = { var:pmr_cc_gr > 0 }\n'
-             '\t\tchange_variable = { name = pmr_cc_grm add = 1 }\n'
-             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_grm >= {GRANT_MONTHS} }}\n'
+             '# The owner\'s investment pool, to the nearest £16, into var $V$ (scope:pmr_cc_gco = this company): the log\'s\n'
+             '# reading, since [GetPlayer.GetInvestmentPool] in a debug_log printed 0 (q31). A pool below 0 reads 0.\n'
+             'pmr_cc_pool_read = {\n\tset_variable = { name = $V$ value = 0 }\n'
+             + ''.join(f'\tset_variable = {{ name = pmr_cc_pt value = var:$V$ }} change_variable = {{ name = pmr_cc_pt add = {2 ** e} }} '
+                       'if = { limit = { owner ?= { investment_pool >= scope:pmr_cc_gco.var:pmr_cc_pt } } '
+                       'set_variable = { name = $V$ value = var:pmr_cc_pt } }\n' for e in range(26, 3, -1))
+             + '}\n\n'
+             '# Country scope: starts the weekly grant clock (pmr_cc.1) unless it is running. pmr_cc_gclock outlives a\n'
+             '# week by two days, so a live clock is never started twice; the monthly pulse restarts a broken chain.\n'
+             'pmr_cc_gclock = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_cc_gclock } }\n'
+             '\t\tset_variable = { name = pmr_cc_gclock days = 9 }\n\t\ttrigger_event = { id = pmr_cc.1 days = 7 }\n\t}\n}\n\n'
+             f'# Weekly (pmr_cc.1), a company with a grant running: the owner\'s investment pool pays this week\'s cost\n'
+             f'# (pmr_cc_gc<gl>, kept up to date monthly by pmr_cc_derive) and the grant moves on a week; a week the pool\n'
+             f'# can\'t cover is not paid and the grant waits. After {GRANT_WEEKS} paid weeks the tier is the company\'s.\n'
+             'pmr_cc_grant_week = {\n\tif = {\n\t\tlimit = { var:pmr_cc_gr > 0 }\n'
+             '\t\tif = { limit = { var:pmr_cc_gr = 5 } set_variable = { name = pmr_cc_gpay value = var:pmr_cc_gc1 } }\n'
+             '\t\telse = { set_variable = { name = pmr_cc_gpay value = var:pmr_cc_gc2 } }\n'
+             '\t\tsave_scope_as = pmr_cc_gco\n'
+             '\t\tif = { limit = { owner ?= { is_player = yes } } pmr_cc_pool_read = { V = pmr_cc_pool0 } }\n'
+             '\t\tif = {\n\t\t\tlimit = { owner ?= { investment_pool >= scope:pmr_cc_gco.var:pmr_cc_gpay } }\n'
+             '\t\t\tchange_variable = { name = pmr_cc_gpay multiply = -1 }\n'
+             '\t\t\towner = { add_investment_pool = scope:pmr_cc_gco.var:pmr_cc_gpay }\n'
+             '\t\t\tchange_variable = { name = pmr_cc_gpay multiply = -1 }\n'
+             '\t\t\tchange_variable = { name = pmr_cc_grw add = 1 }\n'
+             '\t\t\towner = { change_variable = { name = pmr_cc_gweek add = scope:pmr_cc_gco.var:pmr_cc_gpay } }\n'
+             '\t\t\tset_variable = { name = pmr_cc_gpaid value = 1 }\n\t\t}\n'
+             '\t\telse = { set_variable = { name = pmr_cc_gpaid value = 0 } }\n'
+             '\t\tif = { limit = { owner ?= { is_player = yes } } pmr_cc_pool_read = { V = pmr_cc_pool1 } }\n'
+             f'\t\t{player_log("CC_GRANT_WEEK", "paid=[THIS.Var(\'pmr_cc_gpaid\').GetValue|0];gweek=[THIS.Var(\'pmr_cc_gpay\').GetValue|0];pool_before=[THIS.Var(\'pmr_cc_pool0\').GetValue|0];pool_after=[THIS.Var(\'pmr_cc_pool1\').GetValue|0];")}\n'
+             f'\t\tset_variable = {{ name = pmr_cc_grm value = {{ value = var:pmr_cc_grw multiply = {GRANT_MONTHS} divide = {GRANT_WEEKS} floor = yes }} }}\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_grw >= {GRANT_WEEKS} }}\n'
              '\t\t\tif = { limit = { var:pmr_cc_gr = 5 } set_variable = { name = pmr_cc_g1 value = var:pmr_cc_grt } pmr_cc_works_on = { G = 1 } }\n'
              '\t\t\telse = { set_variable = { name = pmr_cc_g2 value = var:pmr_cc_grt } pmr_cc_works_on = { G = 2 } }\n'
              f'\t\t\t{player_log("CC_GRANT_DONE")}\n'
              '\t\t\tset_variable = { name = pmr_cc_gr value = 0 }\n'
              '\t\t\tset_variable = { name = pmr_cc_grt value = 0 }\n'
              '\t\t\tset_variable = { name = pmr_cc_grm value = 0 }\n'
-             '\t\t\tpmr_cc_after_buy = yes\n\t\t}\n\t}\n}\n\n')
+             '\t\t\tset_variable = { name = pmr_cc_grw value = 0 }\n'
+             '\t\t\tpmr_cc_after_buy = yes\n\t\t}\n'
+             '\t\tif = { limit = { owner ?= { is_player = yes } } pmr_cc_mirror = yes }\n\t}\n}\n\n')
     # A click.
     click = ''
     for i, ln in enumerate(LINES):
@@ -1084,7 +1121,7 @@ def effects(p, comps):
              '# player\'s companies; an AI company\'s is brought up to date when its tab opens (pmr_cc_refresh_sgui).\n'
              'pmr_cc_tick = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
-             '\tpmr_cc_earn = yes\n\tpmr_cc_grant_tick = yes\n\tpmr_cc_derive = yes\n'
+             '\tpmr_cc_earn = yes\n\tpmr_cc_derive = yes\n'
              '\tif = {\n\t\tlimit = { owner ?= { is_player = no } }\n\t\tpmr_cc_ai_buy = yes\n\t}\n'
              '\tif = {\n\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\tpmr_cc_apply = yes\n\t}\n'
              '\tif = {\n\t\tlimit = { owner ?= { is_player = yes } }\n\t\tpmr_cc_mirror = yes\n'
@@ -1165,11 +1202,16 @@ pmr_cc_game_started = {
 	}
 }
 
-# Root = country. Every company earns, runs its grant, buys (AI companies) and keeps its executive's traits.
+# Root = country. Every company earns, buys (AI companies) and keeps its executive's traits; a company with a
+# research grant running keeps the weekly grant clock going.
 pmr_cc_monthly_country = {
 	effect = {
 		every_company = {
 			pmr_cc_tick = yes
+		}
+		if = {
+			limit = { any_company = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 } }
+			pmr_cc_gclock = yes
 		}
 	}
 }
@@ -1195,6 +1237,33 @@ pmr_cc_on_company_disbanded = {
 }
 '''
 
+EVENTS = '''namespace = pmr_cc
+
+# Country, every 7 days while one of its companies runs a research grant (pmr_cc_gclock starts it): each grant's
+# week (pmr_cc_grant_week), and the week's total for the Private tab (pmr_cc_gweek). 1.14.5 runs no weekly
+# on_action for script, so the event re-arms itself.
+pmr_cc.1 = {
+	type = country_event
+	hidden = yes
+	immediate = {
+		set_variable = { name = pmr_cc_gweek value = 0 }
+		every_company = {
+			limit = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 }
+			pmr_cc_grant_week = yes
+		}
+		if = {
+			limit = { any_company = { has_variable = pmr_cc_gr var:pmr_cc_gr > 0 } }
+			set_variable = { name = pmr_cc_gclock days = 9 }
+			trigger_event = { id = pmr_cc.1 days = 7 }
+		}
+		else = {
+			remove_variable = pmr_cc_gclock
+			set_variable = { name = pmr_cc_gweek value = 0 }
+		}
+	}
+}
+'''
+
 TEST_DECISION = f'''# Company Culture test decision (test builds only). The AI never takes it. Gives each of the player's companies
 # {TEST_POINTS} Culture points (not levels) and refreshes its tab. Writes PMR;rec=CC_TEST lines.
 pmr_cc_test_points_decision = {{
@@ -1215,7 +1284,7 @@ pmr_cc_test_points_decision = {{
 	ai_chance = {{ value = 0 }}
 }}
 
-# Test builds only: every running research grant of the player's companies completes at the next monthly tick, so the
+# Test builds only: every running research grant of the player's companies completes at its next paid week, so the
 # special method can be checked without waiting {GRANT_MONTHS} months. Writes PMR;rec=CC_TEST_GRANT lines.
 pmr_cc_test_grant_decision = {{
 	is_shown = {{ always = yes }}
@@ -1223,7 +1292,7 @@ pmr_cc_test_grant_decision = {{
 	when_taken = {{
 		every_company = {{
 			limit = {{ has_variable = pmr_cc_gr var:pmr_cc_gr > 0 }}
-			set_variable = {{ name = pmr_cc_grm value = {GRANT_MONTHS - 1} }}
+			set_variable = {{ name = pmr_cc_grw value = {GRANT_WEEKS - 1} }}
 			{{LOG_GRANT}}
 		}}
 	}}
@@ -1487,13 +1556,14 @@ def localization(p, rows, kept_split):
         ' PMR_CC_FX_pg_YES:0 "• Produces its prestige goods"',
         f" PMR_CC_XS_GOOD2:0 \"• [Character.GetCustom('pmr_cc_good_xg2')] #P −5%#! input\"",
         f' PMR_CC_GRANT_BAR:0 "Grant #v {V("pmr_cc_grm")}#! / {GRANT_MONTHS} months"',
+        f' PMR_CC_GRANT_TT:0 "#bold @money!{money("pmr_cc_gpay")}#! a week#!\\n{V("pmr_cc_glv")} levels × @money!{money("pmr_cc_gper")}#!\\nFrom the investment pool"',
         ' PMR_CC_COST_TT:0 "Culture points"',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
         ' PMR_CC_METHODS_NONE:0 "No recipes to retool"',
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
         f' pmr_cc_test_points_decision_desc:0 "Each of your companies gets {TEST_POINTS} Culture points."',
         ' pmr_cc_test_grant_decision:0 "PMR test: finish your companies\' research grants"',
-        ' pmr_cc_test_grant_decision_desc:0 "Running grants finish next month."',
+        ' pmr_cc_test_grant_decision_desc:0 "Running grants finish next week."',
     ]
     for bk in sorted(p.works):
         for t in T3:
@@ -1551,7 +1621,7 @@ def localization(p, rows, kept_split):
             if fx and not ln.goods:   # charters have no bullets, so no key and no textbox (cc_wheel.node)
                 loc.append(f' PMR_CC_FX_{k}_{t}:0 "' + '\\n'.join(fx) + '"')
             # The tooltip is the lock reason only: the card already shows the name and the bullets
-            grant = (f"\\nGrant: {GRANT_MONTHS} months, @money!#v {money(f'pmr_cc_gc{ln.goods}')}#!"
+            grant = (f"\\nGrant: {GRANT_MONTHS} months, @money!#v {money(f'pmr_cc_gc{ln.goods}')}#! a week"
                      if ln.goods else '')
             loc.append(f' PMR_CC_TT_{k}_{t}:0 "[Character.GetCustom(\'pmr_cc_why_{k}_{t}\')]{grant}"')
     # Traits.
@@ -1601,6 +1671,7 @@ def write_all(game, write, header_text, report, p, out_dir):
     write('common/scripted_triggers/pmr_cc_triggers.txt', header_text + triggers())
     write('common/scripted_guis/pmr_cc_sguis.txt', header_text + sguis())
     write('common/on_actions/pmr_cc_on_actions.txt', header_text + ON_ACTIONS)
+    write('events/pmr_cc_events.txt', header_text + EVENTS)
     write('common/script_values/pmr_cc_values.txt', header_text + unlock_values(rows))
     write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST'))
           .replace('{LOG_GRANT}', log_line('CC_TEST_GRANT')))
