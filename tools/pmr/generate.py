@@ -97,6 +97,10 @@ RETOOL_AI_PER_EARNING = round(7500 / 52)
 RETOOL_AI_MULT = 2
 RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
+# Keys the game hashes the same as a vanilla key (error.log "Localization key hash collision"), so one of the two
+# could show the other's text. Hidden locks need no name, so these go without one (observer run q51: vanilla's
+# liberal_trailblazer).
+LOC_HASH_CLASH = {'pm_pmr_key_livestock_ranch_5_65'}
 RETOOL_SLOTS = 2           # private retool buildings per building type: one at home, one abroad (ABROAD_SLOT)
 # The last slot is the player's investors' abroad (Pat 2026-10-13 19:25Z: no level abroad ever retooled). 1.14.5's
 # investment AI picks one state per building type and investor and only then tests can_build_private: Great
@@ -1530,8 +1534,9 @@ def main():
                 shares.append(f'pm_pmr_share_{b}_{i}_{n}')
                 keys.append(f'pm_pmr_key_{b}_{i}_{n}')
                 pct = round(100 * f)
-                loc += [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
-                        f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"']
+                loc.append(f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"')
+                if f'pm_pmr_key_{b}_{i}_{n}' not in LOC_HASH_CLASH:
+                    loc.append(f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"')
             blend_pms.append(f'{any_key} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n')
             keys.insert(0, any_key)   # first: see LOCK_ANY_FIRST above
             loc.append(f' {any_key}:0 "${r.key}$ share lock (switching)"')
