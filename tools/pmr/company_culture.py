@@ -557,8 +557,7 @@ def effects(p):
              'pmr_cc_strip = {\n' + ''.join(f'\tif = {{ limit = {{ has_trait = {x} }} remove_trait = {x} }}\n' for x in all_traits(p))
              + '\tremove_variable = pmr_cc_of\n}\n\n')
     sub_log = ("parent=[THIS.Var('pmr_parent').GetCompany.GetNameNoFormatting];"
-               + ''.join(f"p{k}=[THIS.Var('pmr_cc_p{k}').GetValue|0];" for k in KEYS)
-               + "traits=[THIS.GetCompany.GetExecutive.GetNumTraits|0];")
+               + ''.join(f"p{k}=[THIS.Var('pmr_cc_p{k}').GetValue|0];" for k in KEYS))
     o.append('# A subsidiary (pmr_sub; monthly, and when its parent buys a node): its copy of the parent\'s tiers, read once the\n'
              '# parent is read in at this CAL_VERSION, and the half traits they give.\n'
              'pmr_cc_sub_sync = {\n\tsave_scope_as = pmr_cc_co\n\tclear_saved_scope = pmr_cc_par\n'
