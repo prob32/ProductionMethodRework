@@ -137,11 +137,16 @@ def gate(cond, row, ind):
 
 def card(name, grid_h, body):
     """A row as the Policies card: the building's icon and its grid box (body), on entry_bg_simple."""
+    # Pat 2026-10-19 13:27Z: the card takes the height of what its grid shows (pairs_grid hides empty rows), CARD_PAD
+    # round it, at least the icon's
     h = max(methods_row.ROW_H, grid_h) + 2 * CARD_PAD
     return (f'\ttype {name} = widget {{\n\t\tsize = {{ {CARD_W} {h} }}\n'
             '\t\tbackground = {\n\t\t\tusing = entry_bg_simple\n\t\t}\n'
-            f'\t\tflowcontainer = {{\n\t\t\tposition = {{ {CARD_PAD} {CARD_PAD} }}\n\t\t\tspacing = {ICON_GAP}\n'
-            + body + '\t\t}\n\t}\n\n')
+            '\t\tflowcontainer = {\n\t\t\tresizeparent = yes\n\t\t\tdirection = vertical\n'
+            f'\t\t\twidget = {{ size = {{ {CARD_W} {CARD_PAD} }} }}\n'
+            f'\t\t\tflowcontainer = {{\n\t\t\t\tspacing = {ICON_GAP}\n'
+            f'\t\t\t\twidget = {{ size = {{ {CARD_PAD - ICON_GAP} 0 }} }}\n'
+            + body + f'\t\t\t}}\n\t\t\twidget = {{ size = {{ {CARD_W} {CARD_PAD} }} }}\n\t\t}}\n\t}}\n\n')
 
 
 def type_card(bk, keys, tex, pair, pair_options, read, cols):

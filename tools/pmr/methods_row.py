@@ -101,19 +101,28 @@ def pairs_grid(bk, recipes, options, read, tip, ind, cols=None, visible=None):
     (options: [(option tooltip key, icon texture)], a = 1 none). Reads generate.py pair_effect's interface:
         pmr_cp_<i>_<a>_<b>   profit per level a week     pmr_cav_<i>_<a>_<b>  1 runs, -1 skipped at the cap, 0 not priced
         pmr_cbi_<b>, pmr_cba_<b>  the most profitable runnable pair
-    tip(i, a): the tooltip key of a cell (a = 0 the column's icon). cols as recipes_grid."""
+    tip(i, a): the tooltip key of a cell (a = 0 the column's icon). cols as recipes_grid.
+    Pat, 2026-10-19 13:27Z ("we should be hiding and autosizing the cards vertical height when options aren't
+    available"): a row shows only while one of its cells was priced, and the box (a flowcontainer that resizes it)
+    takes the height of the rows it shows; the columns stay, so every card keeps the same columns."""
     b = bk[len('building_'):]
-    i1, i2 = ind + '\t', ind + '\t\t'
-    w, h = pairs_size(cols or len(recipes), len(options))
-    out = _box(w, h, ind, visible)
-    for col, (i, tex) in enumerate(recipes):
-        out += _head(col, tex, tip(i, 0), i1)
+    i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
+    w, _h = pairs_size(cols or len(recipes), len(options))
+    out = _box(w, PAIR_HEAD + PAIR_ROW + 6, ind, visible)
+    out += f'{i1}flowcontainer = {{\n{i2}resizeparent = yes\n{i2}direction = vertical\n{i2}ignoreinvisible = yes\n'
+    head = ''.join(_head(col, tex, tip(i, 0), i3) for col, (i, tex) in enumerate(recipes))
+    out += f'{i2}widget = {{\n{i3}size = {{ {w} {PAIR_HEAD} }}\n' + head + f'{i2}}}\n'
     for a, (key, tex) in enumerate(options, 1):
-        y = PAIR_HEAD + (a - 1) * PAIR_ROW
-        out += (f'{i1}icon = {{\n{i2}position = {{ 10 {y + 1} }}\n{i2}size = {{ 22 22 }}\n'
-                f'{i2}texture = "{tex}"\n{i2}tooltip = "{key}"\n{i1}}}\n')
+        cavs = [read(f'pmr_cav_{i}_{a}_{b}') for i, _ in recipes]
+        shown = f'Not({eq(cavs[-1], 0)})'
+        for c in reversed(cavs[:-1]):
+            shown = f'Or(Not({eq(c, 0)}), {shown})'
+        out += (f'{i2}widget = {{\n{i3}visible = "[{shown}]"\n{i3}size = {{ {w} {PAIR_ROW} }}\n'
+                f'{i3}icon = {{\n{i3}\tposition = {{ 10 1 }}\n{i3}\tsize = {{ 22 22 }}\n'
+                f'{i3}\ttexture = "{tex}"\n{i3}\ttooltip = "{key}"\n{i3}}}\n')
         for col, (i, _) in enumerate(recipes):
             best = f"And({eq(read(f'pmr_cbi_{b}'), i)}, {eq(read(f'pmr_cba_{b}'), a)})"
             cav = read(f'pmr_cav_{i}_{a}_{b}')
-            out += _cell(col, y, tip(i, a), best, eq(cav, 1), read(f'pmr_cp_{i}_{a}_{b}'), i1, f'Not({eq(cav, 0)})')
-    return out + f'{ind}}}\n'
+            out += _cell(col, 0, tip(i, a), best, eq(cav, 1), read(f'pmr_cp_{i}_{a}_{b}'), i3, f'Not({eq(cav, 0)})')
+        out += f'{i2}}}\n'
+    return out + f'{i2}widget = {{\n{i3}size = {{ {w} 6 }}\n{i2}}}\n{i1}}}\n{ind}}}\n'

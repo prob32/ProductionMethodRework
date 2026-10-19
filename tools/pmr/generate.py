@@ -5275,7 +5275,7 @@ def ai_column(bk, h, x, ind):
                       f'{i4}textbox = {{\n{i4}\tautoresize = yes\n{i4}\tparentanchor = vcenter\n{i4}\talign = left|nobaseline\n'
                       f'{i4}\tusing = fontsize_small\n{i4}\ttext = "PMR_MV_BUY_{key}_{b}"\n{i4}}}\n{i3}}}\n')
         cells += f'{i2}}}\n'
-    return (f'{ind}icon = {{\n{i1}position = {{ {x - 8} {CARD_PAD} }}\n{i1}size = {{ 1 {h - 2 * CARD_PAD} }}\n'
+    return (f'{ind}icon = {{\n{i1}position = {{ {x - 8} 0 }}\n{i1}parentanchor = vcenter\n{i1}size = {{ 1 85% }}\n'
             f'{i1}texture = "{methods_row.WHITE}"\n{i1}color = {{ 1 1 1 0.15 }}\n{i1}alwaystransparent = yes\n{ind}}}\n'
             f'{ind}flowcontainer = {{\n{i1}position = {{ {x} 0 }}\n{i1}parentanchor = vcenter\n{i1}direction = vertical\n'
             f'{i1}flowcontainer = {{\n{i2}direction = vertical\n'
@@ -5287,13 +5287,13 @@ def ai_column(bk, h, x, ind):
             + cells + f'{ind}}}\n')
 
 
-def card_left(bk, ind):
+def card_left(bk, ind, min_h=0):
     """Pat, 2026-10-19 01:07Z ("add level amount and productivity to the building cards"): the building's icon with
     the country's levels on it, as the company panel shows them, and the type's productivity span under it, as the
     Buildings list's header shows it. Pat 2026-10-19 13:00Z ("doesn't jump outside its card margins"): the span stays
     inside the card, 2 px from its edge, and shrinks its font to fit (elide as the last resort)."""
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
-    return (f'{ind}widget = {{\n{i1}size = {{ {ICON_W} {LEFT_H} }}\n{i1}datacontext = "[GetBuildingType(\'{bk}\')]"\n'
+    return (f'{ind}widget = {{\n{i1}size = {{ {ICON_W} {max(LEFT_H, min_h)} }}\n{i1}datacontext = "[GetBuildingType(\'{bk}\')]"\n'
             f'{i1}icon = {{\n{i2}position = {{ 3 0 }}\n{i2}size = {{ 54 54 }}\n{i2}texture = "[BuildingType.GetIcon]"\n'
             f'{i2}tooltipwidget = {{\n{i3}FancyTooltip_BuildingType = {{}}\n{i2}}}\n'
             f'{i2}textbox = {{\n{i3}text = "[BuildingType.GetNumLevelsInCountryFormatted(GetPlayer.Self)]"\n'
@@ -5410,8 +5410,12 @@ def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=N
                   '\t\tbackground = {\n\t\t\tusing = entry_bg_simple\n\t\t}\n'
                   '\t\tflowcontainer = {\n\t\t\tresizeparent = yes\n\t\t\tdirection = vertical\n\t\t\tignoreinvisible = yes\n'
                   f'\t\t\t# the body\n\t\t\twidget = {{\n{t4}size = {{ {CARD_W} {h} }}\n'
-                  f'{t4}flowcontainer = {{\n{t5}position = {{ {CARD_PAD} {CARD_PAD} }}\n{t5}spacing = {ICON_GAP}\n'
-                  + card_left(bk, t5) + grid + f'{t4}}}\n'
+                  # Pat 13:27Z: the body takes the height of what it shows (the grid hides empty rows), CARD_PAD round it
+                  f'{t4}flowcontainer = {{\n{t5}resizeparent = yes\n{t5}direction = vertical\n'
+                  f'{t5}widget = {{ size = {{ {CARD_W} {CARD_PAD} }} }}\n'
+                  f'{t5}flowcontainer = {{\n{t6}spacing = {ICON_GAP}\n{t6}widget = {{ size = {{ {CARD_PAD - ICON_GAP} 0 }} }}\n'
+                  + card_left(bk, t6, AI_H if bk in ai else 0) + grid.replace('\n\t', '\n\t\t').replace(t5, t6, 1)
+                  + f'{t5}}}\n{t5}widget = {{ size = {{ {CARD_W} {CARD_PAD} }} }}\n{t4}}}\n'
                   + (ai_column(bk, h, ai_x, t4) if bk in ai else '')
                   + badge + '\t\t\t}\n' + foot + '\t\t}\n' + outline + '\t}\n\n')
         same = f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
