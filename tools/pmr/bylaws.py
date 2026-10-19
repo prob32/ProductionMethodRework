@@ -11,10 +11,12 @@ the company's and on each of its subsidiaries' (one policy for the group, as the
 multiplies the AI weight of the company's industries and its subsidiaries' (ai_value_tail).
 
 Passing (Pat 14:43Z: "an law passing system; come up with some generalized mapping of opinions"): the board's seats
-back (+1), oppose (-1) or don't care (0) about a change, by their interest group's view of the bylaw it brings
-against the one it replaces (VIEWS; a middle bylaw counts 0). Seats: the executive (3), each subsidiary's executive
-(1), the shareholders (2, the Industrialists' view), and the Workers Council where the Trade Unions have 5% clout or
-more (2, 3 at 15%, 4 at 25%; Pat 14:43Z). Support = the sum of weight x view; a change at BLOCK or below can't start;
+back (+1), oppose (-1) or don't care (0) about a change, by their view of the bylaw it brings against the one it
+replaces. Seats: the executive (3), each subsidiary's executive (1), the shareholders (2), and the Workers Council where
+the Trade Unions have 5% clout or more (2, 3 at 15%, 4 at 25%; Pat 14:43Z). Pat 16:53Z: the shareholders' seat is the
+country's Industrialists' leader, and a character's view is its ideology's (IDEOLOGY_VIEWS; an ideology not listed
+falls back to its interest group's, VIEWS, as does a country without an Industrialists' leader); the council keeps the
+Trade Unions' view. Support = the sum of weight x view; a change at BLOCK or below can't start;
 otherwise its bar gains 20 + 2 x support a month (Pat 16:39Z: shareholders' 2 votes against give +16; 5 to 50) and it
 passes at 100. One change at a time; it can be
 cancelled. An AI company proposes, once a year, the Pay or Hours bylaw its board backs most (support 2 or more).
@@ -27,8 +29,9 @@ a country modifier: Trade Unions approval -1 and political strength +5% for each
 Company variables: pmr_bl_<g> the group's bylaw (1-based), pmr_bl_pg / pmr_bl_pv the change under way (group, bylaw;
 0 none), pmr_bl_pp its bar, pmr_bl_sup its support, pmr_bl_rt its monthly gain, pmr_bl_s_<code> each bylaw's support,
 pmr_bl_v_ex / _sh / _wc the executive's, shareholders' and council's vote on the change (a subsidiary's own vote is
-its pmr_bl_v), pmr_bl_wc the council's weight, pmr_bl_harsh, pmr_bl_ai (Focus's AI factor). Mirrored onto the
-executive for the window with company_culture's numbers.
+its pmr_bl_v), pmr_bl_wc the council's weight, pmr_bl_shl the Industrialists' leader (pmr_bl_shx 1 while there is
+one), pmr_bl_harsh, pmr_bl_ai (Focus's AI factor). Mirrored onto the executive for the window with company_culture's
+numbers.
 """
 
 THR, WAGE, ATTR = 'building_throughput_add', 'building_minimum_wage_mult', 'building_job_attractiveness_mult'
@@ -77,6 +80,40 @@ VIEWS = {
     'ig_rural_folk': {13: 1},
     'ig_armed_forces': {},
 }
+# Views by character ideology (Pat 2026-10-19 16:53Z: "all characters should have their primary ideologies displayed and
+# those ideologies should have an opinion on the company bylaws"): code -> -2..2, and a seat votes the sign of its view
+# of the new bylaw less its view of the current one. Where vanilla's ideology (1.14.5 common/ideologies) has a view on
+# the law a bylaw stands for, the row follows it: Hours and Safety = labour rights (no workers' rights, regulatory
+# bodies, worker protections); Pay = welfare (no social security, poor laws, wage subsidies) and economic system
+# (laissez-faire for Tight Payroll and Market Wages, cooperative ownership for Profit Sharing). The other rows are
+# guesses from the ideology's leaning; moderates back the defaults. Pat hasn't confirmed them.
+IDEOLOGY_ROWS = {
+    'defaults': {12: 1, 22: 1},
+    'tradition': {12: 1, 14: -1, 22: 1},
+    'market': {11: 1, 12: 1, 13: -1, 14: -2, 21: 0, 22: -1, 23: -2},     # market liberal (vanilla)
+    'national': {11: -1, 12: 1, 14: -2, 22: 1},                           # protectionist, modernizer, Mitogaku, Bonapartist
+    'corporate': {11: -1, 12: 0, 13: 1, 14: -1, 22: 1},                   # corporatist (vanilla), fascist, integralist
+    'reform': {11: -1, 13: 1, 21: -1, 23: 1},
+    'labour': {11: -2, 12: -1, 13: 1, 14: 2, 21: -1, 22: 1, 23: 2},       # social democrat (vanilla)
+    'left': {11: -2, 12: -1, 13: 1, 14: 2, 21: -2, 22: 0, 23: 2},         # communist, utopian (vanilla), anarchist
+    'luddite': {11: -2, 12: -1, 13: 1, 21: -1, 23: 1},
+    'slaver': {11: 2, 13: -2, 14: -2, 21: 2, 23: -2},
+}
+IDEOLOGIES = {
+    'defaults': ['moderate', 'pacifist', 'ethno_nationalist', 'nihilist', 'shojoi', 'sovereignist_leader',
+                 'jingoist_leader', 'jacksonian_democrat'],
+    'tradition': ['traditionalist', 'traditionalist_minoritarian', 'royalist', 'legitimist', 'carlist', 'carlist_2',
+                  'miguelist', 'miguelist_2', 'authoritarian'],
+    'market': ['market_liberal', 'orleanist', 'liberal_leader'],
+    'national': ['protectionist', 'modernizer_leader', 'mitogaku', 'bonapartist'],
+    'corporate': ['corporatist_leader', 'fascist', 'integralist', 'despotic_utopian'],
+    'reform': ['reformer', 'radical', 'republican_leader', 'humanitarian', 'humanitarian_royalist', 'positivist',
+               'utilitarian_leader', 'feminist', 'abolitionist', 'ilustrado_leader', 'land_reformer', 'theocrat'],
+    'labour': ['social_democrat'],
+    'left': ['communist', 'vanguardist', 'anarchist', 'utopian'],
+    'luddite': ['luddite'],
+    'slaver': ['slaver'],
+}
 IG_TEX = {'ig_industrialists': 'industrialists', 'ig_landowners': 'landowners',
           'ig_petty_bourgeoisie': 'petty_bourgeoisie', 'ig_trade_unions': 'trade_unions',
           'ig_intelligentsia': 'intelligensia', 'ig_devout': 'devout', 'ig_rural_folk': 'rural_folk',
@@ -94,8 +131,9 @@ TRAIT_FILE = 'common/character_traits/pmr_bl_traits.txt'
 VOTED = [c for c in CODES if c // 10 != FOCUS]   # the bylaws interest groups have views on
 
 VARS = ([f'pmr_bl_{g}' for g, _n, _o in GROUPS] + ['pmr_bl_pg', 'pmr_bl_pv', 'pmr_bl_pp', 'pmr_bl_sup', 'pmr_bl_rt',
-        'pmr_bl_v_ex', 'pmr_bl_v_sh', 'pmr_bl_v_wc', 'pmr_bl_wc', 'pmr_bl_ai'] + [f'pmr_bl_s_{c}' for c in CODES])
-MIRRORED = VARS
+        'pmr_bl_v_ex', 'pmr_bl_v_sh', 'pmr_bl_v_wc', 'pmr_bl_wc', 'pmr_bl_ai', 'pmr_bl_shx']
+        + [f'pmr_bl_s_{c}' for c in CODES])
+MIRRORED = VARS + ['pmr_bl_shl']
 
 
 def trait_key(c):
@@ -154,8 +192,8 @@ def src_scope(ind):
             f'{ind}if = {{ limit = {{ has_variable = pmr_sub }} var:pmr_parent ?= {{ save_scope_as = pmr_bl_src }} }}\n')
 
 
-def _row(ig):
-    """pmr_bl_d_<code>: the seat's vote on each bylaw against the group's current one."""
+def _row(views):
+    """pmr_bl_d_<code>: the seat's vote on each bylaw against the group's current one, by views (code -> view)."""
     out = ''
     for g, _n, names in GROUPS:
         if g == FOCUS:
@@ -163,7 +201,7 @@ def _row(ig):
         n = len(names)
         for cur in range(1, n + 1):
             sets = ' '.join(f'set_variable = {{ name = pmr_bl_d_{code(g, i)} value = '
-                            f'{sign(view(ig, code(g, i)) - view(ig, code(g, cur))) if ig else 0} }}'
+                            f'{sign(views.get(code(g, i), 0) - views.get(code(g, cur), 0))} }}'
                             for i in range(1, n + 1))
             out += f'\t{"if" if cur == 1 else "else_if"} = {{ limit = {{ var:pmr_bl_{g} = {cur} }} {sets} }}\n'
     return out
@@ -180,11 +218,21 @@ def effects(log_line):
                        for x in VARS if x not in [f'pmr_bl_{g}' for g, _n, _o in GROUPS])
              + '}\n\n')
     for ig in VIEWS:
-        o.append(f'# A seat of {ig}: its vote on each bylaw.\npmr_bl_row_{short(ig)} = {{\n{_row(ig)}}}\n\n')
-    o.append(f'# A seat with no interest group: no votes.\npmr_bl_row_none = {{\n{_row(None)}}}\n\n')
-    disp = ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ $WHO$ = {{ executive ?= {{ is_interest_group_type = {ig} }} }} }} '
-                   f'pmr_bl_row_{short(ig)} = yes }}\n' for j, ig in enumerate(VIEWS))
-    o.append('# The votes of company $WHO$\'s executive.\npmr_bl_row_of = {\n' + disp + '\telse = { pmr_bl_row_none = yes }\n}\n\n')
+        o.append(f'# A seat of {ig}: its vote on each bylaw.\npmr_bl_row_{short(ig)} = {{\n{_row(VIEWS[ig])}}}\n\n')
+    for row, views in IDEOLOGY_ROWS.items():
+        o.append(f'# A seat whose character is of an ideology in IDEOLOGIES[{row!r}].\npmr_bl_row_i_{row} = {{\n{_row(views)}}}\n\n')
+    o.append(f'# A seat with no view: no votes.\npmr_bl_row_none = {{\n{_row({})}}}\n\n')
+    disp = ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ scope:pmr_bl_ch = {{ OR = {{ '
+                   + ' '.join(f'has_ideology = ideology:ideology_{x}' for x in IDEOLOGIES[row])
+                   + f' }} }} }} pmr_bl_row_i_{row} = yes }}\n' for j, row in enumerate(IDEOLOGY_ROWS))
+    disp += ''.join(f'\telse_if = {{ limit = {{ scope:pmr_bl_ch = {{ is_interest_group_type = {ig} }} }} '
+                    f'pmr_bl_row_{short(ig)} = yes }}\n' for ig in VIEWS)
+    o.append('# The votes of character scope:pmr_bl_ch: its ideology\'s, else its interest group\'s.\n'
+             'pmr_bl_row_ch = {\n' + disp + '\telse = { pmr_bl_row_none = yes }\n}\n\n')
+    o.append('# The votes of company $WHO$\'s executive.\npmr_bl_row_of = {\n'
+             '\tif = {\n\t\tlimit = { $WHO$ = { exists = executive } }\n'
+             '\t\t$WHO$ = { executive = { save_scope_as = pmr_bl_ch } }\n\t\tpmr_bl_row_ch = yes\n\t}\n'
+             '\telse = { pmr_bl_row_none = yes }\n}\n\n')
     acc = ''.join(f'\tset_variable = {{ name = pmr_bl_t value = var:pmr_bl_d_{c} }}\n'
                   '\tchange_variable = { name = pmr_bl_t multiply = $W$ }\n'
                   f'\tchange_variable = {{ name = pmr_bl_s_{c} add = var:pmr_bl_t }}\n' for c in VOTED)
@@ -212,8 +260,13 @@ def effects(log_line):
              '\t\tscope:pmr_bl_co = {\n\t\t\tpmr_bl_row_of = { WHO = scope:pmr_bl_sub }\n'
              f'\t\t\tpmr_bl_seat = {{ W = {SUB_W} }}\n\t\t}}\n'
              '\t\tset_variable = { name = pmr_bl_v value = scope:pmr_bl_co.var:pmr_bl_vt }\n\t}\n'
-             f'\t# the shareholders ({SHARE_W}, the Industrialists\' view)\n'
-             '\tpmr_bl_row_industrialists = yes\n'
+             f'\t# the shareholders ({SHARE_W}): the Industrialists\' leader, else the Industrialists\' view\n'
+             '\tif = {\n\t\tlimit = { owner ?= { ig:ig_industrialists ?= { exists = leader } } }\n'
+             '\t\towner = { ig:ig_industrialists = { leader = { save_scope_as = pmr_bl_ch } } }\n'
+             '\t\tset_variable = { name = pmr_bl_shl value = scope:pmr_bl_ch }\n'
+             '\t\tset_variable = { name = pmr_bl_shx value = 1 }\n\t\tpmr_bl_row_ch = yes\n\t}\n'
+             '\telse = {\n\t\tif = { limit = { has_variable = pmr_bl_shl } remove_variable = pmr_bl_shl }\n'
+             '\t\tset_variable = { name = pmr_bl_shx value = 0 }\n\t\tpmr_bl_row_industrialists = yes\n\t}\n'
              f'\tpmr_bl_seat = {{ W = {SHARE_W} }}\n'
              '\tset_variable = { name = pmr_bl_v_sh value = var:pmr_bl_vt }\n'
              '\t# the Workers Council (the Trade Unions\' view)\n'

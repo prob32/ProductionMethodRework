@@ -233,7 +233,8 @@ PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
 SWITCH_GAIN = 0.25
-PROFIT_RULE = 100    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40)
+PROFIT_RULE = 101    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
+                     # 101: q46, the transportation rule)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -246,6 +247,17 @@ TARGET_EMPLOYEES = {}   # building type -> employees per level of each retool ta
 # required_input_goods) can't become a building's target unless its state produces electricity, and
 # retooling towards it pauses while the state has none. One rule for government and private retooling.
 ELECTRICITY = 'electricity'
+# Pat, 2026-10-19 16:49Z ("prevent our pm automation default from setting a rail transport if there is no rail transport
+# in a state"): transportation is local too, and the engine cuts a building's whole output by 75% when an input is
+# missing from local supply (GOODS_SHORTAGE_PENALTY_MISSING_INPUTS; Michigan's sulfur mine, q45: a quarter of its levels
+# on Rail Transport left all four making a quarter). A recipe using it can be the default only where the state makes some
+# (pmr_rail), even one the building already runs.
+TRANSPORTATION = 'transportation'
+
+
+def rails(goods):
+    """a recipe's goods per level ({good: amount}, inputs negative) take transportation"""
+    return goods.get(TRANSPORTATION, 0) < 0
 # Loop breaker (2026-10-13: Pat's game froze during the daily update of 16 June 1836, and debug.log
 # held nothing after 11 June). A building type's tick that runs more than TICK_TRIP times in one
 # state in one day stops there for the rest of the day and writes a TRIP line. TRIP and RELEASE (a
@@ -3262,6 +3274,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
             can = f'OR = {{ {can} {abroad(r, i)} }}'
         if i in elec_tiers:
             can = f'AND = {{ {can} var:pmr_elec = 1 }}'
+        if econ and rails(econ[i - 1][0]):
+            can = f'AND = {{ {can} var:pmr_rail = 1 }}'
         return can
 
     def best_effect(name, var, with_abroad):
@@ -3299,7 +3313,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + ';gov_lv=' + '/'.join(f(f'pmr_lvg_{i}') for i in range(1, k + 1))
              + ';slots=' + '/'.join(f(f'pmr_retool_q_priv{j}') for j in range(1, RETOOL_SLOTS + 1))
              + (';crew=' + '/'.join(f(f'pmr_staff_priv{j}') for j in range(1, RETOOL_SLOTS + 1)) if RETOOL_CREW else '')
-             + f";elec=[THIS.Var('pmr_elec').GetValue|0]" + (f";elec_wait={f('pmr_elec_wait')}" if elec_tiers else '')
+             + f";elec=[THIS.Var('pmr_elec').GetValue|0];rail=[THIS.Var('pmr_rail').GetValue|0]" + (f";elec_wait={f('pmr_elec_wait')}" if elec_tiers else '')
              + f";home_investors={f('pmr_inv_home')};pool=[THIS.Var('pmr_pool').GetValue|0]"
              + f";earn={f('pmr_earn')};ai_w={f('pmr_ai_w')}"
              + ";unemp=[THIS.Var('pmr_unemp').GetValue|0]")
@@ -3618,11 +3632,12 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     # Pat 2026-10-19 13:09Z: the newest runnable recipe (pmr_newest_<b>) tests every recipe from the newest down, locked
     # ones first, so it runs only where it can have changed: the first time, in a research pass (pmr_research), and
     # when the state's electricity changed since (pmr_nel_<b>). The re-check timer catches anything else.
-    scan = f'pmr_newest_{b} = yes set_variable = {{ name = pmr_nel_{b} value = var:pmr_elec }}'
+    # The state's local goods changed (pmr_lsup: electricity, transportation) also re-prices the options (pmr_pmv).
+    scan = f'pmr_newest_{b} = yes set_variable = {{ name = pmr_nel_{b} value = var:pmr_lsup }}'
     newest = (f'\tif = {{ limit = {{ OR = {{ NOT = {{ has_variable = pmr_nel_{b} }} NOT = {{ has_variable = {v("pmr_new_now")} }} }} }} '
               f'{scan} }}\n'
-              f'\telse_if = {{ limit = {{ OR = {{ has_variable = pmr_research NOT = {{ var:pmr_nel_{b} = var:pmr_elec }} }} }} '
-              f'{scan} }}\n')
+              f'\telse_if = {{ limit = {{ NOT = {{ var:pmr_nel_{b} = var:pmr_lsup }} }} {scan} set_variable = pmr_pmv }}\n'
+              f'\telse_if = {{ limit = {{ has_variable = pmr_research }} {scan} }}\n')
     xv = lambda name, i: f'{name}_{i}_{b}'   # noqa: E731
     cv = lambda name, op, x: f'change_variable = {{ name = {v(name)} {op} = {x} }}'   # noqa: E731
     top = fmt(1 + PRICE_LADDER[-1] / 100)
@@ -3665,7 +3680,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                     f'\tchange_variable = {{ name = {xv("pmr_rm", i)} subtract = var:{xv("pmr_rw", i)} }}\n')
         pre.append(f'pmr_rmx_{i}_{b} = {{\n' + ''.join(body) + '}\n\n')
     rmx = lambda i: f'pmr_rmx_{i}_{b} = yes'   # noqa: E731
-    can = lambda i: f'OR = {{ {active(recipes[i - 1])} {reach(i, True)} }}'   # noqa: E731
+    can = lambda i: (f'OR = {{ {active(recipes[i - 1])} {reach(i, True)} }}'   # noqa: E731
+                     + (' var:pmr_rail = 1' if rails(econ[i - 1][0]) else ''))
     # a building's first run gives every option figures (0) for the cards to read
     o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {xv("pmr_rm", 1)} }} }}\n'
              + ''.join(f'\t\tset_variable = {{ name = {xv(n, i)} value = 0 }}\n'
@@ -3956,7 +3972,8 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
         techs = pair['techs'][a - 1]
         cond = (f'OR = {{ {active(r)} can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }} }}'
                 + (' owner = { ' + ' '.join(f'has_technology_researched = {t}' for t in techs) + ' }' if techs else '')
-                + (' var:pmr_elec = 1' if pair['elec'][(i, a)] else ''))
+                + (' var:pmr_elec = 1' if pair['elec'][(i, a)] else '')
+                + (' var:pmr_rail = 1' if rails(gd) else ''))
         o.append(f'\tset_variable = {{ name = {cav} value = 0 }}\n'
                  f'\tif = {{\n\t\tlimit = {{ {cond} }}\n\t\tset_variable = {{ name = {cav} value = 1 }}\n'
                  f'\t\tif = {{ limit = {{ var:{cp} > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:{cp} }} '
@@ -3982,6 +3999,15 @@ pmr_read_elec = {
 		set_variable = { name = pmr_elec value = 1 }
 	}
 	else = { set_variable = { name = pmr_elec value = 0 } }
+	# pmr_rail: 1 while the state produces transportation (TRANSPORTATION); pmr_lsup: both, for pmr_newest's re-scan
+	if = {
+		limit = { exists = sg:transportation sg:transportation = { state_goods_production > 0 } }
+		set_variable = { name = pmr_rail value = 1 }
+	}
+	else = { set_variable = { name = pmr_rail value = 0 } }
+	set_variable = { name = pmr_lsup value = var:pmr_rail }
+	change_variable = { name = pmr_lsup multiply = 2 }
+	change_variable = { name = pmr_lsup add = var:pmr_elec }
 ''' + ('}\n\n' if RELEASE else '''	# pool and unemployment are read only for the log, so only in the player's states (not in a release build)
 	if = {
 		limit = { owner = { is_player = yes } }

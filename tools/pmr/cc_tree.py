@@ -68,6 +68,7 @@ CLASSES = {'active': (1,), 'pending': (2, 6), 'bought': (4,), 'locked': (0, 5, 7
 BOARD_W = 540                           # its contents; the panel is BOARD_W + 2 x BOARD_M
 BOARD_M = 10
 EXEC_H, SEAT_H = 96, 74                 # character_portrait_medium (80 x 88), character_portrait_small2 (60 x 66)
+IDEO = 36                               # a seat's ideology icon
 SEAT_TX = 100
 BADGE = 36
 VOTE = 32
@@ -427,13 +428,22 @@ def _vote(x, y, value):
                    for v, tex in ((1, APPROVE), (-1, DISAPPROVE)))
 
 
-def _seat(h, picture, name, sub, weight, vote, vis=None, ctx=''):
-    """One seat of the board: its picture, its name (and its company), its votes and its vote."""
+def _ideology(x, y, who):
+    """Character `who`'s ideology (Pat 16:53Z), its name on hover."""
+    return (f'icon = {{\ndatacontext = "[{who}.GetIdeology]"\nposition = {{ {x} {y} }}\nsize = {{ {IDEO} {IDEO} }}\n'
+            'texture = "[Ideology.GetTexture]"\ntooltip = "[Ideology.GetName]"\n}\n')
+
+
+def _seat(h, picture, name, sub, weight, vote, vis=None, ctx='', who=None):
+    """One seat of the board: its picture, its name (and its company), its character's ideology, its votes and its
+    vote."""
     yc = h // 2
-    lines = (_textbox(SEAT_TX, yc - (30 if sub else 15), BOARD_W - SEAT_TX - BADGE - VOTE - 30, 30, name, 22)
-             + (_textbox(SEAT_TX, yc + 2, BOARD_W - SEAT_TX - BADGE - VOTE - 30, 26, sub, 17) if sub else ''))
+    w = BOARD_W - SEAT_TX - BADGE - VOTE - 30 - (IDEO + 8 if who else 0)
+    lines = (_textbox(SEAT_TX, yc - (30 if sub else 15), w, 30, name, 22)
+             + (_textbox(SEAT_TX, yc + 2, w, 26, sub, 17) if sub else ''))
+    ideo = _ideology(BOARD_W - BADGE - VOTE - 26 - IDEO, yc - IDEO // 2, who) if who else ''
     return (f'widget = {{\n{_vis(vis)}{ctx}size = {{ {BOARD_W} {h} }}\nbackground = {{\nusing = entry_bg\n}}\n'
-            + picture + lines + _badge(BOARD_W - BADGE - VOTE - 18, yc - BADGE // 2, weight)
+            + picture + lines + ideo + _badge(BOARD_W - BADGE - VOTE - 18, yc - BADGE // 2, weight)
             + _vote(BOARD_W - VOTE - 8, yc - VOTE // 2, vote) + '}\n')
 
 
@@ -449,16 +459,22 @@ def seats():
     exe = _seat(EXEC_H, f'character_portrait_medium = {{\nposition = {{ {(SEAT_TX - 80) // 2} 4 }}\n'
                          'datacontext = "[Company.GetExecutive]"\n}\n',
                 '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
-                f'raw_text = "{bylaws.EXEC_W}"', V('pmr_bl_v_ex'))
+                f'raw_text = "{bylaws.EXEC_W}"', V('pmr_bl_v_ex'), who='Company.GetExecutive')
     sub = _seat(SEAT_H, f'character_portrait_small2 = {{\nposition = {{ {(SEAT_TX - 60) // 2} 4 }}\n'
                          'datacontext = "[Company.GetExecutive]"\n}\n',
                 '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
                 f'raw_text = "{bylaws.SUB_W}"', "Company.MakeScope.Var('pmr_bl_v').GetValue",
-                ctx='datacontext = "[Scope.GetCompany]"\n')
+                ctx='datacontext = "[Scope.GetCompany]"\n', who='Company.GetExecutive')
     subs = (f'flowcontainer = {{\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n'
             f'datamodel = "[{company_panel.SUBS}]"\nitem = {{\n{sub}}}\n}}\n')
-    share = _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_industrialists'), 'PMR_BL_SHAREHOLDERS', None,
-                  f'raw_text = "{bylaws.SHARE_W}"', V('pmr_bl_v_sh'))
+    # Pat 16:53Z: the shareholders' seat is the country's Industrialists' leader (pmr_bl_shl), while there is one
+    leader = "Character.MakeScope.Var('pmr_bl_shl').GetCharacter"
+    share = (_seat(SEAT_H, f'character_portrait_small2 = {{\nposition = {{ {(SEAT_TX - 60) // 2} 4 }}\n'
+                           f'datacontext = "[{leader}]"\n}}\n',
+                   f'[{leader}.GetFullNameNoFormatting]', 'PMR_BL_SHAREHOLDERS',
+                   f'raw_text = "{bylaws.SHARE_W}"', V('pmr_bl_v_sh'), vis=EQ('pmr_bl_shx', 1), who=leader)
+             + _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_industrialists'), 'PMR_BL_SHAREHOLDERS', None,
+                     f'raw_text = "{bylaws.SHARE_W}"', V('pmr_bl_v_sh'), vis=f'Not({EQ("pmr_bl_shx", 1)})'))
     council = _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_trade_unions'), 'PMR_BL_COUNCIL', None,
                     f'text = "[{V("pmr_bl_wc")}|0]"', V('pmr_bl_v_wc'), vis=GT('pmr_bl_wc', 0))
     return exe + subs + share + council
