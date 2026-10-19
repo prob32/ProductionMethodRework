@@ -23,22 +23,21 @@ From the build thread, after your 12:56Z to 13:09Z messages.
 - Productivity and Output in the investment chance tooltip have their own tooltips: profit and employees per level,
   goods per level at base prices, and the weight each is multiplied by.
 - The productivity span under the building icon stays inside the card.
-- Your save has the monthly ticks paused (you took the pause decision on 22 May 1836). The decision now shows only
-  while they are paused, as "PMR test: resume the monthly ticks".
+- The pause decision shows only while the ticks are paused, as "PMR test: resume the monthly ticks" (you paused them on
+  22 May 1836 and resumed them on 2 February 1838, so your save runs them).
 
 1. Load your latest PMR Test save.
-2. Take "PMR test: resume the monthly ticks".
-3. Play three months. Open the Policies tab: look at the iron mine, lumber camp and tooling workshop cards.
-4. Hover a card's investment chance, then Productivity and Output in it.
-5. Close the game and tell the build thread; it reads debug.log and error.log. q39's rows below still apply.
+2. Play three months. Open the Policies tab: look at the iron mine, lumber camp and tooling workshop cards.
+3. Hover a card's investment chance, then Productivity and Output in it.
+4. Close the game and tell the build thread; it reads debug.log and error.log. q39's rows below still apply.
 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
-| S1 | Step 2 | The decision is there, and after it the cards' bars move each month | No decision: the ticks were not paused, so the jam is something else (tell the build thread). Bars still stuck after two months: the ticks didn't resume |
-| S2 | Step 3, debug.log | `PROFIT` lines carry `ref=` and `gain=`; every `SWITCH_START` line has `gain=` at 0.25 or more and `pts=` from 1 to 6 | A `SWITCH_START` with `gain=` under 0.25: the threshold isn't applied. No `SWITCH_START` lines: nothing beat its default by 25% in three months, which is not a fault (`rm=` in `PROFIT` shows the figures) |
-| S3 | Step 3 | Each card shows figures only in the gold cell and the unlocked options one step from it in recipe or in an automation row (none older while the gold cell is positive); `PROFIT` lines' `can=` holds 1 only for those | Every cell still filled after a month: the save's old figures weren't recomputed (no `PROFIT` line with `why=price` or `why=recompute` for that type). An empty gold cell: the default can't run, so nothing is priced around it |
-| S4 | Step 4 | Productivity and Output each open a tooltip with three lines and numbers that aren't all 0 | No inner tooltip: the nested tooltip didn't take. Lines with 0: the pick's employees weren't saved (`pmr_pte`) |
-| S5 | Step 3 | The span "£x - £y" under each building icon stays inside its card | It still crosses the card's edge: the text box needs a smaller font or a narrower span |
+| S1 | Step 2 | No "PMR test: resume the monthly ticks" decision, and the cards' bars move each month | The decision shows: the save's ticks are paused again (take it). Bars stuck with no decision: something else stops them (tell the build thread) |
+| S2 | Step 2, debug.log | `PROFIT` lines carry `ref=` and `gain=`; every `SWITCH_START` line has `gain=` at 0.25 or more and `pts=` from 1 to 6 | A `SWITCH_START` with `gain=` under 0.25: the threshold isn't applied. No `SWITCH_START` lines: nothing beat its default by 25% in three months, which is not a fault (`rm=` in `PROFIT` shows the figures) |
+| S3 | Step 2 | Each card shows figures only in the gold cell and the unlocked options one step from it in recipe or in an automation row (none older while the gold cell is positive); `PROFIT` lines' `can=` holds 1 only for those | Every cell still filled after a month: the save's old figures weren't recomputed (no `PROFIT` line with `why=price` or `why=recompute` for that type). An empty gold cell: the default can't run, so nothing is priced around it |
+| S4 | Step 3 | Productivity and Output each open a tooltip with three lines and numbers that aren't all 0 | No inner tooltip: the nested tooltip didn't take. Lines with 0: the pick's employees weren't saved (`pmr_pte`) |
+| S5 | Step 2 | The span "£x - £y" under each building icon stays inside its card | It still crosses the card's edge: the text box needs a smaller font or a narrower span |
 
 ## Earlier: more industries for one company, by a monopoly or by a replacing company (q39, test mod; your 1836 PMR Test save carries on)
 
