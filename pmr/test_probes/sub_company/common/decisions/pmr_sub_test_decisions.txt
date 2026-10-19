@@ -1,0 +1,71 @@
+# Sub-company smoke test, test builds only. Founds two companies at runtime with add_company (vanilla uses it only in
+# history), puts each one's seat in an incorporated state without a Tooling Workshop, and gives it levels there by
+# create_building's company ownership (history only in vanilla, 10_india.txt): _a 2, _b 5. Logs PMR;rec=SUB_TEST at
+# once and every 30 days while either exists.
+pmr_sub_test_decision = {
+	is_shown = {
+		NOT = { has_variable = pmr_sub_test_on }
+	}
+	possible = { always = yes }
+	when_taken = {
+		set_variable = pmr_sub_test_on
+		random_scope_state = {
+			limit = {
+				is_incorporated = yes
+				NOT = { any_scope_building = { is_building_type = building_tooling_workshop } }
+			}
+			save_scope_as = pmr_sub_st_a
+		}
+		if = {
+			limit = { NOT = { exists = scope:pmr_sub_st_a } }
+			capital = { save_scope_as = pmr_sub_st_a }
+		}
+		add_company = company_type:company_pmr_sub_test_a
+		company:company_pmr_sub_test_a ?= {
+			set_company_state_region = scope:pmr_sub_st_a.state_region
+		}
+		scope:pmr_sub_st_a = {
+			create_building = {
+				building = building_tooling_workshop
+				add_ownership = {
+					company = {
+						type = company_pmr_sub_test_a
+						country = ROOT
+						levels = 2
+					}
+				}
+			}
+		}
+		random_scope_state = {
+			limit = {
+				is_incorporated = yes
+				NOT = { any_scope_building = { is_building_type = building_tooling_workshop } }
+			}
+			save_scope_as = pmr_sub_st_b
+		}
+		if = {
+			limit = { NOT = { exists = scope:pmr_sub_st_b } }
+			capital = { save_scope_as = pmr_sub_st_b }
+		}
+		add_company = company_type:company_pmr_sub_test_b
+		company:company_pmr_sub_test_b ?= {
+			set_company_state_region = scope:pmr_sub_st_b.state_region
+		}
+		scope:pmr_sub_st_b = {
+			create_building = {
+				building = building_tooling_workshop
+				add_ownership = {
+					company = {
+						type = company_pmr_sub_test_b
+						country = ROOT
+						levels = 5
+					}
+				}
+			}
+		}
+		set_variable = { name = pmr_sub_step value = 0 }
+		pmr_sub_test_log = yes
+		trigger_event = { id = pmr_sub_test.1 days = 30 }
+	}
+	ai_chance = { value = 0 }
+}

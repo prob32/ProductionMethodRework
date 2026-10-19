@@ -1,0 +1,70 @@
+# Country scope. One PMR;rec=SUB_TEST line: for each test company whether it exists (has_a, has_b) and the levels it
+# owns (levels_a, levels_b, a ladder to 10), the country's companies against its limit (companies, max), and the
+# 30-day steps since founding (month).
+pmr_sub_test_log = {
+	save_scope_as = pmr_sub_c
+	set_variable = { name = pmr_sub_n value = 0 }
+	set_variable = { name = pmr_sub_max value = 0 }
+	set_variable = { name = pmr_sub_has_a value = 0 }
+	set_variable = { name = pmr_sub_lv_a value = 0 }
+	if = {
+		limit = { has_company = company_type:company_pmr_sub_test_a }
+		set_variable = { name = pmr_sub_has_a value = 1 }
+	}
+	company:company_pmr_sub_test_a ?= {
+		if = { limit = { company_owned_levels >= 1 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 1 } } }
+		if = { limit = { company_owned_levels >= 2 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 2 } } }
+		if = { limit = { company_owned_levels >= 3 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 3 } } }
+		if = { limit = { company_owned_levels >= 4 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 4 } } }
+		if = { limit = { company_owned_levels >= 5 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 5 } } }
+		if = { limit = { company_owned_levels >= 6 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 6 } } }
+		if = { limit = { company_owned_levels >= 7 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 7 } } }
+		if = { limit = { company_owned_levels >= 8 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 8 } } }
+		if = { limit = { company_owned_levels >= 9 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 9 } } }
+		if = { limit = { company_owned_levels >= 10 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_a value = 10 } } }
+	}
+	set_variable = { name = pmr_sub_has_b value = 0 }
+	set_variable = { name = pmr_sub_lv_b value = 0 }
+	if = {
+		limit = { has_company = company_type:company_pmr_sub_test_b }
+		set_variable = { name = pmr_sub_has_b value = 1 }
+	}
+	company:company_pmr_sub_test_b ?= {
+		if = { limit = { company_owned_levels >= 1 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 1 } } }
+		if = { limit = { company_owned_levels >= 2 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 2 } } }
+		if = { limit = { company_owned_levels >= 3 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 3 } } }
+		if = { limit = { company_owned_levels >= 4 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 4 } } }
+		if = { limit = { company_owned_levels >= 5 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 5 } } }
+		if = { limit = { company_owned_levels >= 6 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 6 } } }
+		if = { limit = { company_owned_levels >= 7 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 7 } } }
+		if = { limit = { company_owned_levels >= 8 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 8 } } }
+		if = { limit = { company_owned_levels >= 9 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 9 } } }
+		if = { limit = { company_owned_levels >= 10 } scope:pmr_sub_c = { set_variable = { name = pmr_sub_lv_b value = 10 } } }
+	}
+	if = { limit = { num_companies >= 1 } set_variable = { name = pmr_sub_n value = 1 } }
+	if = { limit = { num_companies >= 2 } set_variable = { name = pmr_sub_n value = 2 } }
+	if = { limit = { num_companies >= 3 } set_variable = { name = pmr_sub_n value = 3 } }
+	if = { limit = { num_companies >= 4 } set_variable = { name = pmr_sub_n value = 4 } }
+	if = { limit = { num_companies >= 5 } set_variable = { name = pmr_sub_n value = 5 } }
+	if = { limit = { num_companies >= 6 } set_variable = { name = pmr_sub_n value = 6 } }
+	if = { limit = { num_companies >= 7 } set_variable = { name = pmr_sub_n value = 7 } }
+	if = { limit = { num_companies >= 8 } set_variable = { name = pmr_sub_n value = 8 } }
+	if = { limit = { num_companies >= 9 } set_variable = { name = pmr_sub_n value = 9 } }
+	if = { limit = { num_companies >= 10 } set_variable = { name = pmr_sub_n value = 10 } }
+	if = { limit = { num_companies >= 11 } set_variable = { name = pmr_sub_n value = 11 } }
+	if = { limit = { num_companies >= 12 } set_variable = { name = pmr_sub_n value = 12 } }
+	if = { limit = { max_num_companies >= 1 } set_variable = { name = pmr_sub_max value = 1 } }
+	if = { limit = { max_num_companies >= 2 } set_variable = { name = pmr_sub_max value = 2 } }
+	if = { limit = { max_num_companies >= 3 } set_variable = { name = pmr_sub_max value = 3 } }
+	if = { limit = { max_num_companies >= 4 } set_variable = { name = pmr_sub_max value = 4 } }
+	if = { limit = { max_num_companies >= 5 } set_variable = { name = pmr_sub_max value = 5 } }
+	if = { limit = { max_num_companies >= 6 } set_variable = { name = pmr_sub_max value = 6 } }
+	if = { limit = { max_num_companies >= 7 } set_variable = { name = pmr_sub_max value = 7 } }
+	if = { limit = { max_num_companies >= 8 } set_variable = { name = pmr_sub_max value = 8 } }
+	if = { limit = { max_num_companies >= 9 } set_variable = { name = pmr_sub_max value = 9 } }
+	if = { limit = { max_num_companies >= 10 } set_variable = { name = pmr_sub_max value = 10 } }
+	if = { limit = { max_num_companies >= 11 } set_variable = { name = pmr_sub_max value = 11 } }
+	if = { limit = { max_num_companies >= 12 } set_variable = { name = pmr_sub_max value = 12 } }
+	debug_log = "PMR;rec=SUB_TEST;date=[TimeKeeper.GetCurrentDate.GetString];month=[THIS.Var('pmr_sub_step').GetValue|0];has_a=[THIS.Var('pmr_sub_has_a').GetValue|0];levels_a=[THIS.Var('pmr_sub_lv_a').GetValue|0];has_b=[THIS.Var('pmr_sub_has_b').GetValue|0];levels_b=[THIS.Var('pmr_sub_lv_b').GetValue|0];companies=[THIS.Var('pmr_sub_n').GetValue|0];max=[THIS.Var('pmr_sub_max').GetValue|0]"
+	change_variable = { name = pmr_sub_step add = 1 }
+}

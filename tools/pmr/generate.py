@@ -408,8 +408,9 @@ THUMBNAIL = os.path.join(ROOT, 'pmr', 'thumbnail.png')   # the preview, 1024 x 1
 # (company_culture.py) took over building_employment_laborers_mult. buyin_probe (Pat 13:54Z) ran at 14:22Z and was
 # retired when Pat dropped foreign buy-in at 14:29Z (results: /mnt/project-files/pmr/foreign-buyin/probe-results.md).
 # works_share_probe (Company Culture thread, Pat 2026-10-18 15:35Z) asks whether a building reads its company owners'
-# share through an executive trait (run sheet: /mnt/project-files/pmr/mio/works-share-probe/RUN.md). A probe's
-# English localisation is copied to every other language.
+# share through an executive trait (run sheet: /mnt/project-files/pmr/mio/works-share-probe/RUN.md). sub_company
+# (Pat 2026-10-19 04:13Z) asks whether script can found a company mid-game and give it levels, at 2 and at 5 levels
+# (/mnt/project-files/pmr/sub-companies/FINDINGS.md). A probe's English localisation is copied to every other language.
 TEST_PROBES = os.path.join(ROOT, 'pmr', 'test_probes')
 SHORT_DESCRIPTION = ('Research no longer upgrades a factory overnight: buildings retool level by level through '
                      'construction, and their output blends the recipes their levels run.')

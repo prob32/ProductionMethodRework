@@ -1,0 +1,49 @@
+# Sub-company smoke test, test builds only (Pat 2026-10-19 04:13Z; /mnt/project-files/pmr/sub-companies/FINDINGS.md).
+# Founded only by pmr_sub_test_decision: potential needs its variable, and possible is never met, so neither the
+# player's companies panel nor the AI founds them. _a gets 2 levels, _b 5 (COMPANY_MINIMUM_LEVELS_PER_HQ).
+company_pmr_sub_test_a = {
+	icon = "gfx/interface/icons/company_icons/basic_metalworks.dds"
+	background = "gfx/interface/icons/company_icons/company_backgrounds/comp_illu_manufacturing_heavy.dds"
+
+	flavored_company = yes
+
+	building_types = {
+		building_tooling_workshop
+	}
+
+	potential = {
+		has_variable = pmr_sub_test_on
+	}
+
+	possible = {
+		always = no
+	}
+
+	ai_will_do = {
+		always = no
+	}
+}
+
+company_pmr_sub_test_b = {
+	icon = "gfx/interface/icons/company_icons/basic_metalworks.dds"
+	background = "gfx/interface/icons/company_icons/company_backgrounds/comp_illu_manufacturing_heavy.dds"
+
+	flavored_company = yes
+
+	building_types = {
+		building_tooling_workshop
+	}
+
+	potential = {
+		has_variable = pmr_sub_test_on
+	}
+
+	possible = {
+		always = no
+	}
+
+	ai_will_do = {
+		always = no
+	}
+}
+

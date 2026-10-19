@@ -1,0 +1,5 @@
+﻿l_english:
+ company_pmr_sub_test_a:0 "PMR Test Subsidiary A"
+ company_pmr_sub_test_b:0 "PMR Test Subsidiary B"
+ pmr_sub_test_decision:0 "PMR test: found two test companies"
+ pmr_sub_test_decision_desc:0 "Founds two companies, with 2 and 5 Tooling Workshop levels, each in a state without one."
