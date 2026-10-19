@@ -1348,7 +1348,7 @@ def main():
         if len(plain) > len(TIER_COLORS):
             raise SystemExit(f'{bk}: {len(plain)} recipes, but TIER_COLORS has {len(TIER_COLORS)}; add a colour')
         for i, r in enumerate(recipes, 1):
-            custom_new.append(f'\ttext = {{\n\t\ttrigger = {{ is_building_type = {bk} state = {{ var:pmr_to_{b} = {i} }} }}\n'
+            custom_new.append(f'\ttext = {{\n\t\ttrigger = {{ is_building_type = {bk} state = {{ has_variable = pmr_to_{b} var:pmr_to_{b} = {i} }} }}\n'
                               f'\t\tlocalization_key = {r.key}\n\t}}\n')
         # Carries nothing since the workforce is blended (Pat, 2026-10-13): it is the slot the building
         # browser rows and market lists show, drawn as the gold main output good.

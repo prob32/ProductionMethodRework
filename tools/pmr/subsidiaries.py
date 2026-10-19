@@ -37,6 +37,7 @@ NUMS = (1, 2)           # 1 the supply subsidiary (Vertical Integration), 2 the 
 SLOTS = range(1, SB_SIZE + 1)
 NAME = {1: 'Supply', 2: 'Industries'}
 RETOOL_OF = {}          # building type -> its private retool sites a subsidiary listing it lists too (generate.py)
+TECH = {}               # building type a subsidiary lists -> the technologies unlocking it (plan_types)
 
 
 def short(c):
@@ -77,7 +78,7 @@ def point_prices(game):
 
 
 def buildings(game):
-    """building key -> (icon, construction points)."""
+    """building key -> (icon, construction points, unlocking technologies)."""
     values = {}
     for path in glob.glob(os.path.join(game, 'common', 'script_values', '*.txt')):
         for k, v in re.findall(r'^\s*(construction_cost_\w+)\s*=\s*(\d+)', open(path, encoding='utf-8-sig').read(), re.M):
@@ -88,8 +89,10 @@ def buildings(game):
             if not (n.is_block and n.key):
                 continue
             icon, rc = pdx.get(n.value, 'icon'), pdx.get(n.value, 'required_construction')
+            ut = pdx.get(n.value, 'unlocking_technologies')
             pts = rc.value if rc else '0'
-            out[n.key] = (icon.value.strip('"') if icon else '', values.get(pts, int(pts) if pts.isdigit() else 0))
+            out[n.key] = (icon.value.strip('"') if icon else '', values.get(pts, int(pts) if pts.isdigit() else 0),
+                          pdx.items(ut) if ut else [])
     return out
 
 
@@ -115,6 +118,7 @@ def plan_types(p, game):
     p.sb_types = sorted({b for v in p.comp.values() for s in v['sb'] for b in s})
     p.sb_icon = {b: info[b][0] for b in p.sb_types}
     p.sb_points = {b: info[b][1] for b in p.sb_types}
+    TECH.update({b: info[b][2] for b in p.sb_types})
     for b in p.sb_types:
         if not p.sb_icon[b] or not p.sb_points[b]:
             raise SystemExit(f'subsidiaries: {b} has no icon or construction cost')
@@ -304,14 +308,14 @@ def effects(p):
              + '\t\tscope:pmr_sb_new ?= {\n\t\t\tset_variable = { name = pmr_sb_lv value = 0 }\n' + lv
              + '\t\t}\n\t}\n}\n\n')
     o.append('# Country scope: scope:pmr_sb_st$I$, an incorporated state that can take a level of $B$ (can_construct_building:\n'
-             '# technology, resources), one without the building first.\n'
-             'pmr_sb_seed = {\n'
-             '\trandom_scope_state = {\n'
-             '\t\tlimit = { is_incorporated = yes can_construct_building = $B$ NOT = { any_scope_building = { is_building_type = $B$ } } }\n'
-             '\t\tsave_scope_as = pmr_sb_st$I$\n\t}\n'
-             '\tif = {\n\t\tlimit = { NOT = { exists = scope:pmr_sb_st$I$ } }\n'
-             '\t\trandom_scope_state = {\n\t\t\tlimit = { is_incorporated = yes can_construct_building = $B$ }\n'
-             '\t\t\tsave_scope_as = pmr_sb_st$I$\n\t\t}\n\t}\n}\n\n')
+             '# resources; the technology by pmr_sb_tech_$B$, which it does not check), one without the building first.\n'
+             'pmr_sb_seed = {\n\tif = {\n\t\tlimit = { pmr_sb_tech_$B$ = yes }\n'
+             '\t\trandom_scope_state = {\n'
+             '\t\t\tlimit = { is_incorporated = yes can_construct_building = $B$ NOT = { any_scope_building = { is_building_type = $B$ } } }\n'
+             '\t\t\tsave_scope_as = pmr_sb_st$I$\n\t\t}\n'
+             '\t\tif = {\n\t\t\tlimit = { NOT = { exists = scope:pmr_sb_st$I$ } }\n'
+             '\t\t\trandom_scope_state = {\n\t\t\t\tlimit = { is_incorporated = yes can_construct_building = $B$ }\n'
+             '\t\t\t\tsave_scope_as = pmr_sb_st$I$\n\t\t\t}\n\t\t}\n\t}\n}\n\n')
     o.append(f'# Country scope: {SB_LEVELS} levels of $B$ owned by the new company in scope:pmr_sb_st$I$, while it owns fewer;\n'
              '# its headquarters there, at the first.\n'
              'pmr_sb_levels = {\n\tif = {\n'
@@ -356,7 +360,12 @@ def effects(p):
 
 def triggers():
     return ('# PMR subsidiaries (subsidiaries.py). Company scope: a subsidiary is being paid for (the weekly clock pmr_cc.1).\n'
-            'pmr_sb_paying = {\n\thas_variable = pmr_sb_pick\n\tvar:pmr_sb_pick > 0\n}\n\n')
+            'pmr_sb_paying = {\n\thas_variable = pmr_sb_pick\n\tvar:pmr_sb_pick > 0\n}\n\n'
+            '# Country scope: the country has researched what unlocks the building type (create_building fails without it,\n'
+            '# and can_construct_building does not check it: Hudson\'s Bay\'s oil rig without Pumpjacks, q46).\n'
+            + ''.join(f'pmr_sb_tech_{b} = {{ ' + (' '.join(f'has_technology_researched = {t}' for t in ts) or 'always = yes')
+                      + ' }\n' for b, ts in sorted(TECH.items()))
+            + '\n')
 
 
 TEST_DECISION = f'''
