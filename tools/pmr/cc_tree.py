@@ -1,0 +1,585 @@
+"""Company Culture: the full-screen window (Pat, 2026-10-19 14:43Z), opened from the company panel's Company Culture tab.
+
+company_culture.py builds the lines, their script and their text; this module draws them. The window's body splits
+70 / 30: on the left the two trees on a fixed canvas, Expansion (its root over the Vertical and Horizontal columns) and
+Engineering (its root over its one column), each a root and three levels (Pat 14:58Z); on the right the board, the
+company's executive with its subsidiaries' executives underneath. The window keeps the wheel's header (Culture level,
+points, the bar to the next point) and its opening and closing (fullscreen()).
+
+A node is the tech node, smaller: the round frame and the invention picture, a rounded card whose outline colour is its
+tree's, the name, and its bullets; a branch's first node shows its subsidiary's industries and payment instead, and a
+node opening a charter carries the vanilla charter button once bought (the charter row is off the panel's foot). Links
+are straight lines in three colourings (done, open, locked), of which one shows.
+
+A node reads its state from the executive's mirror, pmr_cc_st_<line>_<tier> (company_culture.effects, pmr_cc_states):
+0 locked, 1 a click buys it, 2 next but short of points or of a week in the investment pool, 4 bought, 5 ruled out by
+the other branch, 6 its subsidiary being paid for, 7 nothing to found for this company.
+"""
+import os
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+import company_culture as cc   # circular: company_culture imports this module; used inside functions only
+import company_panel
+import icons
+import subsidiaries
+
+TEX = 'gfx/interface/pmr_company_culture'
+WHITE = 'gfx/interface/backgrounds/white.dds'
+FRAME_TEX = 'gfx/interface/backgrounds/round_frame_dec.dds'
+ROUND_BG = 'gfx/interface/backgrounds/round_button_bg.dds'
+WARNING = 'gfx/interface/icons/generic_icons/warning.dds'
+CHECK = 'gfx/interface/icons/generic_icons/checkmark.dds'
+GREEN_CHECK = 'gfx/interface/icons/generic_icons/green_checkmark.dds'
+SG_SCOPE = 'GuiScope.SetRoot(Character.MakeScope)'
+LOCAL = 'Company.GetCountry.IsLocalPlayer'
+
+# The node card
+NODE_W, NODE_H = 390, 156
+FRAME, ICON = 104, 80                   # round frame and invention picture, as the tech node
+CX = FRAME // 2                         # the card, from the frame's middle to the node's right
+CW = NODE_W - CX
+TX0 = FRAME + 10                        # the text column
+TXW = NODE_W - TX0 - 12
+BODY_Y = 50
+CHARTER_Y = NODE_H - 50
+SB_ICON = 30
+
+# The canvas: 1250 x 744 fits the left 70% of the window at 1920 x 1080 (1825 x 810 below its header)
+COL_X = {'vx': 0, 'hx': 410, 'en': 860}
+ROOT_X = {'xr': (COL_X['vx'] + COL_X['hx']) // 2, 'er': COL_X['en']}
+GAP = 40
+ROW_Y = [r * (NODE_H + GAP) for r in range(4)]
+CANVAS_W, CANVAS_H = COL_X['en'] + NODE_W, ROW_Y[-1] + NODE_H
+DIVIDER_X = (COL_X['hx'] + NODE_W + COL_X['en']) // 2
+LINK_W = 4
+
+TREE_COL = {'exp': (206, 124, 80), 'eng': (98, 156, 214)}
+CARD_COL = {'active': (30, 63, 77), 'pending': (20, 40, 48), 'bought': (55, 50, 44), 'locked': (12, 24, 30)}
+LINK_COL = {'done': (214, 178, 120), 'active': (130, 190, 215), 'locked': (66, 80, 84)}
+CLASSES = {'active': (1,), 'pending': (2, 6), 'bought': (4,), 'locked': (0, 5, 7)}
+
+# The board
+BOARD_W = 500
+TORSO_W, TORSO_H = 145, 174             # character_portrait_medium_torso
+HEAD = 80                               # character_portrait_medium
+
+FULL = 'pmr_cc_full'                    # the GUI variable that opens the full-screen window
+# The full-screen window lives in ingame_hud.gui, outside the company panel, so it reads the company from the
+# executive the tab or its Open button stored on the player's country (pmr_cc_view_sgui).
+VIEWED = "GetPlayer.MakeScope.Var('pmr_cc_exec').GetCharacter"
+VIEW = ("GetScriptedGui('pmr_cc_view_sgui').Execute(GuiScope.SetRoot(Company.GetExecutive.MakeScope)"
+        ".AddScope('player', GetPlayer.MakeScope).End)")
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Expressions
+
+def V(name):
+    return f"Character.MakeScope.Var('{name}').GetValue"
+
+
+def EQ(name, n):
+    return f"EqualTo_CFixedPoint({V(name)}, '(CFixedPoint){n}')"
+
+
+def GT(name, n):
+    return f"GreaterThan_CFixedPoint({V(name)}, '(CFixedPoint){n}')"
+
+
+def OR(*xs):
+    return xs[0] if len(xs) == 1 else f'Or({xs[0]}, {OR(*xs[1:])})'
+
+
+def AND(*xs):
+    return xs[0] if len(xs) == 1 else f'And({xs[0]}, {AND(*xs[1:])})'
+
+
+def ST(k, t, *vals):
+    return OR(*(EQ(f'pmr_cc_st_{k}_{t}', v) for v in vals))
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Layout
+
+def corner(k, t):
+    """A node's top left on the canvas."""
+    if cc.BY_KEY[k].root:
+        return ROOT_X[k], ROW_Y[0]
+    return COL_X[k], ROW_Y[t]
+
+
+def links():
+    """[(parent node, child node, segments)]; a segment is a rectangle (x, y, w, h). A root's link to a first tier
+    drops to the middle of the gap, runs across and drops again; the drop under the root is drawn once, with the
+    root (trunks())."""
+    out = []
+    for ln in cc.LINES:
+        if ln.root:
+            continue
+        k = ln.key
+        rk = cc.ROOT_OF[ln.tree]
+        rx, ry = corner(rk, 1)
+        cx = COL_X[k] + NODE_W // 2
+        rcx = rx + NODE_W // 2
+        y0, y1 = ry + NODE_H, ROW_Y[1]
+        ym = (y0 + y1) // 2
+        if cx == rcx:
+            segs = [(cx - LINK_W // 2, y0, LINK_W, y1 - y0)]
+        else:
+            lo, hi = min(cx, rcx), max(cx, rcx)
+            segs = [(lo - LINK_W // 2, ym - LINK_W // 2, hi - lo + LINK_W, LINK_W),
+                    (cx - LINK_W // 2, ym, LINK_W, y1 - ym)]
+        out.append(((rk, 1), (k, 1), segs))
+        for t in range(2, ln.tiers + 1):
+            out.append(((k, t - 1), (k, t), [(cx - LINK_W // 2, ROW_Y[t - 1] + NODE_H, LINK_W, GAP)]))
+    return out
+
+
+def trunks():
+    """The drop under a root whose first tiers sit beside it: (root, segment)."""
+    out = []
+    for tree, rk in cc.ROOT_OF.items():
+        rx, ry = corner(rk, 1)
+        rcx = rx + NODE_W // 2
+        if any(COL_X[ln.key] + NODE_W // 2 != rcx for ln in cc.LINES if ln.tree == tree and not ln.root):
+            y0 = ry + NODE_H
+            out.append((rk, (rcx - LINK_W // 2, y0, LINK_W, GAP // 2)))
+    return out
+
+
+def check_layout():
+    boxes = {(ln.key, t): corner(ln.key, t) for ln, t in cc.NODES}
+    keys = list(boxes)
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            (ax, ay), (bx, by) = boxes[a], boxes[b]
+            if abs(ax - bx) < NODE_W + 10 and abs(ay - by) < NODE_H + 10:
+                cc.fail('cc_tree layout', f'{a} and {b} overlap')
+    for x, y in boxes.values():
+        if x < 0 or y < 0 or x + NODE_W > CANVAS_W or y + NODE_H > CANVAS_H:
+            cc.fail('cc_tree layout', f'a node at {x}, {y} leaves the canvas')
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# GUI pieces (written unindented; _reindent indents by brace depth)
+
+def _reindent(text, base):
+    out, depth = [], 0
+    for raw in text.split('\n'):
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith('}'):
+            depth -= 1
+        out.append(base + '\t' * depth + line)
+        depth += line.count('{') - line.count('}') + (1 if line.startswith('}') else 0)
+    if depth:
+        cc.fail('cc_tree', f'unbalanced braces ({depth})')
+    return '\n'.join(out) + '\n'
+
+
+def _vis(expr):
+    return f'visible = "[{expr}]"\n' if expr else ''
+
+
+def _rgb(c, a=1):
+    return f'color = {{ {c[0] / 255:.3f} {c[1] / 255:.3f} {c[2] / 255:.3f} {a} }}\n'
+
+
+def _rect(seg, col, vis=None):
+    x, y, w, h = seg
+    return (f'icon = {{\n{_vis(vis)}position = {{ {x} {y} }}\nsize = {{ {w} {h} }}\ntexture = "{WHITE}"\n{_rgb(col)}'
+            'alwaystransparent = yes\n}\n')
+
+
+def _textbox(x, y, w, h, text, size, extra=''):
+    return (f'textbox = {{\nposition = {{ {x} {y} }}\nsize = {{ {w} {h} }}\nalign = left|nobaseline\n'
+            f'fontsize = {size}\nfontsize_min = {max(12, size - 8)}\nelide = right\n{extra}text = "{text}"\n'
+            'alwaystransparent = yes\n}\n')
+
+
+def link_gui(a, b, segs):
+    """One link in its three colourings: done once both ends are bought, open while its child is next, locked
+    otherwise."""
+    done = AND(ST(*b, 4), ST(*a, 4))
+    active = ST(*b, 1, 2, 6)
+    modes = {'locked': f'Not({OR(done, active)})', 'active': active, 'done': done}
+    return ''.join(f'container = {{\n{_vis(vis)}' + ''.join(_rect(s, LINK_COL[m]) for s in segs) + '}\n'
+                   for m, vis in modes.items())
+
+
+def trunk_gui(rk, seg):
+    return ''.join(_rect(seg, LINK_COL[m], vis) for m, vis in
+                   (('done', ST(rk, 1, 4)), ('active', ST(rk, 1, 1, 2)), ('locked', f'Not({ST(rk, 1, 1, 2, 4)})')))
+
+
+def sub_body(p, ln):
+    """A branch's first node: its subsidiary's industries (the company type's own list, pmr_cc_k_sb<n>_<j>), what it
+    costs a week, and while it is paid for the weeks paid."""
+    n = ln.sub
+    out = ''
+    for j in subsidiaries.SLOTS:
+        cands = sorted({v['sb'][n - 1][j - 1] for v in p.comp.values() if len(v['sb'][n - 1]) >= j})
+        x = TX0 + (j - 1) * (SB_ICON + 3)
+        out += ''.join(f'icon = {{\n{_vis(EQ(f"pmr_cc_k_sb{n}_{j}", p.sb_types.index(b) + 1))}'
+                       f'position = {{ {x} {BODY_Y} }}\nsize = {{ {SB_ICON} {SB_ICON} }}\ntexture = "{p.sb_icon[b]}"\n'
+                       f'tooltip = "{b}"\n}}\n' for b in cands)
+    py = BODY_Y + SB_ICON + 4
+    paying, done = ST(ln.key, 1, 6), ST(ln.key, 1, 4)
+    return (out
+            + f'textbox = {{\n{_vis(f"Not({OR(paying, done)})")}position = {{ {TX0} {py} }}\nsize = {{ {TXW} 22 }}\n'
+            f'align = left|nobaseline\nfontsize = 18\nelide = right\ntext = "PMR_SB_PAY_{n}"\nalwaystransparent = yes\n}}\n'
+            f'widget = {{\n{_vis(paying)}position = {{ {TX0} {py + 4} }}\nsize = {{ {TXW - 8} 14 }}\n'
+            'alwaystransparent = yes\ngold_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
+            f'min = 0\nmax = {subsidiaries.SB_WEEKS}\nvalue = "[FixedPointToFloat({V("pmr_sb_w")})]"\n}}\n}}\n}}\n')
+
+
+PG_NONE = 'IsDataModelEmpty(Company.GetPrestigeGoods)'
+
+
+def prestige_badge():
+    """Hallmark Goods: the company's first prestige good (vanilla company_panel.gui lists them), top right."""
+    return (f'flowcontainer = {{\n{_vis(f"Not({PG_NONE})")}position = {{ {NODE_W - 52} 6 }}\n'
+            "datamodel = \"[DataModelFirst(Company.GetPrestigeGoods, '(int32)1')]\"\nitem = {\n"
+            f'widget = {{\nsize = {{ 44 44 }}\n'
+            f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\nalwaystransparent = yes\n}}\n'
+            'icon = {\nparentanchor = center\nsize = { 34 34 }\ntexture = "[Goods.GetTexture]"\ntooltip = "[Goods.GetName]"\n}\n'
+            '}\n}\n}\n')
+
+
+CHARTER_TEST = {'trade_charter': 'IsTradeCharter', 'investment_charter': 'IsInvestmentCharter',
+                'industry_charter': 'IsIndustryCharter', 'monopoly_charter': 'IsMonopolyCharter',
+                'colonization_charter': 'IsColonizationCharter'}
+TARGETS = 'Or(CompanyCharterType.IsTargettingRegions, CompanyCharterType.IsTargettingBuildings)'
+ACTIVE = ('Or(And(CompanyCharterType.IsTradeCharter, Company.HasAnyTradeCharterActive), '
+          'And(CompanyCharterType.IsInvestmentCharter, Company.HasAnyInvestmentCharterActive))')
+TOGGLE = 'Company.ToggleCharter(CompanyCharterType.Self)'
+
+
+def charter_gui(k, t, charter):
+    """The charter a node opens, at the card's foot. Bought: the vanilla charter button, as the company panel's charter
+    row drew it (company_panel.gui, "COMPANY CHARTER BUTTONS - DO NOT OWN DLC"; a charter aimed at regions or buildings
+    opens vanilla's target menu, the others ask to confirm). Otherwise its icon and name, faint."""
+    test = CHARTER_TEST[charter]
+    size = f'size = {{ {NODE_W - TX0 + 2} 44 }}\n'
+    pick = ('datamodel = "[GetCompanyCharterTypes]"\nitem = {\n'
+            f'container = {{\n{_vis(f"CompanyCharterType.{test}")}')
+    bought = AND(LOCAL, ST(k, t, 4))
+    plate = (f'flowcontainer = {{\n{_vis(bought)}position = {{ {TX0 - 4} {CHARTER_Y} }}\n'
+             'direction = vertical\nignoreinvisible = yes\n' + pick
+             + f'company_charter_button_horizontal = {{\n{_vis(TARGETS)}{size}'
+             'blockoverride "onclick" {\nonclick = "[RightClickMenuManager.ToggleCompanyCharterType(CompanyCharterType.AccessSelf, '
+             'Company.AccessSelf, PdxGuiWidget.AccessSelf)]"\n}\n'
+             'blockoverride "button_style" {\nusing = default_button\n}\n}\n'
+             f'container = {{\n{_vis(f"Not({TARGETS})")}'
+             f'company_charter_active_widget_horizontal = {{\n{_vis(ACTIVE)}{size}'
+             # vanilla puts this block's onclick on an icon, which logs an error per widget (gui.log)
+             'blockoverride "onclick" {}\n}\n'
+             f'company_charter_button_horizontal = {{\n{_vis(f"Not({ACTIVE})")}{size}enabled = "[IsValid({TOGGLE})]"\n'
+             f'blockoverride "onclick" {{\nonclick = "[PopupManager.AskConfirmationWithSound({TOGGLE}, '
+             "'event:/SFX/UI/CompanyCharters/company_charter_grant')]\"\nusing = icon_toggle_single_on_sound\n}\n"
+             'blockoverride "charter_tooltip" {\ntooltipwidget = {\nFancyTooltip_CompanyCharterType = {\n'
+             'blockoverride "tooltip_content_before" {\n'
+             f'custom_tooltip_textbox = {{\nvisible = "[StringIsEmpty(GetDesc({TOGGLE}))]"\ntext = "GRANT_COMPANY_CHARTER_GENERIC_TOOLTIP"\n}}\n'
+             f'custom_tooltip_textbox_with_empty_line = {{\nvisible = "[Not(StringIsEmpty(GetDesc({TOGGLE})))]"\ntext = "[GetDesc({TOGGLE})]"\n}}\n'
+             'custom_tooltip_textbox_with_empty_line = {\ndatacontext = "[Company.GetCountry]"\ntext = "USING_X_FREE_CHARTERS"\n}\n'
+             '}\n}\n}\n}\n}\n}\n}\n}\n}\n')
+    preview = (f'flowcontainer = {{\n{_vis(f"Not({bought})")}position = {{ {TX0} {CHARTER_Y + 2} }}\n'
+               'direction = vertical\nignoreinvisible = yes\nalpha = 0.6\n' + pick
+               + f'widget = {{\nsize = {{ {NODE_W - TX0 - 12} 40 }}\n'
+               f'icon = {{\nsize = {{ 40 40 }}\ntexture = "{FRAME_TEX}"\nalwaystransparent = yes\n}}\n'
+               'icon = {\nposition = { 6 6 }\nsize = { 28 28 }\ntexture = "[CompanyCharterType.GetIcon]"\nalwaystransparent = yes\n}\n'
+               f'textbox = {{\nposition = {{ 48 0 }}\nsize = {{ {NODE_W - TX0 - 60} 40 }}\nalign = left|nobaseline\n'
+               'fontsize = 18\nfontsize_min = 12\nelide = right\ntext = "[CompanyCharterType.GetNameNoFormatting]"\n'
+               'alwaystransparent = yes\n}\n}\n}\n}\n}\n')
+    return plate + preview
+
+
+def node(p, ln, t, x, y):
+    """The node for one tier, top left at (x, y) on the canvas."""
+    k = ln.key
+    st = f'pmr_cc_st_{k}_{t}'
+    cls = {c: ST(k, t, *v) for c, v in CLASSES.items()}
+    locked = cls['locked']
+    tt = f'tooltip = "PMR_CC_TT_{k}_{t}"\n'
+    sg = "GetScriptedGui('pmr_cc_pick_sgui')"
+    scope = f"{SG_SCOPE}.AddScope('line', MakeScopeValue('(CFixedPoint){ln.node(t)}')).End"
+    can = AND(LOCAL, EQ(st, 1), f'{sg}.IsValid({scope})')
+    click = f'enabled = "[{can}]"\nonclick = "[{sg}.Execute({scope})]"\n'
+    tc = TREE_COL[ln.tree]
+    out = f'widget = {{\nposition = {{ {x} {y} }}\nsize = {{ {NODE_W} {NODE_H} }}\n{tt}'
+    # the card by state, its outline by tree (fainter while locked, faintest when ruled out)
+    card = f'position = {{ {CX} 0 }}\nsize = {{ {CW} {NODE_H} }}\nalwaystransparent = yes\n'
+    for c, col in CARD_COL.items():
+        if c == 'locked':
+            out += f'icon = {{\n{_vis(ST(k, t, 0, 7))}{card}texture = "{TEX}/cc_card.dds"\n{_rgb(col)}}}\n'
+            out += f'icon = {{\n{_vis(ST(k, t, 5))}{card}texture = "{TEX}/cc_card.dds"\n{_rgb(col, 0.6)}}}\n'
+        else:
+            out += f'icon = {{\n{_vis(cls[c])}{card}texture = "{TEX}/cc_card.dds"\n{_rgb(col)}}}\n'
+    out += f'icon = {{\n{_vis(f"Not({locked})")}{card}texture = "{TEX}/cc_outline.dds"\n{_rgb(tc)}}}\n'
+    out += f'icon = {{\n{_vis(ST(k, t, 0, 7))}{card}texture = "{TEX}/cc_outline.dds"\n{_rgb(tc, 0.65)}}}\n'
+    out += f'icon = {{\n{_vis(ST(k, t, 5))}{card}texture = "{TEX}/cc_outline.dds"\n{_rgb(tc, 0.45)}}}\n'
+    # a click on the card buys it
+    out += (f'button = {{\n{_vis(cls["active"])}{card.replace("alwaystransparent = yes", "")}'
+            f'using = technology_confirm_button_sound\n{click}{tt}}}\n')
+    # name, divider and what it does; dimmed while locked
+    text = (_textbox(TX0, 8, TXW - (44 if (k, t) == ('en', 3) else 0), 34, f'PMR_CC_NAME_{k}_{t}', 24)
+            + f'icon = {{\nposition = {{ {TX0} 44 }}\nsize = {{ {TXW} 2 }}\ntexture = "{WHITE}"\n'
+            f'{_rgb((200, 185, 150), 0.35)}alwaystransparent = yes\n}}\n')
+    if ln.sub and t == 1:
+        text += sub_body(p, ln)
+    elif cc.fx_lines(k, t):
+        text += (f'textbox = {{\nposition = {{ {TX0} {BODY_Y} }}\nautoresize = yes\n'
+                 f'maximumsize = {{ {TXW} {(CHARTER_Y if t in ln.charters else NODE_H) - BODY_Y - 4} }}\nmultiline = yes\n'
+                 f'align = left|nobaseline\nfontsize = 19\nfontsize_min = 14\nelide = right\ntext = "PMR_CC_FX_{k}_{t}"\n'
+                 'alwaystransparent = yes\n}\n')
+    out += (f'widget = {{\n{_vis(f"Not({locked})")}size = {{ 100% 100% }}\n{text}}}\n'
+            f'widget = {{\n{_vis(locked)}size = {{ 100% 100% }}\nalpha = 0.55\n{text}}}\n')
+    # the round frame and the picture, greyed while locked
+    fy, iy = (NODE_H - FRAME) // 2, (NODE_H - ICON) // 2
+    frame = f'position = {{ 0 {fy} }}\nsize = {{ {FRAME} {FRAME} }}\ntexture = "{FRAME_TEX}"\nalwaystransparent = yes\n'
+    pic = f'position = {{ {(FRAME - ICON) // 2} {iy} }}\nsize = {{ {ICON} {ICON} }}\ntexture = "{ln.icons[t - 1]}"\n'
+    out += (f'icon = {{\n{_vis(f"Not({locked})")}{frame}}}\n'
+            f'icon = {{\n{_vis(locked)}{frame}color = {{ 0.5 0.5 0.5 1 }}\n}}\n'
+            f'button = {{\n{_vis(cls["active"])}{pic}using = technology_confirm_button_sound\n{click}{tt}}}\n'
+            f'icon = {{\n{_vis(OR(cls["pending"], cls["bought"]))}{pic}{tt}}}\n'
+            f'icon = {{\n{_vis(locked)}{pic}color = {{ 0.4 0.4 0.4 1 }}\n{tt}}}\n')
+    # the cost in points, where the tech node shows its era
+    if ln.cost[t - 1]:
+        out += (f'widget = {{\n{_vis(f"Not({cls["bought"]})")}position = {{ {FRAME // 2 - 18} {fy + FRAME - 26} }}\n'
+                f'size = {{ 36 36 }}\ntooltip = "PMR_CC_COST_TT"\n'
+                f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\n}}\n'
+                f'textbox = {{\nraw_text = "{ln.cost[t - 1]}"\nparentanchor = center\nautoresize = yes\n'
+                'align = center|nobaseline\nfontsize = 20\nalwaystransparent = yes\n}\n}\n')
+    # bought: the tech node's ticks
+    out += (f'widget = {{\n{_vis(cls["bought"])}size = {{ 40 40 }}\nparentanchor = bottom|right\nposition = {{ -6 -6 }}\n'
+            f'icon = {{\nsize = {{ 40 40 }}\ntexture = "{ROUND_BG}"\nparentanchor = center\n}}\n'
+            f'icon = {{\ntexture = "{CHECK}"\nsize = {{ 48 48 }}\nparentanchor = center\n}}\n}}\n'
+            f'icon = {{\n{_vis(cls["bought"])}size = {{ 36 36 }}\nposition = {{ 2 {fy + 2} }}\ntexture = "{ROUND_BG}"\n'
+            f'icon = {{\nsize = {{ 80% 80% }}\nparentanchor = center\ntexture = "{GREEN_CHECK}"\n}}\n}}\n')
+    # can be bought: the add button; ruled out: the warning
+    out += (f'button_icon_plus_action = {{\n{_vis(cls["active"])}position = {{ 0 {fy} }}\nsize = {{ 38 38 }}\n'
+            f'using = tooltip_ne\n{click}{tt}}}\n'
+            f'icon = {{\n{_vis(ST(k, t, 5))}position = {{ 4 {fy + 4} }}\nsize = {{ 30 30 }}\ntexture = "{WARNING}"\n'
+            'alwaystransparent = yes\n}\n')
+    if (k, t) == ('en', 3):
+        out += prestige_badge()
+    if t in ln.charters:
+        out += charter_gui(k, t, ln.charters[t])
+    return out + '}\n'
+
+
+def trees(p):
+    """The canvas: the divider between the trees, the links, the nodes."""
+    check_layout()
+    out = (f'icon = {{\nposition = {{ {DIVIDER_X - 1} 0 }}\nsize = {{ 2 {CANVAS_H} }}\ntexture = "{WHITE}"\n'
+           f'{_rgb((200, 185, 150), 0.18)}alwaystransparent = yes\n}}\n')
+    for rk, seg in trunks():
+        out += trunk_gui(rk, seg)
+    for a, b, segs in links():
+        out += link_gui(a, b, segs)
+    for ln, t in cc.NODES:
+        out += node(p, ln, t, *corner(ln.key, t))
+    return (f'widget = {{\nparentanchor = center\nsize = {{ {CANVAS_W} {CANVAS_H} }}\n{out}}}\n')
+
+
+def board():
+    """The board (Pat 14:43Z): the company's executive, its subsidiaries' executives underneath (company_panel.SUBS)."""
+    name = (f'textbox = {{\nposition = {{ {{X}} {{Y}} }}\nsize = {{ {{W}} 32 }}\nalign = left|nobaseline\nfontsize = {{F}}\n'
+            'fontsize_min = 14\nelide = right\nraw_text = "{T}"\n}\n')
+
+    def nm(x, y, w, f, t):
+        return name.replace('{X}', str(x)).replace('{Y}', str(y)).replace('{W}', str(w)).replace('{F}', str(f)).replace('{T}', t)
+    exec_w = (f'widget = {{\nsize = {{ {BOARD_W} {TORSO_H} }}\n'
+              'character_portrait_medium_torso = {\ndatacontext = "[Company.GetExecutive]"\n}\n'
+              + nm(TORSO_W + 16, 52, BOARD_W - TORSO_W - 16, 26, '[Company.GetExecutive.GetFullNameNoFormatting]')
+              + nm(TORSO_W + 16, 92, BOARD_W - TORSO_W - 16, 20, '[Company.GetNameNoFormatting]')
+              + '}\n')
+    subs = (f'flowcontainer = {{\ndirection = vertical\nspacing = 10\nignoreinvisible = yes\n'
+            f'datamodel = "[{company_panel.SUBS}]"\nitem = {{\n'
+            f'widget = {{\ndatacontext = "[Scope.GetCompany]"\nsize = {{ {BOARD_W} {HEAD + 8} }}\n'
+            'character_portrait_medium = {\nposition = { 30 4 }\ndatacontext = "[Company.GetExecutive]"\n}\n'
+            + nm(HEAD + 46, 14, BOARD_W - HEAD - 46, 22, '[Company.GetExecutive.GetFullNameNoFormatting]')
+            + nm(HEAD + 46, 46, BOARD_W - HEAD - 46, 18, '[Company.GetNameNoFormatting]')
+            + '}\n}\n}\n')
+    return (f'flowcontainer = {{\nposition = {{ 20 12 }}\ndirection = vertical\nspacing = 10\nignoreinvisible = yes\n'
+            f'default_header = {{\nblockoverride "text" {{\ntext = "PMR_CC_BOARD"\n}}\n'
+            f'blockoverride "size" {{\nsize = {{ {BOARD_W} 38 }}\n}}\n}}\n'
+            + exec_w
+            + f'divider_clean = {{\nsize = {{ {BOARD_W} 4 }}\n}}\n'
+            + subs + '}\n')
+
+
+def body(p, ready):
+    """The window's body, 70 / 30: the trees and the board."""
+    return (f'hbox = {{\n{_vis(ready)}layoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\n'
+            'margin = { 10 6 }\nspacing = 12\n'
+            'widget = {\nlayoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\n'
+            'layoutstretchfactor_horizontal = 7\nscissor = yes\n'
+            # the tech tree's backdrop painting
+            'background = {\nusing = illu_alpha\nfittype = center\n'
+            'texture = "gfx/interface/illustrations/tech_tree/illustration_tech_production.dds"\n}\n'
+            + trees(p) + '}\n'
+            'widget = {\nlayoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\n'
+            'layoutstretchfactor_horizontal = 3\nscissor = yes\nbackground = {\nusing = dark_area\n}\n'
+            + board() + '}\n}\n')
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The tab
+
+def header_gui(ready):
+    """Culture level, points and the bar to the next point (the tab and the full-screen window)."""
+    bar_value = f"FixedPointToFloat({V('pmr_cc_pct')})"
+    return (
+        f'widget = {{\n{_vis(ready)}parentanchor = hcenter\nsize = {{ 540 82 }}\nbackground = {{\nusing = entry_bg\n}}\n'
+        'textbox = {\nposition = { 16 10 }\nautoresize = yes\nalign = left|nobaseline\nusing = fontsize_xxl\n'
+        'text = "PMR_CC_LEVEL"\n}\n'
+        'textbox = {\nposition = { 16 48 }\nautoresize = yes\nalign = left|nobaseline\ntext = "PMR_CC_POINTS"\n}\n'
+        'widget = {\nposition = { 220 12 }\nsize = { 300 30 }\ntooltip = "PMR_CC_BAR_TT"\n'
+        'gold_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
+        f'min = 0\nmax = 100\nvalue = "[{bar_value}]"\n}}\n}}\n'
+        'textbox = {\nparentanchor = center\nautoresize = yes\nalign = hcenter|nobaseline\ntext = "PMR_CC_BAR"\n'
+        'alwaystransparent = yes\n}\n}\n}\n')
+
+
+def show_button(ready):
+    """Every mirrored executive holds a cost (800 and up). Without one (a new executive this month, a save from before
+    Company Culture) a button reads the company in, instead of an empty window."""
+    return (f'button = {{\n{_vis(f"Not({ready})")}parentanchor = hcenter\nusing = default_button\nsize = {{ 300 40 }}\n'
+            'text = "PMR_CC_SHOW"\n'
+            f'onclick = "[GetScriptedGui(\'pmr_cc_refresh_sgui\').Execute({SG_SCOPE}.End)]"\n}}\n')
+
+
+def tab(p):
+    """The company panel's Company Culture tab: the summary, the button to the full-screen window, and the Methods
+    table (company_panel.py). Returns the gui file with both types (the tab and pmr_cc_fullscreen)."""
+    i1 = '\t\t'
+    ready = GT('pmr_cc_cost', 0)
+    open_button = (f'button = {{\n{_vis(ready)}parentanchor = hcenter\nusing = default_button_primary_big\n'
+                   'size = { 400 50 }\ntext = "PMR_CC_OPEN"\n'
+                   f'onclick = "[{VIEW}]"\nonclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n}}\n')
+    methods = f'{i1}pmr_cc_methods = {{}}\n'   # gui/pmr_company_methods.gui
+    return ('# GENERATED by tools/pmr/company_culture.py and cc_tree.py\n'
+            'types pmr_company_culture {\n'
+            '\ttype company_panel_culture_tab = flowcontainer {\n'
+            '\t\tdirection = vertical\n\t\tusing = default_list_position\n\t\tusing = default_content_fade\n'
+            '\t\tspacing = 6\n\t\tmargin_bottom = 10\n\t\tminimumsize = { 540 -1 }\n'
+            '\t\tdatacontext = "[Company.GetExecutive]"\n\n'
+            + _reindent(show_button(ready) + header_gui(ready) + 'widget = {\nsize = { 10 6 }\n}\n' + open_button
+                        + 'widget = {\nsize = { 10 10 }\n}\n', i1)
+            + methods + '\t}\n\n'
+            + _reindent(fullscreen(body(p, ready), ready), '\t') + '}\n')
+
+
+def fullscreen(gui, ready):
+    """The full-screen window: vanilla's fullscreen_block_window, as the tech tree, over the side panels
+    (ingame_hud.gui, patch_hud). It shows while the company panel is open and the 'pmr_cc_full' GUI variable is set (the
+    tab sets it); the back arrow clears it, back to the panel. Closing it, or the company panel closing under it,
+    clears it too (its _hide), so the next company panel opens on its own tabs. Its company is the one whose executive
+    the tab stored on the player's country (VIEWED)."""
+    return (f'type pmr_cc_fullscreen = fullscreen_block_window {{\nname = "pmr_cc_fullscreen"\n'
+            f'visible = "[And(And(GetVariableSystem.Exists(\'{FULL}\'), InformationPanelBar.IsPanelOpen(\'company_panel\')), '
+            "GreaterThan_CFixedPoint(GetPlayer.MakeScope.ScriptValue('pmr_cc_viewing'), '(CFixedPoint)0'))]\"\n"
+            f'datacontext = "[{VIEWED}]"\ndatacontext = "[Character.GetCompany]"\n'
+            'blockoverride "animation_state_block" {\n'
+            'state = {\nname = _show\nstart_sound = {\nsoundeffect = "event:/SFX/UI/SideBar/technology"\n}\n}\n'
+            f'state = {{\nname = _hide\non_start = "[GetVariableSystem.Clear(\'{FULL}\')]"\n'
+            'start_sound = {\nsoundeffect = "event:/SFX/UI/SideBar/technology_stop"\n}\n}\n}\n'
+            'blockoverride "window_header_name" {\ntext = "PMR_CC_FULL_TITLE"\n}\n'
+            # the topbar's construction box (410 x 75 at y 76, right) stays over this window, unlike over vanilla's
+            # full-screens (block_windows.gui fullscreen_hide), so the X sits left of it
+            'blockoverride "close_button_position" {\nposition = { -425 15 }\n}\n'
+            'blockoverride "back_button_fullscreen" {\nback_button_large = {\nposition = { 11 15 }\nparentanchor = top|left\n'
+            f'onclick = "[GetVariableSystem.Clear(\'{FULL}\')]"\ninput_action = "back"\n}}\n}}\n'
+            'blockoverride "fixed_top" {\nwidget = {\nlayoutpolicy_horizontal = expanding\nsize = { 0 98 }\n'
+            + header_gui(ready).replace('parentanchor = hcenter\n', 'parentanchor = hcenter\nposition = { 0 4 }\n', 1)
+            + show_button(ready).replace('parentanchor = hcenter\n', 'parentanchor = center\n', 1)
+            + '}\n}\n'
+            'blockoverride "entire_content_area" {\n' + gui + '}\n}\n')
+
+
+def patch_panel(text, tab_id):
+    """company_panel.gui: a fourth tab, Company Culture, after Statistics, which opens the full-screen window, left off
+    a subsidiary's panel (Pat 14:43Z: no Company Culture on subsidiaries); the charter row off the panel's foot (its
+    buttons are on the charter nodes); and the panel's closing clears the full-screen window's variable."""
+    where = cc.PANEL_GUI
+    not_sub = company_panel.NOT_SUB
+    anchor = '\t\t\t\tblockoverride "third_button_selected"\n\t\t\t\t{\n\t\t\t\t\ttext = "COMPANY_TAB_STATISTICS"\n\t\t\t\t}\n'
+    if text.count(anchor) != 1:
+        cc.fail(where, 'the Statistics tab button block moved')
+    four = (
+        '\n\t\t\t\t# PMR: Company Culture tab\n'
+        '\t\t\t\tblockoverride "fourth_button"\n\t\t\t\t{\n\t\t\t\t\ttext = "PMR_CC_TAB"\n\t\t\t\t}\n'
+        '\t\t\t\tblockoverride "fourth_button_tooltip"\n\t\t\t\t{\n\t\t\t\t}\n'
+        f'\t\t\t\tblockoverride "fourth_button_click"\n\t\t\t\t{{\n\t\t\t\t\tonclick = "[InformationPanel.SelectTab(\'{tab_id}\')]"\n'
+        f'\t\t\t\t\tonclick = "[{VIEW}]"\n'
+        f'\t\t\t\t\tonclick = "[GetVariableSystem.Set(\'{FULL}\', \'yes\')]"\n\t\t\t\t}}\n'
+        f'\t\t\t\tblockoverride "fourth_button_visibility"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[And(InformationPanel.IsTabSelected(\'{tab_id}\'), {not_sub})]"\n\t\t\t\t}}\n'
+        f'\t\t\t\tblockoverride "fourth_button_visibility_checked"\n\t\t\t\t{{\n\t\t\t\t\tvisible = "[And(Not( InformationPanel.IsTabSelected(\'{tab_id}\') ), {not_sub})]"\n\t\t\t\t}}\n'
+        '\t\t\t\tblockoverride "fourth_button_selected"\n\t\t\t\t{\n\t\t\t\t\ttext = "PMR_CC_TAB"\n\t\t\t\t}\n')
+    text = text.replace(anchor, anchor + four)
+    anchor2 = ('\t\t\t\tcompany_panel_statistics_tab = {\n'
+               '\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'statistics\')]"\n\t\t\t\t}\n')
+    if text.count(anchor2) != 1:
+        cc.fail(where, 'the Statistics tab contents moved')
+    text = text.replace(anchor2, anchor2 + '\n\t\t\t\t# PMR: Company Culture tab\n\t\t\t\tcompany_panel_culture_tab = {\n'
+                        f'\t\t\t\t\tvisible = "[And(InformationPanel.IsTabSelected(\'{tab_id}\'), {not_sub})]"\n\t\t\t\t}}\n')
+    bar = '\t\tblockoverride "fixed_bottom" {\n\t\t\tflowcontainer = {\n\t\t\t\tvisible = "[Company.GetCountry.IsLocalPlayer]"\n'
+    if text.count(bar) != 1:
+        cc.fail(where, 'the charter row at the panel\'s foot moved')
+    text = text.replace(bar, '\t\tblockoverride "fixed_bottom" {\n\t\t\tflowcontainer = {\n'
+                        '\t\t\t\tvisible = no  # PMR: the charter buttons are on the Company Culture charter nodes\n')
+    hide = ('\t\t\tstate = {\n\t\t\t\tname = _hide\n\t\t\t\tstart_sound = {\n'
+            '\t\t\t\t\tsoundeffect = "event:/SFX/UI/CompanyCharters/company_panel_stop"\n')
+    if text.count(hide) != 1:
+        cc.fail(where, 'the panel\'s _hide state moved')
+    return text.replace(hide, hide.replace('name = _hide\n', f'name = _hide\n\t\t\t\ton_start = "[GetVariableSystem.Clear(\'{FULL}\')]"  # PMR\n'))
+
+
+HUD_GUI = 'gui/ingame_hud.gui'
+
+
+def patch_hud(text):
+    """ingame_hud.gui: the full-screen window after the side panels and before the topbar, so the topbar and the left
+    sidebar buttons stay over it as over the tech tree."""
+    anchor = '\t# topbar / alerts / timemanip\n\tvbox = {\n'
+    if text.count(anchor) != 1:
+        cc.fail(HUD_GUI, 'the topbar vbox moved')
+    return text.replace(anchor, '\t# PMR: Company Culture, full-screen (cc_tree.fullscreen)\n\tpmr_cc_fullscreen = {}\n\n' + anchor)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Textures
+
+def _rounded(w, h, radius, ring=None, grad=None, aa=4):
+    """A white rounded rectangle (or its outline, ring px wide) at w x h, drawn at aa times and scaled down. grad:
+    brightness from left to right (1 to grad)."""
+    W, H, R = w * aa, h * aa, radius * aa
+    m = Image.new('L', (W, H), 0)
+    d = ImageDraw.Draw(m)
+    d.rounded_rectangle([0, 0, W - 1, H - 1], radius=R, fill=255)
+    if ring:
+        q = ring * aa
+        d.rounded_rectangle([q, q, W - 1 - q, H - 1 - q], radius=max(1, R - q), fill=0)
+    m = m.resize((w, h), Image.LANCZOS)
+    rgb = np.full((h, w, 3), 255.0)
+    if grad:
+        f = np.minimum(1, np.arange(w) / w * 1.4)
+        rgb *= (1 - f * (1 - grad))[None, :, None]
+    return Image.fromarray(np.dstack([rgb, np.asarray(m)]).round().astype('uint8'), 'RGBA')
+
+
+def textures(out_dir):
+    """Writes the window's textures under out_dir; returns how many."""
+    ims = {
+        'cc_card': _rounded(CW, NODE_H, 16, grad=0.66),
+        'cc_outline': _rounded(CW, NODE_H, 16, ring=3),
+    }
+    for name, im in ims.items():
+        path = os.path.join(out_dir, TEX, f'{name}.dds')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        icons.write_dds(im, path)
+    return len(ims)

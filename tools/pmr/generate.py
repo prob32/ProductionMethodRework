@@ -1118,31 +1118,13 @@ def main():
             if c is not None:
                 goods_cost[gk] = num(c.value, f'{gk} cost')
 
-    # Company Culture (test builds until Pat ships it): each building type making one of a company's top two output
-    # goods gets three more blend members, the works members (company_culture.works_members, one per goods tier, named
-    # after its special method), whose share is the company levels built to that tier there through private retool
-    # levels (Pat 2026-10-19 02:32Z: built, not applied). Listed last in the building's production method groups.
-    cc_plan, works_of = None, {}
+    # Company Culture (test builds until Pat ships it): the company types' trees and subsidiaries (company_culture.plan,
+    # Pat 2026-10-19 14:43Z; no special production methods any more).
+    cc_plan = None
     if not args.release:
         cc_plan = company_culture.plan(game, {bk: (split_info[bk]['plain'] if bk in split_info else
                                                    [r for r in recipes if not isinstance(r, ElectricRecipe)])
                                               for bk, _bn, _s, recipes, _g0, _pg in treated}, goods_cost, goods_tex)
-        for bk, _bn, s_, recipes, _g0, pg in treated:
-            if bk not in cc_plan.works:
-                continue
-            j0 = len(split_info[bk]['members']) if bk in split_info else len(recipes)
-            plain_ = split_info[bk]['plain'] if bk in split_info else recipes
-            works_of[bk] = [(j0 + n, kind, wm, mods) for n, (kind, wm, mods)
-                            in enumerate(company_culture.works_members(cc_plan, bk, plain_[-1].texture), 1)]
-            # its private retool sites, where the special method's levels are built (company_culture.works_effect)
-            cc_plan.sites[bk] = [(j, rbx, (f'has_variable = pmr_abroad_{short(bk)}' if j == ABROAD_SLOT else
-                                           f'NOT = {{ has_variable = pmr_abroad_{short(bk)} }}') if ABROAD_SLOT else None)
-                                 for j, rbx in enumerate(priv_slots(short(bk)), 1)]
-            s_.inserts.append((pg.end - 1, ''.join(
-                f'\tpmg_pmr_share_{short(bk)}_{j}  # PMR: Company Culture works {kind}\n\t'
-                f'\tpmg_pmr_key_{short(bk)}_{j}  # PMR: lock for that share\n\t'
-                for j, kind, _wm, _m in works_of[bk])))
-        CC_WORKS.update(cc_plan.works)   # each special method's profit, pmr_cwp_<t>_<b> (works_profit)
     THROUGHPUT_KEYS.update(throughput_keys(game, [t[0] for t in treated]))   # pmr_thr (profit_effect)
 
     # A method another method needs (unlocking_production_methods: pm_elastics needs a sewing machines recipe) is
@@ -1376,9 +1358,9 @@ def main():
         retool_cost = base_cost * RETOOL_SHARE / N
         costs.append(f'pmr_retool_cost_{b} = {fmt(retool_cost)}  # {rc.value} = {fmt(base_cost)} x {RETOOL_SHARE} / {N}')
         icon = pdx.get(bn.value, 'icon').value
-        retools.append(retool_buildings(b, bk, icon, works=bk in works_of))
+        retools.append(retool_buildings(b, bk, icon))
         site_types += priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
-        triggers.append(retool_triggers(b, bk, works=bk in works_of))
+        triggers.append(retool_triggers(b, bk))
         costs.append(retool_values(b))
 
         for rbx in priv_slots(b):
@@ -1478,25 +1460,14 @@ def main():
             members = [(i, r, blend, emp, SHARE_STEPS if i == 1 else 0,
                         {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
                        for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
-        # Company Culture's works members: unscaled goods mults (a goods tier's output and its extra input over the
-        # base recipe), in WORKS_STEPS steps of the full share, on the company levels that hold a tier (works_effect).
-        for j, kind, wm, mods in works_of.get(bk, []):
-            members.append((j, wm, {'building_modifiers': mods}, {}, 0,
-                            {'member': j, 'kind': 'works', 'works': kind, 'steps': company_culture.works_steps(kind)}))
-        if bk in works_of and cc_plan.works[bk]['in']:
-            profit_goods.add(cc_plan.works[bk]['in'])   # works_effect reads its price (pmr_px_<good>)
         for i, r, blend, emp, default_n, rep in members:
             shares, keys = [], []
             any_key = f'pm_pmr_key_{b}_{i}_any'
             secs = list(dict.fromkeys(list(blend) + (['building_modifiers'] if emp else [])))
-            steps = rep.get('steps', SHARE_STEPS)
-            works = rep.get('kind') == 'works'
+            steps = SHARE_STEPS
             for n in range(steps + 1):
                 f = n / steps
-                body = (''.join(
-                    f'\t{sec} = {{\n\t\tunscaled = {{\n'
-                    + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in blend[sec].items())
-                    + '\t\t}\n\t}\n' for sec in secs if n > 0) if works else ''.join(
+                body = ''.join(
                     f'\t{sec} = {{\n'
                     + (f'\t\tworkforce_scaled = {{\n'
                        + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in blend[sec].items())
@@ -1505,7 +1476,7 @@ def main():
                        + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in emp.items())
                        + '\t\t}\n' if sec == 'building_modifiers' and emp else '')
                     + '\t}\n'
-                    for sec in secs if n > 0))
+                    for sec in secs if n > 0)
                 dflt = '\tis_default = yes\n' if n == default_n else ''
                 blend_pms.append(
                     f'pm_pmr_share_{b}_{i}_{n} = {{\n\ttexture = "{r.texture}"\n{dflt}'
@@ -1517,10 +1488,8 @@ def main():
                 shares.append(f'pm_pmr_share_{b}_{i}_{n}')
                 keys.append(f'pm_pmr_key_{b}_{i}_{n}')
                 pct = round(100 * f)
-                loc += ([f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$"',   # Pat 01:07Z read "13/40" as levels
-                         f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({n}/{steps})"'] if works else
-                        [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
-                         f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"'])
+                loc += [f' pm_pmr_share_{b}_{i}_{n}:0 "${r.key}$ ({pct}% of levels)"',
+                        f' pm_pmr_key_{b}_{i}_{n}:0 "${r.key}$ share lock ({pct}%)"']
             blend_pms.append(f'{any_key} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n')
             keys.insert(0, any_key)   # first: see LOCK_ANY_FIRST above
             loc.append(f' {any_key}:0 "${r.key}$ share lock (switching)"')
@@ -1573,10 +1542,7 @@ def main():
             profit_goods.update(g for gd, _ in pair_ui[bk]['econ'].values() for g in gd if goods_cost.get(g))
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, plain)
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
-                                          econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk),
-                                          [(j, company_culture.works_steps(kind)) for j, kind, *_r in works_of.get(bk, [])])
-                            + (company_culture.works_effect(cc_plan, bk, [j for j, *_r in works_of[bk]])
-                               if bk in works_of else ''))
+                                          econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk)))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
@@ -1621,19 +1587,6 @@ def main():
                 listed = pdx.items(bt)
                 ext = pdx.get(cn.value, 'extension_building_types')
                 extra = [x for x in (pdx.items(ext) if ext and ext.is_block else []) if x not in listed]
-                # Pat 2026-10-19 04:00Z: the Industry Charter offers the building of each input of the company's
-                # industries too (company_culture.plan, 'chx'; test builds)
-                more = [x for x in (cc_plan.comp.get(ck, {}).get('chx', []) if cc_plan else [])
-                        if x not in listed and x not in extra]
-                if more:
-                    note = '  # PMR: makes an input of its industries'
-                    if ext and ext.is_block:
-                        csrc.inserts.append((ext.end - 1, ''.join(f'\t{x}{note}\n\t' for x in more)))
-                    else:
-                        csrc.inserts.append((cn.end - 1, '\textension_building_types = {\n'
-                                             + ''.join(f'\t\t{x}{note}\n' for x in more) + '\t}\n'))
-                    extra += more
-                    report.setdefault('charter_extra', {})[ck] = more
                 new = [(x, rbx) for x in listed + extra if x in retool_of for rbx in retool_of[x] if rbx not in listed]
                 if not new:
                     continue
@@ -1697,7 +1650,7 @@ def main():
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods)) + '\n'.join(tick_effects)
-          + dispatch_effects(dispatch, works=set(works_of)) + '\n' + auto_best_effects(auto))
+          + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-'))
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'))
     write('events/pmr_events.txt', header + EVENTS)
@@ -1740,8 +1693,7 @@ def main():
     SWITCH_ICONS.update((bk, switch_targets(bk, recipe_tex[bk], pair_ui.get(bk), len(keys))) for bk, keys in pick_ui.items())
     mv_keys = pick_ui   # the Private tab's Methods view covers the same types
     ai_of = private_investment.ai_groups(game) if mv_keys else {}   # each row's AI weight (Pat 18:40Z)
-    # the policy parts of each AI weight, for its tooltip's nested Policy line (Pat 2026-10-19 00:01Z); in the test
-    # build a company type's Expanded Works (company_culture.ai_value_tail) is what is left of Policy
+    # the policy parts of each AI weight, for its tooltip's nested Policy line (Pat 2026-10-19 00:01Z)
     if not args.release:    # the test probes' companies buy levels like any other (Pat 2026-10-19 14:10Z)
         private_investment.EXTRA_COMPANY_DIRS[:] = [
             d for d in (os.path.join(TEST_PROBES, p, 'common', 'company_types') for p in sorted(os.listdir(TEST_PROBES)))
@@ -1750,8 +1702,7 @@ def main():
     if owners_of and cc_plan:   # and the subsidiaries their bundles found (subsidiaries.py, test builds)
         for bk, types in subsidiaries.owners(cc_plan).items():
             owners_of.setdefault(bk, []).extend(types)
-    ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of)
-                + ([('works', None)] if not args.release and bk in owners_of else []) for bk in ai_of}
+    ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of) for bk in ai_of}
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
@@ -1841,11 +1792,10 @@ def main():
                             write(f'localization/{lang}/{fn[:-len("english.yml")]}{lang}.yml', f'l_{lang}:\n' + body)
         # Its tab's Methods table: the Policies grid of the company's own building types (Pat 2026-10-19 02:32Z)
         loc += company_panel.write_methods(write, header, mv_keys, recipe_tex, pair_ui, pair_options, mv_read,
-                                           mv_cols(mv_keys, pair_ui) if mv_keys else 1, cc_plan.works)
+                                           mv_cols(mv_keys, pair_ui) if mv_keys else 1)
         # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, in the test build until Pat ships it.
         loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
-        private_investment.AI_TAIL = company_culture.ai_value_tail   # Expanded Works (company_culture.py)
-        private_investment.GRANT_LINE = True                         # research grants in the pool's tooltip
+        private_investment.GRANT_LINE = True   # subsidiary payments in the pool's tooltip (subsidiaries.py)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
@@ -2129,7 +2079,6 @@ BOOKS_PROFIT = (1, 3000000)    # weekly profit, either sign
 BOOKS_OCC = 0.05               # below this occupancy the books are too thin to read: the last wage stands
 WAGE_FLOOR = 10                # GBP a week per 10,000 wage units: what a reading lost to the reads' rounding falls to
 PRICE_MOVE = 0.1               # a monthly pulse recomputes when a good's price or the wage moved this much (Pat 02:43Z)
-CC_WORKS = {}                  # building -> company_culture.Plan.works spec, test builds (main); pmr_cwp_<t>_<b>
 THROUGHPUT_KEYS = {}           # building -> the throughput modifiers read on it (throughput_keys)
 
 
@@ -2535,9 +2484,7 @@ def priv_slots(b):
     return [f'building_pmr_retool_{b}_{j}' for j in range(1, RETOOL_SLOTS + 1)]
 
 
-def retool_buildings(b, bk, icon, works=False):
-    """works: Company Culture's special method is built on the private sites too (company_culture.works_effect), open
-    on its own flag (pmr_cw_open_<b>_<j>) while plain retooling has nothing waiting."""
+def retool_buildings(b, bk, icon):
     out = []
     sides = [('priv', 'bg_pmr_retool_abroad' if j == ABROAD_SLOT else 'bg_pmr_retool', rbx, j)
              for j, rbx in enumerate(priv_slots(b), 1)]
@@ -2548,9 +2495,6 @@ def retool_buildings(b, bk, icon, works=False):
         if side == 'priv':
             flag = f'pmr_retool_open_priv_{b}_{j}'
             open_ = f'has_variable = {flag}'
-            if works:
-                open_ = f'OR = {{ {open_} has_variable = {company_culture.works_open(b, j)} }}'
-                pot = f'OR = {{ {pot} has_variable = {company_culture.works_open(b, j)} }}'
             ai_limit = open_
             who = ('\t# Private investors only, for the privately owned share. Every building vanilla lets private\n'
                    '\t# investors build says ownership_type = self.\n'
@@ -2592,7 +2536,7 @@ def retool_buildings(b, bk, icon, works=False):
             '\tshould_auto_expand = { always = no }\n'
             f'\t# Open only while script is retooling a {bk} in this state'
             + (', where the player owns levels abroad' if j == ABROAD_SLOT else '')
-            + (', or a company\'s special method is built here' if works and side == 'priv' else '') + '.\n'
+            + '.\n'
             f'\tpotential = {{ {pot} }}\n'
             + who +
             ('\t# Only ever the player\'s click: no AI scores it.\n\tai_value = 0\n' if side == 'gova' else
@@ -2610,7 +2554,7 @@ def retool_buildings(b, bk, icon, works=False):
     return '\n'.join(out)
 
 
-def retool_triggers(b, bk, works=False):
+def retool_triggers(b, bk):
     rbg = f'building_pmr_retool_gov_{b}'
     rbga = f'building_pmr_retool_gova_{b}'
     cap = f'pmr_cap_gov_{b}'
@@ -2634,8 +2578,7 @@ def retool_triggers(b, bk, works=False):
         '\t}\n'
         f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
         '}\n']
-    # A private retool building takes levels up to the cap the tick gives it (pmr_cap_priv<j>_<b>), or, where a
-    # company's special method is built (works), up to the cap company_culture.works_effect gives it.
+    # A private retool building takes levels up to the cap the tick gives it (pmr_cap_priv<j>_<b>).
     for j, rbx in enumerate(priv_slots(b), 1):
         cap = f'pmr_cap_priv{j}_{b}'
         plain = (f'\thas_variable = {cap}\n'
@@ -2644,11 +2587,6 @@ def retool_triggers(b, bk, works=False):
                  f'\t\tb:{rbx} = {{ level_after_queued_constructions <= pmr_room_value_priv_{b}_{j} }}\n'
                  '\t}\n'
                  f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n')
-        if works:
-            plain = ('\tOR = {\n\t\tAND = {\n'
-                     + f'\t\t\thas_variable = pmr_retool_open_priv_{b}_{j}\n'
-                     + plain.replace('\n\t', '\n\t\t\t').replace('\t', '\t\t\t', 1)
-                     + '\t\t}\n' + company_culture.works_room_trigger(b, rbx, j) + '\t}\n')
         out.append(f'pmr_retool_room_priv_{b}_{j} = {{\n' + plain + '}\n')
     # levels_owned_by_country counts "a country or investors in that country" (triggers.log), so for
     # the state's own country it includes the government's levels: its investors need more than those.
@@ -2659,19 +2597,8 @@ def retool_triggers(b, bk, works=False):
         f'\texists = b:{bk}\n'
         '\ttrigger_if = {\n'
         '\t\tlimit = { owner = scope:investor_country }\n'
-        + (f'\t\thas_variable = pmr_gov_levels_{b}\n'
-           f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
-           if not works else
-           # the government's levels are dropped once plain retooling is done; a special method's site reads the
-           # tick's copy (company_culture.works_gov)
-           '\t\tOR = {\n\t\t\tAND = {\n'
-           f'\t\t\t\thas_variable = pmr_gov_levels_{b}\n'
-           f'\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
-           '\t\t\t}\n\t\t\tAND = {\n'
-           f'\t\t\t\tNOT = {{ has_variable = pmr_gov_levels_{b} }}\n'
-           f'\t\t\t\thas_variable = {company_culture.works_gov(b)}\n'
-           f'\t\t\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:{company_culture.works_gov(b)} }} }}\n'
-           '\t\t\t}\n\t\t}\n')
+        + f'\t\thas_variable = pmr_gov_levels_{b}\n'
+        f'\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value > state.var:pmr_gov_levels_{b} }} }}\n'
         + '\t}\n'
         f'\ttrigger_else = {{\n\t\tb:{bk} = {{ levels_owned_by_country = {{ target = scope:investor_country value >= 1 }} }}\n\t}}\n'
         '}\n')
@@ -2775,7 +2702,7 @@ def lookup(var, ns, body, ind='\t'):
 
 
 def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None, auto_tiers=(),
-                pair=None, works=()):
+                pair=None):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -2793,10 +2720,6 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     split = pair if pair and pair.get('split') else None
     bm = split['members'] if split else [(i, [i], 'recipe') for i in range(1, k + 1)]
     nb = len(bm)
-    # Company Culture's works members (company_culture.works_members), after bm: their steps come from
-    # pmr_works_<b> (pmr_wn_<j>_<b>), company_culture.works_steps of them, not from the levels' recipes.
-    hi_of = {j: n for j, n in works}
-    nb_all = nb + len(works)
     rec_of = {i: j for j, idxs, grp in bm if grp == 'recipe' for i in idxs}   # target -> its recipe member
     sv = 'pmr_rs' if split else 'pmr_sh'   # a member's share of the levels
 
@@ -2875,16 +2798,15 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # pmr_a_<i>: the step the tick wants (pmr_n_<i>) if that share method runs, else -1. Read before
     # the blend to see what must change, and after it for the log.
     o.append(f'pmr_read_blend_{b} = {{\n')
-    for i in range(1, nb_all + 1):
+    for i in range(1, nb + 1):
         o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
-                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}', '\t',
-                          hi=hi_of.get(i, SHARE_STEPS)))
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} {setv(f"pmr_a_{i}", n)} }}', '\t'))
     o.append('}\n\n')
 
     # pmr_lock_<i>_<b>: member i's lock onto the step the tick wants.
-    for i in range(1, nb_all + 1):
+    for i in range(1, nb + 1):
         o.append(f'pmr_lock_{i}_{b} = {{\n'
-                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("key", i, n), '\t', hi=hi_of.get(i, SHARE_STEPS)) + '}\n\n')
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("key", i, n), '\t') + '}\n\n')
 
     def step(i, cum):
         # member i's share in steps, never past what is left of the whole (SHARE_STEPS less cum)
@@ -2919,15 +2841,13 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     for grp in dict.fromkeys(grp for _, _, grp in bm if grp != 'recipe'):
         o.append(f'\t# {grp}\n\t{setv("pmr_gcum", 0)}\n'
                  + ''.join(step(i, 'pmr_gcum') for i, _, g2 in bm if g2 == grp))
-    for j, _n in works:
-        o.append(f'\t# Company Culture works member (pmr_works_{b})\n\t{setv(f"pmr_n_{j}", "var:" + v(f"pmr_wn_{j}"))}\n')
     o.append(f'\tpmr_read_blend_{b} = yes\n')
-    for i in range(1, nb_all + 1):
+    for i in range(1, nb + 1):
         o.append(f'\t# recipe {i}: if its share is not the one wanted, unlock every share, switch, lock again;\n'
                  '\t# if only the lock moved (the AI took the switching lock), lock again\n'
                  f'\tif = {{\n\t\tlimit = {{ var:{v(f"pmr_a_{i}")} = -1 }}\n'
                  f'\t\tif = {{ limit = {{ NOT = {{ {pm_active("key", i, "any")} }} }} {act("key", i, "any")} }}\n'
-                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("share", i, n), '\t\t', hi=hi_of.get(i, SHARE_STEPS))
+                 + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act("share", i, n), '\t\t')
                  + f'\t\tpmr_lock_{i}_{b} = yes\n\t}}\n'
                  f'\telse_if = {{ limit = {{ {pm_active("key", i, "any")} }} pmr_lock_{i}_{b} = yes }}\n')
     o.append('}\n\n')
@@ -3354,8 +3274,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         return f"[THIS.Var('{v(name)}').GetValue|{d}]"
     # blend: each recipe's share of the levels in steps of 1/SHARE_STEPS, as the tick set it;
     # active: the step each recipe's share group runs as the game reports it, -1 if none
-    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, nb_all + 1))
-           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, nb_all + 1)))
+    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, nb + 1))
+           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, nb + 1)))
     best = f";best={f('pmr_best_now')}" + mix
     split = mix + (f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}"
              f";share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}"
@@ -3518,7 +3438,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t\tset_variable = {v("pmr_switched")}\n\t}}\n')
 
     o.append(recount
-             + (f'\tpmr_works_{b} = yes\n' if works else '') +
+             +
              f'\tpmr_blend_{b} = yes\n'
              + ('' if RELEASE else
                 '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
@@ -3665,8 +3585,6 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                          it by SWITCH_GAIN; 0 if none
       pmr_swg_<b>        the pick's gain over the default (0.3 = 30% more profit), pmr_swr_<b> the bar's points a month
       pmr_prm_<b>        the pick's pmr_rm (the panel's pick row)
-      pmr_cwp_<t>_<b>    goods-line types (Company Culture, CC_WORKS), t = 1..3: tier t's special method a level a week,
-                         its base recipe with WORKS_OUT[t] more of its main output and WORKS_IN[t] more of its extra input
     Pat, 2026-10-19 02:32Z ("why are the pm options negative but the buildings profitable?", agreed 02:43Z): the wage is
     the one the state's own building of the type pays (pmr_wage, from pmr_wage_<b>), and the goods margins are x the
     building's throughput (pmr_thr, 1 + the modifiers throughput_keys reads; the company throughput bonus is left out),
@@ -3693,10 +3611,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     xv = lambda name, i: f'{name}_{i}_{b}'   # noqa: E731
     cv = lambda name, op, x: f'change_variable = {{ name = {v(name)} {op} = {x} }}'   # noqa: E731
     top = fmt(1 + PRICE_LADDER[-1] / 100)
-    works = CC_WORKS.get(bk)
     goods = sorted({g for gd, _ in list(econ) + list((pair or {}).get('econ', {}).values())
-                    for g in gd if goods_cost.get(g)}
-                   | {g for g in ((works['out'], works['in']) if works else ()) if g and goods_cost.get(g)})
+                    for g in gd if goods_cost.get(g)})
     read_px = ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
                       f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
     thr = ''.join(f'\t\tchange_variable = {{ name = pmr_thr add = scope:pmr_bk.modifier:{m} }}\n'
@@ -3843,7 +3759,6 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\t\t{cv("pmr_swr", "max", 1)}\n\t\t{cv("pmr_swr", "min", SWITCH_MONTHS)}\n\t}}\n'
              + vanilla_score(bk, b, econ, goods_cost, setv, v)
              + pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v)
-             + works_profit(bk, b, recipes, econ, goods_cost, pair)
              + '\t# what this run used, for the monthly check (pmr_moved_<b>): each price and the wage, PRICE_MOVE either side\n'
              + ''.join(f'\tset_variable = {{ name = pmr_px{e}_{g}_{b} value = var:pmr_px_{g} }}\n'
                        f'\tchange_variable = {{ name = pmr_px{e}_{g}_{b} multiply = {fmt(1 + s * PRICE_MOVE)} }}\n'
@@ -3880,7 +3795,6 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
             + (f"pair={var(v('pmr_cbi'))}x{var(v('pmr_cba'))};"
                + ('' if pair.get('split') else
                   'cp=' + '/'.join(var(f'pmr_cp_{i}_{a}_{b}', 1) for i, a in sorted(pair['econ'])) + ';') if pair else '')
-            + ('cwp=' + '/'.join(var(f'pmr_cwp_{t}_{b}', 1) for t in company_culture.T3) + ';' if works else '')
             + 'px='
             + ','.join(f"{g}:{var('pmr_px_' + g, 2)}" for g in goods))
     spread = ' '.join(f'1 = {{ set_variable = {{ name = pmr_pchk_{b} value = yes days = {d} }} }}'
@@ -4035,44 +3949,6 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
     return ''.join(o)
 
 
-def works_profit(bk, b, recipes, econ, goods_cost, pair):
-    """Inside pmr_profit_<b>, for a goods-line type (Company Culture; company_culture.Plan.works in CC_WORKS): pmr_cwp_<t>_<b>,
-    t = 1..3, the profit a level a week of tier t's special method (Pat 02:32Z, for the company Methods table): tier t's
-    base recipe (Plan.works: plain recipe min(t, k); with the split, that recipe without automation) at pmr_rm, plus
-    WORKS_OUT[t] more of its 'out' good and less WORKS_IN[t] more of its 'in' good, x the throughput, at the same prices."""
-    w = CC_WORKS.get(bk)
-    if not w:
-        return ''
-    if pair and pair.get('split'):
-        kp = len(pair['recipes'])
-        target = lambda ri: pair['index'][(ri, 1)]   # noqa: E731
-    else:
-        kp = sum(1 for r in recipes if not isinstance(r, ElectricRecipe))
-        target = lambda ri: ri   # noqa: E731
-    o = ['\t# Company Culture\'s special methods (works_profit)\n']
-    for t in company_culture.T3:
-        x = target(min(t, kp))
-        gd = econ[x - 1][0]
-        cw = f'pmr_cwp_{t}_{b}'
-        out_q = max(gd.get(w['out'], 0), 0) * company_culture.WORKS_OUT[t - 1] * goods_cost.get(w['out'], 0)
-        in_q = (max(-gd.get(w['in'], 0), 0) * company_culture.WORKS_IN[t - 1] * goods_cost.get(w['in'], 0)
-                if w['in'] else 0)
-        o.append(f'\tset_variable = {{ name = {cw} value = 0 }}\n')
-        if out_q:
-            o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{w["out"]} }}\n'
-                     f'\tchange_variable = {{ name = pmr_t multiply = {fmt(out_q)} }}\n'
-                     f'\tchange_variable = {{ name = {cw} add = var:pmr_t }}\n')
-        if in_q:
-            o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{w["in"]} }}\n'
-                     f'\tchange_variable = {{ name = pmr_t multiply = {fmt(in_q)} }}\n'
-                     f'\tchange_variable = {{ name = {cw} subtract = var:pmr_t }}\n')
-        o.append(f'\tchange_variable = {{ name = {cw} multiply = var:pmr_thr }}\n'
-                 # its base recipe's figures, where this run left them out (profit_effect's box)
-                 f'\tif = {{ limit = {{ var:pmr_rav_{x}_{b} = 0 }} pmr_rmx_{x}_{b} = yes }}\n'
-                 f'\tchange_variable = {{ name = {cw} add = var:pmr_rm_{x}_{b} }}\n')
-    return ''.join(o)
-
-
 def moved(b):
     """the research changed the building's target candidate (pmr_best_<b> has just run)"""
     if PROFIT_TARGET:
@@ -4102,8 +3978,7 @@ pmr_read_elec = {
                 for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n')
 
 
-def dispatch_effects(buildings, works=()):
-    """works: the building types Company Culture's special method is built on (company_culture.works_level_effect)."""
+def dispatch_effects(buildings):
     def live(bk):
         return f'has_building = {bk} b:{bk} = {{ level >= 1 }}'
     o = ['# ===== dispatch\n\n'
@@ -4125,20 +4000,14 @@ def dispatch_effects(buildings, works=()):
                  f'\t\t\tif = {{ limit = {{ has_variable = pmr_new_build_{b} }} remove_variable = pmr_new_build_{b} }}\n'
                  '\t\t}\n\t}\n')
     o.append('}\n\n'
-             + ('# Building scope, for a retool pseudo-building that just completed a level: tick its parent. A private\n'
-                '# one\'s level on a building a company\'s special method is built on goes to that method first, once plain\n'
-                '# retooling has nothing waiting (company_culture.works_level_effect).\n' if works else
-                '# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n')
-             + 'pmr_tick_parent_of_retool = {\n')
+             '# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n'
+             'pmr_tick_parent_of_retool = {\n')
     for i, bk in enumerate(buildings):
         b = short(bk)
         kw = 'if' if i == 0 else 'else_if'
         types = priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
-        cw = (f'\t\t\tif = {{ limit = {{ root = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in priv_slots(b))
-              + f' }} }} }} pmr_cw_level_{b} = yes }}\n' if bk in works else '')
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in types) + ' } }\n'
                  f'\t\tstate = {{\n\t\t\t{flush_log("RETOOL_LEVEL", bk, mine=f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}")}\n'
-                 + cw +
                  f'\t\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t\t}}\n\t}}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'
@@ -5070,7 +4939,7 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
     (private_investment.ai_groups), copied from the same state as pmr_mv_aiv_<b> and its vanilla base as pmr_mv_aib_<b>;
     parts: each type's policy parts (private_investment.ai_parts), copied as pmr_mv_p<key>_<b>; companies: building
     type -> the company types listing it (private_investment.company_owners): the country's company with the type,
-    if any, as its executive in pmr_mv_co_<b> (the GUI reaches a company through a character, cc_wheel.VIEWED) and
+    if any, as its executive in pmr_mv_co_<b> (the GUI reaches a company through a character, cc_tree.VIEWED) and
     pmr_mv_cf_<b> = 1."""
     pair_ui, ai, parts, companies, extra = pair_ui or {}, ai or {}, parts or {}, companies or {}, extra or {}
     o = ['# Country scope. The Buildings panel\'s Policies tab (methods_view_effects in generate.py).\n\n']
@@ -5137,8 +5006,6 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                     f'\t\t\tchange_variable = {{ name = {sv("pv")} divide = {fmt(VANILLA_OUTPUT_W)} }}\n')
         snapped = ([f'pmr_mv_{n}_{b}' for n in ('pt', 'pol', 'pworks', 'pprod', 'pout', 'ploss', 'wb', 'pe', 'pp', 'pv')]
                    if bk in ai else [])
-        # each Company Culture special method's profit (works_profit), where the state has it
-        cwp = [f'pmr_cwp_{t}_{b}' for t in company_culture.T3] if bk in CC_WORKS else []
         o.append(f'pmr_mv_{b} = {{\n\tsave_temporary_scope_as = pmr_ctry\n'
                  f'\tset_variable = {{ name = pmr_mv_lv_{b} value = 0 }}\n\tset_variable = {{ name = pmr_mv_max_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pbest_{b} value = 0 }}\n'
@@ -5162,7 +5029,7 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                            + [f'pmr_mv_p{key}_{b}' for key in pk] + snapped)
                  # the bars under the card's grid (card_bars): copied where the state has them
                  + ''.join(f'\t\t\t\tif = {{ limit = {{ scope:pmr_st = {{ has_variable = {n} }} }} '
-                           f'set_variable = {{ name = {n} value = scope:pmr_st.var:{n} }} }}\n' for n in extra.get(bk, []) + cwp)
+                           f'set_variable = {{ name = {n} value = scope:pmr_st.var:{n} }} }}\n' for n in extra.get(bk, []))
                  + '\t\t\t}\n\t\t}\n\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 }}\n'
                  + ''.join(f'\t\tchange_variable = {{ name = pmr_mv_ps_{i}_{b} divide = var:pmr_mv_lv_{b} }}\n'

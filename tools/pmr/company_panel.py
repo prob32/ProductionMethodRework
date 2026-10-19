@@ -14,15 +14,13 @@ building type, so the test is vanilla's own type test, ObjectsEqual against each
 Methods table (Pat 02:32Z: "can you make the methods including the company special ones show the same table only for
 buildings the companies own from the policies tab?"): in place of the tab's Methods list, the Policies card's grid
 (methods_row.recipes_grid and pairs_grid on the player's country copies, generate.mv_read) for each building type the
-company owns levels of (BuildingType.GetNumLevelsOwnedByCompanyRaw, as companies_panel.gui reads it), each followed,
-for a goods line of the company's Engineering arm, by its three works methods with their profit per level a week
-(pmr_cwp_<t>_<b> on the player's country), the tier the company runs in gold. A row is built only for a type shown
-(the DataModelRepeatedItem gate of generate.gate_type_copies). The figures are the Policies tab's: opening a company
+company owns levels of (BuildingType.GetNumLevelsOwnedByCompanyRaw, as companies_panel.gui reads it). The works
+methods' rows went with the special methods (Pat 2026-10-19 14:43Z). A row is built only for a type shown (the
+DataModelRepeatedItem gate of generate.gate_type_copies). The figures are the Policies tab's: opening a company
 panel recounts them as the tab's click does, unless the tab or a company panel did so today (TODAY, perf review G4).
 """
 import re
 
-import cc_icons
 import methods_row
 
 RETOOL_TYPES = []   # set by generate.py: every retool site type a company lists (report['company_types'])
@@ -32,7 +30,6 @@ REFRESH_SGUI = 'pmr_cm_refresh_sgui'
 TODAY = 'pmr_mv_today'   # country, a day long: the Policies copies were recounted today
 OWN_GUI = 'gui/pmr_company_methods.gui'
 CARD_W, CARD_PAD, ICON_GAP, GRID_GAP = 540, 8, 8, 6   # as the Policies cards (generate.methods_view_gui)
-OPTION = 22          # the company's icon in the works row's option column, as pairs_grid's option icons
 
 
 def fail(where, msg):
@@ -194,11 +191,6 @@ def owned(bk, read):
             f"{methods_row.gt(read(f'pmr_mv_lv_{short(bk)}'), 0)})")
 
 
-def on_line(idx):
-    """The company's goods line 1 or 2 is the works building with index idx, as (line, test) pairs."""
-    return [(n, methods_row.eq(V(f'pmr_cc_k_g{n}b'), idx)) for n in (1, 2)]
-
-
 def gate(cond, row, ind):
     """A list with one item, row, while cond holds, else none: the row is built only while shown."""
     return (f'{ind}flowcontainer = {{\n{ind}\tvisible = "[{cond}]"\n'
@@ -239,54 +231,17 @@ def type_card(bk, keys, tex, pair, pair_options, read, cols):
                 + f'\t\t\tflowcontainer = {{\n\t\t\t\tdirection = vertical\n\t\t\t\tspacing = {GRID_GAP}\n{grid}\t\t\t}}\n')
 
 
-def works_card(bk, w, read, cols):
-    """The company's works methods of bk (company_culture.py's goods lines): pairs_grid's box with one row, a column per
-    tier: the method's picture over its profit per level a week (pmr_cwp_<t>_<b>), the tier the company runs in gold,
-    faded until it has it. The option column holds the company's icon."""
-    b = short(bk)
-    lines = on_line(w['idx'])
-    ind, i1, i2, i3 = '\t\t\t', '\t\t\t\t', '\t\t\t\t\t', '\t\t\t\t\t\t'
-    bw, bh = methods_row.pairs_size(cols, 1)
-    y = methods_row.PAIR_HEAD
-    box = (f'{ind}widget = {{\n{i1}size = {{ {bw} {bh} }}\n{i1}background = {{\n{i2}using = entry_bg\n{i1}}}\n'
-           f'{i1}icon = {{\n{i2}position = {{ 9 {y + 1} }}\n{i2}size = {{ {OPTION} {OPTION} }}\n'
-           f'{i2}texture = "[Company.GetCompanyType.GetIcon]"\n{i1}}}\n')
-    for t in (1, 2, 3):
-        x = methods_row.PAIR_LEFT + (t - 1) * methods_row.PAIR_COL
-        tip = f'PMR_CM_W_{b}_{t}'
-        runs = 'Or(' + ', '.join(f"And({on}, {methods_row.eq(V(f'pmr_cc_g{n}'), t)})" for n, on in lines) + ')'
-        has = 'Or(' + ', '.join(f"And({on}, {methods_row.gt(V(f'pmr_cc_g{n}'), t - 1)})" for n, on in lines) + ')'
-        box += (f'{i1}icon = {{\n{i2}position = {{ {x + 9} 5 }}\n{i2}size = {{ 40 40 }}\n'
-                f'{i2}texture = "{cc_icons.ENG_ICONS[w["row"] - 1][t - 1]}"\n{i2}tooltip = "{tip}"\n{i1}}}\n'
-                f'{i1}widget = {{\n{i2}position = {{ {x} {y} }}\n'
-                f'{i2}size = {{ {methods_row.PAIR_COL} {methods_row.PAIR_ROW} }}\n{i2}tooltip = "{tip}"\n'
-                f'{i2}icon = {{\n{i3}visible = "[{runs}]"\n{i3}position = {{ 2 1 }}\n'
-                f'{i3}size = {{ {methods_row.PAIR_COL - 4} {methods_row.PAIR_ROW - 2} }}\n'
-                f'{i3}texture = "{methods_row.WHITE}"\n{i3}color = {{ {methods_row.GOLD} }}\n{i3}alwaystransparent = yes\n{i2}}}\n'
-                f'{i2}textbox = {{\n{i3}size = {{ {methods_row.PAIR_COL} {methods_row.PAIR_ROW} }}\n'
-                f'{i3}align = hcenter|vcenter|nobaseline\n{i3}using = fontsize_small\n'
-                f'{i3}alpha = "[TransparentIfFalse({has})]"\n'
-                f"{i3}raw_text = \"@money![{read(f'pmr_cwp_{t}_{b}')}|0]\"\n{i3}alwaystransparent = yes\n{i2}}}\n{i1}}}\n")
-    return card(f'pmr_cm_works_{b}', bh, methods_row.type_icon(bk, ind) + box + f'{ind}}}\n')
-
-
-def methods_gui(recipe_keys, recipe_tex, pair_ui, pair_options, read, cols, works):
+def methods_gui(recipe_keys, recipe_tex, pair_ui, pair_options, read, cols):
     """The tab's Methods table, pmr_cc_methods. recipe_keys, recipe_tex and pair_ui as generate.methods_view_gui (the
-    Policies tab's types), pair_options and read (mv_read) its helpers, cols its boxes' width in columns (mv_cols);
-    works: company_culture.Plan.works. Shown for the player's own companies only: the figures are its country's."""
+    Policies tab's types), pair_options and read (mv_read) its helpers, cols its boxes' width in columns (mv_cols).
+    Shown for the player's own companies only: the figures are its country's."""
     ind = '\t\t'
     rows, gates = '', ''
     for bk, keys in recipe_keys.items():
         rows += type_card(bk, keys, recipe_tex[bk], pair_ui.get(bk), pair_options, read, cols)
         gates += gate(owned(bk, read), f'pmr_cm_{short(bk)}', ind)
-        if bk in works:
-            gates += gate(any_of([on for _n, on in on_line(works[bk]['idx'])]), f'pmr_cm_works_{short(bk)}', ind)
-    for bk in [bk for bk in sorted(works) if bk not in recipe_keys]:
-        gates += gate(any_of([on for _n, on in on_line(works[bk]['idx'])]), f'pmr_cm_works_{short(bk)}', ind)
-    rows += ''.join(works_card(bk, w, read, cols) for bk, w in sorted(works.items()))
     return ('# GENERATED by tools/pmr/company_panel.py. The company panel\'s Company Culture tab: the Methods table, the\n'
-            '# Policies tab\'s grid for each building type the company owns levels of and its works methods; grids by\n'
-            '# tools/pmr/methods_row.py.\n'
+            '# Policies tab\'s grid for each building type the company owns levels of; grids by tools/pmr/methods_row.py.\n'
             'types pmr_company_methods {\n'
             '\ttype pmr_cc_methods = flowcontainer {\n\t\tvisible = "[Company.GetCountry.IsLocalPlayer]"\n'
             '\t\tparentanchor = hcenter\n\t\tdirection = vertical\n\t\tspacing = 4\n'
@@ -306,21 +261,12 @@ def sguis():
             '\t\t}\n\t}\n}\n')
 
 
-def localization(works, read):
-    loc = []
-    for bk, w in sorted(works.items()):
-        b = short(bk)
-        loc += [f' PMR_CM_W_{b}_{t}:0 "#bold $PMR_CC_ENG_{w["row"]}_{t}$#!\\n'
-                f"@money![{read(f'pmr_cwp_{t}_{b}')}|0] per level a week\"" for t in (1, 2, 3)]
-    return loc
-
-
-def write_methods(write, header_text, recipe_keys, recipe_tex, pair_ui, pair_options, read, cols, works):
+def write_methods(write, header_text, recipe_keys, recipe_tex, pair_ui, pair_options, read, cols):
     """Test builds (Company Culture's tab): writes the table and, with Policies types to show, the refresh the panel's
     opening runs (REFRESH, patch_company_panel). Returns its loc lines."""
     global REFRESH
     REFRESH = bool(recipe_keys)
-    write(OWN_GUI, methods_gui(recipe_keys, recipe_tex, pair_ui, pair_options, read, cols, works), bom=False)
+    write(OWN_GUI, methods_gui(recipe_keys, recipe_tex, pair_ui, pair_options, read, cols), bom=False)
     if REFRESH:
         write('common/scripted_guis/pmr_cm_sguis.txt', header_text + sguis())
-    return localization(works, read)
+    return []
