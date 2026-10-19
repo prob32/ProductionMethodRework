@@ -233,8 +233,8 @@ PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
 SWITCH_GAIN = 0.25
-PROFIT_RULE = 102    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
-                     # 101: q46, the transportation rule; 102: q47, figures held to the books)
+PROFIT_RULE = 103    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
+                     # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -250,8 +250,9 @@ ELECTRICITY = 'electricity'
 # Pat, 2026-10-19 16:49Z ("prevent our pm automation default from setting a rail transport if there is no rail transport
 # in a state"): transportation is local too, and the engine cuts a building's whole output by 75% when an input is
 # missing from local supply (GOODS_SHORTAGE_PENALTY_MISSING_INPUTS; Michigan's sulfur mine, q45: a quarter of its levels
-# on Rail Transport left all four making a quarter). A recipe using it can be the default only where the state makes some
-# (pmr_rail), even one the building already runs.
+# on Rail Transport left all four making a quarter). A recipe using it can be the default only where the state has a
+# railway (pmr_rail), even one the building already runs. Pat 17:49Z: a port's transportation doesn't count (West
+# Bengal's opium, q47: rail=1 from its port, no railway, retooling onto Rail Transport).
 TRANSPORTATION = 'transportation'
 
 
@@ -1727,11 +1728,14 @@ def main():
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
-          + '\n# State scope. A note after an option the state can\'t run (technology, laws, electricity).\n'
+          + '\n# State scope. A note after an option the state can\'t run (technology, laws, electricity), or is short of an\n'
+          + '# input for (pmr_xsh).\n'
           + ''.join(f'pmr_xlk_{short(bk)}_{o.j} = {{\n\ttype = state\n\trandom_valid = no\n'
                     f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xav_{o.j}_{short(bk)} = 0 }}\n'
                     f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
-                    '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
+                    + (f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xsh_{o.j}_{short(bk)} ?= 1 }}\n'
+                       '\t\tlocalization_key = PMR_OPT_SHORT\n\t}\n' if mode == 'market' else '')
+                    + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
                     for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_)
           + '\n# State and country scope. The names on the switching bars\' tooltips (pick_custom_loc).\n'
           + pick_custom_loc(pick_ui) + (methods_view_custom_loc(mv_keys, pair_ui) if mv_keys else ''))
@@ -1750,6 +1754,7 @@ def main():
               bom=False)
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
+    TYPE_FLAGS[:] = [('pmr_t_', set(dispatch) | set(recipe_tex)), ('pmr_a_', set(also))]
     write('gui/building_details_panel.gui', gate_type_copies(patch_building_panel(
         recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(),
         opt_ui, also, auto_ui, pick_ui)), bom=False)
@@ -2277,7 +2282,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         goods = sorted({g for x in market for g in x.goods})
         # A good's price is read once a day per state (pmr_pxd_<good>), not once per building type that
         # values it: grain, sugar and fruit each feed five or six farm types.
-        o.append(f'pmr_xvalue_{b} = {{\n' + ''.join(
+        o.append(f'pmr_xvalue_{b} = {{\n\towner = {{ save_scope_as = pmr_xown }}\n' + ''.join(
             f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
             f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods))
         for x in market:
@@ -2291,6 +2296,18 @@ def option_effects(bk, b, conv, goods_cost, recipes):
             o.append(f'\tset_variable = {{ name = {xv("pmr_xw", x.j)} value = var:{xv("pmr_xv", x.j)} }}\n'
                      f'\tif = {{ limit = {{ var:{xv("pmr_xav", x.j)} = 0 }} '
                      f'set_variable = {{ name = {xv("pmr_xv", x.j)} value = -1000000 }} }}\n')
+            # Pat 2026-10-19 18:09Z (an iron mine on 100% Nitroglycerin while explosives were short): an option using
+            # an input its market or the owner's states are short of is worth least, so it sheds TRADE_STEP_MAX
+            # points a month (pmr_xsh_<j>_<b>: 1 while short, for the panel)
+            short_of = sorted(g for g, amt in x.goods.items() if amt < 0 and goods_cost.get(g))
+            if short_of:
+                o.append(f'\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 0 }}\n'
+                         '\tif = {\n\t\tlimit = {\n\t\t\tmarket ?= {\n\t\t\t\tOR = {\n'
+                         + ''.join(f'\t\t\t\t\tmg:{g} ?= {{ OR = {{ market_goods_has_goods_shortage = yes '
+                                   'country_has_local_shortage = scope:pmr_xown } }\n' for g in short_of)
+                         + '\t\t\t\t}\n\t\t\t}\n\t\t}\n'
+                         f'\t\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 1 }}\n'
+                         f'\t\tset_variable = {{ name = {xv("pmr_xv", x.j)} value = -1000000 }}\n\t}}\n')
         o.append('}\n\n')
 
     def none_share(gi, os_):
@@ -3172,6 +3189,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
              f'\t{chg("pmr_cap_gov", "add", "var:" + v("pmr_room_gov"))}\n'
              f'\tset_variable = pmr_retool_gate_{b}\n'
+             f'\tif = {{ limit = {{ has_variable = pmr_rq_{b} }} remove_variable = pmr_rq_{b} }}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} > 0 }} set_variable = pmr_retool_open_gov_{b} }}\n'
              f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_gov_{b} }} remove_variable = pmr_retool_open_gov_{b} }}\n'
              '\t# Abroad no script effect queues a construction for the player\'s government: the upgrade button\n'
@@ -3363,7 +3381,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         # the player's monthly SKIP line counts (pmr_skip_report)
         return (f'owner = {{ if = {{ limit = {{ NOT = {{ has_variable = {name} }} }} set_variable = {{ name = {name} value = 0 }} }} '
                 f'change_variable = {{ name = {name} add = 1 }} }}')
-    recount = (f'\tpmr_read_gov_{b} = yes\n\tpmr_count_retool_{b} = yes\n'
+    # perf review 5, S-7: the sites are read and released only where one can stand (the gate), or until a gate-less
+    # state has read none built and none pending (pmr_rq_<b>, cleared where the gate is set)
+    sites_may = f'OR = {{ has_variable = pmr_retool_gate_{b} NOT = {{ has_variable = pmr_rq_{b} }} }}'
+    recount = (f'\tpmr_read_gov_{b} = yes\n\tif = {{ limit = {{ {sites_may} }} pmr_count_retool_{b} = yes }}\n'
                '\t# S3: the level accounting only when something it reads has changed (pmr_recount_<b>)\n'
                f'\tif = {{\n\t\tlimit = {{ NOT = {{ AND = {{ {same} }} }} }}\n\t\tpmr_recount_{b} = yes\n'
                + ('' if RELEASE else
@@ -3376,7 +3397,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                   f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_skn")} >= {SKIP_CHECK} }}\n\t\t\t{setv("pmr_skn", 0)}\n'
                   f'\t\t\tpmr_skip_check_{b} = yes\n\t\t\t{sk_add("pmr_sk_checked")}\n\t\t}}\n'
                   f'\t\telse = {{ {sk_add("pmr_sk_skip")} }}\n\t}}\n')
-               + f'\tpmr_release_retool_{b} = yes\n')
+               + f'\tif = {{\n\t\tlimit = {{ {sites_may} }}\n\t\tpmr_release_retool_{b} = yes\n'
+               f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_retool_gate_{b} }} var:{v("pmr_retool_built")} = 0 '
+               f'var:{v("pmr_pending")} = 0 }} set_variable = pmr_rq_{b} }}\n\t}}\n')
 
     # Every method change, including the tick's own, fires on_production_method_changed, and its tick
     # runs inside the change (seen in 1.14.5: a SWITCH line logged before the line of the tick that
@@ -4013,9 +4036,9 @@ pmr_read_elec = {
 		set_variable = { name = pmr_elec value = 1 }
 	}
 	else = { set_variable = { name = pmr_elec value = 0 } }
-	# pmr_rail: 1 while the state produces transportation (TRANSPORTATION); pmr_lsup: both, for pmr_newest's re-scan
+	# pmr_rail: 1 while the state has a railway (TRANSPORTATION); pmr_lsup: both, for pmr_newest's re-scan
 	if = {
-		limit = { exists = sg:transportation sg:transportation = { state_goods_production > 0 } }
+		limit = { has_building = building_railway b:building_railway = { level >= 1 } }
 		set_variable = { name = pmr_rail value = 1 }
 	}
 	else = { set_variable = { name = pmr_rail value = 0 } }
@@ -4054,16 +4077,27 @@ def dispatch_effects(buildings):
                  f'\t\t\tpmr_tick_{b} = yes\n'
                  f'\t\t\tif = {{ limit = {{ has_variable = pmr_new_build_{b} }} remove_variable = pmr_new_build_{b} }}\n'
                  '\t\t}\n\t}\n')
-    o.append('}\n\n'
-             '# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n'
-             'pmr_tick_parent_of_retool = {\n')
-    for i, bk in enumerate(buildings):
+    o.append('}\n\n')
+    # perf review S-2: a site searches only its own group's 45 types, any other building leaves after the group checks
+    for bk in buildings:
         b = short(bk)
-        kw = 'if' if i == 0 else 'else_if'
-        types = priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
-        o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in types) + ' } }\n'
-                 f'\t\tstate = {{\n\t\t\t{flush_log("RETOOL_LEVEL", bk, mine=f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}")}\n'
-                 f'\t\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t\t}}\n\t}}\n')
+        o.append(f'# Building scope: a retool site of {bk} completed a level; tick it.\npmr_tick_parent_{b} = {{\n'
+                 f'\tstate = {{\n\t\t{flush_log("RETOOL_LEVEL", bk, mine=f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}")}\n'
+                 f'\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t}}\n}}\n\n')
+    sites = {'bg_pmr_retool': lambda b: [t for j, t in enumerate(priv_slots(b), 1) if j != ABROAD_SLOT],
+             'bg_pmr_retool_abroad': lambda b: [priv_slots(b)[ABROAD_SLOT - 1]],
+             'bg_pmr_retool_gov': lambda b: [f'building_pmr_retool_gov_{b}'],
+             'bg_pmr_retool_gov_abroad': lambda b: [f'building_pmr_retool_gova_{b}']}
+    o.append('# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n'
+             'pmr_tick_parent_of_retool = {\n')
+    for g, (grp, types) in enumerate(sites.items()):
+        o.append(f'\t{"if" if g == 0 else "else_if"} = {{\n\t\tlimit = {{ is_building_group = {grp} }}\n')
+        for i, bk in enumerate(buildings):
+            b = short(bk)
+            ts = types(b)
+            cond = f'is_building_type = {ts[0]}' if len(ts) == 1 else 'OR = { ' + ' '.join(f'is_building_type = {t}' for t in ts) + ' }'
+            o.append(f'\t\t{"if" if i == 0 else "else_if"} = {{ limit = {{ {cond} }} pmr_tick_parent_{b} = yes }}\n')
+        o.append('\t}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'
              '# research, at game start), so the country totals wait for pmr_c_sum_all once the states are done.\n'
@@ -4517,8 +4551,19 @@ def is_type(bk):
     return f"ObjectsEqual(Building.GetBuildingType, GetBuildingType('{bk}').Self)"
 
 
+# Perf review 5, G-2: the HUD marks each PMR type (pmr_t_<key>) and each AUTO_BEST type PMR doesn't retool (pmr_a_<key>)
+# in the GUI variable system, as it marks the retool sites (patch_hud_flags), so "is this a PMR type" is one lookup, not
+# 45 type tests. Vanilla 1.14.5 tests flags the same way (building_browser_panel.gui, Concatenate + Exists).
+TYPE_FLAGS = []   # (prefix, types), set before the GUI is patched
+
+
 def any_type(buildings):
-    """Or() over every PMR building type, nested two at a time."""
+    """Building context: whether its type is one of `buildings`. The type flags where they cover the set exactly, else
+    Or() over the types, nested two at a time."""
+    want = set(buildings)
+    fams = [(pre, ts) for pre, ts in TYPE_FLAGS if ts and ts <= want]
+    if fams and set().union(*(ts for _p, ts in fams)) == want:
+        return any_of([f"GetVariableSystem.Exists(Concatenate('{pre}', Building.GetBuildingType.GetKey))" for pre, _t in fams])
     expr = is_type(buildings[-1])
     for bk in reversed(buildings[:-1]):
         expr = f'Or({is_type(bk)}, {expr})'
@@ -4582,7 +4627,8 @@ def patch_hud_flags(text, site_types):
     (SITE_HIDDEN), before any list that hides them can open."""
     if text.count(HUD_ANCHOR) != 1:
         raise SystemExit('ingame_hud.gui: the topbar vbox moved; update patch_hud_flags')
-    flags = ''.join(f"\t\t\ton_start = \"[GetVariableSystem.Set('{t}', 'yes')]\"\n" for t in sorted(site_types))
+    keys = sorted(site_types) + [pre + t for pre, ts in TYPE_FLAGS for t in sorted(ts)]
+    flags = ''.join(f"\t\t\ton_start = \"[GetVariableSystem.Set('{t}', 'yes')]\"\n" for t in keys)
     return text.replace(HUD_ANCHOR, '\t# PMR: every retool site type marked once, for the lists that hide them\n'
                         '\twidget = {\n\t\tsize = { 0 0 }\n\t\talwaystransparent = yes\n'
                         '\t\tstate = {\n\t\t\tname = pmr_site_flags\n\t\t\ttrigger_on_create = yes\n'
@@ -5079,31 +5125,39 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                     f'\t\t\tchange_variable = {{ name = {sv("pv")} divide = {fmt(VANILLA_OUTPUT_W)} }}\n')
         snapped = ([f'pmr_mv_{n}_{b}' for n in ('pt', 'pol', 'pworks', 'pprod', 'pout', 'ploss', 'wb', 'pe', 'pp', 'pv')]
                    if bk in ai else [])
+        # the state's levels and picks, and the figures of the country's biggest state of the type, onto the country
+        # (scope:pmr_ctry)
+        body = ('\t\tsave_temporary_scope_as = pmr_st\n'
+                f'\t\tscope:pmr_ctry = {{ change_variable = {{ name = pmr_mv_lv_{b} add = scope:pmr_st.var:pmr_level_{b} }} }}\n'
+                + ''.join(f'\t\tif = {{ limit = {{ var:pmr_pbest_{b} = {i} }} '
+                          f'scope:pmr_ctry = {{ change_variable = {{ name = pmr_mv_ps_{i}_{b} add = scope:pmr_st.var:pmr_level_{b} }} }} }}\n'
+                          for i in range(1, k + 1))
+                + f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_level_{b} > scope:pmr_ctry.var:pmr_mv_max_{b} }}\n'
+                + (f'\t\t\tset_variable = {{ name = pmr_mv_aiv_{b} value = pmr_ai_value_{b} }}\n'
+                   f'\t\t\tset_variable = {{ name = pmr_mv_aib_{b} value = pmr_ai_base_{b} }}\n' if bk in ai else '')
+                + ''.join(f'\t\t\tset_variable = {{ name = pmr_mv_p{key}_{b} value = pmr_ai_{key}_{b} }}\n' for key in pk)
+                + snap.replace('owner = {', 'scope:pmr_ctry = {').replace('owner.var:', 'scope:pmr_ctry.var:')
+                + f'\t\t\tscope:pmr_ctry = {{\n'
+                f'\t\t\t\tset_variable = {{ name = pmr_mv_max_{b} value = scope:pmr_st.var:pmr_level_{b} }}\n'
+                + ''.join(f'\t\t\t\tset_variable = {{ name = {n} value = scope:pmr_st.var:{n} }}\n'
+                          for n in per + ([f'pmr_mv_aiv_{b}', f'pmr_mv_aib_{b}'] if bk in ai else [])
+                          + [f'pmr_mv_p{key}_{b}' for key in pk] + snapped)
+                # the bars under the card's grid (card_bars): copied where the state has them
+                + ''.join(f'\t\t\t\tif = {{ limit = {{ scope:pmr_st = {{ has_variable = {n} }} }} '
+                          f'set_variable = {{ name = {n} value = scope:pmr_st.var:{n} }} }}\n' for n in extra.get(bk, []))
+                + '\t\t\t}\n\t\t}\n')
+        found = f'has_variable = pmr_level_{b} var:pmr_level_{b} > 0 has_variable = pmr_pbest_{b} has_variable = pmr_rm_1_{b}'
         o.append(f'pmr_mv_{b} = {{\n\tsave_temporary_scope_as = pmr_ctry\n'
                  f'\tset_variable = {{ name = pmr_mv_lv_{b} value = 0 }}\n\tset_variable = {{ name = pmr_mv_max_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pbest_{b} value = 0 }}\n'
                  + ''.join(f'\tset_variable = {{ name = pmr_mv_ps_{i}_{b} value = 0 }}\n' for i in range(1, k + 1))
-                 + f'\tevery_scope_state = {{\n\t\tlimit = {{ has_variable = pmr_level_{b} var:pmr_level_{b} > 0 '
-                 f'has_variable = pmr_pbest_{b} has_variable = pmr_rm_1_{b} }}\n'
-                 '\t\tsave_temporary_scope_as = pmr_st\n'
-                 f'\t\towner = {{ change_variable = {{ name = pmr_mv_lv_{b} add = scope:pmr_st.var:pmr_level_{b} }} }}\n'
-                 + ''.join(f'\t\tif = {{ limit = {{ var:pmr_pbest_{b} = {i} }} '
-                           f'owner = {{ change_variable = {{ name = pmr_mv_ps_{i}_{b} add = scope:pmr_st.var:pmr_level_{b} }} }} }}\n'
-                           for i in range(1, k + 1))
-                 + f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_level_{b} > scope:pmr_ctry.var:pmr_mv_max_{b} }}\n'
-                 + (f'\t\t\tset_variable = {{ name = pmr_mv_aiv_{b} value = pmr_ai_value_{b} }}\n'
-                    f'\t\t\tset_variable = {{ name = pmr_mv_aib_{b} value = pmr_ai_base_{b} }}\n' if bk in ai else '')
-                 + ''.join(f'\t\t\tset_variable = {{ name = pmr_mv_p{key}_{b} value = pmr_ai_{key}_{b} }}\n' for key in pk)
-                 + snap
-                 + f'\t\t\towner = {{\n'
-                 f'\t\t\t\tset_variable = {{ name = pmr_mv_max_{b} value = scope:pmr_st.var:pmr_level_{b} }}\n'
-                 + ''.join(f'\t\t\t\tset_variable = {{ name = {n} value = scope:pmr_st.var:{n} }}\n'
-                           for n in per + ([f'pmr_mv_aiv_{b}', f'pmr_mv_aib_{b}'] if bk in ai else [])
-                           + [f'pmr_mv_p{key}_{b}' for key in pk] + snapped)
-                 # the bars under the card's grid (card_bars): copied where the state has them
-                 + ''.join(f'\t\t\t\tif = {{ limit = {{ scope:pmr_st = {{ has_variable = {n} }} }} '
-                           f'set_variable = {{ name = {n} value = scope:pmr_st.var:{n} }} }}\n' for n in extra.get(bk, []))
-                 + '\t\t\t}\n\t\t}\n\t}\n'
+                 + f'\tevery_scope_state = {{\n\t\tlimit = {{ {found} }}\n{body}\t}}\n'
+                 # Pat 17:47Z ("i can't see my opium plantations"): a type the country has only abroad, where its
+                 # investors own levels (pmr_abroad_<b>), from those states
+                 + f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} = 0 }}\n'
+                 f'\t\tevery_state = {{\n\t\t\tlimit = {{ has_variable = pmr_abroad_{b} {found} }}\n'
+                 + body.replace('\n\t', '\n\t\t').replace('\t\tsave_temporary', '\t\t\tsave_temporary', 1)
+                 + '\t\t}\n\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_mv_lv_{b} > 0 }}\n'
                  + ''.join(f'\t\tchange_variable = {{ name = pmr_mv_ps_{i}_{b} divide = var:pmr_mv_lv_{b} }}\n'
                            for i in range(1, k + 1))
@@ -5373,10 +5427,24 @@ def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=N
                   f'\t\t\titem = {{\n\t\t\t\tpmr_mv_card_{b} = {{}}\n\t\t\t}}\n\t\t}}\n')
         here = (f"EqualTo_int32(FixedPointToInt({mv_read(f'pmr_mv_rk_{b}')}), "
                 'PdxGuiWidget.AccessParent.GetIndexInDataModel)')
+        # Pat 17:46Z ("they disappear when i click investment chance"): the filters and search stay, so place k makes
+        # its card only while the Buildings list, as filtered, has the type (its item, with buildings)
+        listed = (f"And(ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self), "
+                  'Not(IsDataModelEmpty(BuildingBrowserBuildingTypeItem.GetBuildings)))')
         slots += (f'\t\tflowcontainer = {{\n\t\t\tposition = {{ 7 0 }}\n'
                   f'\t\t\tdatamodel = "[DataModelRepeatedItem(Select_int32({here}, '
                   "'(int32)1', '(int32)0'))]\"\n"
-                  f'\t\t\titem = {{\n\t\t\t\tpmr_mv_card_{b} = {{}}\n\t\t\t}}\n\t\t}}\n')
+                  '\t\t\titem = {\n\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n'
+                  '\t\t\t\t\tdatamodel = "[BuildingBrowserPanel.GetBuildingBrowserBuildingTypeItems]"\n'
+                  '\t\t\t\t\titem = {\n\t\t\t\t\t\tflowcontainer = {\n'
+                  '\t\t\t\t\t\t\tdatacontext = "[BuildingBrowserBuildingTypeItem.GetBuildingType]"\n'
+                  '\t\t\t\t\t\t\tdirection = vertical\n'
+                  f"\t\t\t\t\t\t\tdatamodel = \"[DataModelRepeatedItem(Select_int32({listed}, '(int32)1', '(int32)0'))]\"\n"
+                  f'\t\t\t\t\t\t\titem = {{\n\t\t\t\t\t\t\t\tflowcontainer = {{\n\t\t\t\t\t\t\t\t\tdirection = vertical\n'
+                  f'\t\t\t\t\t\t\t\t\tpmr_mv_card_{b} = {{}}\n'
+                  '\t\t\t\t\t\t\t\t\twidget = { size = { 0 5 } }\n'
+                  '\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t}\n'
+                  '\t\t\t}\n\t\t}\n')
     return ('# GENERATED by tools/pmr/generate.py (methods_view_gui). The side Buildings panel\'s Investments tab: a card\n'
             '# per building type; grids by tools/pmr/methods_row.py.\n'
             'types pmr_methods_view {\n' + cards
@@ -5852,8 +5920,8 @@ def patch_browser_tabs(text, types):
     text = text[:s0] + on_buildings(sorts) + text[s1:]
     text = text[:f0] + on_buildings(filters) + text[f1:]
     # Pat 23:53Z: on Investments a fifth sort button, AI weight, which the game's list can't sort by: it shows PMR's own
-    # list in that order instead (MV_AI, pmr_methods_slot), where the game's filters and search don't apply, so they
-    # step aside until another sort button is clicked
+    # list in that order instead (MV_AI, pmr_methods_slot), each place showing its card only while the game's filtered
+    # list has the type (Pat 17:46Z: the filters and search stay)
     ai_on = f"GetVariableSystem.Exists('{MV_AI}')"
     ai_off = f"GetVariableSystem.Clear('{MV_AI}')"
     if sorts.count('size = { 135 30 }') != 4 or sorts.count('onclick = "[BuildingBrowserPanel.Sort(') != 4:
@@ -5878,7 +5946,7 @@ def patch_browser_tabs(text, types):
                  f'{b4}\tonclick = "[GetVariableSystem.Set(\'{MV_AI}\', \'yes\')]"\n{b4}\tonclick = "[{refresh}]"\n'
                  f'{b4}\tblockoverride "selected_visibility" {{\n{b4}\t\tvisible = "[{ai_on}]"\n{b4}\t}}\n{b4}}}\n'
                  + '\t\t\t' + inv_sorts[inv_sorts.rindex('}'):])
-    inv_filters = on_buildings(filters, f'Not({ai_on})')
+    inv_filters = filters   # Pat 17:46Z: with every sort, the AI weight's too (methods_view_gui's slots follow them)
     # the list's items: vanilla's row on Buildings, PMR's card on Investments (pmr_methods_cards, gui/pmr_methods_view.gui)
     has_rows = 'Not(IsDataModelEmpty(BuildingBrowserBuildingTypeItem.GetBuildings))'
     # q30's ObjectsEqual(BuildingBrowserBuildingTypeItem.GetBuildingType, ...) matched nothing (Pat 22:28Z: blank);
@@ -5938,7 +6006,6 @@ def patch_browser_tabs(text, types):
          '\t\t\t\t\t}\n\t\t\t\t}\n' + inv_filters + '\n' + inv_sorts + '\n\t\t\t}\n'
          # the cards in AI weight order: one slot per card (pmr_mv_n), each making the card of its place
          f'\t\t\tflowcontainer = {{\n\t\t\t\tvisible = "[And({shown}, {ai_on})]"\n\t\t\t\tdirection = vertical\n'
-         '\t\t\t\tspacing = 5\n'
          f'\t\t\t\tdatamodel = "[DataModelRepeatedItem(FixedPointToInt({mv_read("pmr_mv_n")}))]"\n'
          '\t\t\t\titem = {\n\t\t\t\t\tpmr_methods_slot = {}\n\t\t\t\t}\n\t\t\t}\n'
          + '@@PMR_LIST@@' + lst)
@@ -6163,7 +6230,7 @@ def panel_loc(recipe_keys):
 
 def option_loc(opt_ui):
     """Tooltips of the second group bars. Pat, 2026-10-13: short."""
-    loc = [' PMR_EMPTY:0 ""', ' PMR_OPT_LOCKED:0 " (locked)"', ' PMR_OPT_BARRED:0 " (barred)"']
+    loc = [' PMR_EMPTY:0 ""', ' PMR_OPT_LOCKED:0 " (locked)"', ' PMR_OPT_SHORT:0 " (shortage)"', ' PMR_OPT_BARRED:0 " (barred)"']
     for bk, groups in opt_ui.items():
         b = short(bk)
 

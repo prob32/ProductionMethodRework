@@ -72,7 +72,9 @@ IDEO = 36                               # a seat's ideology icon
 SEAT_TX = 100
 BADGE = 36
 VOTE = 32
-CARD_W, CARD_H = 176, 136   # a bylaw's box, as vanilla's law item (country_panel_law_item, 170 x 65)
+CARD_H = 136               # a bylaw's box, as vanilla's law item (country_panel_law_item, 170 x 65)
+WIDE_H = 100               # the bylaw in force alone in its row (Pat 17:42Z: "fill the space ... just like how a law does")
+HALF_W = (BOARD_W - 6) // 2   # the bylaw in force beside the change under way
 SUP_H = 22                  # an open group's support line
 LAW_ICON = 40
 BAR_H = 8
@@ -358,7 +360,7 @@ def node(p, ln, t, x, y):
         text += sub_body(p, ln)
     elif cc.fx_lines(k, t):
         text += (f'textbox = {{\nposition = {{ {TX0} {BODY_Y} }}\nautoresize = yes\n'
-                 f'maximumsize = {{ {TXW} {(CHARTER_Y if t in ln.charters else GRANT_Y if k == cc.GRANT else NODE_H) - BODY_Y - 4} }}\nmultiline = yes\n'
+                 f'maximumsize = {{ {TXW} {(CHARTER_Y if t in ln.charters else GRANT_Y if k in cc.GRANTS else NODE_H) - BODY_Y - 4} }}\nmultiline = yes\n'
                  f'align = left|nobaseline\nfontsize = 19\nfontsize_min = 14\nelide = right\ntext = "PMR_CC_FX_{k}_{t}"\n'
                  'alwaystransparent = yes\n}\n')
     out += (f'widget = {{\n{_vis(f"Not({locked})")}size = {{ 100% 100% }}\n{text}}}\n'
@@ -366,12 +368,18 @@ def node(p, ln, t, x, y):
     # the round frame and the picture, greyed while locked
     fy, iy = (NODE_H - FRAME) // 2, (NODE_H - ICON) // 2
     frame = f'position = {{ 0 {fy} }}\nsize = {{ {FRAME} {FRAME} }}\ntexture = "{FRAME_TEX}"\nalwaystransparent = yes\n'
-    pic = f'position = {{ {(FRAME - ICON) // 2} {iy} }}\nsize = {{ {ICON} {ICON} }}\ntexture = "{ln.icons[t - 1]}"\n'
     out += (f'icon = {{\n{_vis(f"Not({locked})")}{frame}}}\n'
-            f'icon = {{\n{_vis(locked)}{frame}color = {{ 0.5 0.5 0.5 1 }}\n}}\n'
-            f'button = {{\n{_vis(cls["active"])}{pic}using = technology_confirm_button_sound\n{click}{tt}}}\n'
-            f'icon = {{\n{_vis(OR(cls["pending"], cls["bought"]))}{pic}{tt}}}\n'
-            f'icon = {{\n{_vis(locked)}{pic}color = {{ 0.4 0.4 0.4 1 }}\n{tt}}}\n')
+            f'icon = {{\n{_vis(locked)}{frame}color = {{ 0.5 0.5 0.5 1 }}\n}}\n')
+    # Pat 17:55Z: Engineering's second tier shows the company's trade (company_culture.SECTORS, pmr_cc_k_sec)
+    pics = ([(f'Not({GT("pmr_cc_k_sec", 1)})' if i == 1 else EQ('pmr_cc_k_sec', i), icon)
+             for i, (_n, icon, _g) in enumerate(cc.SECTORS, 1)] if (k, t) == cc.SECTOR_NODE
+            else [(None, ln.icons[t - 1])])
+    for sec, icon in pics:
+        pic = f'position = {{ {(FRAME - ICON) // 2} {iy} }}\nsize = {{ {ICON} {ICON} }}\ntexture = "{icon}"\n'
+        both = lambda c: AND(sec, c) if sec else c   # noqa: E731
+        out += (f'button = {{\n{_vis(both(cls["active"]))}{pic}using = technology_confirm_button_sound\n{click}{tt}}}\n'
+                f'icon = {{\n{_vis(both(OR(cls["pending"], cls["bought"])))}{pic}{tt}}}\n'
+                f'icon = {{\n{_vis(both(locked))}{pic}color = {{ 0.4 0.4 0.4 1 }}\n{tt}}}\n')
     # the cost in points, where the tech node shows its era
     if ln.cost[t - 1]:
         out += (f'widget = {{\n{_vis(f"Not({cls["bought"]})")}position = {{ {FRAME // 2 - 18} {fy + FRAME - 26} }}\n'
@@ -394,7 +402,7 @@ def node(p, ln, t, x, y):
         out += prestige_badge()
     if t in ln.charters:
         out += charter_gui(k, t, ln.charters[t])
-    if k == cc.GRANT:
+    if k in cc.GRANTS:
         out += grant_row(k, t)
     return out + '}\n'
 
@@ -413,9 +421,9 @@ def trees(p):
     return (f'widget = {{\nparentanchor = hcenter\nposition = {{ 0 8 }}\nsize = {{ {CANVAS_W} {CANVAS_H} }}\n{out}}}\n')
 
 
-def _badge(x, y, n):
-    """A seat's votes: its weight on the round plate."""
-    return (f'widget = {{\nposition = {{ {x} {y} }}\nsize = {{ {BADGE} {BADGE} }}\ntooltip = "PMR_BL_VOTES_TT"\n'
+def _badge(x, y, n, tt):
+    """A seat's votes: its weight on the round plate, what it comes from on hover (Pat 18:03Z)."""
+    return (f'widget = {{\nposition = {{ {x} {y} }}\nsize = {{ {BADGE} {BADGE} }}\ntooltip = "{tt}"\n'
             f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\n}}\n'
             f'textbox = {{\n{n}\nparentanchor = center\nautoresize = yes\nalign = center|nobaseline\nfontsize = 20\n'
             'alwaystransparent = yes\n}\n}\n')
@@ -430,12 +438,13 @@ def _vote(x, y, value):
 
 
 def _ideology(x, y, who):
-    """Character `who`'s ideology (Pat 16:53Z), its name on hover."""
-    return (f'icon = {{\ndatacontext = "[{who}.GetIdeology]"\nposition = {{ {x} {y} }}\nsize = {{ {IDEO} {IDEO} }}\n'
-            'texture = "[Ideology.GetTexture]"\ntooltip = "[Ideology.GetName]"\n}\n')
+    """Character `who`'s ideology (Pat 16:53Z), its name and its views of the bylaws on hover (Pat 17:44Z;
+    bylaws.custom_loc). who: a bylaws.WHO key."""
+    return (f'icon = {{\ndatacontext = "[{bylaws.WHO[who]}.GetIdeology]"\nposition = {{ {x} {y} }}\n'
+            f'size = {{ {IDEO} {IDEO} }}\ntexture = "[Ideology.GetTexture]"\ntooltip = "PMR_BL_IDEO_{who}"\n}}\n')
 
 
-def _seat(h, picture, name, sub, weight, vote, vis=None, ctx='', who=None):
+def _seat(h, picture, name, sub, weight, vote, vis=None, ctx='', who=None, tt=''):
     """One seat of the board: its picture, its name (and its company), its character's ideology, its votes and its
     vote."""
     yc = h // 2
@@ -444,7 +453,7 @@ def _seat(h, picture, name, sub, weight, vote, vis=None, ctx='', who=None):
              + (_textbox(SEAT_TX, yc + 2, w, 26, sub, 17) if sub else ''))
     ideo = _ideology(BOARD_W - BADGE - VOTE - 26 - IDEO, yc - IDEO // 2, who) if who else ''
     return (f'widget = {{\n{_vis(vis)}{ctx}size = {{ {BOARD_W} {h} }}\nbackground = {{\nusing = entry_bg\n}}\n'
-            + picture + lines + ideo + _badge(BOARD_W - BADGE - VOTE - 18, yc - BADGE // 2, weight)
+            + picture + lines + ideo + _badge(BOARD_W - BADGE - VOTE - 18, yc - BADGE // 2, weight, tt)
             + _vote(BOARD_W - VOTE - 8, yc - VOTE // 2, vote) + '}\n')
 
 
@@ -460,76 +469,94 @@ def seats():
     exe = _seat(EXEC_H, f'character_portrait_medium = {{\nposition = {{ {(SEAT_TX - 80) // 2} 4 }}\n'
                          'datacontext = "[Company.GetExecutive]"\n}\n',
                 '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
-                f'raw_text = "{bylaws.EXEC_W}"', V('pmr_bl_v_ex'), who='Company.GetExecutive')
+                f'text = "[{V("pmr_bl_w_x")}|0]"', V('pmr_bl_v_ex'), who='EX', tt='PMR_BL_VOTES_X')
     sub = _seat(SEAT_H, f'character_portrait_small2 = {{\nposition = {{ {(SEAT_TX - 60) // 2} 4 }}\n'
                          'datacontext = "[Company.GetExecutive]"\n}\n',
                 '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
-                f'raw_text = "{bylaws.SUB_W}"', "Company.MakeScope.Var('pmr_bl_v').GetValue",
-                ctx='datacontext = "[Scope.GetCompany]"\n', who='Company.GetExecutive')
+                "text = \"[Company.MakeScope.Var('pmr_bl_w').GetValue|0]\"", "Company.MakeScope.Var('pmr_bl_v').GetValue",
+                ctx='datacontext = "[Scope.GetCompany]"\n', who='EX', tt='PMR_BL_VOTES_B')
     subs = (f'flowcontainer = {{\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n'
             f'datamodel = "[{company_panel.SUBS}]"\nitem = {{\n{sub}}}\n}}\n')
-    # Pat 16:53Z: the shareholders' seat is the country's Industrialists' leader (pmr_bl_shl), while there is one
-    leader = "Character.MakeScope.Var('pmr_bl_shl').GetCharacter"
-    # Pat 17:23Z: a Character read off a variable drew the empty silhouette; vanilla draws a variable's character from
-    # the Scope (ep2_japan_widgets.gui, emperor_var), so the portrait does too, with no button, icons or frame that
-    # would read the window's Character (the executive)
-    portrait = (f'character_portrait_small2 = {{\nposition = {{ {(SEAT_TX - 60) // 2} 4 }}\n'
-                "datacontext = \"[Character.MakeScope.Var('pmr_bl_shl')]\"\n"
-                'blockoverride "portrait_texture" {\nportrait_texture = "[Scope.GetCharacter.GetPortrait('
-                "'environment_standard', 'camera_head', 'idle', GetPortraitRenderSize(PdxGuiWidget.Self))]\"\n}\n"
-                'blockoverride "portrait_frame" {\nicon = {\nsize = { 100% 100% }\n'
-                'texture = "gfx/interface/portraits/portrait_frame_head.dds"\n}\n}\n'
-                'blockoverride "portrait_button" {}\nblockoverride "portrait_icons" {}\n'
-                'blockoverride "tooltip" {\ntooltipwidget = {\nFancyTooltip_Character = {\n'
-                'datacontext = "[Scope.AccessCharacter]"\n}\n}\n}\n}\n')
-    share = (_seat(SEAT_H, portrait,
-                   f'[{leader}.GetFullNameNoFormatting]', 'PMR_BL_SHAREHOLDERS',
-                   f'raw_text = "{bylaws.SHARE_W}"', V('pmr_bl_v_sh'), vis=EQ('pmr_bl_shx', 1), who=leader)
+    # Pat 16:53Z: the shareholders' seat is the country's Industrialists' leader (pmr_bl_shl), while there is one;
+    # Pat 17:44Z: the Workers Council's is the Trade Unions' leader (pmr_bl_wcl)
+    share_w = f'text = "[{V("pmr_bl_w_h")}|0]"'
+    share = (_seat(SEAT_H, _var_portrait('pmr_bl_shl'), f'[{bylaws.WHO["SH"]}.GetFullNameNoFormatting]',
+                   'PMR_BL_SHAREHOLDERS', share_w, V('pmr_bl_v_sh'), vis=EQ('pmr_bl_shx', 1), who='SH',
+                   tt='PMR_BL_VOTES_H')
              + _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_industrialists'), 'PMR_BL_SHAREHOLDERS', None,
-                     f'raw_text = "{bylaws.SHARE_W}"', V('pmr_bl_v_sh'), vis=f'Not({EQ("pmr_bl_shx", 1)})'))
-    council = _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_trade_unions'), 'PMR_BL_COUNCIL', None,
-                    f'text = "[{V("pmr_bl_wc")}|0]"', V('pmr_bl_v_wc'), vis=GT('pmr_bl_wc', 0))
+                     share_w, V('pmr_bl_v_sh'), vis=f'Not({EQ("pmr_bl_shx", 1)})', tt='PMR_BL_VOTES_H'))
+    council_w = f'text = "[{V("pmr_bl_w_w")}|0]"'
+    council = (_seat(SEAT_H, _var_portrait('pmr_bl_wcl'), f'[{bylaws.WHO["WC"]}.GetFullNameNoFormatting]',
+                     'PMR_BL_COUNCIL', council_w, V('pmr_bl_v_wc'), vis=AND(GT('pmr_bl_wc', 0), EQ('pmr_bl_wcx', 1)),
+                     who='WC', tt='PMR_BL_VOTES_W')
+               + _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_trade_unions'), 'PMR_BL_COUNCIL', None, council_w,
+                       V('pmr_bl_v_wc'), vis=AND(GT('pmr_bl_wc', 0), f'Not({EQ("pmr_bl_wcx", 1)})'), tt='PMR_BL_VOTES_W'))
     return exe + subs + share + council
 
 
-def bylaw_card(g, i, kind):
+def _var_portrait(var):
+    """The portrait of the character held in the executive's variable `var`. Pat 17:23Z: a Character read off a
+    variable drew the empty silhouette; vanilla draws a variable's character from the Scope (ep2_japan_widgets.gui,
+    emperor_var), so this does too, with no button, icons or frame that would read the window's Character (the
+    executive)."""
+    return (f'character_portrait_small2 = {{\nposition = {{ {(SEAT_TX - 60) // 2} 4 }}\n'
+            f"datacontext = \"[Character.MakeScope.Var('{var}')]\"\n"
+            'blockoverride "portrait_texture" {\nportrait_texture = "[Scope.GetCharacter.GetPortrait('
+            "'environment_standard', 'camera_head', 'idle', GetPortraitRenderSize(PdxGuiWidget.Self))]\"\n}\n"
+            'blockoverride "portrait_frame" {\nicon = {\nsize = { 100% 100% }\n'
+            'texture = "gfx/interface/portraits/portrait_frame_head.dds"\n}\n}\n'
+            'blockoverride "portrait_button" {}\nblockoverride "portrait_icons" {}\n'
+            'blockoverride "tooltip" {\ntooltipwidget = {\nFancyTooltip_Character = {\n'
+            'datacontext = "[Scope.AccessCharacter]"\n}\n}\n}\n}\n')
+
+
+def bylaw_card(g, i, kind, n=3):
     """One bylaw's box, as a law in vanilla's laws panel (Pat 16:39Z: "bigger boxes and the effect listed under them"):
     its icon and name, its effects under them, the bar of a change to it at its foot. Pat 17:23Z: a group shows only
-    the bylaw in force (kind 'now'; a click opens the others) and a change under way ('pending'); open, the others
-    ('alt') show their support, and a click on one starts the change (bylaws.pmr_bl_pick_sgui)."""
+    the bylaw in force (kind 'wide' alone, 'now' beside a change under way; a click opens the others) and a change
+    under way ('pending'); open, the others ('alt', n in the group) show their support, and a click on one starts the
+    change (bylaws.pmr_bl_pick_sgui). Pat 17:42Z: the boxes fill the board's width, as laws do."""
     c = bylaws.code(g, i)
     sg = "GetScriptedGui('pmr_bl_pick_sgui')"
     scope = f"{SG_SCOPE}.AddScope('opt', MakeScopeValue('(CFixedPoint){c}')).End"
     opened = f"GetVariableSystem.Exists('pmr_bl_open_{g}')"
-    fx_h = CARD_H - LAW_ICON - 14 - BAR_H - 8 - (SUP_H if kind == 'alt' else 0)
+    under_way = EQ('pmr_bl_pg', g)
+    w, h = {'wide': (BOARD_W, WIDE_H), 'alt': ((BOARD_W - 6 * (n - 2)) // (n - 1), CARD_H)}.get(kind, (HALF_W, CARD_H))
+    fx_h = h - LAW_ICON - 14 - 8 - (BAR_H if kind != 'wide' else 0) - (SUP_H if kind == 'alt' else 0)
     sup = V(f'pmr_bl_s_{c}')
-    support = (''.join(f'icon = {{\n{_vis(f"{cmp}({sup}, \'(CFixedPoint)0\')")}position = {{ 10 {CARD_H - BAR_H - 8 - SUP_H} }}\n'
+    support = (''.join(f'icon = {{\n{_vis(f"{cmp}({sup}, \'(CFixedPoint)0\')")}position = {{ 10 {h - BAR_H - 8 - SUP_H} }}\n'
                        f'size = {{ {SUP_H} {SUP_H} }}\ntexture = "{tex}"\nalwaystransparent = yes\n}}\n'
                        for cmp, tex in (('GreaterThan_CFixedPoint', APPROVE), ('LessThan_CFixedPoint', DISAPPROVE)))
-               + f'textbox = {{\nposition = {{ {SUP_H + 16} {CARD_H - BAR_H - 8 - SUP_H} }}\nsize = {{ 80 {SUP_H} }}\n'
+               + f'textbox = {{\nposition = {{ {SUP_H + 16} {h - BAR_H - 8 - SUP_H} }}\nsize = {{ 80 {SUP_H} }}\n'
                f'align = left|vcenter|nobaseline\nfontsize = 16\ntext = "PMR_BL_SUP_{c}"\nalwaystransparent = yes\n}}\n'
                if kind == 'alt' else '')
+    bar = (f'widget = {{\n{_vis(AND(under_way, EQ("pmr_bl_pv", i)))}position = {{ 8 {h - BAR_H - 6} }}\n'
+           f'size = {{ {w - 16} {BAR_H} }}\ntooltip = "PMR_BL_BAR_TT"\n'
+           'green_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
+           f'min = 0\nmax = 100\nvalue = "[FixedPointToFloat({V("pmr_bl_pp")})]"\n}}\n}}\n}}\n'
+           if kind != 'wide' else '')
     inner = (f'icon = {{\nposition = {{ 8 8 }}\nsize = {{ {LAW_ICON} {LAW_ICON} }}\n'
              f'texture = "{bylaws.LAW_ICON.format(bylaws.ICON[c])}"\nalwaystransparent = yes\n}}\n'
-             f'textbox = {{\nposition = {{ {LAW_ICON + 14} 6 }}\nsize = {{ {CARD_W - LAW_ICON - 20} 44 }}\n'
+             f'textbox = {{\nposition = {{ {LAW_ICON + 14} 6 }}\nsize = {{ {w - LAW_ICON - 20} 44 }}\n'
              'align = left|vcenter|nobaseline\nmultiline = yes\nfontsize = 17\nfontsize_min = 12\nelide = right\n'
              f'text = "PMR_BL_NAME_{c}"\nalwaystransparent = yes\n}}\n'
-             + (f'textbox = {{\nposition = {{ 10 {LAW_ICON + 14} }}\nsize = {{ {CARD_W - 16} {fx_h} }}\n'
+             + (f'textbox = {{\nposition = {{ 10 {LAW_ICON + 14} }}\nsize = {{ {w - 16} {fx_h} }}\n'
                 'align = left|nobaseline\nmultiline = yes\nfontsize = 14\nfontsize_min = 12\nelide = right\n'
                 f'text = "PMR_BL_FX_{c}"\nalwaystransparent = yes\n}}\n' if bylaws.fx(c) else '')
-             + support
-             + f'widget = {{\n{_vis(AND(EQ("pmr_bl_pg", g), EQ("pmr_bl_pv", i)))}position = {{ 8 {CARD_H - BAR_H - 6} }}\n'
-             f'size = {{ {CARD_W - 16} {BAR_H} }}\ntooltip = "PMR_BL_BAR_TT"\n'
-             'green_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
-             f'min = 0\nmax = 100\nvalue = "[FixedPointToFloat({V("pmr_bl_pp")})]"\n}}\n}}\n}}\n')
-    box = f'size = {{ {CARD_W} {CARD_H} }}\n'
+             + support + bar)
+    box = f'size = {{ {w} {h} }}\n'
     now = EQ(f'pmr_bl_{g}', i)
+    toggle = f'onclick = "[GetVariableSystem.Toggle(\'pmr_bl_open_{g}\')]"\n'
+    if kind == 'wide':
+        return (f'button = {{\n{_vis(AND(now, f"Not(And({under_way}, Not({opened})))"))}{box}'
+                f'using = default_button_primary\n{toggle}{inner}}}\n')
     if kind == 'now':
-        return (f'button = {{\n{_vis(now)}{box}using = default_button_primary\n'
-                f'onclick = "[GetVariableSystem.Toggle(\'pmr_bl_open_{g}\')]"\n{inner}}}\n')
+        return (f'button = {{\n{_vis(AND(now, under_way, f"Not({opened})"))}{box}using = default_button_primary\n'
+                f'{toggle}{inner}}}\n')
     if kind == 'pending':
-        return (f'button = {{\n{_vis(AND(EQ("pmr_bl_pg", g), EQ("pmr_bl_pv", i), f"Not({opened})"))}{box}'
-                f'using = default_button\n{inner}}}\n')
+        # Pat 17:43Z: who backs the change under way and who opposes it, on hover
+        return (f'button = {{\n{_vis(AND(under_way, EQ("pmr_bl_pv", i), f"Not({opened})"))}{box}'
+                f'using = default_button\n{toggle}tooltip = "PMR_BL_TT_{c}"\n{inner}}}\n')
     return (f'button = {{\n{_vis(f"Not({now})")}{box}using = default_button\n'
             f'enabled = "[And({LOCAL}, {sg}.IsValid({scope}))]"\nonclick = "[{sg}.Execute({scope})]"\n'
             f'onclick = "[GetVariableSystem.Clear(\'pmr_bl_open_{g}\')]"\n'
@@ -538,7 +565,7 @@ def bylaw_card(g, i, kind):
 
 def bylaw_group(g, names):
     """One group of bylaws: its name, the cancel of a change to it under way, the bylaw in force (and the change under
-    way beside it); open, the others under them."""
+    way beside it); open, the others under them. Each row fills the board's width."""
     cancel = "GetScriptedGui('pmr_bl_cancel_sgui')"
     end = f'{SG_SCOPE}.End'
     n = range(1, len(names) + 1)
@@ -548,8 +575,10 @@ def bylaw_group(g, names):
              + f'button_icon_cancel = {{\n{_vis(AND(LOCAL, EQ("pmr_bl_pg", g)))}position = {{ {BOARD_W - 30} 0 }}\n'
              f'size = {{ 30 30 }}\nenabled = "[{cancel}.IsValid({end})]"\nonclick = "[{cancel}.Execute({end})]"\n}}\n}}\n')
     return (f'flowcontainer = {{\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n{title}'
-            + row(''.join(bylaw_card(g, i, 'now') for i in n) + ''.join(bylaw_card(g, i, 'pending') for i in n))
-            + row(''.join(bylaw_card(g, i, 'alt') for i in n), _vis(f"GetVariableSystem.Exists('pmr_bl_open_{g}')"))
+            + row(''.join(bylaw_card(g, i, 'wide') for i in n) + ''.join(bylaw_card(g, i, 'now') for i in n)
+                  + ''.join(bylaw_card(g, i, 'pending') for i in n))
+            + row(''.join(bylaw_card(g, i, 'alt', len(names)) for i in n),
+                  _vis(f"GetVariableSystem.Exists('pmr_bl_open_{g}')"))
             + '}\n')
 
 

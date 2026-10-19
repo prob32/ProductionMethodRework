@@ -746,7 +746,7 @@ def on_actions():
             'on_start_expanding_building = { on_actions = { pmr_pi_on_start } }\n\n'
             '# A policy card lasts only while the country keeps its law; an AI country without one picks one it can\n'
             '# afford (Pat 19:34Z). The player\'s weekly clock is restarted here if its chain broke (pmr_pi_start_clock).\n'
-            'pmr_pi_monthly_country = {\n\teffect = {\n'
+            'pmr_pi_monthly_country = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }   # the test pause (S-6)\n\teffect = {\n'
             + drop +
             '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_policy_lock_m }\n'
             '\t\t\tchange_variable = { name = pmr_policy_lock_m add = -1 }\n'
@@ -760,7 +760,7 @@ def on_actions():
             '\t\t\tpmr_pi_start_clock = yes\n\t\t}\n'
             '\t}\n}\n\n'
             '# Root = building, a level of it starting construction (the Recent Investments bars).\n'
-            'pmr_pi_on_start = {\n\teffect = {\n\t\tpmr_pi_start = yes\n\t}\n}\n')
+            'pmr_pi_on_start = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }\n\teffect = {\n\t\tpmr_pi_start = yes\n\t}\n}\n')
 
 
 def pf_effects(shorts):
@@ -1005,6 +1005,8 @@ def retool_types(game, out):
                             re.M))
     btype, parent = building_groups(game)
     index = {k: i for i, (k, *_r) in enumerate(GROUPS)}
+    site_group = dict((k, g) for k, g in re.findall(r'^(building_pmr_retool_\w+) = \{.*?^\tbuilding_group = (\w+)', text,
+                                                    re.M | re.S))
     res = []
     for k, _s, _o, _c in top_blocks(text):
         m = re.fullmatch(r'building_pmr_retool_gova?_(.+)', k) or re.fullmatch(r'building_pmr_retool_(.+)_\d+', k)
@@ -1014,7 +1016,9 @@ def retool_types(game, out):
         g = group_of('building_' + b, btype, parent)
         if not g or b not in costs:
             fail('pmr_retool_buildings.txt', f'{k}: no priority group or no pmr_retool_cost_{b}')
-        res.append((k[len('building_'):], index[g], costs[b], b))
+        if k not in site_group:
+            fail('pmr_retool_buildings.txt', f'{k}: no building_group')
+        res.append((k[len('building_'):], index[g], costs[b], b, site_group[k]))
     if not res:
         fail('pmr_retool_buildings.txt', 'found no retool buildings')
     return res
@@ -1060,15 +1064,17 @@ def invest_effects(types, retools):
             args = f'S = {s} G = {g} C = {c} T = {t}' if with_gc else f'S = {s}'
             return (f'\t\t{"else_if" if k else "if"} = {{\n\t\t\tlimit = {{ is_building_type = building_{s} }}\n'
                     f'\t\t\t{effect} = {{ {args} }}\n\t\t}}\n')
-        out = ''.join(call(k, s, g, c, s) for k, (s, g, c) in enumerate(types))
-        if retools:
+        # perf review S-2: a retool site searches only its own building group's sites, and the others pass the
+        # four group checks to the counted types
+        out = ''
+        for j, grp in enumerate(dict.fromkeys(r[4] for r in retools)):
             inner = ''.join('\t' + line + '\n' for line in
-                            ''.join(call(k, s, g, c, t) for k, (s, g, c, t) in enumerate(retools)).rstrip('\n').split('\n'))
-            out += ('\t\telse_if = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tis_building_group = bg_pmr_retool\n'
-                    '\t\t\t\t\tis_building_group = bg_pmr_retool_abroad\n'
-                    '\t\t\t\t\tis_building_group = bg_pmr_retool_gov\n'
-                    '\t\t\t\t\tis_building_group = bg_pmr_retool_gov_abroad\n\t\t\t\t}\n\t\t\t}\n' + inner + '\t\t}\n')
-        return out
+                            ''.join(call(k, s, g, c, t) for k, (s, g, c, t, _bg) in
+                                    enumerate(r for r in retools if r[4] == grp)).rstrip('\n').split('\n'))
+            out += (f'\t\t{"else_if" if j else "if"} = {{\n\t\t\tlimit = {{ is_building_group = {grp} }}\n'
+                    + inner + '\t\t}\n')
+        first = 1 if out else 0
+        return out + ''.join(call(k + first, s, g, c, s) for k, (s, g, c) in enumerate(types))
     where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
              'state=[THIS.GetState.GetNameNoFormatting];building=$S$')
     nums = ("levels=[THIS.Var('pmr_iv_dl').GetValue|0];player_levels=[THIS.Var('pmr_iv_d').GetValue|0];"

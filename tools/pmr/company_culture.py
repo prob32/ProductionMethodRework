@@ -67,11 +67,14 @@ OUTPUT = (0.12, 0.16)               # Precision Manufacturing, Hallmark Goods: o
 # to grant the benefit. the next tier needs to be locked until the current tiers progress is complete"): buying an
 # Engineering tier (points, as before) starts its grant; the owner's investment pool pays GRANT_COST per level the
 # company employs every week, a week it can't cover waits, and after GRANT_WEEKS paid weeks the tier is the company's.
-GRANT = 'en'
+# Pat 17:42Z: "lvl 1 engineering should require culture points and research grant": Engineering's root too.
+GRANTS = ('er', 'en')
 GRANT_WEEKS = 52
-GRANT_COST = (500, 1000, 1500)      # £ per employed level a week, by tier (Pat 2026-10-18 22:28Z, 10-19 00:06Z; q35's)
+GRANT_COST = {'er': (250,), 'en': (500, 1000, 1500)}   # £ per employed level a week, by tier (Pat 2026-10-18 22:28Z,
+                                                     # 10-19 00:06Z; q35's); the root's is PMR's pick
 LV_LADDER = list(range(100, 20, -5)) + list(range(20, 0, -1))   # employed levels, for a grant's cost
-GRANT_VARS = ['pmr_rg_t', 'pmr_rg_w', 'pmr_rg_pay', 'pmr_rg_next', 'pmr_rg_ok', 'pmr_rg_paid']   # on the company
+GRANT_VARS = ['pmr_rg_t', 'pmr_rg_w', 'pmr_rg_pay', 'pmr_rg_next', 'pmr_rg_ok', 'pmr_rg_paid']   # on the company;
+# pmr_rg_t is the running grant's node (Line.node; 1-3, Process Engineering's tiers, before q48)
 HALF = 0.5                          # a subsidiary's share of its parent's throughput and of the country's company bonus
 SUB_RANGE = (-40, 15)               # the Subsidiary trait's net throughput, whole percent
 
@@ -136,13 +139,36 @@ LINES = [
          (INVENTION.format('corporate_management'), PM_ICON.format('skyscraper_trade_nexus'),
           INVENTION.format('international_trade')), (1, 2, 3), sub=2,
          charters={1: 'industry_charter', 2: 'investment_charter', 3: 'colonization_charter'}),
-    Line(4, 'er', 'eng', ('Engineering',), (INVENTION.format('mechanical_tools'),), (0,), root=True),
+    Line(4, 'er', 'eng', ('Engineering',), (INVENTION.format('mechanical_tools'),), (1,), root=True),
     Line(5, 'en', 'eng', ('Process Engineering', 'Precision Manufacturing', 'Hallmark Goods'),
          (INVENTION.format('conveyers'), PM_ICON.format('precision_tools'), INVENTION.format('crystal_glass')),
          (1, 2, 3)),
 ]
 BY_KEY = {ln.key: ln for ln in LINES}
 KEYS = [ln.key for ln in LINES]
+# Engineering's second tier by the company's trade (Pat 17:55Z: an opium company's bonus is not "Precision
+# Manufacturing"): (name, icon, building groups); a company takes the first whose groups hold its key building's group
+# or the nearest parent, else the first. pmr_cc_k_sec is the 1-based row.
+SECTORS = (
+    ('Precision Manufacturing', PM_ICON.format('precision_tools'), ()),
+    ('Crop Science', PM_ICON.format('improved_fertilizer'), ('bg_agriculture', 'bg_plantations', 'bg_rubber')),
+    ('Selective Breeding', PM_ICON.format('intensive_grazing'), ('bg_ranching',)),
+    ('Deep Prospecting', INVENTION.format('prospecting_tech'), ('bg_mining', 'bg_gold_fields', 'bg_oil_extraction')),
+    ('Scientific Forestry', PM_ICON.format('hardwood_selection'), ('bg_logging',)),
+    ('Fleet Outfitting', PM_ICON.format('steam_trawlers'), ('bg_fishing', 'bg_whaling')),
+    ('Systems Engineering', INVENTION.format('logistics_tech'), ('bg_infrastructure', 'bg_power', 'bg_trade')),
+    ('Fine Craftsmanship', PM_ICON.format('realist_art'), ('bg_arts',)),
+)
+SECTOR_NODE = ('en', 2)
+
+
+def sector(chain):
+    """The SECTORS row (1-based) for a building's group chain, nearest group first."""
+    for grp in chain or []:
+        for i, (_n, _i, grps) in enumerate(SECTORS, 1):
+            if grp in grps:
+                return i
+    return 1
 ROOT_OF = {'exp': 'xr', 'eng': 'er'}
 RIVAL = {'vx': 'hx', 'hx': 'vx'}      # Pat 14:43Z: "only one can be picked"
 CHARTER_AT = {c: (ln.key, t) for ln in LINES for t, c in ln.charters.items()}
@@ -240,8 +266,13 @@ class Plan:
         self.comp = {}         # company -> {'key', 'eg', 'pvars', 'pg', 'sb': [vertical list, horizontal list]}
         self.goods = []        # every good a company's Precision Manufacturing names, 1-based
         self.goods_tex = {}    # good -> its icon (vanilla's goods texture)
+        self.good_sec = {}     # good -> the SECTORS row of the building making it (its output traits' name)
         self.sb_types = []     # every building type a subsidiary lists, 1-based (subsidiaries.plan_types)
         self.sb_icon, self.sb_points, self.sb_prices = {}, {}, []
+
+
+RAILWAY = 'building_railway'
+RAIL_GROUPS = {'bg_mining', 'bg_logging', 'bg_oil_extraction', 'bg_plantations', 'bg_rubber'}
 
 
 def plan(game, plain, goods_cost, goods_tex=None):
@@ -291,6 +322,10 @@ def plan(game, plain, goods_cost, goods_tex=None):
                 mk = [x for x in sorted(maker.get(good, []), key=lambda x: -out_val[x].get(good, 0)) if x not in bts]
                 if mk and mk[0] not in vert:
                     vert.append(mk[0])
+            # Pat 17:50Z: a resource or plantation company's Vertical Integration includes railways
+            if (RAIL_GROUPS & set(groups.get(key) or []) and RAILWAY in ownable and RAILWAY not in bts
+                    and RAILWAY not in vert):
+                vert = vert[:subsidiaries.SB_SIZE - 1] + [RAILWAY]
             # the key building's class, else its parent class and so on (Pat 15:51Z: "always something for
             # horizontal diversification"; a logging company widens to all extraction)
             for grp in groups.get(key) or []:
@@ -307,7 +342,9 @@ def plan(game, plain, goods_cost, goods_tex=None):
                 horiz = (sorted((b for b in rest if good in in_val.get(b, {})), key=lambda b: (-in_val[b][good], b))
                          or sorted((b for b in rest if kin(b) > 0), key=lambda b: (-kin(b), b))
                          or sorted(rest, key=lambda b: (abs(total[b] - total[key]), b)))
-        p.comp[c] = {'key': key, 'eg': eg[:2], 'pvars': pvars, 'pg': pg,
+        for b in ranked:
+            p.good_sec.setdefault(main[b][0], sector(groups.get(b)))
+        p.comp[c] = {'key': key, 'eg': eg[:2], 'pvars': pvars, 'pg': pg, 'sec': sector(groups.get(key)) if key else 1,
                      'sb': [vert[:subsidiaries.SB_SIZE], horiz[:subsidiaries.SB_SIZE]]}
     subsidiaries.plan_types(p, game)
     p.goods = sorted({g for v in p.comp.values() for g in v['eg']})
@@ -335,7 +372,8 @@ def output_traits(p):
     for g in p.goods:
         n = gi(p, g)
         for t, val in zip((2, 3), OUTPUT):
-            out.append((f'pmr_cc_eo_{g}_{t}', BY_KEY['en'].icons[t - 1], [(f'goods_output_{g}_mult', val)],
+            icon = SECTORS[p.good_sec.get(g, 1) - 1][1] if (('en', t) == SECTOR_NODE) else BY_KEY['en'].icons[t - 1]
+            out.append((f'pmr_cc_eo_{g}_{t}', icon, [(f'goods_output_{g}_mult', val)],
                         f'var:pmr_cc_en = {t} OR = {{ var:pmr_cc_k_eg1 = {n} var:pmr_cc_k_eg2 = {n} }}'))
     return out
 
@@ -427,7 +465,7 @@ def player_log(rec, extra=''):
     return f'if = {{ limit = {{ owner ?= {{ is_player = yes }} }} {log_line(rec, extra)} }}'
 
 
-KVARS = ['pmr_cc_k_eg1', 'pmr_cc_k_eg2', 'pmr_cc_k_pg'] + subsidiaries.KVARS
+KVARS = ['pmr_cc_k_eg1', 'pmr_cc_k_eg2', 'pmr_cc_k_pg', 'pmr_cc_k_sec'] + subsidiaries.KVARS
 PARENT_VARS = [f'pmr_cc_p{k}' for k in KEYS]          # a subsidiary's copy of its parent's tiers
 STATE_VARS = [f'pmr_cc_st_{ln.key}_{t}' for ln, t in NODES]
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mth',
@@ -458,9 +496,13 @@ def grant_derive():
     """Appended to pmr_cc_derive (company scope, scope:pmr_cc_gco): the next Engineering tier's weekly grant
     (pmr_rg_next: GRANT_COST per employed level, at least one) and whether it can start (pmr_rg_ok: none running and a
     week in the owner's investment pool)."""
-    nxt = ''.join(f'\t{"if" if t == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_{GRANT} = {t} }} '
-                  f'set_variable = {{ name = pmr_rg_next value = {c} }} }}\n' for t, c in enumerate(GRANT_COST))
+    tiers = [(k, t, c) for k in GRANTS for t, c in enumerate(GRANT_COST[k])]
+    nxt = ''.join(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_{k} = {t} }} '
+                  f'set_variable = {{ name = pmr_rg_next value = {c} }} }}\n' for j, (k, t, c) in enumerate(tiers))
+    old = BY_KEY['en'].node(0)
     return ('\t# Engineering\'s next research grant (company_culture.py, GRANT_COST per employed level a week)\n'
+            f'\t# a grant read in from before q48 runs a Process Engineering tier by its number\n'
+            f'\tif = {{ limit = {{ var:pmr_rg_t > 0 var:pmr_rg_t < 10 }} change_variable = {{ name = pmr_rg_t add = {old} }} }}\n'
             '\tset_local_variable = { name = pmr_rg_lv value = 1 }\n'
             + ladder('company_employed_levels', [(n, n) for n in LV_LADDER], 'pmr_rg_lv', '\t')
             + '\tset_variable = { name = pmr_rg_next value = 0 }\n' + nxt
@@ -471,7 +513,12 @@ def grant_derive():
 
 
 def grant_effects(done):
-    """pmr_rg_week (the weekly payment) and pmr_rg_done (the tier granted; done: what buying the tier did before)."""
+    """pmr_rg_week (the weekly payment) and pmr_rg_done (the tier granted; done: line -> what buying its tier did
+    before)."""
+    grant = ''.join(f'\t{"if" if j == 0 else "else_if"} = {{\n\t\tlimit = {{ var:pmr_rg_t >= {BY_KEY[k].node(1)} '
+                    f'var:pmr_rg_t <= {BY_KEY[k].node(BY_KEY[k].tiers)} }}\n'
+                    f'\t\tchange_variable = {{ name = pmr_cc_{k} add = 1 }}\n' + done.get(k, '') + '\t}\n'
+                    for j, k in enumerate(GRANTS))
     wlog = ("tier=[THIS.Var('pmr_rg_t').GetValue|0];w=[THIS.Var('pmr_rg_w').GetValue|0];"
             "pay=[THIS.Var('pmr_rg_pay').GetValue|0];paid=[THIS.Var('pmr_rg_paid').GetValue|0];")
     return ('# Weekly (pmr_cc.1) while an Engineering research grant runs (pmr_rg_t its tier): the owner\'s investment pool pays\n'
@@ -489,11 +536,10 @@ def grant_effects(done):
             f'\tif = {{\n\t\tlimit = {{ var:pmr_rg_w >= {GRANT_WEEKS} }}\n\t\tpmr_rg_done = yes\n\t}}\n'
             '\tif = { limit = { owner ?= { is_player = yes } } pmr_cc_mirror = yes }\n}\n\n'
             '# The research grant is paid: its tier is the company\'s, and the next one can be bought.\n'
-            f'pmr_rg_done = {{\n\tchange_variable = {{ name = pmr_cc_{GRANT} add = 1 }}\n'
-            '\tset_variable = { name = pmr_rg_t value = 0 }\n\tset_variable = { name = pmr_rg_w value = 0 }\n'
+            f'pmr_rg_done = {{\n\t{player_log("CC_GRANT_DONE", wlog)}\n' + grant
+            + '\tset_variable = { name = pmr_rg_t value = 0 }\n\tset_variable = { name = pmr_rg_w value = 0 }\n'
             '\tset_variable = { name = pmr_rg_pay value = 0 }\n'
-            + done + '\tpmr_cc_after_buy = yes\n'
-            f'\t{player_log("CC_GRANT_DONE", f"line={GRANT};")}\n}}\n\n')
+            '\tpmr_cc_after_buy = yes\n}\n\n')
 
 
 def effects(p):
@@ -509,7 +555,7 @@ def effects(p):
     for i, (c, v) in enumerate(sorted(p.comp.items())):
         eg = v['eg']
         vals = {'pmr_cc_k_eg1': gi(p, eg[0]) if eg else 0, 'pmr_cc_k_eg2': gi(p, eg[1]) if len(eg) > 1 else 0,
-                'pmr_cc_k_pg': 1 if v['pg'] else 0, **subsidiaries.kvals(p, v)}
+                'pmr_cc_k_pg': 1 if v['pg'] else 0, 'pmr_cc_k_sec': v['sec'], **subsidiaries.kvals(p, v)}
         sets = ' '.join(f'set_variable = {{ name = {k} value = {x} }}' for k, x in vals.items() if x)
         if sets:
             chain += f'\t{"if" if not chain else "else_if"} = {{\n\t\tlimit = {{ is_company_type = company_type:{c} }}\n\t\t{sets}\n\t}}\n'
@@ -528,6 +574,7 @@ def effects(p):
              + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = {x} }} }} set_variable = {{ name = {x} value = 0 }} }}\n'
                        for x in zero)
              + zero_k + chain
+             + '\tif = { limit = { has_variable = pmr_sb_sig } remove_variable = pmr_sb_sig }   # a subsidiary re-applies\n'
              + f'\tset_variable = {{ name = pmr_cc_on value = {CAL_VERSION} }}\n'
              '\tpmr_cc_set_cost = yes\n\tpmr_cc_derive = yes\n'
              '\t# a subsidiary being paid for pays this build\'s price from now on\n'
@@ -564,6 +611,7 @@ def effects(p):
         if v['pvars']:
             pchain += (f'\t\t{"if" if not pchain else "else_if"} = {{ limit = {{ is_company_type = company_type:{c} }} '
                        + ' '.join(f'set_variable = {x}' for x in v['pvars']) + ' }\n')
+    done = {}
     for ln in LINES:
         k = ln.key
         pay = ''.join(f'\t{"if" if t == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_{k} = {t} }} '
@@ -572,19 +620,23 @@ def effects(p):
         if ln.sub:
             take += (f'\t# its subsidiary\'s payments start, unless it already has one (a save from before the trees)\n'
                      f'\tif = {{ limit = {{ var:pmr_cc_{k} = 1 var:pmr_sb_d{ln.sub} = 0 }} pmr_sb_start = {{ N = {ln.sub} }} }}\n')
-        if k == GRANT:
-            done = ('\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods, or PMR\'s own: generate.py\n'
-                    '\t# gives the companies vanilla lets make them whenever prosperous a trigger on pmr_cc_hallmark)\n'
-                    f'\tif = {{\n\t\tlimit = {{ var:pmr_cc_{k} = 3 }}\n\t\tset_variable = pmr_cc_hallmark\n' + pchain + '\t}\n')
-            take = ('\t# the tier\'s research grant starts; the tier is the company\'s when it is paid (pmr_rg_week)\n'
+        if k == 'en':
+            done[k] = ('\t\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods, or PMR\'s own:\n'
+                       '\t\t# generate.py gives the companies vanilla lets make them whenever prosperous a trigger on\n'
+                       '\t\t# pmr_cc_hallmark)\n'
+                       f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_{k} = 3 }}\n\t\t\tset_variable = pmr_cc_hallmark\n'
+                       + pchain.replace('\n\t', '\n\t\t').replace('\t', '\t\t', 1) + '\t\t}\n')
+        if k in GRANTS:
+            take = ('\t# the tier\'s research grant starts (pmr_rg_t its node); the tier is the company\'s when it is paid\n'
+                    '\t# (pmr_rg_week)\n'
                     f'\tset_variable = {{ name = pmr_rg_t value = var:pmr_cc_{k} }}\n'
-                    '\tchange_variable = { name = pmr_rg_t add = 1 }\n'
+                    f'\tchange_variable = {{ name = pmr_rg_t add = {ln.node(1)} }}\n'
                     '\tset_variable = { name = pmr_rg_w value = 0 }\n'
                     '\tset_variable = { name = pmr_rg_pay value = var:pmr_rg_next }\n'
                     '\towner ?= { pmr_cc_gclock = yes }\n')
-            o.append(grant_effects(done))
         o.append(f'pmr_cc_buy_{k} = {{\n{pay}{take}\tpmr_cc_after_buy = yes\n'
                  f'\t{player_log("CC_BUY", f"line={k};")}\n}}\n\n')
+    o.append(grant_effects(done))
     o.append('# After a node: the derived numbers, the executive\'s traits, and its subsidiaries\' Subsidiary traits.\n'
              'pmr_cc_after_buy = {\n\tpmr_cc_derive = yes\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n'
              '\tevery_in_list = {\n\t\tvariable = pmr_subs\n\t\tpmr_cc_sub_sync = yes\n\t}\n\tsave_scope_as = pmr_cc_co\n}\n\n')
@@ -625,7 +677,7 @@ def effects(p):
              'pmr_cc_ai_step = {\n' + steps + '}\n\n'
              'pmr_cc_ai_buy = {\n'
              '\tif = { limit = { pmr_cc_open_xr = yes } pmr_cc_buy_xr = yes }\n'
-             '\tif = { limit = { pmr_cc_open_er = yes } pmr_cc_buy_er = yes }\n'
+             '\tif = { limit = { pmr_cc_open_er = yes pmr_cc_afford_er = yes } pmr_cc_buy_er = yes }\n'
              + ''.join(f'\tif = {{ limit = {{ pmr_sb_again_{n} = yes }} pmr_sb_start = {{ N = {n} }} }}\n' for n in subsidiaries.NUMS)
              + '\tif = {\n\t\tlimit = { var:pmr_cc_pts >= 1 }\n\t\tpmr_cc_ai_step = yes\n'
              '\t\tif = { limit = { var:pmr_cc_pts >= 1 } pmr_cc_ai_step = yes }\n\t}\n}\n\n')
@@ -690,7 +742,19 @@ def effects(p):
              '\tround_variable = { name = pmr_sb_thr nearest = 1 }\n'
              f'\tclamp_variable = {{ name = pmr_sb_thr min = {SUB_RANGE[0]} max = {SUB_RANGE[1]} }}\n'
              '\tpmr_bl_sub_focus = yes\n'
-             '\tpmr_cc_apply = yes\n'
+             # perf review S-5: the traits only change with pmr_sb_thr, the parent's Pay and Hours bylaws or a new
+             # executive, so they are applied only then (pmr_sb_sig, cleared by pmr_cc_init)
+             '\tset_local_variable = { name = pmr_sb_s value = 0 }\n'
+             '\tif = {\n\t\tlimit = { scope:pmr_cc_par ?= { has_variable = pmr_bl_1 has_variable = pmr_bl_2 } }\n'
+             '\t\tset_local_variable = { name = pmr_sb_s value = scope:pmr_cc_par.var:pmr_bl_1 }\n'
+             '\t\tchange_local_variable = { name = pmr_sb_s multiply = 10 }\n'
+             '\t\tchange_local_variable = { name = pmr_sb_s add = scope:pmr_cc_par.var:pmr_bl_2 }\n'
+             '\t\tchange_local_variable = { name = pmr_sb_s multiply = 1000 }\n\t}\n'
+             '\tchange_local_variable = { name = pmr_sb_s add = var:pmr_sb_thr }\n'
+             '\tif = {\n\t\tlimit = {\n\t\t\tOR = {\n\t\t\t\tNOT = { var:pmr_sb_sig ?= local_var:pmr_sb_s }\n'
+             '\t\t\t\texecutive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } }\n\t\t\t}\n\t\t}\n'
+             '\t\tset_variable = { name = pmr_sb_sig value = local_var:pmr_sb_s }\n'
+             '\t\tpmr_cc_apply = yes\n\t}\n'
              f'\t{player_log("CC_SUB", sub_log)}\n}}\n\n')
     # Node states.
     states = ''
@@ -710,8 +774,8 @@ def effects(p):
                        f'\t\telse = {{ {s(2)} }}\n\t}}\n')
         else:
             states += f'\tif = {{ limit = {{ var:pmr_cc_{k} >= {t} }} {s(4)} }}\n'
-            if k == GRANT:
-                states += f'\telse_if = {{ limit = {{ var:pmr_rg_t = {t} }} {s(6)} }}\n'
+            if k in GRANTS:
+                states += f'\telse_if = {{ limit = {{ var:pmr_rg_t = {ln.node(t)} }} {s(6)} }}\n'
         if na(ln):
             states += f'\telse_if = {{ limit = {{ {na(ln)} }} {s(7)} }}\n'
         if ruled(ln):
@@ -785,7 +849,7 @@ def triggers():
         if ln.sub:
             n = ln.sub
             c += [f'var:pmr_cc_k_sbp{n} > 0', f'OR = {{ var:pmr_cc_{k} > 0 var:pmr_sb_d{n} = 1 var:pmr_sb_ok{n} = 1 }}']
-        if k == GRANT:   # no grant running, and a week of the next in the pool
+        if k in GRANTS:   # no grant running, and a week of the next in the pool
             c += ['var:pmr_rg_t = 0', 'var:pmr_rg_ok = 1']
         o.append(f'pmr_cc_open_{k} = {{\n' + ''.join(f'\t{x}\n' for x in c) + '}\n\n')
     o.append('# The points for each line\'s next tier.\n')
@@ -844,6 +908,7 @@ pmr_cc_game_started = {
 # traits; a company paying keeps the weekly clock going; the country's subsidiary slots are recounted (subsidiaries.py),
 # and the Trade Unions' answer to harsh bylaws (bylaws.py).
 pmr_cc_monthly_country = {
+	trigger = { NOT = { has_global_variable = pmr_ticks_paused } }   # the test pause (perf review S-6)
 	effect = {
 		every_company = {
 			pmr_cc_tick = yes
@@ -1004,7 +1069,9 @@ def custom_loc(p):
     out.append(entry('pmr_cc_fx_eg2_2', [('var:pmr_cc_k_eg2 ?= 0', 'PMR_EMPTY')], 'PMR_CC_FX_EG2_2'))
     out.append(entry('pmr_cc_fx_eg2_3', [('var:pmr_cc_k_eg2 ?= 0', 'PMR_EMPTY')], 'PMR_CC_FX_EG2_3'))
     out.append(entry('pmr_cc_fx_pg', [('var:pmr_cc_k_pg ?= 0', 'PMR_EMPTY')], 'PMR_CC_FX_PG'))
-    return '\n'.join(out)
+    out.append(entry(f'pmr_cc_name_{SECTOR_NODE[0]}_{SECTOR_NODE[1]}',
+                     [(f'var:pmr_cc_k_sec ?= {i}', f'PMR_CC_SEC_{i}') for i in range(2, len(SECTORS) + 1)], 'PMR_CC_SEC_1'))
+    return '\n'.join(out) + '\n' + bylaws.custom_loc()
 
 
 def why_cases(ln, t):
@@ -1016,7 +1083,7 @@ def why_cases(ln, t):
     if ln.sub and t == 1:
         cases += [(f'{st} ?= 6', 'PMR_SB_FUNDING'),
                   (f'{st} ?= 2 var:pmr_sb_ok{ln.sub} ?= 0', f'PMR_SB_POOL_{ln.sub}')]
-    if k == GRANT:
+    if k in GRANTS:
         cases += [(f'{st} ?= 6', 'PMR_RG_FUNDING'), (f'{st} ?= 2 var:pmr_rg_ok ?= 0', 'PMR_RG_POOL')]
     cases.append((f'{st} ?= 2', 'PMR_CC_WHY_POINTS'))
     if ruled(ln):
@@ -1091,11 +1158,14 @@ def localization(p):
         ' pmr_rg_test_finish_decision:0 "PMR test: finish your research grants"',
         ' pmr_rg_test_finish_decision_desc:0 "Each running research grant is paid up next week."',
     ]
+    sec = f"[Character.GetCustom('pmr_cc_name_{SECTOR_NODE[0]}_{SECTOR_NODE[1]}')]"
+    name = lambda k, t: sec if (k, t) == SECTOR_NODE else BY_KEY[k].names[t - 1]   # noqa: E731
+    loc += [f' PMR_CC_SEC_{i}:0 "{n}"' for i, (n, _i, _g) in enumerate(SECTORS, 1)]
     for ln in LINES:
         for t in range(1, ln.tiers + 1):
-            loc.append(f' PMR_CC_NAME_{ln.key}_{t}:0 "{ln.names[t - 1]}"')
+            loc.append(f' PMR_CC_NAME_{ln.key}_{t}:0 "{name(ln.key, t)}"')
             if t > 1:
-                loc.append(f' PMR_CC_WHY_PREV_{ln.key}_{t}:0 "#N Needs {ln.names[t - 2]}#!"')
+                loc.append(f' PMR_CC_WHY_PREV_{ln.key}_{t}:0 "#N Needs {name(ln.key, t - 1)}#!"')
             fx = fx_lines(ln.key, t)
             if fx:
                 loc.append(f' PMR_CC_FX_{ln.key}_{t}:0 "' + '\\n'.join(fx) + '"')
@@ -1111,7 +1181,8 @@ def localization(p):
     for key, _i, mods, _w in output_traits(p):
         t = int(key.rsplit('_', 1)[1])
         g = mods[0][0][len('goods_output_'):-len('_mult')]
-        loc += [f' {key}:0 "{BY_KEY["en"].names[t - 1]}: ${g}$"', f' {key}_desc:0 "Company Culture"']
+        nm = SECTORS[p.good_sec.get(g, 1) - 1][0] if ('en', t) == SECTOR_NODE else BY_KEY['en'].names[t - 1]
+        loc += [f' {key}:0 "{nm}: ${g}$"', f' {key}_desc:0 "Company Culture"']
     return loc
 
 
