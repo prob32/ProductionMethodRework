@@ -2104,11 +2104,15 @@ def patch_ai_value(text, owners, invest):
             extra += f'\tadd = pmr_ai_pt_{b}\n\tmin = {AI_FLOOR}\n'
             pf = (f'pmr_ai_pt_{b} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{ owner ?= {{ has_variable = pmr_pterm_{b} }} }}\n'
                   f'\t\tvalue = owner.var:pmr_pterm_{b}\n\t}}\n}}\n')
-        if AI_TAIL and k in owners:
-            extra += AI_TAIL(owners[k])
+        # Expanded Works multiplies the whole value at its end. The value before it is its own script value,
+        # pmr_ai_pre_<b>, so the Policies tab's tooltip can show what the tail adds (Pat 2026-10-19 02:32Z: "Expanded
+        # Works +3426" with no company holding it); the weight itself is computed as before.
+        tail = AI_TAIL(owners[k]) if AI_TAIL and k in owners else ''
+        value = (f'pmr_ai_pre_{b} = {{\n\tvalue = pmr_ai_base_{b}\n{extra}}}\n{name} = {{\n\tvalue = pmr_ai_pre_{b}\n{tail}}}\n'
+                 if tail else f'{name} = {{\n\tvalue = pmr_ai_base_{b}\n{extra}}}\n')
         values.append(pf + f'pmr_ai_base_{b} = {{\n{inner}}}\n'
                       f'pmr_ai_earn_{b} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{ exists = b:{k} }}\n{ladder}\t}}\n}}\n'
-                      + parts + f'{name} = {{\n\tvalue = pmr_ai_base_{b}\n{extra}}}\n')
+                      + parts + value)
     for a, b, ins in sorted(edits, reverse=True):
         text = text[:a] + ins + text[b:]
     return text, values
