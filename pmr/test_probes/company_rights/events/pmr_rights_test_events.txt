@@ -1,0 +1,28 @@
+﻿namespace = pmr_rights_test
+
+# Country scope, hidden: the company-rights smoke test's log every 30 days, 24 times.
+pmr_rights_test.1 = {
+	type = country_event
+	hidden = yes
+
+	immediate = {
+		set_variable = { name = pmr_rt_src value = 4 }
+		pmr_rights_test_log = yes
+		change_variable = { name = pmr_rt_step add = 1 }
+		if = {
+			limit = { var:pmr_rt_step < 24 }
+			trigger_event = { id = pmr_rights_test.1 days = 30 }
+		}
+	}
+}
+
+# Country scope, hidden: the log the day after a test decision.
+pmr_rights_test.2 = {
+	type = country_event
+	hidden = yes
+
+	immediate = {
+		set_variable = { name = pmr_rt_src value = 3 }
+		pmr_rights_test_log = yes
+	}
+}

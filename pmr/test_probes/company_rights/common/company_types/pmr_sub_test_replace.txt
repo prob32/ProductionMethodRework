@@ -1,0 +1,32 @@
+﻿# Company-rights smoke test, test builds only (Pat 2026-10-19 12:23Z/12:28Z: more industries per company, one pick
+# opening a bundle of three). _c declares replaces_company = _b (a company-type field no vanilla company uses) and
+# carries _b's list plus three more types. Shown wherever _b's test is on; possible, so the Companies panel's own
+# establish path can be tried before pmr_replace_test_decision's add_company. Sorted after pmr_sub_test.txt so _b
+# exists when _c is read.
+company_pmr_sub_test_c = {
+	icon = "gfx/interface/icons/company_icons/basic_metalworks.dds"
+	background = "gfx/interface/icons/company_icons/company_backgrounds/comp_illu_manufacturing_heavy.dds"
+
+	flavored_company = yes
+
+	replaces_company = company_pmr_sub_test_b
+
+	building_types = {
+		building_tooling_workshop
+		building_coal_mine
+		building_iron_mine
+		building_steel_mill
+	}
+
+	potential = {
+		has_variable = pmr_sub_test_on
+	}
+
+	possible = {
+		always = yes
+	}
+
+	ai_will_do = {
+		always = no
+	}
+}

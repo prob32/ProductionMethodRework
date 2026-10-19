@@ -1,0 +1,6 @@
+﻿l_english:
+ company_pmr_sub_test_c:0 "PMR Test Subsidiary C"
+ pmr_mono_test_decision:0 "PMR test: Textile Mills monopoly"
+ pmr_mono_test_decision_desc:0 "Your first company that isn't a test company gets a monopoly on Textile Mills."
+ pmr_replace_test_decision:0 "PMR test: Subsidiary C replaces B"
+ pmr_replace_test_decision_desc:0 "Founds Subsidiary C, which replaces Subsidiary B, with no levels of its own."

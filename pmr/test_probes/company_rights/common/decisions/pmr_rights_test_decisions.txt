@@ -1,0 +1,52 @@
+﻿# Company-rights smoke test, test builds only. pmr_mono_test_decision gives the country's first company that isn't
+# a PMR test company a monopoly on Textile Mills, a type on none of its lists, by add_company_monopoly (no vanilla
+# script uses it). pmr_replace_test_decision founds _c, which replaces _b, by add_company and gives it no levels, so
+# any levels it holds came from _b. Each logs PMR;rec=RIGHTS_TEST at once and the next day; the first one taken also
+# starts the 30-day log.
+pmr_mono_test_decision = {
+	is_shown = {
+		NOT = { has_variable = pmr_mono_test_on }
+	}
+	possible = {
+		any_company = {
+			NOT = { is_company_type = company_type:company_pmr_sub_test_a }
+			NOT = { is_company_type = company_type:company_pmr_sub_test_b }
+			NOT = { is_company_type = company_type:company_pmr_sub_test_c }
+		}
+	}
+	when_taken = {
+		set_variable = pmr_mono_test_on
+		random_company = {
+			limit = {
+				NOT = { is_company_type = company_type:company_pmr_sub_test_a }
+				NOT = { is_company_type = company_type:company_pmr_sub_test_b }
+				NOT = { is_company_type = company_type:company_pmr_sub_test_c }
+			}
+			set_variable = pmr_mono_test_co
+			add_company_monopoly = bt:building_textile_mills
+		}
+		set_variable = { name = pmr_rt_src value = 1 }
+		pmr_rights_test_log = yes
+		pmr_rights_test_arm = yes
+	}
+	ai_chance = { value = 0 }
+}
+
+pmr_replace_test_decision = {
+	is_shown = {
+		has_variable = pmr_sub_test_on
+		NOT = { has_variable = pmr_replace_test_on }
+		NOT = { has_company = company_type:company_pmr_sub_test_c }
+	}
+	possible = { always = yes }
+	when_taken = {
+		set_variable = pmr_replace_test_on
+		set_variable = { name = pmr_rt_src value = 0 }
+		pmr_rights_test_log = yes
+		add_company = company_type:company_pmr_sub_test_c
+		set_variable = { name = pmr_rt_src value = 2 }
+		pmr_rights_test_log = yes
+		pmr_rights_test_arm = yes
+	}
+	ai_chance = { value = 0 }
+}

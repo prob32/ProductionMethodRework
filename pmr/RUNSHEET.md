@@ -10,7 +10,35 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: a second Industry Rights, every input in the charter list, a grant decision, the investment chance in sections, retool sites out of the build menus, two test companies founded by script, the Industry Charter node by decision (q38, test mod; your 1836 PMR Test save carries on)
+## Latest: more industries for one company, by a monopoly or by a replacing company (q39, test mod; your 1836 PMR Test save carries on)
+
+From the build thread, after your 12:14Z to 12:28Z messages. Both tests look for a way to give one company more
+industries than its one Industry Rights allows, so that one pick can open a bundle of three.
+
+- A decision, "PMR test: Textile Mills monopoly": your first company that isn't a test company (Krupp) gets a
+  monopoly on Textile Mills, which is on none of its lists. The test is whether a monopoly lets a company own and
+  build a type it has no rights to. Clothes may get dearer in this save.
+- PMR Test Subsidiary C, a company type that says it replaces Subsidiary B and carries B's Tooling Workshops plus Coal
+  Mines, Iron Mines and Steel Mills. A decision, "PMR test: Subsidiary C replaces B", founds C with no levels of its
+  own. The test is whether B's levels pass to C, which would let a company be swapped for a copy with a longer list.
+- Both write `RIGHTS_TEST` lines at once, the next day and every 30 days. q38's `SUB_TEST` lines carry on.
+
+1. Load your latest PMR Test save.
+2. Open the Companies panel and find PMR Test Subsidiary C. Note whether Subsidiary B still shows and whether C's
+   Establish button is active (hover it). If it is active, establish C there.
+3. If C wasn't established in step 2, take the decision "PMR test: Subsidiary C replaces B". Open the Companies
+   panel again and hover C.
+4. Take the decision "PMR test: Textile Mills monopoly". Hover Krupp in the Companies panel.
+5. Play three months. Watch the construction queue for Textile Mills and Krupp's industries.
+6. Close the game and tell the build thread; it reads debug.log and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| R1 | Step 2 | C listed, its Establish button active although you're over the company limit | C missing: its file didn't load (tell the build thread). Establish greyed for the company limit: replacing doesn't lift the limit; go on to step 3. B gone from the list once C shows, with nothing else changing: `replaces_company` only swaps the list entry |
+| R2 | Step 3, debug.log | A `src=2` line with `has_b=0;has_c=1;levels_c=5`, and C's card shows 5 Tooling Workshop levels and four industries | `has_b=1;has_c=1`: founding C doesn't replace B. `has_b=0;has_c=1;levels_c=0`: B is removed but its levels don't move (C then goes within days, under 5 levels). `has_c=0` at `src=2`: the game refuses to found a replacing company (check error.log). No `RIGHTS_TEST` line: the decision didn't run |
+| R3 | Steps 4-5, debug.log | `mono=1` at `src=1`, and within three months Krupp's card lists Textile Mills with levels (`co_levels` rises with them) | `mono=0` at `src=1`: a company can't hold a monopoly on a type outside its lists (check error.log). `mono=1` with new Textile Mills owned by others: a monopoly gives no rights to the type. `mono=1` and no Textile Mills built or bought by anyone: a monopoly only shuts others out. `co_levels` can also rise from Krupp's own industries, so its card decides |
+
+## Earlier: a second Industry Rights, every input in the charter list, a grant decision, the investment chance in sections, retool sites out of the build menus, two test companies founded by script, the Industry Charter node by decision (q38, test mod; played 2026-10-19, H1 and C1 seen 12:03Z to 12:14Z)
 
 From the build thread, after your 03:48Z to 04:13Z and 12:02Z messages.
 
@@ -44,7 +72,7 @@ From the build thread, after your 03:48Z to 04:13Z and 12:02Z messages.
 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
-| H1 | Step 2 | Industry Rights II grants a second building while Industry Rights keeps the first; Krupp's Available Industries shows both | Industry Rights II greyed out with "already has other Industry Rights": the game allows one per kind, so a company can't hold two industry charters. Only one button on the card: the game lists one charter per kind (tell the build thread). No buttons: the node didn't open (check `CC_BUY` with `line=ch`) |
+| H1 | Step 2 (seen 12:14Z: greyed, "already has other Industry Rights") | Industry Rights II grants a second building while Industry Rights keeps the first; Krupp's Available Industries shows both | Industry Rights II greyed out with "already has other Industry Rights": the game allows one per kind, so a company can't hold two industry charters. Only one button on the card: the game lists one charter per kind (tell the build thread). No buttons: the node didn't open (check `CC_BUY` with `line=ch`) |
 | H2 | Step 2 | Industry Rights lists Iron Mines, Coal Mines, Tooling Workshops, Power Plants and Oil Rigs | Iron Mines alone: the company file override didn't load |
 | E3 | Step 3, debug.log | A `CC_TEST_GRANTS` line per company with `grant_g1` and `grant_g2` not 0; then `CC_GRANT_WEEK` lines with `line=g1` and `line=g2` every week; the pool tooltip's Research grants is their sum | `grant_g2=0/0` in `CC_TEST_GRANTS`: that line couldn't take a grant (its next tier already known or gated); no `CC_TEST_GRANTS` line: the decision didn't run |
 | T1 | Step 4, debug.log | Policy shows a Light Industries line; no Foreign or Domestic line; an `MV_PARTS` line where, per type, the six numbers before the last add up to the last | No `MV_PARTS` line: the Policies tab never refreshed (open it once). Numbers that don't add up: the snapshot is wrong (tell the build thread) |
