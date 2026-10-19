@@ -1,4 +1,4 @@
-# Country scope. One PMR;rec=SUB_TEST line: for each test company whether it exists (has_a, has_b) and the levels it
+﻿# Country scope. One PMR;rec=SUB_TEST line: for each test company whether it exists (has_a, has_b) and the levels it
 # owns (levels_a, levels_b, a ladder to 10), the country's companies against its limit (companies, max), and the
 # 30-day steps since founding (month).
 pmr_sub_test_log = {

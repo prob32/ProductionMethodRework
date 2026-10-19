@@ -1,4 +1,4 @@
-# Sub-company smoke test, test builds only (Pat 2026-10-19 04:13Z; /mnt/project-files/pmr/sub-companies/FINDINGS.md).
+﻿# Sub-company smoke test, test builds only (Pat 2026-10-19 04:13Z; /mnt/project-files/pmr/sub-companies/FINDINGS.md).
 # Founded only by pmr_sub_test_decision: potential needs its variable, and possible is never met, so neither the
 # player's companies panel nor the AI founds them. _a gets 2 levels, _b 5 (COMPANY_MINIMUM_LEVELS_PER_HQ).
 company_pmr_sub_test_a = {

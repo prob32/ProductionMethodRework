@@ -1648,6 +1648,27 @@ pmr_cc_test_grants_start_decision = {{
 	ai_chance = {{ value = 0 }}
 }}
 
+# Test builds only (Pat 2026-10-19 12:02Z, "I only see industry rights 1 for krupp"): each of the player's companies
+# without the Industry Charter node takes it free (the node's points are given back), so its card shows both charter
+# buttons, Industry Rights and Industry Rights II (SECOND_CHARTER). Writes PMR;rec=CC_BUY lines (pmr_cc_buy_ch).
+pmr_cc_test_charter_decision = {{
+	is_shown = {{ always = yes }}
+	possible = {{ always = yes }}
+	when_taken = {{
+		every_company = {{
+			limit = {{ NOT = {{ var:pmr_cc_ch ?= 1 }} }}
+			if = {{
+				limit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}
+				pmr_cc_init = yes
+			}}
+			change_variable = {{ name = pmr_cc_pts add = {BY_KEY['ch'].cost[0]} }}
+			pmr_cc_buy_ch = yes
+			pmr_cc_refresh = yes
+		}}
+	}}
+	ai_chance = {{ value = 0 }}
+}}
+
 # Test builds only: every running research grant of the player's companies completes at its next paid week, so the
 # special method can be checked without waiting {GRANT_MONTHS} months. Writes PMR;rec=CC_TEST_GRANT lines.
 pmr_cc_test_grant_decision = {{
@@ -1886,6 +1907,8 @@ def localization(p):
         ' pmr_cc_test_grant_decision_desc:0 "Running grants finish next week."',
         ' pmr_cc_test_grants_start_decision:0 "PMR test: start a research grant on both goods lines"',
         ' pmr_cc_test_grants_start_decision_desc:0 "Each of your companies with goods lines founds Engineering if it can and starts both grants."',
+        ' pmr_cc_test_charter_decision:0 "PMR test: open the Industry Charter node"',
+        ' pmr_cc_test_charter_decision_desc:0 "Each of your companies takes the Industry Charter node free."',
         f' {SECOND_CHARTER}:0 "$industry_charter$ II"',
         f' {SECOND_CHARTER}_desc:0 "$industry_charter_desc$"',
         f' {SECOND_CHARTER}_type_desc:0 "$industry_charter_type_desc$"',

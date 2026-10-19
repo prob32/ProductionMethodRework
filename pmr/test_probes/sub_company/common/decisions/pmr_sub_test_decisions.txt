@@ -1,4 +1,4 @@
-# Sub-company smoke test, test builds only. Founds two companies at runtime with add_company (vanilla uses it only in
+﻿# Sub-company smoke test, test builds only. Founds two companies at runtime with add_company (vanilla uses it only in
 # history), puts each one's seat in an incorporated state without a Tooling Workshop, and gives it levels there by
 # create_building's company ownership (history only in vanilla, 10_india.txt): _a 2, _b 5. Logs PMR;rec=SUB_TEST at
 # once and every 30 days while either exists.

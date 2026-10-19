@@ -1,4 +1,4 @@
-namespace = pmr_sub_test
+﻿namespace = pmr_sub_test
 
 # Country scope, hidden: the sub-company smoke test's log every 30 days while a test company exists; the line that
 # finds both gone is the last.

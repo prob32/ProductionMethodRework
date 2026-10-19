@@ -449,7 +449,10 @@ def charter_plate(k):
     "COMPANY CHARTER BUTTONS - DO NOT OWN DLC"), which q27 hides (Pat 20:37Z). It sits in the card under the bullets.
     A charter aimed at regions or buildings opens vanilla's target menu; the others ask to confirm."""
     size = f'size = {{ {NODE_W - TX0 - 6} 56 }}\n'
-    return (f'flowcontainer = {{\n{_vis(AND(LOCAL, ST(k, 1, 4)))}position = {{ {TX0 - 8} {NODE_H - 72} }}\n'
+    # Industry Charter lists two industry charters, vanilla's and Industry Rights II (company_culture.SECOND_CHARTER),
+    # so its buttons start a button higher to stay on the card
+    up = 60 if k == 'ch' else 0
+    return (f'flowcontainer = {{\n{_vis(AND(LOCAL, ST(k, 1, 4)))}position = {{ {TX0 - 8} {NODE_H - 72 - up} }}\n'
             'direction = vertical\nignoreinvisible = yes\ndatamodel = "[GetCompanyCharterTypes]"\nitem = {\n'
             f'container = {{\n{_vis(f"CompanyCharterType.{CHARTER_TEST[k]}")}'
             f'company_charter_button_horizontal = {{\n{_vis(TARGETS)}{size}'
