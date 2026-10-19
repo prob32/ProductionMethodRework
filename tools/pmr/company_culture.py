@@ -16,12 +16,15 @@ prestige goods at the third level. The key building is the company's building ty
 
 How a bonus reaches the company's own levels and nobody else's (confirmed in game 2026-10-14 03:51Z): each bonus is a
 character trait on the company's executive with an executive_modifier, which the engine applies to the building levels
-the company owns. A subsidiary's executive carries half its parent's throughput and input cut (Pat 14:43Z: "half of
-the throughput and construction bonus"; the construction bonus is country-wide in 1.14.5, so only those halve), read
-from the parent's tiers (pmr_cc_p<line>, pmr_cc_sub_sync).
+the company owns. A subsidiary's executive carries one trait, Subsidiary, and none of its parent's (Pat 15:48Z): half
+its parent's tree throughput, less half the country's Company Throughput Bonus (Pat 14:43Z "half of the throughput and
+construction bonus", 15:48Z "use the executive traits to nerf subsidiaries throughput buffs by half"), in whole
+percent, kept in step monthly (pmr_cc_sub_sync, pmr_sb_thr). The construction bonus is the country's and can't be cut
+for one company (Pat 15:48Z: "that's fine").
 
 Points (unchanged since 10-14): each month a company earns prosperity x (1 + employed levels / 50, capped at 2)
-funds; a full bar (100 x (level + 1)^1.8 + 700, HoI4's curve) is one point. A subsidiary earns none and buys nothing.
+funds; a full bar (COST_SCALE x (100 x (level + 1)^1.8 + 700), HoI4's curve) is one point. A subsidiary earns none
+and buys nothing.
 
 State lives on the company; every value the window shows is mirrored onto the executive (the panel reads
 Company.GetExecutive.MakeScope), and the clicks are character-scope scripted GUIs that find the company back as the
@@ -38,6 +41,7 @@ import os
 import re
 
 import pdx
+import bylaws
 import cc_tree
 import company_panel
 import subsidiaries
@@ -46,9 +50,10 @@ TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
 PANEL_GUI = 'gui/company_panel.gui'
 CHARTER_FILE = 'common/company_charter_types/00_company_charter_types.txt'
-CAL_VERSION = 7                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
+CAL_VERSION = 8                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
                                     # 5: a grant per goods line; 6: the subsidiary bundles; 7: the two trees (an older
-                                    # company's nodes are points again)
+                                    # company's nodes are points again); 8: q45 (the trees' nodes kept)
+TREES_SINCE = 7                     # a company read in before this gets its nodes back as points
 
 # ---------------------------------------------------------------------------------------------------------------
 # Numbers Pat hasn't confirmed (SPEC.md sections 2 and 3): named so they are easy to change.
@@ -58,9 +63,22 @@ INPUT_CUT = 0.10                    # Supply Contracts
 THROUGHPUT = 0.10                   # Captive Supply, Market Reach, Process Engineering
 EOS_LEVELS = 10                     # Regional Headquarters: economy of scale cap
 OUTPUT = (0.12, 0.16)               # Precision Manufacturing, Hallmark Goods: output of the company's main goods
-HALF = 0.5                          # a subsidiary's share of its parent's throughput and input cut
+# Research grants (Pat 15:54Z: "each engineering tier should cost a research grant and have that green progress bar
+# to grant the benefit. the next tier needs to be locked until the current tiers progress is complete"): buying an
+# Engineering tier (points, as before) starts its grant; the owner's investment pool pays GRANT_COST per level the
+# company employs every week, a week it can't cover waits, and after GRANT_WEEKS paid weeks the tier is the company's.
+GRANT = 'en'
+GRANT_WEEKS = 52
+GRANT_COST = (500, 1000, 1500)      # £ per employed level a week, by tier (Pat 2026-10-18 22:28Z, 10-19 00:06Z; q35's)
+LV_LADDER = list(range(100, 20, -5)) + list(range(20, 0, -1))   # employed levels, for a grant's cost
+GRANT_VARS = ['pmr_rg_t', 'pmr_rg_w', 'pmr_rg_pay', 'pmr_rg_next', 'pmr_rg_ok', 'pmr_rg_paid']   # on the company
+HALF = 0.5                          # a subsidiary's share of its parent's throughput and of the country's company bonus
+SUB_RANGE = (-40, 15)               # the Subsidiary trait's net throughput, whole percent
 
 # Points
+COST_SCALE = 1.25                   # Pat 15:53Z: "10 years on average to finish a tree": a tree's 6 points cost 13,639
+                                    # funds, 10 years at 114 a month, the mean rate of the player's companies in the q38
+                                    # to q44 logs (EIC 193, Hudson's Bay 128, Ruhr 99, Krupp 74, Dollfus-Mieg 60)
 PROSPERITY_LADDER = list(range(100, 0, -5))          # 100, 95 .. 5
 SIZE_LADDER = [(n, 1 + n / 50) for n in range(50, 0, -5)]
 MAX_LEVEL = 60
@@ -68,10 +86,11 @@ TEST_POINTS = 12                    # every level of both trees
 
 INVENTION = 'gfx/interface/icons/invention_icons/{}.dds'
 PM_ICON = 'gfx/interface/icons/production_method_icons/{}.dds'
+SUB_ICON = INVENTION.format('joint_stock_companies')
 
 
 def point_cost(level):
-    return round(100 * (level + 1) ** 1.8 + 700)
+    return round(COST_SCALE * (100 * (level + 1) ** 1.8 + 700))
 
 
 def short(key):
@@ -130,7 +149,7 @@ CHARTER_AT = {c: (ln.key, t) for ln in LINES for t, c in ln.charters.items()}
 NODES = [(ln, t) for ln in LINES for t in range(1, ln.tiers + 1)]
 
 # Traits of every company: (line, tier) -> executive modifiers. A tier's trait replaces the one before, so each holds
-# the line's bonuses up to it. A subsidiary's executive carries HALF of the throughput and input cut (HALF_TRAITS).
+# the line's bonuses up to it. A subsidiary's executive carries none of them, only the Subsidiary trait (sub_traits).
 THR, INP, EOS = 'building_throughput_add', 'building_goods_input_mult', 'building_economy_of_scale_level_cap_add'
 TRAITS = {
     ('xr', 1): [(INP, -ROOT_INPUT)],
@@ -141,12 +160,17 @@ TRAITS = {
     ('hx', 3): [(EOS, EOS_LEVELS), (THR, THROUGHPUT)],
     ('en', 1): [(THR, THROUGHPUT)],
 }
-HALF_TRAITS = {kt: [(m, v * HALF) for m, v in mods if m in (THR, INP)] for kt, mods in TRAITS.items()}
-HALF_TRAITS = {kt: mods for kt, mods in HALF_TRAITS.items() if mods}
 
 
-def trait_key(k, t, half=False):
-    return f'pmr_cc_{k}_{t}' + ('_h' if half else '')
+def trait_key(k, t):
+    return f'pmr_cc_{k}_{t}'
+
+
+def sub_key(n):
+    return f'pmr_sb_thr_{"m" if n < 0 else "p"}{abs(n)}'
+
+
+SUB_TRAITS = [n for n in range(SUB_RANGE[0], SUB_RANGE[1] + 1) if n]   # 0: no trait
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -199,6 +223,17 @@ def building_groups(game):
     return out
 
 
+def goods_kinds(game):
+    """good -> its category (staple, industrial, luxury, military)."""
+    out = {}
+    for path in glob.glob(os.path.join(game, 'common', 'goods', '*.txt')):
+        for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
+            if n.is_block and n.key:
+                c = pdx.get(n.value, 'category')
+                out[n.key] = c.value if c else None
+    return out
+
+
 class Plan:
     """What the generator decides per company type (plan())."""
     def __init__(self):
@@ -217,6 +252,7 @@ def plan(game, plain, goods_cost, goods_tex=None):
     some vanilla company lists (so a company can own them)."""
     comps = companies(game)
     groups = building_groups(game)
+    kind = goods_kinds(game)
     p = Plan()
     p.goods_tex = dict(goods_tex or {})
 
@@ -255,9 +291,22 @@ def plan(game, plain, goods_cost, goods_tex=None):
                 mk = [x for x in sorted(maker.get(good, []), key=lambda x: -out_val[x].get(good, 0)) if x not in bts]
                 if mk and mk[0] not in vert:
                     vert.append(mk[0])
-            grp = (groups.get(key) or [None])[0]
-            horiz = sorted((b for b in ownable if b not in bts and (groups.get(b) or [None])[0] == grp),
-                           key=lambda b: -total[b])
+            # the key building's class, else its parent class and so on (Pat 15:51Z: "always something for
+            # horizontal diversification"; a logging company widens to all extraction)
+            for grp in groups.get(key) or []:
+                horiz = sorted((b for b in ownable if b not in bts and grp in (groups.get(b) or [])),
+                               key=lambda b: -total[b])
+                if horiz:
+                    break
+            if not horiz:
+                # no other ownable type in its classes (power plants, art academies): the industries using its main
+                # good, else those making goods of its kind (fine art: other luxuries), else the nearest by output value
+                good = main[key][0]
+                rest = [b for b in ownable if b not in bts and b not in vert]
+                kin = lambda b: sum(v for g, v in out_val[b].items() if kind.get(g) == kind.get(good))  # noqa: E731
+                horiz = (sorted((b for b in rest if good in in_val.get(b, {})), key=lambda b: -in_val[b][good])
+                         or sorted((b for b in rest if kin(b) > 0), key=lambda b: -kin(b))
+                         or sorted(rest, key=lambda b: (abs(total[b] - total[key]), b)))
         p.comp[c] = {'key': key, 'eg': eg[:2], 'pvars': pvars, 'pg': pg,
                      'sb': [vert[:subsidiaries.SB_SIZE], horiz[:subsidiaries.SB_SIZE]]}
     subsidiaries.plan_types(p, game)
@@ -293,18 +342,18 @@ def output_traits(p):
 
 def all_traits(p):
     """Every Company Culture trait key."""
-    return ([trait_key(k, t) for k, t in TRAITS] + [trait_key(k, t, True) for k, t in HALF_TRAITS]
-            + [key for key, *_r in output_traits(p)])
+    return ([trait_key(k, t) for k, t in TRAITS] + [sub_key(n) for n in SUB_TRAITS] + [key for key, *_r in output_traits(p)]
+            + bylaws.trait_keys())
 
 
 def traits(p):
     out = ['# Company Culture traits (company_culture.py). Each sits on a company\'s executive; its executive_modifier\n'
-           '# applies to the building levels that company owns. Never random (possible no, weight 0, value 0). The _h\n'
-           '# traits are a subsidiary\'s half of its parent\'s.\n\n']
+           '# applies to the building levels that company owns. Never random (possible no, weight 0, value 0). A\n'
+           '# subsidiary\'s executive holds one pmr_sb_thr_ trait only: its throughput in whole percent (pmr_sb_thr).\n\n']
     for (k, t), mods in TRAITS.items():
         out.append(trait(trait_key(k, t), BY_KEY[k].icons[t - 1], mods))
-    for (k, t), mods in HALF_TRAITS.items():
-        out.append(trait(trait_key(k, t, True), BY_KEY[k].icons[t - 1], mods))
+    for n in SUB_TRAITS:
+        out.append(trait(sub_key(n), SUB_ICON, [(THR, n / 100)]))
     for key, icon, mods, _w in output_traits(p):
         out.append(trait(key, icon, mods))
     return '\n'.join(out)
@@ -383,7 +432,7 @@ PARENT_VARS = [f'pmr_cc_p{k}' for k in KEYS]          # a subsidiary's copy of i
 STATE_VARS = [f'pmr_cc_st_{ln.key}_{t}' for ln, t in NODES]
 MIRRORED = (['pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_funds', 'pmr_cc_cost', 'pmr_cc_rate', 'pmr_cc_pct', 'pmr_cc_mth',
              'pmr_cc_prosp', 'pmr_cc_size'] + [f'pmr_cc_{k}' for k in KEYS] + STATE_VARS + KVARS
-            + subsidiaries.MIRRORED)
+            + subsidiaries.MIRRORED + GRANT_VARS + bylaws.MIRRORED)
 
 
 def ready(ln, t):
@@ -397,12 +446,54 @@ def ready(ln, t):
 
 def na(ln):
     """A branch with nothing to found: the company's key building has no input makers, or no other industry in its
-    class (SPEC.md section 2: 51 companies see Horizontal locked)."""
+    class or any class above it."""
     return f'var:pmr_cc_k_sbp{ln.sub} = 0' if ln.sub else None
 
 
 def ruled(ln):
     return f'var:pmr_cc_{RIVAL[ln.key]} >= 1' if ln.key in RIVAL else None
+
+
+def grant_derive():
+    """Appended to pmr_cc_derive (company scope, scope:pmr_cc_gco): the next Engineering tier's weekly grant
+    (pmr_rg_next: GRANT_COST per employed level, at least one) and whether it can start (pmr_rg_ok: none running and a
+    week in the owner's investment pool)."""
+    nxt = ''.join(f'\t{"if" if t == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_{GRANT} = {t} }} '
+                  f'set_variable = {{ name = pmr_rg_next value = {c} }} }}\n' for t, c in enumerate(GRANT_COST))
+    return ('\t# Engineering\'s next research grant (company_culture.py, GRANT_COST per employed level a week)\n'
+            '\tset_local_variable = { name = pmr_rg_lv value = 1 }\n'
+            + ladder('company_employed_levels', [(n, n) for n in LV_LADDER], 'pmr_rg_lv', '\t')
+            + '\tset_variable = { name = pmr_rg_next value = 0 }\n' + nxt
+            + '\tchange_variable = { name = pmr_rg_next multiply = local_var:pmr_rg_lv }\n'
+            '\tset_variable = { name = pmr_rg_ok value = 0 }\n'
+            '\tif = { limit = { var:pmr_rg_t = 0 var:pmr_rg_next > 0 '
+            'owner ?= { investment_pool >= scope:pmr_cc_gco.var:pmr_rg_next } } set_variable = { name = pmr_rg_ok value = 1 } }\n')
+
+
+def grant_effects(done):
+    """pmr_rg_week (the weekly payment) and pmr_rg_done (the tier granted; done: what buying the tier did before)."""
+    wlog = ("tier=[THIS.Var('pmr_rg_t').GetValue|0];w=[THIS.Var('pmr_rg_w').GetValue|0];"
+            "pay=[THIS.Var('pmr_rg_pay').GetValue|0];paid=[THIS.Var('pmr_rg_paid').GetValue|0];")
+    return ('# Weekly (pmr_cc.1) while an Engineering research grant runs (pmr_rg_t its tier): the owner\'s investment pool pays\n'
+            f'# pmr_rg_pay, or the week waits; after {GRANT_WEEKS} paid weeks the tier is granted (pmr_rg_done).\n'
+            'pmr_rg_week = {\n\tsave_scope_as = pmr_cc_gco\n'
+            '\tif = {\n\t\tlimit = { owner ?= { investment_pool >= scope:pmr_cc_gco.var:pmr_rg_pay } }\n'
+            '\t\tchange_variable = { name = pmr_rg_pay multiply = -1 }\n'
+            '\t\towner = { add_investment_pool = scope:pmr_cc_gco.var:pmr_rg_pay }\n'
+            '\t\tchange_variable = { name = pmr_rg_pay multiply = -1 }\n'
+            '\t\tchange_variable = { name = pmr_rg_w add = 1 }\n'
+            '\t\towner = { change_variable = { name = pmr_cc_rweek add = scope:pmr_cc_gco.var:pmr_rg_pay } }\n'
+            '\t\tset_variable = { name = pmr_rg_paid value = 1 }\n\t}\n'
+            '\telse = { set_variable = { name = pmr_rg_paid value = 0 } }\n'
+            f'\t{player_log("CC_GRANT_WEEK", wlog)}\n'
+            f'\tif = {{\n\t\tlimit = {{ var:pmr_rg_w >= {GRANT_WEEKS} }}\n\t\tpmr_rg_done = yes\n\t}}\n'
+            '\tif = { limit = { owner ?= { is_player = yes } } pmr_cc_mirror = yes }\n}\n\n'
+            '# The research grant is paid: its tier is the company\'s, and the next one can be bought.\n'
+            f'pmr_rg_done = {{\n\tchange_variable = {{ name = pmr_cc_{GRANT} add = 1 }}\n'
+            '\tset_variable = { name = pmr_rg_t value = 0 }\n\tset_variable = { name = pmr_rg_w value = 0 }\n'
+            '\tset_variable = { name = pmr_rg_pay value = 0 }\n'
+            + done + '\tpmr_cc_after_buy = yes\n'
+            f'\t{player_log("CC_GRANT_DONE", f"line={GRANT};")}\n}}\n\n')
 
 
 def effects(p):
@@ -423,12 +514,13 @@ def effects(p):
         if sets:
             chain += f'\t{"if" if not chain else "else_if"} = {{\n\t\tlimit = {{ is_company_type = company_type:{c} }}\n\t\t{sets}\n\t}}\n'
     zero_k = ''.join(f'\tset_variable = {{ name = {k} value = 0 }}\n' for k in KVARS)
-    zero = ['pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate'] + [f'pmr_cc_{k}' for k in KEYS] + PARENT_VARS + subsidiaries.ZERO
+    zero = (['pmr_cc_funds', 'pmr_cc_level', 'pmr_cc_pts', 'pmr_cc_rate'] + [f'pmr_cc_{k}' for k in KEYS] + PARENT_VARS
+            + subsidiaries.ZERO + GRANT_VARS)
     o.append('# A company seen for the first time, or after CAL_VERSION changed: zero state where missing, the company\n'
-             '# type\'s numbers, its first cost. A company read in by an older Company Culture (the 10-18 wheel) gets its\n'
+             '# type\'s numbers, its cost. A company read in by an older Company Culture (the 10-18 wheel) gets its\n'
              '# points back for the nodes it had: one per level, as earned; a subsidiary being paid for starts over.\n'
              'pmr_cc_init = {\n'
-             '\tif = {\n\t\tlimit = { has_variable = pmr_cc_on has_variable = pmr_cc_level }\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_cc_on has_variable = pmr_cc_level var:pmr_cc_on < {TREES_SINCE} }}\n'
              '\t\tset_variable = { name = pmr_cc_pts value = var:pmr_cc_level }\n'
              + ''.join(f'\t\tset_variable = {{ name = pmr_cc_{k} value = 0 }}\n' for k in KEYS)
              + ''.join(f'\t\tset_variable = {{ name = {x} value = 0 }}\n' for x in ('pmr_sb_pick', 'pmr_sb_w', 'pmr_sb_pay'))
@@ -437,11 +529,15 @@ def effects(p):
                        for x in zero)
              + zero_k + chain
              + f'\tset_variable = {{ name = pmr_cc_on value = {CAL_VERSION} }}\n'
-             '\tpmr_cc_set_cost = yes\n\tpmr_cc_derive = yes\n}\n\n')
+             '\tpmr_cc_set_cost = yes\n\tpmr_cc_derive = yes\n'
+             '\t# a subsidiary being paid for pays this build\'s price from now on\n'
+             + ''.join(f'\tif = {{ limit = {{ var:pmr_sb_pick = {n} }} set_variable = {{ name = pmr_sb_pay value = var:pmr_sb_pay{n} }} }}\n'
+                       for n in subsidiaries.NUMS)
+             + '}\n\n')
     # Cost of the next point.
     costs = ''.join(f'\t{"if" if L == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_level <= {L} }} '
                     f'set_variable = {{ name = pmr_cc_cost value = {point_cost(L)} }} }}\n' for L in range(MAX_LEVEL))
-    o.append('# Funds for the next point: 100 x (level + 1)^1.8 + 700, HoI4\'s curve.\n'
+    o.append(f'# Funds for the next point: {COST_SCALE} x (100 x (level + 1)^1.8 + 700), HoI4\'s curve.\n'
              'pmr_cc_set_cost = {\n' + costs
              + f'\telse = {{ set_variable = {{ name = pmr_cc_cost value = {point_cost(MAX_LEVEL)} }} }}\n}}\n\n')
     o.append('# Monthly funds: prosperity x size, size = 1 + employed levels / 50 (at most 2), both read by ladder.\n'
@@ -461,7 +557,7 @@ def effects(p):
              '\t\tpmr_cc_set_cost = yes\n'
              f'\t\t{player_log("CC_POINT")}\n\t}}\n}}\n\n')
     o.append('# Numbers derived from the tiers and the owner: the subsidiaries\' weekly costs (subsidiaries.derive).\n'
-             'pmr_cc_derive = {\n\tsave_scope_as = pmr_cc_gco\n' + subsidiaries.derive(p.sb_prices) + '}\n\n')
+             'pmr_cc_derive = {\n\tsave_scope_as = pmr_cc_gco\n' + subsidiaries.derive(p.sb_prices) + grant_derive() + '}\n\n')
     # Buy, per line.
     pchain = ''
     for c, v in sorted(p.comp.items()):
@@ -476,13 +572,20 @@ def effects(p):
         if ln.sub:
             take += (f'\t# its subsidiary\'s payments start, unless it already has one (a save from before the trees)\n'
                      f'\tif = {{ limit = {{ var:pmr_cc_{k} = 1 var:pmr_sb_d{ln.sub} = 0 }} pmr_sb_start = {{ N = {ln.sub} }} }}\n')
-        if k == 'en':
-            take += ('\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods, or PMR\'s own: generate.py\n'
-                     '\t# gives the companies vanilla lets make them whenever prosperous a trigger on pmr_cc_hallmark)\n'
-                     '\tif = {\n\t\tlimit = { var:pmr_cc_en = 3 }\n\t\tset_variable = pmr_cc_hallmark\n' + pchain + '\t}\n')
+        if k == GRANT:
+            done = ('\t# Hallmark Goods: the variable its prestige goods wait for (05_prestige_goods, or PMR\'s own: generate.py\n'
+                    '\t# gives the companies vanilla lets make them whenever prosperous a trigger on pmr_cc_hallmark)\n'
+                    f'\tif = {{\n\t\tlimit = {{ var:pmr_cc_{k} = 3 }}\n\t\tset_variable = pmr_cc_hallmark\n' + pchain + '\t}\n')
+            take = ('\t# the tier\'s research grant starts; the tier is the company\'s when it is paid (pmr_rg_week)\n'
+                    f'\tset_variable = {{ name = pmr_rg_t value = var:pmr_cc_{k} }}\n'
+                    '\tchange_variable = { name = pmr_rg_t add = 1 }\n'
+                    '\tset_variable = { name = pmr_rg_w value = 0 }\n'
+                    '\tset_variable = { name = pmr_rg_pay value = var:pmr_rg_next }\n'
+                    '\towner ?= { pmr_cc_gclock = yes }\n')
+            o.append(grant_effects(done))
         o.append(f'pmr_cc_buy_{k} = {{\n{pay}{take}\tpmr_cc_after_buy = yes\n'
                  f'\t{player_log("CC_BUY", f"line={k};")}\n}}\n\n')
-    o.append('# After a node: the derived numbers, the executive\'s traits, and its subsidiaries\' half of them.\n'
+    o.append('# After a node: the derived numbers, the executive\'s traits, and its subsidiaries\' Subsidiary traits.\n'
              'pmr_cc_after_buy = {\n\tpmr_cc_derive = yes\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_apply = yes\n'
              '\tevery_in_list = {\n\t\tvariable = pmr_subs\n\t\tpmr_cc_sub_sync = yes\n\t}\n\tsave_scope_as = pmr_cc_co\n}\n\n')
     o.append('# The owner\'s investment pool, to the nearest £16, into var $V$ (scope:pmr_cc_gco = this company): the log\'s\n'
@@ -527,9 +630,9 @@ def effects(p):
              + '\tif = {\n\t\tlimit = { var:pmr_cc_pts >= 1 }\n\t\tpmr_cc_ai_step = yes\n'
              '\t\tif = { limit = { var:pmr_cc_pts >= 1 } pmr_cc_ai_step = yes }\n\t}\n}\n\n')
     # Traits on the executive.
-    def line_fx(k, table, var, half=False):
+    def line_fx(k, table, var):
         tiers = sorted(t for kk, t in table if kk == k)
-        keys = {t: trait_key(k, t, half) for t in tiers}
+        keys = {t: trait_key(k, t) for t in tiers}
         out = ''
         for n, t in enumerate(reversed(tiers)):
             cond = f'var:{var} >= {t}' if n == 0 else f'var:{var} = {t}'
@@ -541,30 +644,52 @@ def effects(p):
                                           for x in keys.values()) + '\t\t}\n'
         return out
     full = ''.join(f'\t\t# {k}\n' + line_fx(k, TRAITS, f'pmr_cc_{k}') for k in dict.fromkeys(k for k, _t in TRAITS))
-    half = ''.join(f'\t\t# {k}, half (a subsidiary)\n' + line_fx(k, HALF_TRAITS, f'pmr_cc_p{k}', True)
-                   for k in dict.fromkeys(k for k, _t in HALF_TRAITS))
+    sub = ('\t\t# Subsidiary (pmr_sb_thr, a subsidiary\'s only)\n'
+           + ''.join(f'\t\tif = {{ limit = {{ has_trait = {sub_key(n)} NOT = {{ scope:pmr_cc_co = {{ var:pmr_sb_thr ?= {n} }} }} }} '
+                     f'remove_trait = {sub_key(n)} }}\n' for n in SUB_TRAITS)
+           + ''.join(f'\t\tif = {{ limit = {{ NOT = {{ has_trait = {sub_key(n)} }} scope:pmr_cc_co = {{ var:pmr_sb_thr ?= {n} }} }} '
+                     f'add_trait = {sub_key(n)} }}\n' for n in SUB_TRAITS))
     keyed = ''.join(f'\t\tif = {{ limit = {{ has_trait = {key} NOT = {{ scope:pmr_cc_co = {{ {w} }} }} }} remove_trait = {key} }}\n'
                     f'\t\tif = {{ limit = {{ NOT = {{ has_trait = {key} }} scope:pmr_cc_co = {{ {w} }} }} add_trait = {key} }}\n'
                     for key, _i, _m, w in output_traits(p))
-    o.append('# The executive\'s traits for the company\'s tiers, or for a subsidiary its half of its parent\'s. An executive\n'
+    o.append('# The executive\'s traits for the company\'s tiers, or for a subsidiary the Subsidiary trait. An executive\n'
              '# who came from another company with Culture traits loses them first (pmr_cc_strip). Company scope.\n'
-             'pmr_cc_apply = {\n\tsave_scope_as = pmr_cc_co\n\texecutive ?= {\n'
+             'pmr_cc_apply = {\n\tsave_scope_as = pmr_cc_co\n' + bylaws.src_scope('\t') + '\texecutive ?= {\n'
              '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\thas_variable = pmr_cc_of\n\t\t\t\tNOT = { var:pmr_cc_of ?= scope:pmr_cc_co }\n\t\t\t}\n'
              '\t\t\tpmr_cc_strip = yes\n\t\t}\n'
              '\t\tset_variable = { name = pmr_cc_of value = scope:pmr_cc_co }\n'
-             + full + half + keyed + '\t}\n}\n\n')
+             + full + keyed + sub + bylaws.apply_traits('\t\t') + '\t}\n}\n\n')
     o.append('# Character scope: every Company Culture trait off. When an executive changes company and on disbanding.\n'
              'pmr_cc_strip = {\n' + ''.join(f'\tif = {{ limit = {{ has_trait = {x} }} remove_trait = {x} }}\n' for x in all_traits(p))
              + '\tremove_variable = pmr_cc_of\n}\n\n')
     sub_log = ("parent=[THIS.Var('pmr_parent').GetCompany.GetNameNoFormatting];"
-               + ''.join(f"p{k}=[THIS.Var('pmr_cc_p{k}').GetValue|0];" for k in KEYS))
+               + ''.join(f"p{k}=[THIS.Var('pmr_cc_p{k}').GetValue|0];" for k in KEYS)
+               + "thr=[THIS.Var('pmr_sb_thr').GetValue|0];country=[THIS.Var('pmr_sb_cthr').GetValue|2];")
+    # the parent's tree throughput by its tiers, in percent: each line's highest tier with a trait holds the line's
+    tree = ''
+    for k in dict.fromkeys(k for k, _t in TRAITS):
+        tiers = sorted((t for kk, t in TRAITS if kk == k and any(m == THR for m, _v in TRAITS[(kk, t)])), reverse=True)
+        for i, t in enumerate(tiers):
+            thr = sum(v for m, v in TRAITS[(k, t)] if m == THR) * 100 * HALF
+            tree += (f'\t{"if" if i == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_p{k} >= {t} }} '
+                     f'change_variable = {{ name = pmr_sb_thr add = {fmt(thr)} }} }}\n')
     o.append('# A subsidiary (pmr_sub; monthly, and when its parent buys a node): its copy of the parent\'s tiers, read once the\n'
-             '# parent is read in at this CAL_VERSION, and the half traits they give.\n'
+             '# parent is read in at this CAL_VERSION, and its Subsidiary trait: half the parent\'s tree throughput less half\n'
+             '# the country\'s Company Throughput Bonus, in whole percent (pmr_sb_thr; pmr_sb_cthr the country\'s, in percent).\n'
              'pmr_cc_sub_sync = {\n\tsave_scope_as = pmr_cc_co\n\tclear_saved_scope = pmr_cc_par\n'
              '\tvar:pmr_parent ?= { save_scope_as = pmr_cc_par }\n'
              f'\tif = {{\n\t\tlimit = {{ scope:pmr_cc_par ?= {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n'
              + ''.join(f'\t\tset_variable = {{ name = pmr_cc_p{k} value = scope:pmr_cc_par.var:pmr_cc_{k} }}\n' for k in KEYS)
              + '\t}\n\telse = {\n' + ''.join(f'\t\tset_variable = {{ name = pmr_cc_p{k} value = 0 }}\n' for k in KEYS) + '\t}\n'
+             '\tset_variable = { name = pmr_sb_thr value = 0 }\n' + tree
+             + '\tset_variable = { name = pmr_sb_cthr value = owner.modifier:country_company_throughput_bonus_add }\n'
+             '\tchange_variable = { name = pmr_sb_cthr multiply = 100 }\n'
+             f'\tset_local_variable = {{ name = pmr_sb_c value = var:pmr_sb_cthr }}\n'
+             f'\tchange_local_variable = {{ name = pmr_sb_c multiply = {fmt(HALF)} }}\n'
+             '\tchange_variable = { name = pmr_sb_thr subtract = local_var:pmr_sb_c }\n'
+             '\tround_variable = { name = pmr_sb_thr nearest = 1 }\n'
+             f'\tclamp_variable = {{ name = pmr_sb_thr min = {SUB_RANGE[0]} max = {SUB_RANGE[1]} }}\n'
+             '\tpmr_bl_sub_focus = yes\n'
              '\tpmr_cc_apply = yes\n'
              f'\t{player_log("CC_SUB", sub_log)}\n}}\n\n')
     # Node states.
@@ -585,6 +710,8 @@ def effects(p):
                        f'\t\telse = {{ {s(2)} }}\n\t}}\n')
         else:
             states += f'\tif = {{ limit = {{ var:pmr_cc_{k} >= {t} }} {s(4)} }}\n'
+            if k == GRANT:
+                states += f'\telse_if = {{ limit = {{ var:pmr_rg_t = {t} }} {s(6)} }}\n'
         if na(ln):
             states += f'\telse_if = {{ limit = {{ {na(ln)} }} {s(7)} }}\n'
         if ruled(ln):
@@ -599,7 +726,8 @@ def effects(p):
     o.append('# The window\'s numbers, mirrored onto the executive (the panel reads Company.GetExecutive.MakeScope). Node\n'
              '# states pmr_cc_st_<line>_<tier>: 0 locked (a tier before it, or its tree\'s root), 1 a click buys it (or pays\n'
              '# for a subsidiary that went again), 2 next but short of points or of a week in the investment pool, 4 bought,\n'
-             '# 5 ruled out by the other branch, 6 its subsidiary being paid for, 7 nothing to found for this company.\n'
+             '# 5 ruled out by the other branch, 6 its subsidiary being paid for or its research grant running, 7 nothing to\n'
+             '# found for this company.\n'
              'pmr_cc_states = {\n' + states + '}\n\n'
              'pmr_cc_mirror = {\n\tsave_scope_as = pmr_cc_co\n\tpmr_cc_states = yes\n'
              '\tset_variable = { name = pmr_cc_pct value = var:pmr_cc_funds }\n'
@@ -619,7 +747,7 @@ def effects(p):
              'pmr_cc_tick = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
              '\tif = {\n\t\tlimit = { has_variable = pmr_sub }\n\t\tpmr_cc_sub_sync = yes\n\t}\n'
-             '\telse = {\n\t\tpmr_cc_earn = yes\n\t\tpmr_cc_derive = yes\n'
+             '\telse = {\n\t\tpmr_cc_earn = yes\n\t\tpmr_cc_derive = yes\n\t\tpmr_bl_month = yes\n'
              '\t\tif = {\n\t\t\tlimit = { owner ?= { is_player = no } }\n\t\t\tpmr_cc_ai_buy = yes\n\t\t}\n'
              '\t\tif = {\n\t\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\t\tpmr_cc_apply = yes\n\t\t}\n'
              '\t\tif = {\n\t\t\tlimit = { owner ?= { is_player = yes } }\n\t\t\tpmr_cc_mirror = yes\n'
@@ -628,13 +756,13 @@ def effects(p):
              'pmr_cc_refresh = {\n\tsave_scope_as = pmr_cc_co\n'
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_on ?= {CAL_VERSION} }} }}\n\t\tpmr_cc_init = yes\n\t}}\n'
              '\tif = {\n\t\tlimit = { has_variable = pmr_sub }\n\t\tpmr_cc_sub_sync = yes\n\t}\n'
-             '\telse = {\n\t\tpmr_cc_derive = yes\n'
+             '\telse = {\n\t\tpmr_cc_derive = yes\n\t\tpmr_bl_init = yes\n\t\tpmr_bl_focus = yes\n\t\tpmr_bl_count = yes\n'
              '\t\tif = {\n\t\t\tlimit = { executive ?= { NOT = { var:pmr_cc_of ?= scope:pmr_cc_co } } }\n\t\t\tpmr_cc_apply = yes\n\t\t}\n'
              '\t}\n\tpmr_cc_mirror = yes\n}\n\n')
     o.append('# Character scope (an executive, from the window): the owner\'s company this character runs, scope:line kept.\n'
              'pmr_cc_with_company = {\n\tsave_scope_as = pmr_cc_exec\n'
              '\towner ?= {\n\t\tevery_company = {\n\t\t\tlimit = { executive ?= scope:pmr_cc_exec }\n\t\t\t$EFFECT$ = yes\n\t\t}\n\t}\n}\n\n')
-    return ''.join(o) + subsidiaries.effects(p)
+    return ''.join(o) + subsidiaries.effects(p) + bylaws.effects(player_log)
 
 
 # The order AI companies buy in after the roots and their branch (a step whose line is not open is passed over; the
@@ -657,6 +785,8 @@ def triggers():
         if ln.sub:
             n = ln.sub
             c += [f'var:pmr_cc_k_sbp{n} > 0', f'OR = {{ var:pmr_cc_{k} > 0 var:pmr_sb_d{n} = 1 var:pmr_sb_ok{n} = 1 }}']
+        if k == GRANT:   # no grant running, and a week of the next in the pool
+            c += ['var:pmr_rg_t = 0', 'var:pmr_rg_ok = 1']
         o.append(f'pmr_cc_open_{k} = {{\n' + ''.join(f'\t{x}\n' for x in c) + '}\n\n')
     o.append('# The points for each line\'s next tier.\n')
     for ln in LINES:
@@ -668,8 +798,10 @@ def triggers():
         if ln.sub:
             n = ln.sub
             o.append(f'pmr_sb_again_{n} = {{\n\tvar:pmr_cc_{ln.key} >= 1\n\tvar:pmr_sb_d{n} = 0\n\tvar:pmr_sb_ok{n} = 1\n}}\n\n')
-    o.append('# The weekly clock (pmr_cc.1) has work for this company: a subsidiary being paid for.\n'
-             'pmr_cc_weekly = {\n\tpmr_sb_paying = yes\n}\n\n')
+    o.append('# An Engineering research grant runs (pmr_rg_week).\n'
+             'pmr_rg_running = {\n\thas_variable = pmr_rg_t\n\tvar:pmr_rg_t > 0\n}\n\n'
+             '# The weekly clock (pmr_cc.1) has work for this company: a subsidiary being paid for, a research grant.\n'
+             'pmr_cc_weekly = {\n\tOR = {\n\t\tpmr_sb_paying = yes\n\t\tpmr_rg_running = yes\n\t}\n}\n\n')
     return ''.join(o) + subsidiaries.triggers()
 
 
@@ -688,7 +820,7 @@ def sguis():
             '# (pmr_cc_exec), where the full-screen window (ingame_hud.gui, outside the company panel) finds the company.\n'
             'pmr_cc_view_sgui = {\n\tscope = character\n\tsaved_scopes = { player }\n'
             '\teffect = {\n\t\tscope:player = {\n\t\t\tset_variable = { name = pmr_cc_exec value = root }\n\t\t}\n'
-            '\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n')
+            '\t\tpmr_cc_with_company = { EFFECT = pmr_cc_refresh }\n\t}\n}\n\n' + bylaws.sguis())
 
 
 ON_ACTIONS = '''# Company Culture (company_culture.py). Appended to vanilla on_actions the documented way.
@@ -708,8 +840,9 @@ pmr_cc_game_started = {
 	}
 }
 
-# Root = country. Every company earns, buys (AI companies) and keeps its executive's traits; a company paying for a
-# subsidiary keeps the weekly clock going; the country's subsidiary slots are recounted (subsidiaries.py).
+# Root = country. Every company earns, buys (AI companies), counts its board (bylaws.py) and keeps its executive's
+# traits; a company paying keeps the weekly clock going; the country's subsidiary slots are recounted (subsidiaries.py),
+# and the Trade Unions' answer to harsh bylaws (bylaws.py).
 pmr_cc_monthly_country = {
 	effect = {
 		every_company = {
@@ -720,6 +853,7 @@ pmr_cc_monthly_country = {
 			pmr_cc_gclock = yes
 		}
 		pmr_sb_slots = yes
+		pmr_bl_country = yes
 	}
 }
 
@@ -756,9 +890,11 @@ pmr_cc.1 = {
 	hidden = yes
 	immediate = {
 		set_variable = { name = pmr_cc_gweek value = 0 }
+		set_variable = { name = pmr_cc_rweek value = 0 }
 		every_company = {
 			limit = { pmr_cc_weekly = yes var:pmr_cc_on ?= CAL_VERSION }
-			pmr_sb_week = yes
+			if = { limit = { pmr_sb_paying = yes } pmr_sb_week = yes }
+			if = { limit = { pmr_rg_running = yes } pmr_rg_week = yes }
 		}
 		if = {
 			limit = { any_company = { pmr_cc_weekly = yes } }
@@ -768,6 +904,7 @@ pmr_cc.1 = {
 		else = {
 			remove_variable = pmr_cc_gclock
 			set_variable = { name = pmr_cc_gweek value = 0 }
+			set_variable = { name = pmr_cc_rweek value = 0 }
 		}
 	}
 }
@@ -789,6 +926,20 @@ pmr_cc_test_points_decision = {{
 			change_variable = {{ name = pmr_cc_pts add = {TEST_POINTS} }}
 			pmr_cc_refresh = yes
 			{{LOG}}
+		}}
+	}}
+	ai_chance = {{ value = 0 }}
+}}
+
+# Test builds only: every research grant of the player's companies is paid up, so its tier is granted at the next
+# weekly tick. Writes PMR;rec=CC_GRANT_WEEK lines from there.
+pmr_rg_test_finish_decision = {{
+	is_shown = {{ always = yes }}
+	possible = {{ always = yes }}
+	when_taken = {{
+		every_company = {{
+			limit = {{ pmr_rg_running = yes }}
+			set_variable = {{ name = pmr_rg_w value = {GRANT_WEEKS - 1} }}
 		}}
 	}}
 	ai_chance = {{ value = 0 }}
@@ -865,6 +1016,8 @@ def why_cases(ln, t):
     if ln.sub and t == 1:
         cases += [(f'{st} ?= 6', 'PMR_SB_FUNDING'),
                   (f'{st} ?= 2 var:pmr_sb_ok{ln.sub} ?= 0', f'PMR_SB_POOL_{ln.sub}')]
+    if k == GRANT:
+        cases += [(f'{st} ?= 6', 'PMR_RG_FUNDING'), (f'{st} ?= 2 var:pmr_rg_ok ?= 0', 'PMR_RG_POOL')]
     cases.append((f'{st} ?= 2', 'PMR_CC_WHY_POINTS'))
     if ruled(ln):
         cases.append((f'{st} ?= 5', f'PMR_CC_WHY_RULED_{RIVAL[k]}'))
@@ -928,10 +1081,15 @@ def localization(p):
         f" PMR_CC_FX_EG2_2:0 \"• {good2} #P {pct(OUTPUT[0])}#! output\"",
         f" PMR_CC_FX_EG2_3:0 \"• {good2} #P {pct(OUTPUT[1] - OUTPUT[0])}#! output\"",
         ' PMR_CC_FX_PG:0 "• Prestige goods"',
+        f' PMR_RG_PAY:0 "@money!{money("pmr_rg_next")} × {GRANT_WEEKS}"',
+        f' PMR_RG_POOL:0 "#N Investment pool needs @money!{money("pmr_rg_next")}#!"',
+        f' PMR_RG_FUNDING:0 "@money!{money("pmr_rg_pay")}, {V("pmr_rg_w")} / {GRANT_WEEKS}"',
         ' PMR_CC_COST_TT:0 "Culture points"',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
         f' pmr_cc_test_points_decision_desc:0 "Each of your companies gets {TEST_POINTS} Culture points."',
+        ' pmr_rg_test_finish_decision:0 "PMR test: finish your research grants"',
+        ' pmr_rg_test_finish_decision_desc:0 "Each running research grant is paid up next week."',
     ]
     for ln in LINES:
         for t in range(1, ln.tiers + 1):
@@ -948,9 +1106,8 @@ def localization(p):
         loc.append(f' PMR_CC_WHY_ROOT_{tr}:0 "#N Needs {BY_KEY[k].names[0]}#!"')
     for (k, t) in TRAITS:
         loc += [f' {trait_key(k, t)}:0 "{BY_KEY[k].names[t - 1]}"', f' {trait_key(k, t)}_desc:0 "Company Culture"']
-    for (k, t) in HALF_TRAITS:
-        loc += [f' {trait_key(k, t, True)}:0 "{BY_KEY[k].names[t - 1]}"',
-                f' {trait_key(k, t, True)}_desc:0 "Company Culture"']
+    for n in SUB_TRAITS:
+        loc += [f' {sub_key(n)}:0 "Subsidiary"', f' {sub_key(n)}_desc:0 ""']
     for key, _i, mods, _w in output_traits(p):
         t = int(key.rsplit('_', 1)[1])
         g = mods[0][0][len('goods_output_'):-len('_mult')]
@@ -982,6 +1139,8 @@ def write_all(game, write, header_text, report, p, out_dir):
           bom=False)
     n_tex = cc_tree.textures(out_dir)
     sb_loc = subsidiaries.write_all(game, write, header_text, p)
+    write(bylaws.TRAIT_FILE, header_text + bylaws.traits())
+    write(bylaws.STATIC_FILE, header_text + bylaws.static_modifiers())
     n_traits = len(all_traits(p))
     report['company_culture'] = {
         'companies': len(p.comp), 'traits': n_traits, 'textures': n_tex,
@@ -993,4 +1152,7 @@ def write_all(game, write, header_text, report, p, out_dir):
     print(f'company culture: {len(p.comp)} companies ({sum(1 for v in p.comp.values() if not v["key"])} without a key '
           f'building), {n_traits} traits, {n_tex} textures; subsidiaries over {len(p.sb_types)} building types, '
           f'{no_v} companies with no vertical and {no_h} with no horizontal one')
-    return localization(p) + goods_mult_loc(p, game) + sb_loc
+    return localization(p) + goods_mult_loc(p, game) + sb_loc + bylaws.localization()
+
+
+ai_value_tail = bylaws.ai_value_tail   # generate.py: private_investment.AI_TAIL, the Focus bylaw

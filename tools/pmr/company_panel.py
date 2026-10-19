@@ -5,11 +5,15 @@ Retool sites (Pat 02:32Z: "Can you hid[e] the re-tooling buildings from here whi
 generate.py lists each treated type's private retool sites in the building_types of every company listing the type
 (COMPANY_RETOOL), so a company can own its buildings' retooling, and every list of a company's industries showed each
 industry twice. The sites stay in building_types; the lists hide them. No 1.14.5 GUI file reads a building group off a
-building type, so the test is vanilla's own type test, ObjectsEqual against each site type a company lists
-(RETOOL_TYPES), and the lists skip invisible items (ignoreinvisible, as generate.hide_retool_sites's urban grid):
+building type. Until q45 the test was ObjectsEqual against each of the ~90 site types, per icon and per frame, which
+slowed the Companies panel (Pat 15:52Z); now each panel's opening marks every site type a company lists (RETOOL_TYPES)
+as a GUI variable of its own key (site_flags), and an icon tests one: GetVariableSystem.Exists(BuildingType.GetKey)
+(vanilla reads BuildingType.GetKey as a string, map_markers.gui). The lists skip invisible items (ignoreinvisible, as
+generate.hide_retool_sites's urban grid):
     company_panel.gui    Available Industries
-    companies_panel.gui  the companies list's industry icons, each company type's Available Industries, and
-                         company_building_item, the company tooltip's industry icons (custom_tooltip.gui)
+    companies_panel.gui  the companies list's industry icons; each company type's industries, its charter
+                         industries and the industry filter (Pat 15:52Z); company_building_item and
+                         company_type_building_item, the tooltips' industry icons
 
 Methods table (Pat 02:32Z: "can you make the methods including the company special ones show the same table only for
 buildings the companies own from the policies tab?"): in place of the tab's Methods list, the Policies card's grid
@@ -49,19 +53,28 @@ def any_of(exprs):
 
 
 def not_site():
-    """BuildingType context: not one of the retool sites a company lists."""
-    return 'Not(' + any_of([f"ObjectsEqual(BuildingType.Self, GetBuildingType('{t}').Self)" for t in RETOOL_TYPES]) + ')'
+    """BuildingType context: not one of the retool sites a company lists (site_flags marked them)."""
+    return 'Not(GetVariableSystem.Exists(BuildingType.GetKey))'
+
+
+def site_flags(ind):
+    """A panel's _show on_start lines: every retool site type a company lists, a GUI variable of its own key."""
+    return ''.join(f"{ind}on_start = \"[GetVariableSystem.Set('{t}', 'yes')]\"  # PMR: a retool site\n" for t in RETOOL_TYPES)
 
 
 MODEL = 'datamodel = "[Company.GetBuildingTypes]"\n'
+TYPE_MODELS = ['datamodel = "[CompanyType.AccessBuildingTypes(GetPlayer.Self)]"\n',
+               'datamodel = "[CompanyType.GetPotentialBuildingTypes(GetPlayer.Self)]"\n',
+               'datamodel = "[CompaniesPanel.GetAllBuildingTypes]"\n']
 
 
-def hide_sites(text, where, lists):
-    """Each list of Company.GetBuildingTypes in text (lists of them) skips invisible items, and its item's widget is
+def hide_sites(text, where, lists, models=(MODEL,)):
+    """Each list of one of models in text (lists of them in all) skips invisible items, and its item's widget is
     invisible for a retool site."""
-    found = list(re.finditer(r'^(\t*)' + re.escape(MODEL), text, re.M))
+    found = sorted((m for model in models for m in re.finditer(r'^(\t*)' + re.escape(model), text, re.M)),
+                   key=lambda m: m.start())
     if len(found) != lists:
-        fail(where, f'expected {lists} lists of Company.GetBuildingTypes, found {len(found)}; update hide_sites')
+        fail(where, f'expected {lists} lists of building types, found {len(found)}; update hide_sites')
     if not RETOOL_TYPES:
         return text
     vis = f'visible = "[{not_site()}]"  # PMR: no retool sites (company_panel.py)\n'
@@ -142,13 +155,14 @@ def patch_company_panel(text):
     recounts its figures (REFRESH_SGUI); in test builds, the parent's subsidiaries under its Regional HQs."""
     where = 'company_panel.gui'
     text = hide_sites(text, where, 1)
+    show = '\t\tblockoverride "animation_state_block" {\n\t\t\tstate = {\n\t\t\t\tname = _show\n'
+    if text.count(show) != 1:
+        fail(where, 'the panel\'s _show state moved; update patch_company_panel')
+    text = text.replace(show, show + site_flags('\t\t\t\t'))
     if SUB_LINKS:
         text = sub_assets(sub_regional_hqs(text, where), where)
     if not REFRESH:
         return text
-    show = '\t\tblockoverride "animation_state_block" {\n\t\t\tstate = {\n\t\t\t\tname = _show\n'
-    if text.count(show) != 1:
-        fail(where, 'the panel\'s _show state moved; update patch_company_panel')
     run = f"GetScriptedGui('{REFRESH_SGUI}').Execute(GuiScope.SetRoot(GetPlayer.MakeScope).End)"
     return text.replace(show, show + f'\t\t\t\ton_start = "[{run}]"  # PMR: the Methods table\'s figures\n')
 
@@ -157,12 +171,16 @@ def patch_companies_panel(text):
     """companies_panel.gui: the companies list's and the company types' industries, and the company tooltip's
     (company_building_item), without the retool sites."""
     where = 'companies_panel.gui'
-    text = hide_sites(text, where, 2)
-    item = '\ttype company_building_item = button {\n'
-    if text.count(item) != 1:
-        fail(where, 'company_building_item moved; update patch_companies_panel')
-    if RETOOL_TYPES:
-        text = text.replace(item, item + f'\t\tvisible = "[{not_site()}]"  # PMR: no retool sites (company_panel.py)\n')
+    text = hide_sites(text, where, 5, [MODEL] + TYPE_MODELS)
+    show = '\t\t\t\tname = _show\n\t\t\t\ton_start = "[GetVariableSystem.Clear(\'hide_current_companies\')]"\n'
+    if text.count(show) != 1:
+        fail(where, 'the panel\'s _show state moved; update patch_companies_panel')
+    text = text.replace(show, show + site_flags('\t\t\t\t'))
+    for item in ('\ttype company_building_item = button {\n', '\ttype company_type_building_item = button {\n'):
+        if text.count(item) != 1:
+            fail(where, f'{item.strip()} moved; update patch_companies_panel')
+        if RETOOL_TYPES:
+            text = text.replace(item, item + f'\t\tvisible = "[{not_site()}]"  # PMR: no retool sites (company_panel.py)\n')
     if SUB_LINKS:   # the player's companies and every company, without subsidiaries
         mine = ('\t\t\t\t\t\tdatamodel = "[AccessPlayer.GetCompanies]"\n',
                 '\t\t\t\t\t\titem = {\n\t\t\t\t\t\t\tcompany_item = {}\n')

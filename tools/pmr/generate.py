@@ -1586,7 +1586,9 @@ def main():
                     continue
                 listed = pdx.items(bt)
                 ext = pdx.get(cn.value, 'extension_building_types')
-                extra = [x for x in (pdx.items(ext) if ext and ext.is_block else []) if x not in listed]
+                # Pat 2026-10-19 15:40Z: with subsidiaries (test builds) the retooling of an industry the company doesn't
+                # list belongs to the subsidiary that lists it (subsidiaries.RETOOL_OF), not to the parent
+                extra = [] if cc_plan else [x for x in (pdx.items(ext) if ext and ext.is_block else []) if x not in listed]
                 new = [(x, rbx) for x in listed + extra if x in retool_of for rbx in retool_of[x] if rbx not in listed]
                 if not new:
                     continue
@@ -1598,6 +1600,10 @@ def main():
                 write(f'common/company_types/{csrc.name}', csrc.render())
     # the panels listing a company's industries hide them (Pat 2026-10-19 02:32Z, company_panel.py)
     company_panel.RETOOL_TYPES = sorted({rbx for c in report['company_types'] for rbx in c['added']})
+    if COMPANY_RETOOL and cc_plan:   # each subsidiary type lists the retooling of its industries (subsidiaries.py)
+        subsidiaries.RETOOL_OF = {b: retool_of[b] for b in cc_plan.sb_types if b in retool_of}
+        company_panel.RETOOL_TYPES = sorted(set(company_panel.RETOOL_TYPES)
+                                            | {r for rs in subsidiaries.RETOOL_OF.values() for r in rs})
 
     write('common/production_methods/pmr_labour_production_methods.txt', header + '\n'.join(labour_pms))
     write('common/production_method_groups/pmr_labour_groups.txt', header + '\n'.join(labour_groups))
@@ -1702,7 +1708,9 @@ def main():
     if owners_of and cc_plan:   # and the subsidiaries their bundles found (subsidiaries.py, test builds)
         for bk, types in subsidiaries.owners(cc_plan).items():
             owners_of.setdefault(bk, []).extend(types)
-    ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of) for bk in ai_of}
+    # in test builds a company's Focus bylaw ends the weight (company_culture.ai_value_tail), shown as Companies
+    ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of)
+                + ([('works', None)] if cc_plan and bk in owners_of else []) for bk in ai_of}
     write('common/customizable_localization/pmr_custom_loc.txt', header +
           '# Building scope. The recipe a building runs, which is the one any retooling moves it to.\n'
           'pmr_new_recipe = {\n\ttype = building\n\tlog_loc_errors = no\n' + ''.join(custom_new) + '}\n'
@@ -1796,6 +1804,7 @@ def main():
         # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, in the test build until Pat ships it.
         loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
         private_investment.GRANT_LINE = True   # subsidiary payments in the pool's tooltip (subsidiaries.py)
+        private_investment.AI_TAIL = company_culture.ai_value_tail   # the Focus bylaw (company_culture.py)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)

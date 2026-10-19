@@ -1796,9 +1796,10 @@ def ai_groups(game):
     return {f'building_{s}': keys[g] for s, g, _c in invest_types(game)}
 
 
-# Pat, 2026-10-19 02:32Z ("can we get the research grants added to this tool tip instead?"): the week's research
-# grants (pmr_cc.1 sums pmr_cc_gweek on the country and zeroes it once no grant runs) are a line of the investment
-# pool's own tooltip, in its style, while one runs, in place of a line under the pool. The tooltip's text is vanilla's
+# Pat, 2026-10-19 02:32Z ("can we get the research grants added to this tool tip instead?"): the week's payments
+# (pmr_cc.1 sums them on the country, zeroed once none runs) are lines of the investment pool's own tooltip, in its
+# style, each while one runs: Expansion, the subsidiaries' (pmr_cc_gweek; Pat 15:54Z "it should be called expansion"),
+# and Research grants, Engineering's (pmr_cc_rweek). The tooltip's text is vanilla's
 # INVESTMENT_POOL_BREAKDOWN, which ends with INVESTMENT_POOL_CHANGE, the same data functions in every language, so
 # that key gets the line, from localization/<lang>/replace (generate.py): wherever vanilla shows the tooltip, it
 # shows the grants (the Private tab, the budget panel, the construction queue).
@@ -1810,8 +1811,9 @@ def replace_loc():
     """Vanilla keys PMR rewrites, as loc lines (English text inside them falls back per language)."""
     if not GRANT_LINE:
         return []
-    on = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_cc_gweek').GetValue, '(CFixedPoint)0')"
-    return [f' INVESTMENT_POOL_CHANGE:1 "{POOL_CHANGE}[SelectLocalization({on}, \'PMR_PI_GRANTS_TT\', \'PMR_EMPTY\')]"']
+    on = lambda v: f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('{v}').GetValue, '(CFixedPoint)0')"   # noqa: E731
+    return [f' INVESTMENT_POOL_CHANGE:1 "{POOL_CHANGE}[SelectLocalization({on("pmr_cc_gweek")}, \'PMR_PI_GRANTS_TT\', \'PMR_EMPTY\')]'
+            f'[SelectLocalization({on("pmr_cc_rweek")}, \'PMR_PI_RESEARCH_TT\', \'PMR_EMPTY\')]"']
 
 
 def private_tab():
@@ -2164,6 +2166,8 @@ def localization(types):
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
         # the pool tooltip's line (replace_loc), in the style of vanilla's Reinvestment line
         f' PMR_PI_GRANTS_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_gweek\').GetValue)|D+=]#! '
+        'Expansion"',
+        f' PMR_PI_RESEARCH_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_rweek\').GetValue)|D+=]#! '
         'Research grants"',
         ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
         ' PMR_RW_EMPTY:0 "No historical data"',

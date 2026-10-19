@@ -13,7 +13,8 @@ are straight lines in three colourings (done, open, locked), of which one shows.
 
 A node reads its state from the executive's mirror, pmr_cc_st_<line>_<tier> (company_culture.effects, pmr_cc_states):
 0 locked, 1 a click buys it, 2 next but short of points or of a week in the investment pool, 4 bought, 5 ruled out by
-the other branch, 6 its subsidiary being paid for, 7 nothing to found for this company.
+the other branch, 6 its subsidiary being paid for or its research grant running (an Engineering tier: grant_row), 7
+nothing to found for this company.
 """
 import os
 
@@ -21,6 +22,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 import company_culture as cc   # circular: company_culture imports this module; used inside functions only
+import bylaws
 import company_panel
 import icons
 import subsidiaries
@@ -36,7 +38,7 @@ SG_SCOPE = 'GuiScope.SetRoot(Character.MakeScope)'
 LOCAL = 'Company.GetCountry.IsLocalPlayer'
 
 # The node card
-NODE_W, NODE_H = 390, 156
+NODE_W, NODE_H = 360, 156
 FRAME, ICON = 104, 80                   # round frame and invention picture, as the tech node
 CX = FRAME // 2                         # the card, from the frame's middle to the node's right
 CW = NODE_W - CX
@@ -44,10 +46,12 @@ TX0 = FRAME + 10                        # the text column
 TXW = NODE_W - TX0 - 12
 BODY_Y = 50
 CHARTER_Y = NODE_H - 50
+GRANT_Y = NODE_H - 30                   # an Engineering tier's grant row (grant_row)
 SB_ICON = 30
 
-# The canvas: 1250 x 744 fits the left 70% of the window at 1920 x 1080 (1825 x 810 below its header)
-COL_X = {'vx': 0, 'hx': 410, 'en': 860}
+# The canvas: 1146 x 744, top-centred left of the board; with the board it fits the window at 1920 x 1080 and interface
+# scale 1 (1825 x 810 below its header)
+COL_X = {'vx': 0, 'hx': 376, 'en': 786}
 ROOT_X = {'xr': (COL_X['vx'] + COL_X['hx']) // 2, 'er': COL_X['en']}
 GAP = 40
 ROW_Y = [r * (NODE_H + GAP) for r in range(4)]
@@ -60,10 +64,16 @@ CARD_COL = {'active': (30, 63, 77), 'pending': (20, 40, 48), 'bought': (55, 50, 
 LINK_COL = {'done': (214, 178, 120), 'active': (130, 190, 215), 'locked': (66, 80, 84)}
 CLASSES = {'active': (1,), 'pending': (2, 6), 'bought': (4,), 'locked': (0, 5, 7)}
 
-# The board
-BOARD_W = 500
-TORSO_W, TORSO_H = 145, 174             # character_portrait_medium_torso
-HEAD = 80                               # character_portrait_medium
+# The board: a fixed panel right of the trees, its seats and its bylaws
+BOARD_W = 540                           # its contents; the panel is BOARD_W + 2 x BOARD_M
+BOARD_M = 10
+EXEC_H, SEAT_H = 96, 74                 # character_portrait_medium (80 x 88), character_portrait_small2 (60 x 66)
+SEAT_TX = 100
+BADGE = 36
+VOTE = 32
+OPT_H, BAR_H = 40, 10
+APPROVE = 'gfx/interface/icons/generic_icons/approval_icon.dds'
+DISAPPROVE = 'gfx/interface/icons/generic_icons/disapproval_icon.dds'
 
 FULL = 'pmr_cc_full'                    # the GUI variable that opens the full-screen window
 # The full-screen window lives in ingame_hud.gui, outside the company panel, so it reads the company from the
@@ -236,6 +246,17 @@ def sub_body(p, ln):
             f'min = 0\nmax = {subsidiaries.SB_WEEKS}\nvalue = "[FixedPointToFloat({V("pmr_sb_w")})]"\n}}\n}}\n}}\n')
 
 
+def grant_row(k, t):
+    """An Engineering tier (Pat 15:54Z): its research grant at the card's foot, the weekly cost while it is next, the
+    green bar of paid weeks while it runs."""
+    nxt, running = ST(k, t, 1, 2), ST(k, t, 6)
+    return (f'textbox = {{\n{_vis(nxt)}position = {{ {TX0} {GRANT_Y} }}\nsize = {{ {TXW} 24 }}\n'
+            'align = left|nobaseline\nfontsize = 18\nelide = right\ntext = "PMR_RG_PAY"\nalwaystransparent = yes\n}\n'
+            f'widget = {{\n{_vis(running)}position = {{ {TX0} {GRANT_Y + 6} }}\nsize = {{ {TXW - 8} 14 }}\n'
+            'alwaystransparent = yes\ngreen_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
+            f'min = 0\nmax = {cc.GRANT_WEEKS}\nvalue = "[FixedPointToFloat({V("pmr_rg_w")})]"\n}}\n}}\n}}\n')
+
+
 PG_NONE = 'IsDataModelEmpty(Company.GetPrestigeGoods)'
 
 
@@ -332,7 +353,7 @@ def node(p, ln, t, x, y):
         text += sub_body(p, ln)
     elif cc.fx_lines(k, t):
         text += (f'textbox = {{\nposition = {{ {TX0} {BODY_Y} }}\nautoresize = yes\n'
-                 f'maximumsize = {{ {TXW} {(CHARTER_Y if t in ln.charters else NODE_H) - BODY_Y - 4} }}\nmultiline = yes\n'
+                 f'maximumsize = {{ {TXW} {(CHARTER_Y if t in ln.charters else GRANT_Y if k == cc.GRANT else NODE_H) - BODY_Y - 4} }}\nmultiline = yes\n'
                  f'align = left|nobaseline\nfontsize = 19\nfontsize_min = 14\nelide = right\ntext = "PMR_CC_FX_{k}_{t}"\n'
                  'alwaystransparent = yes\n}\n')
     out += (f'widget = {{\n{_vis(f"Not({locked})")}size = {{ 100% 100% }}\n{text}}}\n'
@@ -368,6 +389,8 @@ def node(p, ln, t, x, y):
         out += prestige_badge()
     if t in ln.charters:
         out += charter_gui(k, t, ln.charters[t])
+    if k == cc.GRANT:
+        out += grant_row(k, t)
     return out + '}\n'
 
 
@@ -382,48 +405,116 @@ def trees(p):
         out += link_gui(a, b, segs)
     for ln, t in cc.NODES:
         out += node(p, ln, t, *corner(ln.key, t))
-    return (f'widget = {{\nparentanchor = center\nsize = {{ {CANVAS_W} {CANVAS_H} }}\n{out}}}\n')
+    return (f'widget = {{\nparentanchor = hcenter\nposition = {{ 0 8 }}\nsize = {{ {CANVAS_W} {CANVAS_H} }}\n{out}}}\n')
+
+
+def _badge(x, y, n):
+    """A seat's votes: its weight on the round plate."""
+    return (f'widget = {{\nposition = {{ {x} {y} }}\nsize = {{ {BADGE} {BADGE} }}\ntooltip = "PMR_BL_VOTES_TT"\n'
+            f'icon = {{\nsize = {{ 100% 100% }}\ntexture = "{ROUND_BG}"\n}}\n'
+            f'textbox = {{\n{n}\nparentanchor = center\nautoresize = yes\nalign = center|nobaseline\nfontsize = 20\n'
+            'alwaystransparent = yes\n}\n}\n')
+
+
+def _vote(x, y, value):
+    """A seat's vote on the change under way: for, against, or nothing while it doesn't care."""
+    under_way = GT('pmr_bl_pg', 0)
+    return ''.join(f'icon = {{\n{_vis(AND(under_way, f"EqualTo_CFixedPoint({value}, \'(CFixedPoint){v}\')"))}'
+                   f'position = {{ {x} {y} }}\nsize = {{ {VOTE} {VOTE} }}\ntexture = "{tex}"\nalwaystransparent = yes\n}}\n'
+                   for v, tex in ((1, APPROVE), (-1, DISAPPROVE)))
+
+
+def _seat(h, picture, name, sub, weight, vote, vis=None, ctx=''):
+    """One seat of the board: its picture, its name (and its company), its votes and its vote."""
+    yc = h // 2
+    lines = (_textbox(SEAT_TX, yc - (30 if sub else 15), BOARD_W - SEAT_TX - BADGE - VOTE - 30, 30, name, 22)
+             + (_textbox(SEAT_TX, yc + 2, BOARD_W - SEAT_TX - BADGE - VOTE - 30, 26, sub, 17) if sub else ''))
+    return (f'widget = {{\n{_vis(vis)}{ctx}size = {{ {BOARD_W} {h} }}\nbackground = {{\nusing = entry_bg\n}}\n'
+            + picture + lines + _badge(BOARD_W - BADGE - VOTE - 18, yc - BADGE // 2, weight)
+            + _vote(BOARD_W - VOTE - 8, yc - VOTE // 2, vote) + '}\n')
+
+
+def _ig_picture(h, ig):
+    size = SEAT_H - 18
+    return (f'icon = {{\nposition = {{ {(SEAT_TX - size) // 2} {(h - size) // 2} }}\nsize = {{ {size} {size} }}\n'
+            f'texture = "{bylaws.IG_ICON.format(bylaws.IG_TEX[ig])}"\nalwaystransparent = yes\n}}\n')
+
+
+def seats():
+    """The executive (3 votes), each subsidiary's executive (1), the shareholders (2) and the Workers Council (its
+    weight, while there is one): bylaws.pmr_bl_count."""
+    exe = _seat(EXEC_H, f'character_portrait_medium = {{\nposition = {{ {(SEAT_TX - 80) // 2} 4 }}\n'
+                         'datacontext = "[Company.GetExecutive]"\n}\n',
+                '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
+                f'raw_text = "{bylaws.EXEC_W}"', V('pmr_bl_v_ex'))
+    sub = _seat(SEAT_H, f'character_portrait_small2 = {{\nposition = {{ {(SEAT_TX - 60) // 2} 4 }}\n'
+                         'datacontext = "[Company.GetExecutive]"\n}\n',
+                '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
+                f'raw_text = "{bylaws.SUB_W}"', "Company.MakeScope.Var('pmr_bl_v').GetValue",
+                ctx='datacontext = "[Scope.GetCompany]"\n')
+    subs = (f'flowcontainer = {{\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n'
+            f'datamodel = "[{company_panel.SUBS}]"\nitem = {{\n{sub}}}\n}}\n')
+    share = _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_industrialists'), 'PMR_BL_SHAREHOLDERS', None,
+                  f'raw_text = "{bylaws.SHARE_W}"', V('pmr_bl_v_sh'))
+    council = _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_trade_unions'), 'PMR_BL_COUNCIL', None,
+                    f'text = "[{V("pmr_bl_wc")}|0]"', V('pmr_bl_v_wc'), vis=GT('pmr_bl_wc', 0))
+    return exe + subs + share + council
+
+
+def bylaw_group(g, names):
+    """One group of bylaws: its name, the cancel of a change to it under way, a button per bylaw (the one in force
+    lit; a click on another starts the change, bylaws.pmr_bl_pick_sgui) and the change's bar under its bylaw."""
+    n = len(names)
+    bw = (BOARD_W - 6 * (n - 1)) // n
+    sg = "GetScriptedGui('pmr_bl_pick_sgui')"
+    cancel = "GetScriptedGui('pmr_bl_cancel_sgui')"
+    end = f'{SG_SCOPE}.End'
+    out = (_textbox(0, 0, BOARD_W - 40, 30, f'PMR_BL_GROUP_{g}', 21)
+           + f'button_icon_cancel = {{\n{_vis(AND(LOCAL, EQ("pmr_bl_pg", g)))}position = {{ {BOARD_W - 30} 0 }}\n'
+           f'size = {{ 30 30 }}\nenabled = "[{cancel}.IsValid({end})]"\nonclick = "[{cancel}.Execute({end})]"\n}}\n')
+    for i in range(1, n + 1):
+        c = bylaws.code(g, i)
+        x, y = (i - 1) * (bw + 6), 34
+        scope = f"{SG_SCOPE}.AddScope('opt', MakeScopeValue('(CFixedPoint){c}')).End"
+        label = (f'textbox = {{\nparentanchor = center\nsize = {{ {bw - 10} {OPT_H - 6} }}\nalign = center|nobaseline\n'
+                 f'fontsize = 17\nfontsize_min = 12\nelide = right\ntext = "PMR_BL_NAME_{c}"\nalwaystransparent = yes\n}}\n')
+        box = f'position = {{ {x} {y} }}\nsize = {{ {bw} {OPT_H} }}\n'
+        fx = f'tooltip = "PMR_BL_FX_{c}"\n' if bylaws.fx(c) else ''
+        out += (f'button = {{\n{_vis(EQ(f"pmr_bl_{g}", i))}{box}using = default_button_primary\n{fx}{label}}}\n'
+                f'button = {{\n{_vis(f"Not({EQ(f"pmr_bl_{g}", i)})")}{box}using = default_button\n'
+                f'enabled = "[And({LOCAL}, {sg}.IsValid({scope}))]"\nonclick = "[{sg}.Execute({scope})]"\n'
+                f'tooltip = "PMR_BL_TT_{c}"\n{label}}}\n'
+                f'widget = {{\n{_vis(AND(EQ("pmr_bl_pg", g), EQ("pmr_bl_pv", i)))}position = {{ {x} {y + OPT_H + 4} }}\n'
+                f'size = {{ {bw} {BAR_H} }}\ntooltip = "PMR_BL_BAR_TT"\n'
+                'green_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
+                f'min = 0\nmax = 100\nvalue = "[FixedPointToFloat({V("pmr_bl_pp")})]"\n}}\n}}\n}}\n')
+    return f'widget = {{\nsize = {{ {BOARD_W} {34 + OPT_H + 4 + BAR_H + 4} }}\n{out}}}\n'
 
 
 def board():
-    """The board (Pat 14:43Z): the company's executive, its subsidiaries' executives underneath (company_panel.SUBS)."""
-    name = (f'textbox = {{\nposition = {{ {{X}} {{Y}} }}\nsize = {{ {{W}} 32 }}\nalign = left|nobaseline\nfontsize = {{F}}\n'
-            'fontsize_min = 14\nelide = right\nraw_text = "{T}"\n}\n')
-
-    def nm(x, y, w, f, t):
-        return name.replace('{X}', str(x)).replace('{Y}', str(y)).replace('{W}', str(w)).replace('{F}', str(f)).replace('{T}', t)
-    exec_w = (f'widget = {{\nsize = {{ {BOARD_W} {TORSO_H} }}\n'
-              'character_portrait_medium_torso = {\ndatacontext = "[Company.GetExecutive]"\n}\n'
-              + nm(TORSO_W + 16, 52, BOARD_W - TORSO_W - 16, 26, '[Company.GetExecutive.GetFullNameNoFormatting]')
-              + nm(TORSO_W + 16, 92, BOARD_W - TORSO_W - 16, 20, '[Company.GetNameNoFormatting]')
-              + '}\n')
-    subs = (f'flowcontainer = {{\ndirection = vertical\nspacing = 10\nignoreinvisible = yes\n'
-            f'datamodel = "[{company_panel.SUBS}]"\nitem = {{\n'
-            f'widget = {{\ndatacontext = "[Scope.GetCompany]"\nsize = {{ {BOARD_W} {HEAD + 8} }}\n'
-            'character_portrait_medium = {\nposition = { 30 4 }\ndatacontext = "[Company.GetExecutive]"\n}\n'
-            + nm(HEAD + 46, 14, BOARD_W - HEAD - 46, 22, '[Company.GetExecutive.GetFullNameNoFormatting]')
-            + nm(HEAD + 46, 46, BOARD_W - HEAD - 46, 18, '[Company.GetNameNoFormatting]')
-            + '}\n}\n}\n')
-    return (f'flowcontainer = {{\nposition = {{ 20 12 }}\ndirection = vertical\nspacing = 10\nignoreinvisible = yes\n'
-            f'default_header = {{\nblockoverride "text" {{\ntext = "PMR_CC_BOARD"\n}}\n'
-            f'blockoverride "size" {{\nsize = {{ {BOARD_W} 38 }}\n}}\n}}\n'
-            + exec_w
-            + f'divider_clean = {{\nsize = {{ {BOARD_W} 4 }}\n}}\n'
-            + subs + '}\n')
+    """The board (Pat 14:43Z, 15:37Z): its seats, then the bylaws it passes (bylaws.py)."""
+    def header(key):
+        return (f'default_header = {{\nblockoverride "text" {{\ntext = "{key}"\n}}\n'
+                f'blockoverride "size" {{\nsize = {{ {BOARD_W} 38 }}\n}}\n}}\n')
+    return (f'flowcontainer = {{\nposition = {{ {BOARD_M} 10 }}\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n'
+            + header('PMR_CC_BOARD') + seats()
+            + 'widget = {\nsize = { 10 8 }\n}\n'
+            + header('PMR_BL_HEADER')
+            + ''.join(bylaw_group(g, names) for g, _n, names in bylaws.GROUPS)
+            + '}\n')
 
 
 def body(p, ready):
-    """The window's body, 70 / 30: the trees and the board."""
+    """The window's body: the trees, top-centred in what the board leaves, and the board."""
     return (f'hbox = {{\n{_vis(ready)}layoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\n'
             'margin = { 10 6 }\nspacing = 12\n'
-            'widget = {\nlayoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\n'
-            'layoutstretchfactor_horizontal = 7\nscissor = yes\n'
+            'widget = {\nlayoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\nscissor = yes\n'
             # the tech tree's backdrop painting
             'background = {\nusing = illu_alpha\nfittype = center\n'
             'texture = "gfx/interface/illustrations/tech_tree/illustration_tech_production.dds"\n}\n'
             + trees(p) + '}\n'
-            'widget = {\nlayoutpolicy_horizontal = expanding\nlayoutpolicy_vertical = expanding\n'
-            'layoutstretchfactor_horizontal = 3\nscissor = yes\nbackground = {\nusing = dark_area\n}\n'
+            f'widget = {{\nsize = {{ {BOARD_W + 2 * BOARD_M} 0 }}\nlayoutpolicy_horizontal = fixed\n'
+            'layoutpolicy_vertical = expanding\nscissor = yes\nbackground = {\nusing = dark_area\n}\n'
             + board() + '}\n}\n')
 
 

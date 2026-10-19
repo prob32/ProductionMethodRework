@@ -3,9 +3,9 @@ its sister subsidiary. Test builds, with Company Culture (company_culture.py), w
 
 Each company type has up to two subsidiary types, n = 1 vertical and n = 2 horizontal (company_culture.plan, 'sb'):
 the building types making an input of the company's key building, and the other building types of the key building's
-class, up to SB_SIZE each, the company's own aside. Buying the node charges SB_LEVELS levels' construction cost of
+class, up to SB_SIZE each, the company's own aside. Buying the node charges SB_PAID_LEVELS levels' construction cost of
 the list's first industry to the owner's investment pool, a part every week for SB_WEEKS paid weeks (q43's payment,
-Pat 14:18Z "Paid from pool"); then the subsidiary is founded: a company type of its own (company_pmr_sb_<parent>_<n>)
+Pat 14:18Z "Paid from pool"; one level's since q45, Pat 15:54Z "reduce the ticking cost"); then the subsidiary is founded: a company type of its own (company_pmr_sb_<parent>_<n>)
 founded by add_company with SB_LEVELS levels (COMPANY_MINIMUM_LEVELS_PER_HQ: a company with fewer is dissolved within
 a day, q37) of the first of its industries a state can take. It is listed under the parent's Regional HQs and Assets
 tab and left off the Companies panel (company_panel.py, SUB_LINKS: the parent's variable list pmr_subs, the
@@ -26,6 +26,7 @@ import pdx
 
 SB_SIZE = 8             # industries a subsidiary lists, at most
 SB_LEVELS = 5           # COMPANY_MINIMUM_LEVELS_PER_HQ (00_defines.txt)
+SB_PAID_LEVELS = 1      # the levels whose construction cost the pool pays (Pat 15:54Z; 5 until q44)
 SB_WEEKS = 52           # paid weeks
 TEST_POOL = 1000000     # pmr_sb_test_pool_decision
 CONSTRUCTION_PMS = 'common/production_methods/13_construction.txt'
@@ -35,6 +36,7 @@ SLOT_MODIFIER = 'pmr_sb_company_slots'
 NUMS = (1, 2)           # 1 the supply subsidiary (Vertical Integration), 2 the sister subsidiary (Diversification)
 SLOTS = range(1, SB_SIZE + 1)
 NAME = {1: 'Supply', 2: 'Industries'}
+RETOOL_OF = {}          # building type -> its private retool sites a subsidiary listing it lists too (generate.py)
 
 
 def short(c):
@@ -140,7 +142,7 @@ def kvals(p, v):
         for j, b in enumerate(s, 1):
             out[f'pmr_cc_k_sb{n}_{j}'] = p.sb_types.index(b) + 1
         if s:
-            out[f'pmr_cc_k_sbp{n}'] = SB_LEVELS * p.sb_points[s[0]]
+            out[f'pmr_cc_k_sbp{n}'] = SB_PAID_LEVELS * p.sb_points[s[0]]
     return out
 
 
@@ -163,6 +165,7 @@ def company_types(p, game):
                        + (f'\tbackground = "{bg}"\n' if bg else '')
                        + '\n\tflavored_company = yes\n\n\tbuilding_types = {\n'
                        + ''.join(f'\t\t{b}\n' for b in s)
+                       + ''.join(f'\t\t{r}  # PMR: retooling of {b}\n' for b in s for r in RETOOL_OF.get(b, []))
                        + f'\t}}\n\n\tpotential = {{\n\t\thas_variable = pmr_sb_ok_{t}\n\t}}\n\n'
                        '\tpossible = {\n\t\talways = no\n\t}\n\n\tai_will_do = {\n\t\talways = no\n\t}\n}\n\n')
     return ''.join(out)
