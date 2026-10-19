@@ -1,8 +1,8 @@
 ﻿# Regional HQs subsidiary smoke test, test builds only (Pat 2026-10-19 12:54Z: "I only would want a subsidiary IF it
 # was listed under regional HQ of a parent COMPANY"). Links Subsidiary B to a parent company: the one that took the
-# Textile Mills test (pmr_mono_test_co), else the first company that isn't a test company. B is founded first, with 5
+# Textile Mills test (pmr_mono_test_co), else any company that isn't a test company. B is founded first, with 5
 # Tooling Workshop levels in a state without one, if the save has none. The parent holds B in its variable list
-# pmr_subs, and its executive a copy; B gets pmr_sub = 1 and pmr_parent. company_panel.py lists pmr_subs under the
+# pmr_subs, and its executive a copy; B gets pmr_sub = 1 and pmr_parent, and the country pmr_shq_par (for the log). company_panel.py lists pmr_subs under the
 # parent's Regional HQs and leaves pmr_sub companies off the Companies panel's lists. Logs PMR;rec=SUBHQ_TEST (and
 # SUB_TEST) at once and the next day.
 pmr_subhq_test_decision = {
@@ -78,6 +78,7 @@ pmr_subhq_test_decision = {
 				set_variable = { name = pmr_sub value = 1 }
 				set_variable = { name = pmr_parent value = scope:pmr_shq_parent }
 			}
+			set_variable = { name = pmr_shq_par value = scope:pmr_shq_parent }
 			scope:pmr_shq_parent = {
 				add_to_variable_list = { name = pmr_subs target = scope:pmr_shq_sub }
 				executive ?= {

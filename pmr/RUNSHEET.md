@@ -10,32 +10,32 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: cards that shrink to what they show, a subsidiary under its parent's Regional HQs (q41, test mod; your 1836 PMR Test save carries on)
+## Latest: cards that shrink to what they show, a subsidiary under its parent's Regional HQs (q41, test mod; your France PMR Test save carries on)
 
 From the build thread, after your 13:11Z and 13:27Z messages.
 
 - A Production Methods card shows a recipe-and-automation row only while one of its cells has a figure, and the card
   takes the height of the rows it shows, on the Policies tab and in the company panel's Methods table.
-- A decision, "PMR test: Subsidiary B under a parent company", links PMR Test Subsidiary B to Krupp (the company from
-  the Textile Mills test; founding B first, with 5 Tooling Workshop levels, if the save has none). Krupp's company panel
-  should list B under Regional HQs, and the Companies panel should no longer list B. This is the test of whether a
+- A decision, "PMR test: Subsidiary B under a parent company", links PMR Test Subsidiary B to one of your companies
+  (founding B first, with 5 Tooling Workshop levels, if the save has none). That company's panel should list B under
+  Regional HQs, and the Companies panel should no longer list B. This is the test of whether a
   subsidiary can live under its parent the way you asked; the bundle of three industries comes after it passes.
 - It writes a `SUBHQ_TEST` line (and a `SUB_TEST` line with B's levels) at once and the next day.
 
 1. Load your latest PMR Test save.
 2. Open the Policies tab: look at the lumber camp, iron mine and tooling workshop cards.
-3. Take "PMR test: Subsidiary B under a parent company". Open the Companies panel, then Krupp's company panel, and
-   look at its Regional HQs column (under Regional HQs & Colonies). Click B's entry there.
+3. Take "PMR test: Subsidiary B under a parent company". Open the Companies panel, then each of your companies'
+   panels in turn, and look at the Regional HQs column (under Regional HQs & Colonies). Click B's entry there.
 4. Play a few days, close the game and tell the build thread; it reads debug.log and error.log. q40's rows below still
    apply.
 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
 | K1 | Step 2 | The lumber camp card shows only its rows with figures and is no taller than it needs; cards with every row filled look as before | The card keeps its full height with empty rows: the rows' visibility didn't take (the row test reads the wrong cells). Rows gone but the card as tall as before: the card didn't resize to its body |
-| K2 | Step 3, debug.log | `SUBHQ_TEST` with `has_b=1;sub=1;linked=1;in_list=1;exec_list=1` | `has_b=0`: founding B failed (`SUB_TEST` shows its levels). `in_list=0` or `exec_list=0`: a company (or its executive) can't hold a list of companies; the next build stores B in a plain variable instead |
-| K3 | Step 3 | Krupp's Regional HQs column lists PMR Test Subsidiary B with Prussia's flag, and "No Regional HQs" is gone | B listed without a flag: the panel can't read the company's own variables, but reads its executive's (the next build uses that). Nothing listed while H2 passed: the panel can't read a company out of a variable list (`error.log` names the failing call) |
+| K2 | Step 3, debug.log | `SUBHQ_TEST` with `has_b=1;sub=1;linked=1;in_list=1;exec_list=1` and `parent=` naming one of your companies | `has_b=0`: founding B failed (`SUB_TEST` shows its levels). `in_list=0` or `exec_list=0`: a company (or its executive) can't hold a list of companies; the next build stores B in a plain variable instead |
+| K3 | Step 3 | One company's Regional HQs column lists PMR Test Subsidiary B with your flag, and "No Regional HQs" is gone there | B listed without a flag: the panel can't read the company's own variables, but reads its executive's (the next build uses that). Nothing listed while K2 passed: the panel can't read a company out of a variable list (`error.log` names the failing call) |
 | K4 | Step 3 | Clicking B's entry opens B's company panel | Nothing opens: the panel can't open a company it reads out of a list; the next build opens it another way |
-| K5 | Step 3 | The Companies panel lists your companies and every company without B; Krupp and the others still show | B still listed: the hide test can't read B's `pmr_sub`. Every company gone: the test hides all of them (tell the build thread at once) |
+| K5 | Step 3 | The Companies panel lists your companies and every company without B; the others still show | B still listed: the hide test can't read B's `pmr_sub`. Every company gone: the test hides all of them (tell the build thread at once) |
 
 ## Earlier: a 25% bar to switch, only nearby unlocked options priced, Productivity and Output explained (q40, test mod; your 1836 PMR Test save carries on)
 
