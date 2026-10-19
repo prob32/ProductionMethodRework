@@ -248,6 +248,11 @@ ELECTRICITY = 'electricity'
 # 4 KB blocks, so the last lines before a hang are lost unless one line fills a block by itself.
 TICK_TRIP = 25
 FLUSH_PAD = 4500
+# S3 (performance review 3; Pat, 2026-10-19 02:35Z): a tick skips the level accounting when nothing it reads has
+# changed (pmr_recount_<b>). In test builds a player's building that skipped this many ticks in a row runs it
+# anyway and logs SKIP_MISS for any value the skipped ticks had left different, and the player's country logs a
+# SKIP line a month: the ticks that skipped, ran it, and ran it as that check.
+SKIP_CHECK = 12
 # Second groups (Pat approved both 2026-10-13; built from 03:21Z). A group after the recipe group is
 # either a trade-off, blended by local prices, or a plantation's working conditions, blended by the
 # workforce's acceptance. Each of its options (every method but the one that does nothing) gets a share
@@ -1666,7 +1671,8 @@ def main():
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
-    write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-')))
+    write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-'))
+          .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'))
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -1870,11 +1876,17 @@ def drop_empty(text):
         text = new
 
 
-def flush_log(rec, bk, extra=''):
-    """State scope, every country: a line long enough to push itself and everything before it to disk."""
-    return (f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
+def flush_log(rec, bk, extra='', mine=None):
+    """State scope, every country: a line long enough to push itself and everything before it to disk.
+    With mine (a trigger: the player's), only the player's lines are padded and the others are written plain:
+    padded lines from every country rotated Pat's debug.log about once a minute of play (2026-10-19)."""
+    line = (f'PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
-            f'building={bk}{extra};pad={"." * FLUSH_PAD}"')
+            f'building={bk}{extra}')
+    if mine:
+        return (f'if = {{ limit = {{ {mine} }} debug_log = "{line};pad={"." * FLUSH_PAD}" }} '
+                f'else = {{ debug_log = "{line}" }}')
+    return f'debug_log = "{line};pad={"." * FLUSH_PAD}"'
 
 
 # --trace-from DATE (a diagnostic build, never a release; 2026-10-13: Pat's game froze on 16 August 1838
@@ -2518,6 +2530,28 @@ def highest(ns, cond, leaf, ind='\t'):
     return find(0, len(ns) - 1, ind)
 
 
+LOOKUP_FROM = 7   # an index ladder this long or longer becomes a binary search (lookup); shorter ones cost no more as ladders
+
+
+def lookup(var, ns, body, ind='\t'):
+    """body(x) for the x of ns (ascending integers) that var holds, nothing if it holds none of them: the
+    `if var = 1 ... else_if var = 2 ...` ladder done as a binary search on var > m, each leaf still testing
+    var = x (performance review 3, S2; Pat, 2026-10-19 02:35Z). The same leaf runs for every value, about
+    log2(len(ns)) + 1 checks where the ladder took len(ns) / 2 (a ranch's 36 targets: 7, not 18). Ladders
+    shorter than LOOKUP_FROM stay ladders."""
+    if len(ns) < LOOKUP_FROM:
+        return ''.join(f'{ind}{"if" if j == 0 else "else_if"} = {{ limit = {{ {var} = {x} }} {body(x)} }}\n'
+                       for j, x in enumerate(ns))
+
+    def find(lo, hi, ind):
+        if lo == hi:
+            return f'{ind}if = {{ limit = {{ {var} = {ns[lo]} }} {body(ns[lo])} }}\n'
+        mid = (lo + hi) // 2
+        return (f'{ind}if = {{\n{ind}\tlimit = {{ {var} > {ns[mid]} }}\n' + find(mid + 1, hi, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid, ind + '\t') + f'{ind}}}\n')
+    return find(0, len(ns) - 1, ind)
+
+
 def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None, auto_tiers=(),
                 pair=None, works=()):
     """Every effect for one building type. All run in STATE scope.
@@ -2563,9 +2597,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         return f'is_production_method_active = {{ building_type = {bk} production_method = {r.key} }}'
 
     def on_index(var, body, ind='\t'):
-        """body(i) for the recipe whose index is held in var."""
-        return ''.join(f'{ind}{"if" if i == 1 else "else_if"} = {{ limit = {{ var:{v(var)} = {i} }} {body(i)} }}\n'
-                       for i in range(1, k + 1))
+        """body(i) for the recipe whose index is held in var (a binary search from LOOKUP_FROM recipes on)."""
+        return lookup(f'var:{v(var)}', list(range(1, k + 1)), body, ind)
 
     def setv(name, value):
         return f'set_variable = {{ name = {v(name)} value = {value} }}'
@@ -2585,6 +2618,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + on_index('pmr_to', lambda i: f'set_variable = {{ name = {lv(i)} value = var:{v("pmr_level")} }}')
              + '\t# the government\'s levels are placed again by pmr_sync_gov_<b>\n'
              + ''.join(f'\tset_variable = {{ name = {lvg(i)} value = 0 }}\n' for i in range(1, k + 1))
+             + '\t# the level accounting runs in full again (S3)\n'
+             f'\tif = {{ limit = {{ has_variable = pmr_fp_{b} }} remove_variable = pmr_fp_{b} }}\n'
              + '}\n\n')
 
     # The blend: each recipe's share of the levels, in steps of 1 / SHARE_STEPS, picks the active
@@ -2639,14 +2674,25 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                 f'\t\tif = {{ limit = {{ var:{v(f"pmr_n_{i}")} > var:{v("pmr_nrest")} }} {setv(f"pmr_n_{i}", "var:" + v("pmr_nrest"))} }}\n'
                 f'\t\t{chg(cum, "add", "var:" + v(f"pmr_n_{i}"))}\n')
     o.append(f'pmr_blend_{b} = {{\n\t{setv("pmr_ncum", 0)}\n')
+    if split:
+        # S2: the target's recipe member (pmr_tom_<b>, 0 for no target) found once, so each member tests it
+        # rather than every pair it is in (a ranch's 36 tests, now 7 and one per member)
+        if len(rec_of) != sum(len(idxs) for _, idxs, grp in bm if grp == 'recipe'):
+            raise SystemExit(f'{bk}: a retool target in two recipe members')
+        o.append(f'\t{setv("pmr_tom", 0)}\n' + on_index('pmr_to', lambda i: setv("pmr_tom", rec_of[i])))
     for i, idxs, grp in bm:
         if grp != 'recipe':
             continue
-        on_target = (f'var:{v("pmr_to")} = {idxs[0]}' if len(idxs) == 1 else
+        on_target = (f'var:{v("pmr_tom")} = {i}' if split else
+                     f'var:{v("pmr_to")} = {idxs[0]}' if len(idxs) == 1 else
                      'OR = { ' + ' '.join(f'var:{v("pmr_to")} = {x}' for x in idxs) + ' }')
         o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ {on_target} }} }}\n' + step(i, 'pmr_ncum') + '\t}\n')
-    o.append(on_index('pmr_to', lambda i: f'{setv(f"pmr_n_{rec_of[i]}", SHARE_STEPS)} '
-                                          f'{chg(f"pmr_n_{rec_of[i]}", "subtract", "var:" + v("pmr_ncum"))}'))
+    if split:
+        o.append(lookup(f'var:{v("pmr_tom")}', sorted(set(rec_of.values())),
+                        lambda j: f'{setv(f"pmr_n_{j}", SHARE_STEPS)} {chg(f"pmr_n_{j}", "subtract", "var:" + v("pmr_ncum"))}'))
+    else:
+        o.append(on_index('pmr_to', lambda i: f'{setv(f"pmr_n_{rec_of[i]}", SHARE_STEPS)} '
+                                              f'{chg(f"pmr_n_{rec_of[i]}", "subtract", "var:" + v("pmr_ncum"))}'))
     # automation members (the split): each its own share, rounded, the methods of one group never past the whole
     for grp in dict.fromkeys(grp for _, _, grp in bm if grp != 'recipe'):
         o.append(f'\t# {grp}\n\t{setv("pmr_gcum", 0)}\n'
@@ -2725,8 +2771,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + ''.join(f'\t{chg("pmr_gsum", "add", "var:" + lvg(i))}\n' for i in range(1, k + 1))
              + f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_gsum")} < var:{v("pmr_gov_levels")} }}\n'
              f'\t\t{setv("pmr_gd", "var:" + v("pmr_gov_levels"))}\n\t\t{chg("pmr_gd", "subtract", "var:" + v("pmr_gsum"))}\n'
-             + ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_to")} = {i} }}\n' + place(i, '\t\t\t') + '\t\t}\n'
-                       for i in range(1, k + 1))
+             + (''.join(f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_to")} = {i} }}\n' + place(i, '\t\t\t') + '\t\t}\n'
+                        for i in range(1, k + 1)) if k < LOOKUP_FROM else
+                on_index('pmr_to', lambda i: ' '.join(x.strip() for x in place(i, '').splitlines()), '\t\t'))
              + ''.join(place(i, '\t\t') for i in range(1, k + 1))
              + f'\t}}\n\telse_if = {{\n\t\tlimit = {{ var:{v("pmr_gsum")} > var:{v("pmr_gov_levels")} }}\n'
              f'\t\t{setv("pmr_gd", "var:" + v("pmr_gsum"))}\n\t\t{chg("pmr_gd", "subtract", "var:" + v("pmr_gov_levels"))}\n'
@@ -2771,11 +2818,14 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # a crew (RETOOL_CREW, 0 since Pat's 03:37Z call): then it stays so investors can expand it, until
     # the crew is still short RETOOL_CREW_GRACE_DAYS after its last level landed. Never removed while
     # anything is queued on it (that leaves a NULL_STATE construction).
+    mine = f'OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}'   # the player's, as log() reads it
+
     def release(rbx, side, keep=''):
         seen = 'pmr_seen_gov' if side.startswith('gov') else 'pmr_seen_priv'
         built = v('pmr_retool_built_' + side)
-        # A crewed private one may still have staff when it goes: logged (flush_log) in case that hangs.
-        crumb = '' if side.startswith('gov') else f"\t\t{flush_log('RELEASE', rbx, f';built=[THIS.Var({built!r}).GetValue|0]')}\n"
+        # A crewed private one may still have staff when it goes: logged (flush_log) in case that hangs; padded
+        # only for the player's, at home or abroad.
+        crumb = '' if side.startswith('gov') else f"\t\t{flush_log('RELEASE', rbx, f';built=[THIS.Var({built!r}).GetValue|0]', mine)}\n"
         # the abroad site's levels are also in the government side's totals
         merged = (f'\t\t{chg("pmr_retool_built_gov", "subtract", "var:" + built)}\n'
                   f'\t\t{chg("pmr_retool_q_gov", "subtract", "var:" + v("pmr_retool_q_gova"))}\n' if side == 'gova' else '')
@@ -2836,17 +2886,29 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # privately owned level. Levels a side can't use (it has none left to retool, after a sale) move
     # the other side's. The retool buildings keep their levels between retools, so pmr_seen_<side>
     # counts the levels already used and only the rest move anything.
-    o.append(f'pmr_progress_{b} = {{\n\tpmr_read_retool_{b} = yes\n'
+    # In three parts since S3 (performance review 3; Pat, 2026-10-19 02:35Z): pmr_count_retool_<b> reads the sites
+    # and counts their new levels (pmr_conv_<side>_<b>) every tick; pmr_progress_<b> moves the levels, inside the
+    # level accounting a quiet tick skips (pmr_recount_<b>); pmr_release_retool_<b> removes finished sites every tick.
+    # The three share nothing with the level accounting but those counts, so the order between them is free.
+    def each_pass(conv, gov):
+        # S2: one test of the count per pass; every convert in it tests the count first, and none runs at 0
+        return (f'\tif = {{\n\t\tlimit = {{ var:{v(conv)} > 0 }}\n'
+                + ''.join('\t' + x for x in ''.join(convert(conv, i, gov) for i in range(1, k + 1)).splitlines(True))
+                + '\t}\n')
+    o.append(f'pmr_count_retool_{b} = {{\n\tpmr_read_retool_{b} = yes\n'
              + (''.join(crew(j, rbx) for j, rbx in slots) if RETOOL_CREW else '')
-             + count('gov') + count('priv')
+             + count('gov') + count('priv') + '}\n\n')
+    o.append(f'pmr_progress_{b} = {{\n'
              + f'\t{setv("pmr_gain", 0)}\n\t{setv("pmr_ggain", 0)}\n'
-             + ''.join(convert('pmr_conv_gov', i, True) for i in range(1, k + 1))
-             + ''.join(convert('pmr_conv_priv', i, False) for i in range(1, k + 1))
+             + each_pass('pmr_conv_gov', True)
+             + each_pass('pmr_conv_priv', False)
              + f'\t{chg("pmr_conv_priv", "add", "var:" + v("pmr_conv_gov"))}\n'
-             + ''.join(convert('pmr_conv_priv', i, False) for i in range(1, k + 1))
-             + ''.join(convert('pmr_conv_priv', i, True) for i in range(1, k + 1))
+             + each_pass('pmr_conv_priv', False)
+             + each_pass('pmr_conv_priv', True)
              + on_index('pmr_to', lambda i: f'change_variable = {{ name = {lv(i)} add = var:{v("pmr_gain")} }} '
                                             f'change_variable = {{ name = {lvg(i)} add = var:{v("pmr_ggain")} }}')
+             + '}\n\n')
+    o.append(f'pmr_release_retool_{b} = {{\n'
              + ''.join(release(rbx, f'priv{j}', keep_crew(j) if RETOOL_CREW else '') for j, rbx in slots)
              + release(rbg, 'gov')
              # the abroad site stands while the player's government still has room (pmr_split_retool_<b>)
@@ -3086,6 +3148,60 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + ";unemp=[THIS.Var('pmr_unemp').GetValue|0]")
     done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
 
+    # S3, skip unchanged months (performance review 3; Pat, 2026-10-19 02:35Z). The level accounting
+    # (pmr_recount_<b>: sync_levels, sync_gov, progress, mix) reads the building's level, the target, the
+    # government's levels (pmr_read_gov_<b>), the new retool levels (pmr_count_retool_<b>) and the levels on each
+    # recipe, all and the government's; it writes those levels and mix's shares, which nothing else writes but
+    # pmr_reset_levels_<b> (it drops the fingerprint). Run again on what it left with no new retool level and a
+    # target, it changes nothing: the levels already add up to the building's, the government's to its own. So as
+    # it finishes it keeps what it read (pmr_fp_*_<b>), and a tick that finds every value the same, level by level,
+    # and no new retool level skips it. A retool level finished on any path is a new level here (pmr_conv_*), and
+    # a level moved by anything else differs from its fingerprint. Mix is in it: it reads nothing else.
+    fp = ([('pmr_level', 'pmr_fp_level'), ('pmr_to', 'pmr_fp_to'), ('pmr_gov_levels', 'pmr_fp_gl')]
+          + [(f'pmr_lv_{i}', f'pmr_fp_lv_{i}') for i in range(1, k + 1)]
+          + [(f'pmr_lvg_{i}', f'pmr_fp_lvg_{i}') for i in range(1, k + 1)])
+    same = (f'has_variable = pmr_fp_{b} var:{v("pmr_conv_gov")} <= 0 var:{v("pmr_conv_priv")} <= 0 var:{v("pmr_to")} > 0 '
+            + ' '.join(f'var:{v(a)} = var:{v(s)}' for a, s in fp))
+    o.append(f'pmr_recount_{b} = {{\n\tpmr_sync_levels_{b} = yes\n\tpmr_sync_gov_{b} = yes\n\tpmr_progress_{b} = yes\n'
+             f'\tpmr_mix_{b} = yes\n\tset_variable = pmr_fp_{b}\n'
+             + ''.join(f'\t{setv(s, "var:" + v(a))}\n' for a, s in fp) + '}\n\n')
+    if not RELEASE:
+        # The check (test builds): a player's building that skipped SKIP_CHECK ticks in a row runs the accounting
+        # anyway and logs SKIP_MISS for each value it left different from what the skipped ticks had left.
+        splitting = bool(pair and pair.get('split'))
+        outs = ([f'pmr_lv_{i}' for i in range(1, k + 1)] + [f'pmr_lvg_{i}' for i in range(1, k + 1)]
+                + ['pmr_lv_to', 'pmr_need', 'pmr_p', 'pmr_ui_retooling']
+                + [f'pmr_sh_{i}' for i in range(1, k + 1)] + [f'pmr_lvp_{i}' for i in range(1, k + 1)]
+                + [f'pmr_ash_{a}' for a in range(1, len(auto_tiers) + 1)]
+                + ([f'pmr_rs_{j}' for j, _, _ in bm]
+                   + [f'pmr_rl{s}_{j}' for j, _, grp in bm if grp == 'recipe' for s in ('vg', 'vp')] if splitting else []))
+        o.append(f'pmr_skip_check_{b} = {{\n'
+                 + ''.join(f'\t{setv("pmr_sm" + n[3:], "var:" + v(n))}\n' for n in outs)
+                 + f'\tpmr_recount_{b} = yes\n'
+                 + ''.join(f'\tif = {{ limit = {{ NOT = {{ var:{v(n)} = var:{v("pmr_sm" + n[3:])} }} }} '
+                           'debug_log = "PMR;rec=SKIP_MISS;date=[TimeKeeper.GetCurrentDate.GetString];'
+                           'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                           f'building={bk};var={n};skipped={f("pmr_sm" + n[3:], 3)};full={f(n, 3)}" }}\n' for n in outs)
+                 + ''.join(f'\tremove_variable = {v("pmr_sm" + n[3:])}\n' for n in outs) + '}\n\n')
+
+    def sk_add(name):
+        # the player's monthly SKIP line counts (pmr_skip_report)
+        return (f'owner = {{ if = {{ limit = {{ NOT = {{ has_variable = {name} }} }} set_variable = {{ name = {name} value = 0 }} }} '
+                f'change_variable = {{ name = {name} add = 1 }} }}')
+    recount = (f'\tpmr_read_gov_{b} = yes\n\tpmr_count_retool_{b} = yes\n'
+               '\t# S3: the level accounting only when something it reads has changed (pmr_recount_<b>)\n'
+               f'\tif = {{\n\t\tlimit = {{ NOT = {{ AND = {{ {same} }} }} }}\n\t\tpmr_recount_{b} = yes\n'
+               + ('' if RELEASE else
+                  f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} {sk_add("pmr_sk_ran")} {setv("pmr_skn", 0)} }}\n')
+               + '\t}\n'
+               + ('' if RELEASE else
+                  f'\telse_if = {{\n\t\tlimit = {{ owner = {{ is_player = yes }} }}\n'
+                  f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_skn")} }} }} {setv("pmr_skn", 0)} }}\n'
+                  f'\t\t{chg("pmr_skn", "add", 1)}\n'
+                  f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_skn")} >= {SKIP_CHECK} }}\n\t\t\t{setv("pmr_skn", 0)}\n'
+                  f'\t\t\tpmr_skip_check_{b} = yes\n\t\t\t{sk_add("pmr_sk_checked")}\n\t\t}}\n'
+                  f'\t\telse = {{ {sk_add("pmr_sk_skip")} }}\n\t}}\n')
+               + f'\tpmr_release_retool_{b} = yes\n')
 
     # Every method change, including the tick's own, fires on_production_method_changed, and its tick
     # runs inside the change (seen in 1.14.5: a SWITCH line logged before the line of the tick that
@@ -3179,11 +3295,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
              f'\t\tset_variable = {v("pmr_switched")}\n\t}}\n')
 
-    o.append(f'\tpmr_sync_levels_{b} = yes\n'
-             f'\tpmr_read_gov_{b} = yes\n'
-             f'\tpmr_sync_gov_{b} = yes\n'
-             f'\tpmr_progress_{b} = yes\n'
-             f'\tpmr_mix_{b} = yes\n'
+    o.append(recount
              + (f'\tpmr_works_{b} = yes\n' if works else '') +
              f'\tpmr_blend_{b} = yes\n'
              + ('' if RELEASE else
@@ -3595,7 +3707,7 @@ def dispatch_effects(buildings):
         kw = 'if' if i == 0 else 'else_if'
         types = priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
         o.append(f'\t{kw} = {{\n\t\tlimit = {{ OR = {{ ' + ' '.join(f'is_building_type = {t}' for t in types) + ' } }\n'
-                 f'\t\tstate = {{\n\t\t\t{flush_log("RETOOL_LEVEL", bk)}\n'
+                 f'\t\tstate = {{\n\t\t\t{flush_log("RETOOL_LEVEL", bk, mine=f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}")}\n'
                  f'\t\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t\t}}\n\t}}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'
@@ -3638,6 +3750,14 @@ def dispatch_effects(buildings):
              '\t\tpmr_c_sum_every = yes\n'
              '\t\tdebug_log = "PMR;rec=CSUM;date=[TimeKeeper.GetCurrentDate.GetString]"\n'
              '\t}\n}\n')
+    if not RELEASE:
+        counts = ('pmr_sk_skip', 'pmr_sk_ran', 'pmr_sk_checked')
+        o.append('\n# Country scope, monthly (test builds): the player\'s PMR building ticks since the last SKIP line that\n'
+                 '# skipped the level accounting (S3, pmr_recount_<b>), ran it, and ran it as a check (SKIP_MISS).\n'
+                 'pmr_skip_report = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
+                 '\t\tdebug_log = "PMR;rec=SKIP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+                 + ';'.join(f"{n[7:]}=[THIS.Var('{n}').GetValue|0]" for n in counts) + '"\n'
+                 + ''.join(f'\t\tset_variable = {{ name = {n} value = 0 }}\n' for n in counts) + '\t}\n}\n')
     return ''.join(o)
 
 
@@ -5585,7 +5705,8 @@ pmr_on_building_expanded = {
 # at once instead of at the next month turn.
 pmr_on_acquired_technology = {
 	effect = {
-		if = { limit = { exists = capital } capital = { TECH_CRUMB } }
+		# the player's only: a padded line per country per technology rotated debug.log (2026-10-19)
+		if = { limit = { is_player = yes exists = capital } capital = { TECH_CRUMB } }
 		# The player, for buildings abroad the player owns levels in (pmr_abroad_<b>).
 		if = {
 			limit = { is_player = yes }
@@ -5630,6 +5751,7 @@ pmr_on_monthly_pulse_country = {
 	trigger = { NOT = { has_global_variable = pmr_ticks_paused } }
 	effect = {
 		pmr_c_sum_all = yes
+SKIP_REPORT
 	}
 }
 '''
