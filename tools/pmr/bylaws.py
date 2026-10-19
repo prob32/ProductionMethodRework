@@ -385,17 +385,22 @@ def static_modifiers():
 
 LABEL = {WAGE: 'Wage target', ATTR: 'Job attractiveness', DIV: 'Workforce dividends', THR: 'Throughput',
          COND: 'Dangerous conditions'}
+# Pat 17:24Z ("bonuses to these laws should either format green or red"): +1 where a rise is good for the company,
+# -1 where it is bad (vanilla's colour where it has one: throughput and job attractiveness good, dangerous conditions
+# bad; wages and workforce dividends, neutral in vanilla, cost the company).
+GOOD = {THR: 1, ATTR: 1, COND: -1, WAGE: -1, DIV: -1}
 
 
 def fx(c):
     """A bylaw's effect bullets, values only."""
     pct = lambda x: f'{round(x * 100):+d}%'.replace('-', '−')   # noqa: E731
+    col = lambda good: 'P' if good else 'N'   # noqa: E731
     if c in TRAITS:
-        return [f'• {LABEL[m]} #v {pct(v)}#!' for m, v in TRAITS[c]]
+        return [f'• {LABEL[m]} #{col(v * GOOD[m] > 0)} {pct(v)}#!' for m, v in TRAITS[c]]
     i = c % 10
     if c // 10 == FOCUS and i in FOCUS_AI:
         own, sub = FOCUS_AI[i]
-        return [f'• Own industries #v ×{fmt(own)}#!', f'• Subsidiary industries #v ×{fmt(sub)}#!']
+        return [f'• Own industries #{col(own > 1)} ×{fmt(own)}#!', f'• Subsidiary industries #{col(sub > 1)} ×{fmt(sub)}#!']
     return []
 
 
@@ -409,7 +414,8 @@ def localization():
         loc.append(f' PMR_BL_GROUP_{g}:0 "{name}"')
     for c in CODES:
         sup = f"Support [Character.MakeScope.Var('pmr_bl_s_{c}').GetValue|+=0]"
-        loc += [f' PMR_BL_NAME_{c}:0 "{NAME[c]}"', f' PMR_BL_TT_{c}:0 "{sup}"']
+        loc += [f' PMR_BL_NAME_{c}:0 "{NAME[c]}"', f' PMR_BL_TT_{c}:0 "{sup}"',
+                f' PMR_BL_SUP_{c}:0 "[Character.MakeScope.Var(\'pmr_bl_s_{c}\').GetValue|+=0]"']
         if fx(c):
             loc.append(f' PMR_BL_FX_{c}:0 "' + '\\n'.join(fx(c)) + '"')
     for c in TRAITS:

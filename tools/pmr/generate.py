@@ -233,8 +233,8 @@ PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
 SWITCH_GAIN = 0.25
-PROFIT_RULE = 101    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
-                     # 101: q46, the transportation rule)
+PROFIT_RULE = 102    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
+                     # 101: q46, the transportation rule; 102: q47, figures held to the books)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -2194,6 +2194,10 @@ def wage_effect(bk, b, econ):
             f'\t\t\t\tchange_variable = {{ name = pmr_wg_{b} divide = var:pmr_bk_u }}\n'
             f'\t\t\t\tchange_variable = {{ name = pmr_wg_{b} multiply = 100 }}\n'
             f'\t\t\t\tchange_variable = {{ name = pmr_wg_{b} max = {WAGE_FLOOR} }}\n'
+            '\t\t\t\t# the books\' weekly profit per level at full staffing, which the profit calculation is held to\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_bpl_{b} value = var:pmr_bk_p }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_bk_o }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_level_{b} }}\n'
             '\t\t\t}\n\t\t}\n\t}\n}\n\n')
 
 
@@ -3655,7 +3659,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                    f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
          + '\t# the state\'s own wage for the type (pmr_wage_<b>) and the building\'s throughput\n'
          f'\tpmr_wage_{b} = yes\n\tset_variable = {{ name = pmr_wage value = var:pmr_wg_{b} }}\n'
-         '\tset_variable = { name = pmr_thr value = 1 }\n'
+         '\tset_variable = { name = pmr_thr value = 1 }\n\tset_variable = { name = pmr_off value = 0 }\n'
          + (f'\tif = {{\n\t\tlimit = {{ exists = b:{bk} }}\n\t\tb:{bk} = {{ save_temporary_scope_as = pmr_bk }}\n{thr}'
             '\t\tchange_variable = { name = pmr_thr max = 0.1 }\n\t}\n' if thr else '')]
     # Pat 2026-10-19 13:09Z: "we should only evaluate unlocked items that are +/- from our current to save on calcs. If
@@ -3677,7 +3681,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                     f'\tset_variable = {{ name = {xv("pmr_rw", i)} value = var:pmr_wage }}\n'
                     f'\tchange_variable = {{ name = {xv("pmr_rw", i)} multiply = {fmt(wu / 10000)} }}\n'
                     f'\tset_variable = {{ name = {xv("pmr_rm", i)} value = var:{xv("pmr_rg", i)} }}\n'
-                    f'\tchange_variable = {{ name = {xv("pmr_rm", i)} subtract = var:{xv("pmr_rw", i)} }}\n')
+                    f'\tchange_variable = {{ name = {xv("pmr_rm", i)} subtract = var:{xv("pmr_rw", i)} }}\n'
+                    f'\tchange_variable = {{ name = {xv("pmr_rm", i)} add = var:pmr_off }}\n')
         pre.append(f'pmr_rmx_{i}_{b} = {{\n' + ''.join(body) + '}\n\n')
     rmx = lambda i: f'pmr_rmx_{i}_{b} = yes'   # noqa: E731
     can = lambda i: (f'OR = {{ {active(recipes[i - 1])} {reach(i, True)} }}'   # noqa: E731
@@ -3704,12 +3709,20 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + lookup(f'var:{now}', list(range(1, k + 1)), ref_at, '\t\t') + '\t}\n'
              + '\tif = {\n\t\tlimit = { var:pmr_ref = 0 }\n'
              + lookup(f'var:{v("pmr_pbest")}', list(range(1, k + 1)), ref_at, '\t\t') + '\t}\n')
+    # Pat 2026-10-19 17:23Z (Pommern's rye farm made +GBP 55 a week while PMR priced its method at -49 and moved it down):
+    # the recipe figures leave out what the building's other groups add (its secondary group's liquor, ownership jobs),
+    # so the reference is held to the books' profit per level (pmr_bpl_<b>, wage_effect) and every other option moves by
+    # the same amount (pmr_off), keeping the recipes' differences.
+    def calib(c):
+        rm = xv('pmr_rm', c)
+        return (f'if = {{ limit = {{ has_variable = pmr_bpl_{b} }} set_variable = {{ name = pmr_off value = var:pmr_bpl_{b} }} '
+                f'change_variable = {{ name = pmr_off subtract = var:{rm} }} set_variable = {{ name = {rm} value = var:pmr_bpl_{b} }} }}')
     # its figures (pmr_rr) and the box around it: pmr_lo_<d>, pmr_hi_<d> on axis d, none below it while it makes a profit
     o.append('\tset_variable = { name = pmr_rr value = 0 }\n'
              + ''.join(f'\tset_variable = {{ name = pmr_lo_{d} value = -1 }}\n'
                        f'\tset_variable = {{ name = pmr_hi_{d} value = 999 }}\n' for d in range(1, nd + 1))
              + lookup('var:pmr_ref', list(range(1, k + 1)),
-                      lambda c: f'{rmx(c)} set_variable = {{ name = pmr_rr value = var:{xv("pmr_rm", c)} }} '
+                      lambda c: f'{rmx(c)} {calib(c)} set_variable = {{ name = pmr_rr value = var:{xv("pmr_rm", c)} }} '
                       + ' '.join(f'set_variable = {{ name = pmr_lo_{d} value = {axes[c][d - 1] - 1} }} '
                                  f'set_variable = {{ name = pmr_hi_{d} value = {axes[c][d - 1] + 1} }}'
                                  for d in range(1, nd + 1)))
@@ -3819,7 +3832,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     line = (f'PMR;rec=PROFIT;date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
             f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
-            f"ref={var('pmr_ref')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};"
+            f"ref={var('pmr_ref')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};off={var('pmr_off', 1)};"
             f"earn={var(v('pmr_bke'), 2)};bal={var(v('pmr_bkp'))};occ={var(v('pmr_bko'), 3)};"
             f"rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
             f"can={per('pmr_rav')};veto={per('pmr_rveto')};"
@@ -3968,7 +3981,8 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
         o.append(f'\tchange_variable = {{ name = {cp} multiply = var:pmr_thr }}\n'
                  '\tset_variable = { name = pmr_t value = var:pmr_wage }\n'
                  f'\tchange_variable = {{ name = pmr_t multiply = {fmt(wu / 10000)} }}\n'
-                 f'\tchange_variable = {{ name = {cp} subtract = var:pmr_t }}\n')
+                 f'\tchange_variable = {{ name = {cp} subtract = var:pmr_t }}\n'
+                 f'\tchange_variable = {{ name = {cp} add = var:pmr_off }}\n')
         techs = pair['techs'][a - 1]
         cond = (f'OR = {{ {active(r)} can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }} }}'
                 + (' owner = { ' + ' '.join(f'has_technology_researched = {t}' for t in techs) + ' }' if techs else '')
