@@ -233,8 +233,9 @@ PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
 SWITCH_GAIN = 0.25
-PROFIT_RULE = 103    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
-                     # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway)
+PROFIT_RULE = 104    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
+                     # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway;
+                     # 104: q50, no step down while the building makes money)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -3726,6 +3727,24 @@ def profit_axes(k, pair=None):
     return out
 
 
+def axis_weights(k, pair, axes):
+    """The option at given places, back from profit_axes: index = (recipe - 1) x na + 1 + the sum of each automation
+    place x its weight (pairs are numbered recipe first, then automation option a, a - 1 in mixed radix). Returns
+    (na, weights); checked against every option."""
+    nd = len(axes[1])
+    if nd == 1:
+        na, wts = 1, []
+    else:
+        opts = pair['options']
+        radix = [len(dict.fromkeys(o[g].key for o in opts)) for g in range(len(opts[0]))]
+        na = len(opts)
+        wts = [math.prod(radix[j + 1:]) for j in range(len(radix))]
+    for x, ax in axes.items():
+        if x != (ax[0] - 1) * na + 1 + sum(p * w for p, w in zip(ax[1:], wts)):
+            raise SystemExit(f'axis_weights: option {x} sits at {ax}, which the weights {na}, {wts} do not give back')
+    return na, wts
+
+
 def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair=None):
     """State scope: pmr_profit_<b>, the profit calculation, and pmr_best_<b>, which makes its pick the target.
     The interface Company Culture reads (fixed 2026-10-18; the best-methods windows), recipe index i as everywhere:
@@ -3820,8 +3839,55 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ''.join(f'\t\telse_if = {{ limit = {{ {active(r)} }} {setv("pmr_pbest", i)} }}\n'
                        for i, r in enumerate(recipes, 1) if i > 1)
              + '\t}\n')
-    # the reference (pmr_ref): the default where it can run here, else the last pick where it can, else none (0)
     now = v('pmr_best_now')
+    # Pat 2026-10-19 19:30Z (New Jersey's shipyards made a profit on the newer recipe and were retooled down to a default
+    # the game-start pick had set): "We should ONLY look to even go down a level of PM if we are unprofitable." The floor
+    # (pmr_fl) is the highest option the building's levels run (pmr_lv_<i>_<b>). While the building isn't losing money
+    # (its books, pmr_bpl_<b>, at 0 or more, or no reading yet), a default below the floor on any axis is raised to it at
+    # once, and the box below prices nothing under the reference. A default a loss lowered (pmr_dn_<b>, switch_effect)
+    # is left to finish its retooling.
+    na, wts = axis_weights(k, pair, axes)
+    put = lambda name: lambda i: ' '.join(f'set_variable = {{ name = {name}_{d} value = {axes[i][d - 1]} }}'   # noqa: E731
+                                          for d in range(1, nd + 1))
+    o.append('\t# the floor and the raise (Pat 19:30Z)\n'
+             '\tset_variable = { name = pmr_fl value = 0 }\n\tset_variable = { name = pmr_ok value = 0 }\n'
+             f'\tif = {{\n\t\tlimit = {{ exists = b:{bk} has_variable = {v("pmr_level")} var:{v("pmr_level")} > 0 }}\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_lv_{k}_{b} }}\n'
+             + ''.join(f'\t\t\t{"if" if i == k else "else_if"} = {{ limit = {{ var:pmr_lv_{i}_{b} > 0 }} '
+                       f'set_variable = {{ name = pmr_fl value = {i} }} }}\n' for i in range(k, 0, -1))
+             # game setup runs the first pick before the levels are counted: the method the building runs
+             + '\t\t}\n\t\telse = {\n'
+             + ''.join(f'\t\t\t{"if" if i == k else "else_if"} = {{ limit = {{ {active(recipes[i - 1])} }} '
+                       f'set_variable = {{ name = pmr_fl value = {i} }} }}\n' for i in range(k, 0, -1))
+             + '\t\t}\n\t}\n'
+             f'\tif = {{ limit = {{ var:pmr_fl > 0 OR = {{ NOT = {{ has_variable = pmr_bpl_{b} }} var:pmr_bpl_{b} >= 0 }} }} '
+             'set_variable = { name = pmr_ok value = 1 } }\n'
+             f'\tif = {{\n\t\tlimit = {{ var:pmr_fl > 0 has_variable = {now} var:{now} > 0 }}\n'
+             + lookup('var:pmr_fl', list(range(1, k + 1)), put('pmr_fa'), '\t\t')
+             + lookup(f'var:{now}', list(range(1, k + 1)), put('pmr_da'), '\t\t')
+             + '\t\tif = {\n\t\t\tlimit = { OR = { '
+             + ' '.join(f'var:pmr_da_{d} < var:pmr_fa_{d}' for d in range(1, nd + 1)) + ' } }\n'
+             f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_ok = 1 NOT = {{ has_variable = pmr_dn_{b} }} }}\n'
+             + ''.join(f'\t\t\t\tif = {{ limit = {{ var:pmr_da_{d} < var:pmr_fa_{d} }} '
+                       f'set_variable = {{ name = pmr_da_{d} value = var:pmr_fa_{d} }} }}\n' for d in range(1, nd + 1))
+             # the option at those places: (recipe - 1) x na + 1 + each automation place x its weight
+             + '\t\t\t\tset_variable = { name = pmr_fu value = var:pmr_da_1 }\n'
+             f'\t\t\t\tchange_variable = {{ name = pmr_fu subtract = 1 }}\n\t\t\t\tchange_variable = {{ name = pmr_fu multiply = {na} }}\n'
+             '\t\t\t\tchange_variable = { name = pmr_fu add = 1 }\n'
+             + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_t value = var:pmr_da_{d} }}\n'
+                       f'\t\t\t\tchange_variable = {{ name = pmr_t multiply = {wts[d - 2]} }}\n'
+                       '\t\t\t\tchange_variable = { name = pmr_fu add = var:pmr_t }\n' for d in range(2, nd + 1))
+             + lookup('var:pmr_fu', list(range(1, k + 1)),
+                      lambda i: (f'if = {{ limit = {{ {can(i)} }} '
+                                 f'if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=FLOOR;'
+                                 'date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+                                 f'state=[THIS.GetState.GetNameNoFormatting];building={bk};from=[THIS.Var(\'{now}\').GetValue|0];'
+                                 f'to={i};floor=[THIS.Var(\'pmr_fl\').GetValue|0];books=[THIS.Var(\'pmr_bpl_{b}\').GetValue|1]" }} '
+                                 f'{setv("pmr_best_now", i)} {setv("pmr_sw", 0)} {setv("pmr_swd", 0)} {setv("pmr_swto", 0)} }}'),
+                      '\t\t\t\t')
+             + '\t\t\t}\n\t\t}\n'
+             f'\t\telse_if = {{ limit = {{ has_variable = pmr_dn_{b} }} remove_variable = pmr_dn_{b} }}\n\t}}\n')
+    # the reference (pmr_ref): the default where it can run here, else the last pick where it can, else none (0)
     ref_at = lambda c: (f'set_variable = {{ name = {xv("pmr_rav", c)} value = 0 }} '   # noqa: E731
                         f'if = {{ limit = {{ {can(c)} }} set_variable = {{ name = {xv("pmr_rav", c)} value = 1 }} '
                         f'set_variable = {{ name = pmr_ref value = {c} }} }}')
@@ -3847,7 +3913,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                       + ' '.join(f'set_variable = {{ name = pmr_lo_{d} value = {axes[c][d - 1] - 1} }} '
                                  f'set_variable = {{ name = pmr_hi_{d} value = {axes[c][d - 1] + 1} }}'
                                  for d in range(1, nd + 1)))
-             + '\tif = {\n\t\tlimit = { var:pmr_ref > 0 var:pmr_rr > 0 }\n'
+             + '\tif = {\n\t\tlimit = { var:pmr_ref > 0 OR = { var:pmr_rr >= 0 var:pmr_ok = 1 } }\n'
              + ''.join(f'\t\tset_variable = {{ name = pmr_lo_{d} value = var:pmr_hi_{d} }}\n'
                        f'\t\tchange_variable = {{ name = pmr_lo_{d} subtract = 1 }}\n' for d in range(1, nd + 1))
              + '\t}\n')
@@ -3953,7 +4019,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     line = (f'PMR;rec=PROFIT;date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
             f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
-            f"ref={var('pmr_ref')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};off={var('pmr_off', 1)};"
+            f"ref={var('pmr_ref')};floor={var('pmr_fl')};ok={var('pmr_ok')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};off={var('pmr_off', 1)};"
             f"earn={var(v('pmr_bke'), 2)};bal={var(v('pmr_bkp'))};occ={var(v('pmr_bko'), 3)};"
             f"rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
             f"can={per('pmr_rav')};veto={per('pmr_rveto')};"
@@ -4027,6 +4093,9 @@ def switch_effect(b, bk, k, setv, v, var):
             f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};months={var(v('pmr_sw'))}\" }}\n"
             f'\t\t\t{setv("pmr_best_now", "var:" + pick)}\n'
+            # a default a loss lowered keeps the floor from raising it while its levels retool (profit_effect)
+            f'\t\t\tif = {{ limit = {{ var:{v("pmr_swd")} = -1 }} set_variable = pmr_dn_{b} }}\n'
+            f'\t\t\telse_if = {{ limit = {{ has_variable = pmr_dn_{b} }} remove_variable = pmr_dn_{b} }}\n'
             # the next tick prices the options around the new default (profit_effect's box)
             f'\t\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
             + clear.replace('\t\t', '\t\t\t') + '\t\t}\n\t}\n'
