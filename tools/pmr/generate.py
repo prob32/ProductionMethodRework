@@ -237,9 +237,14 @@ PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
 SWITCH_GAIN = 0.25
-PROFIT_RULE = 104    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
+# Pat, 2026-10-19 22:47Z (decision card "Both", observer run q51: USA ports went Industrial -> Basic -> Industrial ->
+# Basic in four months on figures of -£45 to +£4, which the relative test reads as +171%): a switch also needs
+# SWITCH_MIN £ a week per level over the default, and a building whose books can't be read (pmr_bsx_<b>: government
+# paid, subsidised, nearly empty) keeps its default.
+SWITCH_MIN = 20
+PROFIT_RULE = 105    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
                      # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway;
-                     # 104: q50, no step down while the building makes money)
+                     # 104: q50, no step down while the building makes money; 105: q52, SWITCH_MIN and unread books)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -4004,15 +4009,19 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         if body:
             o.append(f'\t{"if" if first else "else_if"} = {{\n\t\tlimit = {{ var:pmr_ref = {c} }}\n{body}\t}}\n')
             first = False
-    # the pick: the reference unless another recipe beats its profit (pmr_rr) by SWITCH_GAIN of it (pmr_hu); a pick
-    # that can't run sets none
+    # the pick: the reference unless another recipe beats its profit (pmr_rr) by SWITCH_GAIN of it and SWITCH_MIN
+    # (pmr_hu); a pick that can't run sets none
     o.append('\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
     o.append('\tset_variable = { name = pmr_hu value = var:pmr_rr }\n'
              '\tif = { limit = { var:pmr_hu < 0 } change_variable = { name = pmr_hu multiply = -1 } }\n'
              f'\tchange_variable = {{ name = pmr_hu multiply = {fmt(SWITCH_GAIN)} }}\n'
+             f'\tchange_variable = {{ name = pmr_hu max = {fmt(SWITCH_MIN)} }}\n'
              # the first run at market prices replaces the setup pick (base prices) freely, as it stands at once
              f'\tif = {{ limit = {{ OR = {{ has_global_variable = pmr_setup AND = {{ has_variable = pmr_month '
-             f'NOT = {{ has_variable = pmr_pmkt_{b} }} }} }} }} set_variable = {{ name = pmr_hu value = 0 }} }}\n')
+             f'NOT = {{ has_variable = pmr_pmkt_{b} }} }} }} }} set_variable = {{ name = pmr_hu value = 0 }} }}\n'
+             # books that can't be read keep the default (SWITCH_MIN above); a hurdle under pmr_pv's start, so a default
+             # that can no longer run still gives way
+             f'\tif = {{ limit = {{ has_variable = pmr_bsx_{b} }} set_variable = {{ name = pmr_hu value = 100000 }} }}\n')
     for i in range(1, k + 1):
         o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_rav", i)} = 1 var:{xv("pmr_rveto", i)} = 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_t value = var:{xv("pmr_rm", i)} }}\n'
