@@ -768,7 +768,8 @@ def pf_effects(shorts):
     building type b with PMR's profit pick, the level-weighted averages over the country's states of the pick's
     profit per level a week (pmr_prm_<b>) as pmr_pavg_<b> and of its vanilla score terms (pmr_pvs_<b>) as
     pmr_pterm_<b>, which pmr_ai_pt_<b> adds to the type's ai_value, and of its parts for the Policies tooltip: the profit
-    term where positive as pmr_ptp_<b> (productivity) and the output term as pmr_pto_<b> (the rest is losses). They go
+    term where positive as pmr_ptp_<b> (productivity), the output term as pmr_pto_<b> (the rest is losses) and the
+    pick's employees per level as pmr_pte_<b> (Productivity's nested tooltip, Pat 2026-10-19 12:56Z). They go
     when no state of the country has the type, so it adds nothing there. The player's figures go to debug.log
     (PMR;rec=PF)."""
     o = ['# Country scope. A building type\'s average profit and vanilla score terms (private_investment.pf_effects).\n\n']
@@ -778,6 +779,7 @@ def pf_effects(shorts):
                  f'\tset_variable = {{ name = pmr_pf_l_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pf_p_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pf_o_{b} value = 0 }}\n'
+                 f'\tset_variable = {{ name = pmr_pf_e_{b} value = 0 }}\n'
                  f'\tevery_scope_state = {{\n\t\tlimit = {{ has_variable = pmr_prm_{b} has_variable = pmr_pvs_{b} '
                  f'has_variable = pmr_level_{b} var:pmr_level_{b} > 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_pft value = var:pmr_prm_{b} }}\n'
@@ -796,16 +798,20 @@ def pf_effects(shorts):
                  f'\t\t\tset_variable = {{ name = pmr_pfu value = var:pmr_pvs_{b} }}\n'
                  f'\t\t\tchange_variable = {{ name = pmr_pfu subtract = var:pmr_pvp_{b} }}\n'
                  f'\t\t\tchange_variable = {{ name = pmr_pfu multiply = var:pmr_level_{b} }}\n'
+                 f'\t\t\tset_variable = {{ name = pmr_pfe value = 0 }}\n'
+                 f'\t\t\tif = {{ limit = {{ has_variable = pmr_pve_{b} }} set_variable = {{ name = pmr_pfe value = var:pmr_pve_{b} }} }}\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_pfe multiply = var:pmr_level_{b} }}\n'
                  f'\t\t\towner = {{\n\t\t\t\tchange_variable = {{ name = pmr_pf_p_{b} add = scope:pmr_st.var:pmr_pft }}\n'
-                 f'\t\t\t\tchange_variable = {{ name = pmr_pf_o_{b} add = scope:pmr_st.var:pmr_pfu }}\n\t\t\t}}\n\t\t}}\n'
-                 '\t\tremove_variable = pmr_pft\n\t\tremove_variable = pmr_pfu\n\t}\n'
+                 f'\t\t\t\tchange_variable = {{ name = pmr_pf_o_{b} add = scope:pmr_st.var:pmr_pfu }}\n'
+                 f'\t\t\t\tchange_variable = {{ name = pmr_pf_e_{b} add = scope:pmr_st.var:pmr_pfe }}\n\t\t\t}}\n\t\t}}\n'
+                 '\t\tremove_variable = pmr_pft\n\t\tremove_variable = pmr_pfu\n\t\tremove_variable = pmr_pfe\n\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_pf_l_{b} > 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_pavg_{b} value = var:pmr_pf_s_{b} }}\n'
                  f'\t\tchange_variable = {{ name = pmr_pavg_{b} divide = var:pmr_pf_l_{b} }}\n'
                  f'\t\tset_variable = {{ name = pmr_pterm_{b} value = var:pmr_pf_t_{b} }}\n'
                  f'\t\tchange_variable = {{ name = pmr_pterm_{b} divide = var:pmr_pf_l_{b} }}\n'
                  + ''.join(f'\t\tset_variable = {{ name = pmr_pt{x}_{b} value = var:pmr_pf_{x}_{b} }}\n'
-                           f'\t\tchange_variable = {{ name = pmr_pt{x}_{b} divide = var:pmr_pf_l_{b} }}\n' for x in 'po')
+                           f'\t\tchange_variable = {{ name = pmr_pt{x}_{b} divide = var:pmr_pf_l_{b} }}\n' for x in 'poe')
                  +
                  '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
                  '\t\t\tdebug_log = "PMR;rec=PF;date=[TimeKeeper.GetCurrentDate.GetString];'
@@ -813,8 +819,8 @@ def pf_effects(shorts):
                  f"levels=[THIS.Var('pmr_pf_l_{b}').GetValue|0];avg=[THIS.Var('pmr_pavg_{b}').GetValue|1];"
                  f"term=[THIS.Var('pmr_pterm_{b}').GetValue|0]\"\n\t\t}}\n\t}}\n"
                  f'\telse = {{\n\t\tremove_variable = pmr_pavg_{b}\n\t\tremove_variable = pmr_pterm_{b}\n'
-                 f'\t\tremove_variable = pmr_ptp_{b}\n\t\tremove_variable = pmr_pto_{b}\n\t}}\n'
-                 + ''.join(f'\tremove_variable = pmr_pf_{x}_{b}\n' for x in 'stlpo') + '}\n\n')
+                 f'\t\tremove_variable = pmr_ptp_{b}\n\t\tremove_variable = pmr_pto_{b}\n\t\tremove_variable = pmr_pte_{b}\n\t}}\n'
+                 + ''.join(f'\tremove_variable = pmr_pf_{x}_{b}\n' for x in 'stlpoe') + '}\n\n')
     o.append('pmr_pf_all = {\n' + ''.join(f'\tpmr_pf_{b} = yes\n' for b in shorts) + '}\n')
     return ''.join(o)
 

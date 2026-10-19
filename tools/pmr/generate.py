@@ -215,11 +215,13 @@ AUTOMATION_GOODS_STEP = 0.1    # goods rounded down to this, never below it, so 
 # The profit calculation (Pat, 2026-10-18 17:06Z, for Company Culture's best-methods window; SUMMARY.md §3 of
 # /mnt/project-files/pmr/retool-profitability): each recipe's weekly profit per level at the state's prices,
 # wages at pmr_wage (AUTOMATION_WAGE until a measured local wage replaces it), the best one in pmr_pbest_<b>.
-# A recipe other than the current pick must beat it by PROFIT_STICK_UP of its margin when newer and
-# PROFIT_STICK_DOWN when older (vanilla's x0.95 and x0.75 stickiness, ai:1010-1011), and a recipe needing more
-# of an input whose price is at the +75% cap is vetoed (vanilla's x0.01 for shortages, ai:1001). Pat,
-# 2026-10-19 01:07Z ("diesel pumps when we have little to no oil"): the pick itself is vetoed too when it needs
-# more of a capped input than an older recipe, so a shortage moves the pick down.
+# Pat, 2026-10-19 12:59Z ("a threshold; new combination is at least 25% more productive; then progress points speed
+# up for how much more productive it really is"): a recipe other than the default (pmr_best_now_<b>, else the last
+# pick) becomes the pick only when its profit beats the default's by SWITCH_GAIN of the default's, newer or older,
+# and the switching bar then gains gain / SWITCH_GAIN points a month (at least 1, at most SWITCH_MONTHS). A recipe
+# needing more than the default of an input whose price is at the +75% cap is vetoed (vanilla's x0.01 for
+# shortages, ai:1001); the default itself no longer is (Pat 12:58Z, "why is this happening if rail is a better
+# deal?": the 01:07Z rule moved iron mines off Rail Transportation while engines sat at the cap).
 # Pat, 17:14Z: the pick decides how new builds and retooling go (PROFIT_TARGET; False puts back the newest
 # runnable recipe), computed only when something changed or on a re-check every six months (profit_effect).
 # Pat, 2026-10-19 01:07Z: a new pick becomes that default (pmr_best_now_<b>) only once a bar has filled for
@@ -228,8 +230,8 @@ PROFIT_TARGET = True
 PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
-PROFIT_STICK_UP = 0.05
-PROFIT_STICK_DOWN = 0.25
+SWITCH_GAIN = 0.25
+PROFIT_RULE = 100    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -3622,15 +3624,37 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     return ''.join(o)
 
 
+def profit_axes(k, pair=None):
+    """Option index i (1..k) -> its place on each axis, the recipe first: (i,) for a type without automation pairs; with
+    the split (recipe ri, automation option a) -> (ri, its method's place in each automation group), groups in vanilla's
+    order, as automation_options builds them (a - 1 in mixed radix, the last group fastest)."""
+    if not (pair and pair.get('split')):
+        return {i: (i,) for i in range(1, k + 1)}
+    opts = pair['options']
+    radix = [len(dict.fromkeys(o[g].key for o in opts)) for g in range(len(opts[0]))] if opts and opts[0] else []
+    out = {}
+    for (ri, a), x in pair['index'].items():
+        rest, place = a - 1, []
+        for n in reversed(radix):
+            place.append(rest % n)
+            rest //= n
+        out[x] = (ri, *reversed(place))
+    assert sorted(out) == list(range(1, k + 1)), 'profit_axes: the pairs are not the options 1..k'
+    return out
+
+
 def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair=None):
     """State scope: pmr_profit_<b>, the profit calculation, and pmr_best_<b>, which makes its pick the target.
     The interface Company Culture reads (fixed 2026-10-18; the best-methods windows), recipe index i as everywhere:
       pmr_rg_<i>_<b>     goods margin per level per week at the state's prices (outputs minus inputs, GBP) x pmr_thr
       pmr_rw_<i>_<b>     wages per level per week: wage units x pmr_wage / 10,000
       pmr_rm_<i>_<b>     pmr_rg - pmr_rw, the profit per level per week
-      pmr_rav_<i>_<b>    1 while recipe i can become the target here (pmr_newest_<b>'s rule)
-      pmr_rveto_<i>_<b>  1 while recipe i needs more of an input than the current pick and its price is at the cap
-      pmr_pbest_<b>      the pick: best pmr_rm of the runnable, unvetoed recipes, sticky (PROFIT_STICK_*); 0 if none
+      pmr_rav_<i>_<b>    1 while recipe i can become the target here (pmr_newest_<b>'s rule) and this run priced it:
+                         the reference, or one step from it (Pat 13:09Z); 0 otherwise, its figures then an earlier run's
+      pmr_rveto_<i>_<b>  1 while recipe i needs more of an input than the default and its price is at the cap
+      pmr_pbest_<b>      the pick: the best pmr_rm of the runnable, unvetoed recipes, the default unless another beats
+                         it by SWITCH_GAIN; 0 if none
+      pmr_swg_<b>        the pick's gain over the default (0.3 = 30% more profit), pmr_swr_<b> the bar's points a month
       pmr_prm_<b>        the pick's pmr_rm (the panel's pick row)
       pmr_cwp_<t>_<b>    goods-line types (Company Culture, CC_WORKS), t = 1..3: tier t's special method a level a week,
                          its base recipe with WORKS_OUT[t] more of its main output and WORKS_IN[t] more of its extra input
@@ -3649,7 +3673,16 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     newest = (f'\tpmr_newest_{b} = yes\n')
     if not econ or not PROFIT_TARGET:
         return f'pmr_best_{b} = {{\n{newest}\t{setv("pmr_best_now", "var:" + v("pmr_new_now"))}\n}}\n\n'
+    # Pat 2026-10-19 13:09Z: the newest runnable recipe (pmr_newest_<b>) tests every recipe from the newest down, locked
+    # ones first, so it runs only where it can have changed: the first time, in a research pass (pmr_research), and
+    # when the state's electricity changed since (pmr_nel_<b>). The re-check timer catches anything else.
+    scan = f'pmr_newest_{b} = yes set_variable = {{ name = pmr_nel_{b} value = var:pmr_elec }}'
+    newest = (f'\tif = {{ limit = {{ OR = {{ NOT = {{ has_variable = pmr_nel_{b} }} NOT = {{ has_variable = {v("pmr_new_now")} }} }} }} '
+              f'{scan} }}\n'
+              f'\telse_if = {{ limit = {{ OR = {{ has_variable = pmr_research NOT = {{ var:pmr_nel_{b} = var:pmr_elec }} }} }} '
+              f'{scan} }}\n')
     xv = lambda name, i: f'{name}_{i}_{b}'   # noqa: E731
+    cv = lambda name, op, x: f'change_variable = {{ name = {v(name)} {op} = {x} }}'   # noqa: E731
     top = fmt(1 + PRICE_LADDER[-1] / 100)
     works = CC_WORKS.get(bk)
     goods = sorted({g for gd, _ in list(econ) + list((pair or {}).get('econ', {}).values())
@@ -3670,21 +3703,34 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
          '\tset_variable = { name = pmr_thr value = 1 }\n'
          + (f'\tif = {{\n\t\tlimit = {{ exists = b:{bk} }}\n\t\tb:{bk} = {{ save_temporary_scope_as = pmr_bk }}\n{thr}'
             '\t\tchange_variable = { name = pmr_thr max = 0.1 }\n\t}\n' if thr else '')]
+    # Pat 2026-10-19 13:09Z: "we should only evaluate unlocked items that are +/- from our current to save on calcs. If
+    # our current is profitable we should never evaluate going back down." Each option's figures are a scripted effect of
+    # their own (pmr_rmx_<i>_<b>), run for the reference (the default where it can run, else the last pick) and then only
+    # for options one step from it on every axis (recipe, each automation group: profit_axes), none below it while it
+    # makes a profit, and only those the owner can run. Without a reference every option that can run is priced.
+    axes = profit_axes(k, pair)
+    nd = len(axes[1])
+    pre = []
     for i, (gd, wu) in enumerate(econ, 1):
-        o.append(f'\tset_variable = {{ name = {xv("pmr_rg", i)} value = 0 }}\n')
+        body = [f'\tset_variable = {{ name = {xv("pmr_rg", i)} value = 0 }}\n']
         for g, q in sorted(gd.items()):
             if goods_cost.get(g):
-                o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{g} }}\n'
-                         f'\tchange_variable = {{ name = pmr_t multiply = {fmt(q * goods_cost[g])} }}\n'
-                         f'\tchange_variable = {{ name = {xv("pmr_rg", i)} add = var:pmr_t }}\n')
-        o.append(f'\tchange_variable = {{ name = {xv("pmr_rg", i)} multiply = var:pmr_thr }}\n'
-                 f'\tset_variable = {{ name = {xv("pmr_rw", i)} value = var:pmr_wage }}\n'
-                 f'\tchange_variable = {{ name = {xv("pmr_rw", i)} multiply = {fmt(wu / 10000)} }}\n'
-                 f'\tset_variable = {{ name = {xv("pmr_rm", i)} value = var:{xv("pmr_rg", i)} }}\n'
-                 f'\tchange_variable = {{ name = {xv("pmr_rm", i)} subtract = var:{xv("pmr_rw", i)} }}\n'
-                 f'\tset_variable = {{ name = {xv("pmr_rav", i)} value = 0 }}\n'
-                 f'\tif = {{ limit = {{ OR = {{ {active(recipes[i - 1])} {reach(i, True)} }} }} '
-                 f'set_variable = {{ name = {xv("pmr_rav", i)} value = 1 }} }}\n')
+                body.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{g} }}\n'
+                            f'\tchange_variable = {{ name = pmr_t multiply = {fmt(q * goods_cost[g])} }}\n'
+                            f'\tchange_variable = {{ name = {xv("pmr_rg", i)} add = var:pmr_t }}\n')
+        body.append(f'\tchange_variable = {{ name = {xv("pmr_rg", i)} multiply = var:pmr_thr }}\n'
+                    f'\tset_variable = {{ name = {xv("pmr_rw", i)} value = var:pmr_wage }}\n'
+                    f'\tchange_variable = {{ name = {xv("pmr_rw", i)} multiply = {fmt(wu / 10000)} }}\n'
+                    f'\tset_variable = {{ name = {xv("pmr_rm", i)} value = var:{xv("pmr_rg", i)} }}\n'
+                    f'\tchange_variable = {{ name = {xv("pmr_rm", i)} subtract = var:{xv("pmr_rw", i)} }}\n')
+        pre.append(f'pmr_rmx_{i}_{b} = {{\n' + ''.join(body) + '}\n\n')
+    rmx = lambda i: f'pmr_rmx_{i}_{b} = yes'   # noqa: E731
+    can = lambda i: f'OR = {{ {active(recipes[i - 1])} {reach(i, True)} }}'   # noqa: E731
+    # a building's first run gives every option figures (0) for the cards to read
+    o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {xv("pmr_rm", 1)} }} }}\n'
+             + ''.join(f'\t\tset_variable = {{ name = {xv(n, i)} value = 0 }}\n'
+                       for i in range(1, k + 1) for n in ('pmr_rg', 'pmr_rw', 'pmr_rm'))
+             + '\t}\n')
     # the current pick: the last one, else PMR's target, else the recipe the building runs, else the oldest
     o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_pbest")} }} }}\n\t\t{setv("pmr_pbest", 1)}\n'
              f'\t\tif = {{ limit = {{ has_variable = {v("pmr_to")} var:{v("pmr_to")} > 0 }} '
@@ -3692,8 +3738,55 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ''.join(f'\t\telse_if = {{ limit = {{ {active(r)} }} {setv("pmr_pbest", i)} }}\n'
                        for i, r in enumerate(recipes, 1) if i > 1)
              + '\t}\n')
-    # the veto: an input recipe i needs more of than the pick c, at the price cap. One branch per pick c, so a run
-    # tests about k/2 picks and then k recipes, not k x (k-1) (perf review 3, S1)
+    # the reference (pmr_ref): the default where it can run here, else the last pick where it can, else none (0)
+    now = v('pmr_best_now')
+    ref_at = lambda c: (f'set_variable = {{ name = {xv("pmr_rav", c)} value = 0 }} '   # noqa: E731
+                        f'if = {{ limit = {{ {can(c)} }} set_variable = {{ name = {xv("pmr_rav", c)} value = 1 }} '
+                        f'set_variable = {{ name = pmr_ref value = {c} }} }}')
+    o.append('\tset_variable = { name = pmr_ref value = 0 }\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = {now} }}\n'
+             + lookup(f'var:{now}', list(range(1, k + 1)), ref_at, '\t\t') + '\t}\n'
+             + '\tif = {\n\t\tlimit = { var:pmr_ref = 0 }\n'
+             + lookup(f'var:{v("pmr_pbest")}', list(range(1, k + 1)), ref_at, '\t\t') + '\t}\n')
+    # its figures (pmr_rr) and the box around it: pmr_lo_<d>, pmr_hi_<d> on axis d, none below it while it makes a profit
+    o.append('\tset_variable = { name = pmr_rr value = 0 }\n'
+             + ''.join(f'\tset_variable = {{ name = pmr_lo_{d} value = -1 }}\n'
+                       f'\tset_variable = {{ name = pmr_hi_{d} value = 999 }}\n' for d in range(1, nd + 1))
+             + lookup('var:pmr_ref', list(range(1, k + 1)),
+                      lambda c: f'{rmx(c)} set_variable = {{ name = pmr_rr value = var:{xv("pmr_rm", c)} }} '
+                      + ' '.join(f'set_variable = {{ name = pmr_lo_{d} value = {axes[c][d - 1] - 1} }} '
+                                 f'set_variable = {{ name = pmr_hi_{d} value = {axes[c][d - 1] + 1} }}'
+                                 for d in range(1, nd + 1)))
+             + '\tif = {\n\t\tlimit = { var:pmr_ref > 0 var:pmr_rr > 0 }\n'
+             + ''.join(f'\t\tset_variable = {{ name = pmr_lo_{d} value = var:pmr_hi_{d} }}\n'
+                       f'\t\tchange_variable = {{ name = pmr_lo_{d} subtract = 1 }}\n' for d in range(1, nd + 1))
+             + '\t}\n')
+    # every other option: priced only inside the box and where it can run (pmr_rav_<i>_<b> 1), else pmr_rav 0; the
+    # recipe axis first, so a recipe outside the box skips all its automation options at one check
+    def inside(i, dims):
+        return ' '.join(f'var:pmr_lo_{d} <= {axes[i][d - 1]} var:pmr_hi_{d} >= {axes[i][d - 1]}' for d in dims)
+
+    def price(i, ind):
+        body = (f'{ind}if = {{\n{ind}\tlimit = {{ NOT = {{ var:pmr_ref = {i} }} }}\n'
+                f'{ind}\tset_variable = {{ name = {xv("pmr_rav", i)} value = 0 }}\n'
+                f'{ind}\tif = {{ limit = {{ {can(i)} }} set_variable = {{ name = {xv("pmr_rav", i)} value = 1 }} {rmx(i)} }}\n'
+                f'{ind}}}\n')
+        rest = inside(i, range(2, nd + 1))
+        if not rest:
+            return body
+        return (f'{ind}if = {{\n{ind}\tlimit = {{ {rest} }}\n' + body.replace(ind, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{ set_variable = {{ name = {xv("pmr_rav", i)} value = 0 }} }}\n')
+    by_first = {}
+    for i in range(1, k + 1):
+        by_first.setdefault(axes[i][0], []).append(i)
+    for c0, xs in sorted(by_first.items()):
+        o.append(f'\tif = {{\n\t\tlimit = {{ var:pmr_lo_1 <= {c0} var:pmr_hi_1 >= {c0} }}\n'
+                 + ''.join(price(i, '\t\t') for i in xs)
+                 + '\t}\n\telse = {\n'
+                 + ''.join(f'\t\tset_variable = {{ name = {xv("pmr_rav", i)} value = 0 }}\n' for i in xs)
+                 + '\t}\n')
+    # the veto: an input recipe i needs more of than the reference c, at the price cap. One branch per reference c,
+    # so a run tests about k/2 references and then k recipes, not k x (k-1) (perf review 3, S1)
     inputs = [{g: -q for g, q in gd.items() if q < 0 and goods_cost.get(g)} for gd, _ in econ]
     o += [f'\tset_variable = {{ name = {xv("pmr_rveto", i)} value = 0 }}\n' for i in range(1, k + 1)]
 
@@ -3707,34 +3800,38 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
             more = [g for g, q in sorted(inputs[i - 1].items()) if q > inputs[c - 1].get(g, 0) + 1e-9]
             if c != i and more:
                 body += capped(more, i)
-        # the pick itself, when it needs more of a capped input than an older recipe
-        own = [g for g, q in sorted(inputs[c - 1].items())
-               if any(q > inputs[j - 1].get(g, 0) + 1e-9 for j in range(1, c))]
-        if own:
-            body += capped(own, c)
         if body:
-            o.append(f'\t{"if" if first else "else_if"} = {{\n\t\tlimit = {{ var:{v("pmr_pbest")} = {c} }}\n{body}\t}}\n')
+            o.append(f'\t{"if" if first else "else_if"} = {{\n\t\tlimit = {{ var:pmr_ref = {c} }}\n{body}\t}}\n')
             first = False
-    # the pick, against the current one's hurdles (pmr_hu newer, pmr_hd older); a pick that can't run sets none
-    o.append('\tset_variable = { name = pmr_hu value = 0 }\n\tset_variable = { name = pmr_hd value = 0 }\n'
-             '\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
-    for c in range(1, k + 1):
-        o.append(f'\t{"if" if c == 1 else "else_if"} = {{ limit = {{ var:{v("pmr_pbest")} = {c} var:{xv("pmr_rav", c)} = 1 }} '
-                 f'set_variable = {{ name = pmr_hu value = var:{xv("pmr_rm", c)} }} }}\n')
-    o.append('\tif = { limit = { var:pmr_hu < 0 } change_variable = { name = pmr_hu multiply = -1 } }\n'
-             '\tset_variable = { name = pmr_hd value = var:pmr_hu }\n'
-             f'\tchange_variable = {{ name = pmr_hu multiply = {fmt(PROFIT_STICK_UP)} }}\n'
-             f'\tchange_variable = {{ name = pmr_hd multiply = {fmt(PROFIT_STICK_DOWN)} }}\n')
+    # the pick: the reference unless another recipe beats its profit (pmr_rr) by SWITCH_GAIN of it (pmr_hu); a pick
+    # that can't run sets none
+    o.append('\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
+    o.append('\tset_variable = { name = pmr_hu value = var:pmr_rr }\n'
+             '\tif = { limit = { var:pmr_hu < 0 } change_variable = { name = pmr_hu multiply = -1 } }\n'
+             f'\tchange_variable = {{ name = pmr_hu multiply = {fmt(SWITCH_GAIN)} }}\n'
+             # the first run at market prices replaces the setup pick (base prices) freely, as it stands at once
+             f'\tif = {{ limit = {{ OR = {{ has_global_variable = pmr_setup AND = {{ has_variable = pmr_month '
+             f'NOT = {{ has_variable = pmr_pmkt_{b} }} }} }} }} set_variable = {{ name = pmr_hu value = 0 }} }}\n')
     for i in range(1, k + 1):
         o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_rav", i)} = 1 var:{xv("pmr_rveto", i)} = 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_t value = var:{xv("pmr_rm", i)} }}\n'
-                 f'\t\tif = {{ limit = {{ var:{v("pmr_pbest")} < {i} }} change_variable = {{ name = pmr_t subtract = var:pmr_hu }} }}\n'
-                 f'\t\telse_if = {{ limit = {{ var:{v("pmr_pbest")} > {i} }} change_variable = {{ name = pmr_t subtract = var:pmr_hd }} }}\n'
+                 f'\t\tif = {{ limit = {{ var:pmr_ref > 0 NOT = {{ var:pmr_ref = {i} }} }} '
+                 f'change_variable = {{ name = pmr_t subtract = var:pmr_hu }} }}\n'
                  f'\t\tif = {{ limit = {{ var:pmr_t > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:pmr_t }} '
                  f'set_variable = {{ name = pmr_pk value = {i} }} }}\n\t}}\n')
     o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n\t{setv("pmr_prm", 0)}\n'
              + ''.join(f'\tif = {{ limit = {{ var:pmr_pk = {i} }} {setv("pmr_prm", "var:" + xv("pmr_rm", i))} }}\n'
                        for i in range(1, k + 1))
+             # the gain over the reference (pmr_swg_<b>) and the bar's points a month (pmr_swr_<b>)
+             + f'\t{setv("pmr_swg", 0)}\n\t{setv("pmr_swr", 1)}\n'
+             f'\tif = {{\n\t\tlimit = {{ var:pmr_ref > 0 var:pmr_pk > 0 NOT = {{ var:pmr_pk = var:pmr_ref }} }}\n'
+             f'\t\t{setv("pmr_swg", "var:" + v("pmr_prm"))}\n\t\t{cv("pmr_swg", "subtract", "var:pmr_rr")}\n'
+             '\t\tset_variable = { name = pmr_t value = var:pmr_rr }\n'
+             '\t\tif = { limit = { var:pmr_t < 0 } change_variable = { name = pmr_t multiply = -1 } }\n'
+             '\t\tchange_variable = { name = pmr_t max = 1 }\n'
+             f'\t\t{cv("pmr_swg", "divide", "var:pmr_t")}\n'
+             f'\t\t{setv("pmr_swr", "var:" + v("pmr_swg"))}\n\t\t{cv("pmr_swr", "divide", fmt(SWITCH_GAIN))}\n'
+             f'\t\t{cv("pmr_swr", "max", 1)}\n\t\t{cv("pmr_swr", "min", SWITCH_MONTHS)}\n\t}}\n'
              + vanilla_score(bk, b, econ, goods_cost, setv, v)
              + pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v)
              + works_profit(bk, b, recipes, econ, goods_cost, pair)
@@ -3745,12 +3842,12 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ''.join(f'\tset_variable = {{ name = pmr_wg{e}_{b} value = var:pmr_wage }}\n'
                        f'\tchange_variable = {{ name = pmr_wg{e}_{b} multiply = {fmt(1 + s * PRICE_MOVE)} }}\n'
                        for e, s in (('h', 1), ('l', -1)))
-             + f'\tset_variable = {{ name = pmr_pmb_{b} value = {len(goods)} }}\n}}\n\n')
+             + f'\tset_variable = {{ name = pmr_pmb_{b} value = {len(goods) + PROFIT_RULE} }}\n}}\n\n')
     # pmr_moved_<b>: on a monthly pulse, pmr_pmv when a good's price or the wage moved PRICE_MOVE off what the last
     # run used; prices first (read once a day per state anyway), the wage only when they stand. Bounds from an older
     # build (no pmr_pmb_<b>, or another goods count) recompute at once.
     o.append(f'pmr_moved_{b} = {{\n'
-             f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pmb_{b} }} NOT = {{ var:pmr_pmb_{b} = {len(goods)} }} }} }}\n'
+             f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pmb_{b} }} NOT = {{ var:pmr_pmb_{b} = {len(goods) + PROFIT_RULE} }} }} }}\n'
              '\t\tset_variable = pmr_pmv\n\t}\n\telse = {\n'
              + read_px.replace('\tif = {', '\t\tif = {')
              + ('\t\tif = { limit = { OR = { ' + ' '.join(f'var:pmr_px_{g} >= var:pmr_pxh_{g}_{b} var:pmr_px_{g} <= var:pmr_pxl_{g}_{b}'
@@ -3767,7 +3864,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     line = (f'PMR;rec=PROFIT;date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
             f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
-            f"wage={var('pmr_wage')};thr={var('pmr_thr', 2)};"
+            f"ref={var('pmr_ref')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};"
             f"earn={var(v('pmr_bke'), 2)};bal={var(v('pmr_bkp'))};occ={var(v('pmr_bko'), 3)};"
             f"rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
             f"can={per('pmr_rav')};veto={per('pmr_rveto')};"
@@ -3802,15 +3899,15 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              '\tif = { limit = { has_variable = pmr_pmv } remove_variable = pmr_pmv }\n'
              + f'\tpmr_switch_{b} = yes\n}}\n\n')
-    return switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + ''.join(o)
+    return switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + ''.join(pre) + ''.join(o)
 
 
 def switch_effect(b, bk, k, setv, v, var):
     """State scope, after each pick: pmr_switch_<b> (Pat, 2026-10-19 01:07Z: "a progress bar ... towards setting a new
     PM default ... if it wants to downgrade because goods are too expensive it has to also fill up the same bar in
     red; it should take 6 months"). The pick (pmr_pbest_<b>) becomes the default new levels and retooling follow
-    (pmr_best_now_<b>) once it has stood for SWITCH_MONTHS monthly pulses:
-      pmr_swto_<b>  the pick the bar fills toward (0: none)     pmr_sw_<b>   monthly pulses so far
+    (pmr_best_now_<b>) once its bar has SWITCH_MONTHS points, pmr_swr_<b> a monthly pulse (Pat 12:59Z):
+      pmr_swto_<b>  the pick the bar fills toward (0: none)     pmr_sw_<b>   points so far
       pmr_swd_<b>   1 toward a newer recipe (green), -1 an older one (red), 0 none
     A pick that changes starts the bar again; one back on the default empties it. The default takes the pick at once
     the first time, at the building's first pick at market prices (pmr_sw_inst), and when the default can no longer
@@ -3833,12 +3930,17 @@ def switch_effect(b, bk, k, setv, v, var):
             f'\t\t\tif = {{ limit = {{ var:{pick} > var:{now} }} {setv("pmr_swd", 1)} }}\n'
             f'\t\t\telse = {{ {setv("pmr_swd", -1)} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=SWITCH_START;{where};'
-            f"default={var(now)};to={var(pick)};dir={var(v('pmr_swd'))}\" }}\n\t\t}}\n"
-            f'\t\tif = {{ limit = {{ has_variable = pmr_month }} change_variable = {{ name = {v("pmr_sw")} add = 1 }} }}\n'
+            f"default={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};gain={var(v('pmr_swg'), 2)};pts={var(v('pmr_swr'), 2)}\" }}\n\t\t}}\n"
+            # Pat 12:59Z: the bigger the gain over the default, the more points a month (pmr_swr_<b>, profit_effect)
+            f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_month }}\n'
+            f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} change_variable = {{ name = {v("pmr_sw")} add = var:{v("pmr_swr")} }} }}\n'
+            f'\t\t\telse = {{ change_variable = {{ name = {v("pmr_sw")} add = 1 }} }}\n\t\t}}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_sw")} >= {SWITCH_MONTHS} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};months={var(v('pmr_sw'))}\" }}\n"
             f'\t\t\t{setv("pmr_best_now", "var:" + pick)}\n'
+            # the next tick prices the options around the new default (profit_effect's box)
+            f'\t\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
             + clear.replace('\t\t', '\t\t\t') + '\t\t}\n\t}\n'
             '\tif = { limit = { has_variable = pmr_sw_inst } remove_variable = pmr_sw_inst }\n'
             # Pat 2026-10-19 03:51Z: the card showed a finished bar for a month, as the country's copy (pmr_c_sum_<b>, the
@@ -3847,7 +3949,8 @@ def switch_effect(b, bk, k, setv, v, var):
             '\t\tsave_temporary_scope_as = pmr_sws\n'
             f'\t\towner = {{\n\t\t\tif = {{\n\t\t\t\tlimit = {{ scope:pmr_sws.var:{v("pmr_level")} >= var:pmr_c_swm_{b} }}\n'
             + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_c_{n}_{b} value = scope:pmr_sws.var:{v(x)} }}\n'
-                      for n, x in (('sw', 'pmr_sw'), ('swd', 'pmr_swd'), ('swto', 'pmr_swto'), ('now', 'pmr_best_now')))
+                      for n, x in (('sw', 'pmr_sw'), ('swd', 'pmr_swd'), ('swto', 'pmr_swto'), ('now', 'pmr_best_now'),
+                                   ('swg', 'pmr_swg')))
             + '\t\t\t}\n\t\t}\n\t}\n}\n\n')
 
 
@@ -3855,14 +3958,16 @@ def vanilla_score(bk, b, econ, goods_cost, setv, v):
     """Inside pmr_profit_<b>, after the pick: pmr_pvs_<b>, what vanilla's investment pool would add to the type's
     ai_value for a new level of the pick at this state's prices (VANILLA_*_W): its profit per level a week
     (pmr_prm_<b>) / the target's employees per level x 7500 (x 10000 for a loss), plus its outputs at base value
-    x 0.3125. 0 without a pick. pmr_pvp_<b>: the profit (or loss) term alone, for the Policies tooltip's lines."""
+    x 0.3125. 0 without a pick. pmr_pvp_<b>: the profit (or loss) term alone, for the Policies tooltip's lines;
+    pmr_pve_<b>: the pick's employees per level, for Productivity's nested tooltip."""
     emps = TARGET_EMPLOYEES.get(bk, [])
     o = [f'\t# vanilla\'s profit and output terms for the pick (vanilla_score); pmr_pvp_<b> the profit term alone\n'
-         f'\t{setv("pmr_pvs", 0)}\n\t{setv("pmr_pvp", 0)}\n']
+         f'\t{setv("pmr_pvs", 0)}\n\t{setv("pmr_pvp", 0)}\n\t{setv("pmr_pve", 0)}\n']
     for i, (gd, _wu) in enumerate(econ, 1):
         e = max(emps[i - 1] if i <= len(emps) else 0, 1)
         out = sum(q * goods_cost[g] for g, q in gd.items() if q > 0 and goods_cost.get(g))
         o.append(f'\tif = {{\n\t\tlimit = {{ var:pmr_pk = {i} }}\n\t\t{setv("pmr_pvs", "var:" + v("pmr_prm"))}\n'
+                 f'\t\t{setv("pmr_pve", e)}\n'
                  f'\t\tif = {{ limit = {{ var:{v("pmr_pvs")} > 0 }} '
                  f'change_variable = {{ name = {v("pmr_pvs")} multiply = {fmt(VANILLA_PROFIT_W / e)} }} }}\n'
                  f'\t\telse = {{ change_variable = {{ name = {v("pmr_pvs")} multiply = {fmt(VANILLA_DEFICIT_W / e)} }} }}\n'
@@ -3883,15 +3988,16 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
         return ''
     if pair.get('split'):
         # The pairs are the retool targets (SPLIT_AUTOMATION): the grid shows the pick's own figures, and its gold
-        # cell is the pick. A pair that can't run or is skipped at the price cap reads as unavailable.
+        # cell is the pick. pmr_cav_<i>_<a>_<b>: 1 priced and runnable, -1 priced but skipped at the price cap, 0 not
+        # priced this run (out of reach or one step too far, profit_effect), so the card leaves its figure out.
         o = [f'\t# recipe + automation pairs: the retool targets\' figures (pair_effect)\n'
              f'\t{setv("pmr_cbi", 0)}\n\t{setv("pmr_cba", 0)}\n']
         for (i, a), x in sorted(pair['index'].items()):
             cp, cav = f'pmr_cp_{i}_{a}_{b}', f'pmr_cav_{i}_{a}_{b}'
             o.append(f'\tset_variable = {{ name = {cp} value = var:pmr_rm_{x}_{b} }}\n'
                      f'\tset_variable = {{ name = {cav} value = 0 }}\n'
-                     f'\tif = {{ limit = {{ var:pmr_rav_{x}_{b} = 1 var:pmr_rveto_{x}_{b} = 0 }} '
-                     f'set_variable = {{ name = {cav} value = 1 }} }}\n'
+                     f'\tif = {{ limit = {{ var:pmr_rav_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = 1 }} '
+                     f'if = {{ limit = {{ var:pmr_rveto_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = -1 }} }} }}\n'
                      f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {x} }} {setv("pmr_cbi", i)} {setv("pmr_cba", a)} }}\n')
         return ''.join(o)
     o = [f'\t# recipe + automation pairs (pair_effect)\n\t{setv("pmr_cbi", 0)}\n\t{setv("pmr_cba", 0)}\n'
@@ -3952,6 +4058,8 @@ def works_profit(bk, b, recipes, econ, goods_cost, pair):
                      f'\tchange_variable = {{ name = pmr_t multiply = {fmt(in_q)} }}\n'
                      f'\tchange_variable = {{ name = {cw} subtract = var:pmr_t }}\n')
         o.append(f'\tchange_variable = {{ name = {cw} multiply = var:pmr_thr }}\n'
+                 # its base recipe's figures, where this run left them out (profit_effect's box)
+                 f'\tif = {{ limit = {{ var:pmr_rav_{x}_{b} = 0 }} pmr_rmx_{x}_{b} = yes }}\n'
                  f'\tchange_variable = {{ name = {cw} add = var:pmr_rm_{x}_{b} }}\n')
     return ''.join(o)
 
@@ -4035,7 +4143,7 @@ def dispatch_effects(buildings, works=()):
              '# State scope (on_acquired_technology): tick only the buildings whose best recipe the research\n'
              '# changed, and any not seen yet. The rest wait for the month; until then a newly unlocked\n'
              '# trade-off shows as unavailable on the panel, whose shares move only monthly anyway.\n'
-             'pmr_state_research = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
+             'pmr_state_research = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n\tset_variable = pmr_research\n')
     for bk in buildings:
         b = short(bk)
         o.append(f'\tif = {{\n\t\tlimit = {{ {live(bk)} }}\n'
@@ -4043,17 +4151,17 @@ def dispatch_effects(buildings, works=()):
                  f'\t\telse = {{\n\t\t\tpmr_best_{b} = yes\n'
                  f'\t\t\tif = {{ limit = {{ {moved(b)} }} pmr_tick_{b} = yes }}\n'
                  '\t\t}\n\t}\n')
-    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
+    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n\tremove_variable = pmr_research\n}\n\n'
              '# State scope, another country\'s state where the player owns levels (pmr_abroad_any), when the\n'
              '# player researches: the same, for the buildings the player owns levels in.\n'
-             'pmr_state_research_abroad = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
+             'pmr_state_research_abroad = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n\tset_variable = pmr_research\n')
     for bk in buildings:
         b = short(bk)
         o.append(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} has_variable = pmr_mix_{b} {live(bk)} }}\n'
                  f'\t\tpmr_best_{b} = yes\n'
                  f'\t\tif = {{ limit = {{ {moved(b)} }} pmr_tick_{b} = yes }}\n'
                  '\t}\n')
-    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
+    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n\tremove_variable = pmr_research\n}\n\n'
              '# Country scope: the country\'s totals for every PMR building type (Buildings tab rows).\n'
              'pmr_c_sum_every = {\n\tset_variable = pmr_c_abroad\n')
     for bk in buildings:
@@ -5006,8 +5114,19 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                               for n, cv in (('pprod', 'pmr_ptp'), ('pout', 'pmr_pto')))
                     + f'\t\t\tset_variable = {{ name = {sv("ploss")} value = var:{sv("pt")} }}\n'
                     f'\t\t\tchange_variable = {{ name = {sv("ploss")} subtract = var:{sv("pprod")} }}\n'
-                    f'\t\t\tchange_variable = {{ name = {sv("ploss")} subtract = var:{sv("pout")} }}\n')
-        snapped = ([f'pmr_mv_{n}_{b}' for n in ('pt', 'pol', 'pworks', 'pprod', 'pout', 'ploss', 'wb')]
+                    f'\t\t\tchange_variable = {{ name = {sv("ploss")} subtract = var:{sv("pout")} }}\n'
+                    # Pat 2026-10-19 12:56Z: what Productivity and Output value (their nested tooltips): the pick's
+                    # employees per level (pmr_pte_<b>, pf_effects), the profit per level that gives Productivity with
+                    # them, and the goods per level at base prices that give Output
+                    f'\t\t\tset_variable = {{ name = {sv("pe")} value = 0 }}\n'
+                    f'\t\t\tif = {{ limit = {{ owner = {{ has_variable = pmr_pte_{b} }} }} '
+                    f'set_variable = {{ name = {sv("pe")} value = owner.var:pmr_pte_{b} }} }}\n'
+                    f'\t\t\tset_variable = {{ name = {sv("pp")} value = var:{sv("pprod")} }}\n'
+                    f'\t\t\tchange_variable = {{ name = {sv("pp")} multiply = var:{sv("pe")} }}\n'
+                    f'\t\t\tchange_variable = {{ name = {sv("pp")} divide = {fmt(VANILLA_PROFIT_W)} }}\n'
+                    f'\t\t\tset_variable = {{ name = {sv("pv")} value = var:{sv("pout")} }}\n'
+                    f'\t\t\tchange_variable = {{ name = {sv("pv")} divide = {fmt(VANILLA_OUTPUT_W)} }}\n')
+        snapped = ([f'pmr_mv_{n}_{b}' for n in ('pt', 'pol', 'pworks', 'pprod', 'pout', 'ploss', 'wb', 'pe', 'pp', 'pv')]
                    if bk in ai else [])
         # each Company Culture special method's profit (works_profit), where the state has it
         cwp = [f'pmr_cwp_{t}_{b}' for t in company_culture.T3] if bk in CC_WORKS else []
@@ -5171,7 +5290,8 @@ def ai_column(bk, h, x, ind):
 def card_left(bk, ind):
     """Pat, 2026-10-19 01:07Z ("add level amount and productivity to the building cards"): the building's icon with
     the country's levels on it, as the company panel shows them, and the type's productivity span under it, as the
-    Buildings list's header shows it."""
+    Buildings list's header shows it. Pat 2026-10-19 13:00Z ("doesn't jump outside its card margins"): the span stays
+    inside the card, 2 px from its edge, and shrinks its font to fit (elide as the last resort)."""
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
     return (f'{ind}widget = {{\n{i1}size = {{ {ICON_W} {LEFT_H} }}\n{i1}datacontext = "[GetBuildingType(\'{bk}\')]"\n'
             f'{i1}icon = {{\n{i2}position = {{ 3 0 }}\n{i2}size = {{ 54 54 }}\n{i2}texture = "[BuildingType.GetIcon]"\n'
@@ -5179,8 +5299,8 @@ def card_left(bk, ind):
             f'{i2}textbox = {{\n{i3}text = "[BuildingType.GetNumLevelsInCountryFormatted(GetPlayer.Self)]"\n'
             f'{i3}autoresize = yes\n{i3}position = {{ 2 -1 }}\n{i3}parentanchor = bottom\n{i3}align = left|nobaseline\n'
             f'{i3}alwaystransparent = yes\n{i2}}}\n{i1}}}\n'
-            f'{i1}textbox = {{\n{i2}position = {{ -{CARD_PAD} 57 }}\n{i2}size = {{ {ICON_W + CARD_PAD + ICON_GAP} 20 }}\n'
-            f'{i2}align = hcenter|nobaseline\n{i2}using = fontsize_small\n'
+            f'{i1}textbox = {{\n{i2}position = {{ -{CARD_PAD - 2} 57 }}\n{i2}size = {{ {ICON_W + CARD_PAD + ICON_GAP - 4} 20 }}\n'
+            f'{i2}align = hcenter|nobaseline\n{i2}using = fontsize_small\n{i2}fontsize_min = 10\n{i2}elide = right\n'
             f'{i2}text = "[BuildingType.GetProductivitySpanDesc(GetPlayer.Self)]"\n'
             f'{i2}tooltip = "PRODUCTIVITY_SPAN_TOOLTIP"\n{i2}using = tooltip_above\n{i1}}}\n{ind}}}\n')
 
@@ -5322,7 +5442,7 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
             out.append(f'pmr_mvcn_{b}_{i}_{a} = {{\n\ttype = country\n\trandom_valid = no\n'
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cbi_{b} = {i} var:pmr_cba_{b} = {a} }}\n'
                        '\t\tlocalization_key = PMR_PAIR_NOTE_BEST\n\t}\n'
-                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cav_{i}_{a}_{b} = 0 }}\n\t\tlocalization_key = PMR_PICK_NOTE_LOCKED\n\t}}\n'
+                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cav_{i}_{a}_{b} = -1 }}\n\t\tlocalization_key = PMR_PICK_NOTE_VETO\n\t}}\n'
                        '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     for bk, keys in recipe_keys.items():
         b = short(bk)
@@ -5331,7 +5451,6 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
         for i in range(1, len(keys) + 1):
             out.append(f'pmr_mvnote_{b}_{i} = {{\n\ttype = country\n\trandom_valid = no\n'
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = PMR_PICK_NOTE_BEST\n\t}}\n'
-                       f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rav_{i}_{b} = 0 }}\n\t\tlocalization_key = PMR_PICK_NOTE_LOCKED\n\t}}\n'
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rveto_{i}_{b} = 1 }}\n\t\tlocalization_key = PMR_PICK_NOTE_VETO\n\t}}\n'
                        '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     return ''.join(out)
@@ -5344,16 +5463,21 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
            ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
            ' PMR_MV_AI_LABEL:0 "Investment chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_BASE:0 "Base"',
            ' PMR_MV_COMPANIES:0 "Companies"', ' PMR_MV_PROD:0 "Productivity"', ' PMR_MV_LOSS:0 "Losses"',
-           ' PMR_MV_OUT:0 "Output"']
+           ' PMR_MV_OUT:0 "Output"', ' PMR_MV_PROFIT_LV:0 "Profit per level a week"',
+           ' PMR_MV_EMP_LV:0 "Employees per level"', ' PMR_MV_GOODS_LV:0 "Goods per level a week at base prices"',
+           ' PMR_MV_WEIGHT:0 "Weight"']
     for bk, keys in recipe_keys.items():
         b = short(bk)
         if (pair_ui or {}).get(bk, {}).get('split'):
             continue   # no recipe row (methods_view_gui)
         for i, key in enumerate(keys, 1):
-            lines = methods_row.recipe_tip_lines(bk, i, key, mv_read, f"[{MV_COUNTRY}.GetCustom('pmr_mvnote_{b}_{i}')]")
-            lines += [f"Picked: #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#!",
-                      f"Running: #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#!"]
-            loc.append(f' PMR_MV_TIP_{b}_{i}:0 "' + '\\n'.join(lines) + '"')
+            name, profit = methods_row.recipe_tip_lines(bk, i, key, mv_read, f"[{MV_COUNTRY}.GetCustom('pmr_mvnote_{b}_{i}')]")
+            # the profit line only where the last run priced the recipe (profit_effect's box, Pat 13:09Z)
+            loc.append(f' PMR_MV_PL_{b}_{i}:0 "\\n{profit}"')
+            loc.append(f' PMR_MV_TIP_{b}_{i}:0 "{name}'
+                       f"[SelectLocalization({methods_row.eq(mv_read(f'pmr_rav_{i}_{b}'), 1)}, 'PMR_MV_PL_{b}_{i}', 'PMR_EMPTY')]"
+                       f"\\nPicked: #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#!"
+                       f"\\nRunning: #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#!\"")
     for bk, group in (ai or {}).items():
         if bk not in recipe_keys:
             continue
@@ -5381,8 +5505,21 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
         pol.append(line(f'PMR_MV_POL_PRIO_{b}', f'$PMR_IPW_GROUP_{group}$', mv_read(f'pmr_mv_prio_{b}')))
         loc.append(f' PMR_MV_POL_TT_{b}:0 "' + ''.join(pol) + '"')
         tail = any(key == 'works' and not name for key, name in (parts or {}).get(bk, []))
+        # Pat 2026-10-19 12:56Z: Productivity and Output open a nested tooltip with what they value: the profit and
+        # employees per level and vanilla's weight; the goods per level at base prices and its weight
+        pprod, pout = mv_read(f'pmr_mv_pprod_{b}'), mv_read(f'pmr_mv_pout_{b}')
+        loc.append(f' PMR_MV_PROD_TT_{b}:0 "#bold $PMR_MV_PROD$ [{pprod}|=+0]#!\\n'
+                   f'$PMR_MV_PROFIT_LV$: @money![{mv_read(f"pmr_mv_pp_{b}")}|0]\\n'
+                   f'$PMR_MV_EMP_LV$: [{mv_read(f"pmr_mv_pe_{b}")}|0]\\n'
+                   f'$PMR_MV_WEIGHT$: ×{VANILLA_PROFIT_W:g}"')
+        loc.append(f' PMR_MV_OUT_TT_{b}:0 "#bold $PMR_MV_OUT$ [{pout}|=+0]#!\\n'
+                   f'$PMR_MV_GOODS_LV$: @money![{mv_read(f"pmr_mv_pv_{b}")}|0]\\n'
+                   f'$PMR_MV_WEIGHT$: ×{VANILLA_OUTPUT_W:g}"')
+        nest = {'PROD': f'PMR_MV_PROD_TT_{b}', 'OUT': f'PMR_MV_OUT_TT_{b}'}
         rest = ([line(f'PMR_MV_CO_{b}', '$PMR_MV_COMPANIES$', mv_read(f'pmr_mv_pworks_{b}'))] if tail else []) + [
-            line(f'PMR_MV_{x.upper()}_{b}', f'$PMR_MV_{lab}$', mv_read(f'pmr_mv_{x}_{b}'))
+            line(f'PMR_MV_{x.upper()}_{b}',
+                 (f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],{nest[lab]} $PMR_MV_{lab}$#!' if lab in nest
+                  else f'$PMR_MV_{lab}$'), mv_read(f'pmr_mv_{x}_{b}'))
             for x, lab in (('pprod', 'PROD'), ('ploss', 'LOSS'), ('pout', 'OUT'))]
         loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold $PMR_MV_AI_LABEL$ [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
                    f'$PMR_MV_BASE$: [{aib}|0]\\n'
@@ -5399,9 +5536,11 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
             more = (f"\\nPicked: #bold [{mv_read(f'pmr_mv_ps_{pr['index'][(i, a)]}_{b}')}|%0]#!"
                     f"\\nRunning: #bold [{mv_read(f'pmr_c_sh_{pr['index'][(i, a)]}_{b}')}|%0]#!"
                     if pr.get('split') else '')
-            loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${names[i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!\\n'
-                       f"@money![{mv_read(f'pmr_cp_{i}_{a}_{b}')}|0] per level a week"
-                       f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]{more}\"")
+            loc.append(f' PMR_MVP_PL_{b}_{i}_{a}:0 "\\n@money![{mv_read(f"pmr_cp_{i}_{a}_{b}")}|0] per level a week'
+                       f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]\"")
+            loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${names[i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!'
+                       f"[SelectLocalization(Not({methods_row.eq(mv_read(f'pmr_cav_{i}_{a}_{b}'), 0)}), "
+                       f"'PMR_MVP_PL_{b}_{i}_{a}', 'PMR_EMPTY')]{more}\"")
     # the bars under the grid (card_bars): the group's name, then each option that holds a share
     def shares(tip, head, rows):
         body = []
@@ -5443,19 +5582,20 @@ def pick_custom_loc(pick_ui):
 def pick_loc(pick_ui):
     """The switching bars' tooltips, and the notes the Policies cards' tooltips put after a recipe's profit. Pat,
     2026-10-19 02:32Z: no "Most profitable" line (PMR_PICK_ROW_<b>) and no idle bar (PMR_CSW_IDLE_<b>) any more."""
-    loc = [' PMR_PICK_NOTE_BEST:0 " (most profitable)"', ' PMR_PICK_NOTE_LOCKED:0 " (not available)"',
-           ' PMR_PICK_NOTE_VETO:0 " (input at price cap)"']
+    loc = [' PMR_PICK_NOTE_BEST:0 " (most profitable)"', ' PMR_PICK_NOTE_VETO:0 " (input at price cap)"']
     for bk, keys in pick_ui.items():
         b = short(bk)
 
         def var(name, f='0'):
             return f"[Building.GetState.MakeScope.Var('{name}').GetValue|{f}]"
-        # the switching bar (switch_bar): from, to, months
+        # the switching bar (switch_bar): from, to, the gain over the default, points (Pat 12:59Z)
+        cvar = lambda name, f='0': f"[GetPlayer.MakeScope.Var('{name}').GetValue|{f}]"   # noqa: E731
         loc.append(f' PMR_SW_TT_{b}:0 "#bold [Building.GetState.GetCustom(\'pmr_sw_now_{b}\')]#! → '
-                   f'#bold [Building.GetState.GetCustom(\'pmr_sw_to_{b}\')]#!\\n{var(f"pmr_sw_{b}")} of {SWITCH_MONTHS} months"')
+                   f'#bold [Building.GetState.GetCustom(\'pmr_sw_to_{b}\')]#!\\n'
+                   f'{var(f"pmr_swg_{b}", "=+%0")} profit\\n{var(f"pmr_sw_{b}", "1")} of {SWITCH_MONTHS} points"')
         loc.append(f' PMR_CSW_TT_{b}:0 "#bold [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]#! → '
                    f'#bold [GetPlayer.GetCustom(\'pmr_csw_to_{b}\')]#!\\n'
-                   f"[GetPlayer.MakeScope.Var('pmr_c_sw_{b}').GetValue|0] of {SWITCH_MONTHS} months\"")
+                   f'{cvar(f"pmr_c_swg_{b}", "=+%0")} profit\\n{cvar(f"pmr_c_sw_{b}", "1")} of {SWITCH_MONTHS} points"')
     return loc
 
 
@@ -6250,7 +6390,7 @@ DECISIONS = '''# Test decision. The AI never takes it (ai_chance 0). It writes P
 # hooks (construction, method changes) stay, so what remains is the cost of the data itself. Shares
 # freeze while paused and move again from the next month after resuming.
 pmr_test_pause_ticks_decision = {
-	is_shown = { always = yes }
+	is_shown = { has_global_variable = pmr_ticks_paused }   # resume only (Pat paused a game with it by accident, 2026-10-19)
 	possible = { always = yes }
 	when_taken = {
 		if = {
@@ -6268,8 +6408,8 @@ pmr_test_pause_ticks_decision = {
 '''
 
 DECISION_LOC = [
-    ' pmr_test_pause_ticks_decision:0 "PMR test: pause or resume the monthly ticks"',
-    ' pmr_test_pause_ticks_decision_desc:0 "Pauses or resumes PMR\'s ticks."',
+    ' pmr_test_pause_ticks_decision:0 "PMR test: resume the monthly ticks"',
+    ' pmr_test_pause_ticks_decision_desc:0 "Resumes PMR\'s monthly ticks."',
 ]
 
 

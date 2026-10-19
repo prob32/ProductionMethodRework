@@ -8,7 +8,7 @@ same width (cols).
 
 The grids read the profit calculation's interface variables (generate.py profit_effect and pair_effect) from whatever
 scope the caller names, so the caller decides where the prices come from:
-    pmr_rm_<i>_<b>     profit per level a week          pmr_rav_<i>_<b>    1 while recipe i can run
+    pmr_rm_<i>_<b>     profit per level a week          pmr_rav_<i>_<b>    1 while recipe i can run and was priced
     pmr_rveto_<i>_<b>  1 while recipe i is skipped      pmr_pbest_<b>      the pick (recipe index, 0 if none)
 read(name) returns the GUI expression for one of them, e.g. lambda n: f"GetPlayer.MakeScope.Var('{n}').GetValue" for
 country copies.
@@ -63,15 +63,17 @@ def _head(col, tex, tip, ind):
             f'{i1}texture = "{tex}"\n{i1}tooltip = "{tip}"\n{ind}}}\n')
 
 
-def _cell(col, y, tip, best, alive, value, ind):
-    """One figure in column col at row y: the gold square while best holds, faded while alive doesn't."""
+def _cell(col, y, tip, best, alive, value, ind, shown=None):
+    """One figure in column col at row y: the gold square while best holds, faded while alive doesn't, left out while
+    shown doesn't (an option the last run didn't price, Pat 2026-10-19 13:09Z)."""
     i1, i2 = ind + '\t', ind + '\t\t'
     return (f'{ind}widget = {{\n{i1}position = {{ {PAIR_LEFT + col * PAIR_COL} {y} }}\n'
             f'{i1}size = {{ {PAIR_COL} {PAIR_ROW} }}\n{i1}tooltip = "{tip}"\n'
             f'{i1}icon = {{\n{i2}visible = "[{best}]"\n{i2}position = {{ 2 1 }}\n'
             f'{i2}size = {{ {PAIR_COL - 4} {PAIR_ROW - 2} }}\n{i2}texture = "{WHITE}"\n'
             f'{i2}color = {{ {GOLD} }}\n{i2}alwaystransparent = yes\n{i1}}}\n'
-            f'{i1}textbox = {{\n{i2}size = {{ {PAIR_COL} {PAIR_ROW} }}\n{i2}align = hcenter|vcenter|nobaseline\n'
+            f'{i1}textbox = {{\n' + (f'{i2}visible = "[{shown}]"\n' if shown else '')
+            + f'{i2}size = {{ {PAIR_COL} {PAIR_ROW} }}\n{i2}align = hcenter|vcenter|nobaseline\n'
             f'{i2}using = fontsize_small\n{i2}alpha = "[TransparentIfFalse({alive})]"\n'
             f'{i2}raw_text = "@money![{value}|0]"\n{i2}alwaystransparent = yes\n{i1}}}\n{ind}}}\n')
 
@@ -88,7 +90,8 @@ def recipes_grid(bk, recipes, read, tip, ind, cols=None, visible=None):
         out += _head(col, tex, tip(i), i1)
     for col, (i, _) in enumerate(recipes):
         alive = f"And({eq(read(f'pmr_rav_{i}_{b}'), 1)}, Not({eq(read(f'pmr_rveto_{i}_{b}'), 1)}))"
-        out += _cell(col, PAIR_HEAD, tip(i), eq(read(f'pmr_pbest_{b}'), i), alive, read(f'pmr_rm_{i}_{b}'), i1)
+        out += _cell(col, PAIR_HEAD, tip(i), eq(read(f'pmr_pbest_{b}'), i), alive, read(f'pmr_rm_{i}_{b}'), i1,
+                     eq(read(f'pmr_rav_{i}_{b}'), 1))
     return out + f'{ind}}}\n'
 
 
@@ -96,7 +99,7 @@ def pairs_grid(bk, recipes, options, read, tip, ind, cols=None, visible=None):
     """Pat, 2026-10-18 18:17Z: every recipe with every automation (PM1 + PM3), the same gold highlight on the most
     profitable pair. Columns are the plain recipes (recipes: [(index i, icon texture)]), rows the automation options
     (options: [(option tooltip key, icon texture)], a = 1 none). Reads generate.py pair_effect's interface:
-        pmr_cp_<i>_<a>_<b>   profit per level a week     pmr_cav_<i>_<a>_<b>  1 while the pair could run
+        pmr_cp_<i>_<a>_<b>   profit per level a week     pmr_cav_<i>_<a>_<b>  1 runs, -1 skipped at the cap, 0 not priced
         pmr_cbi_<b>, pmr_cba_<b>  the most profitable runnable pair
     tip(i, a): the tooltip key of a cell (a = 0 the column's icon). cols as recipes_grid."""
     b = bk[len('building_'):]
@@ -111,5 +114,6 @@ def pairs_grid(bk, recipes, options, read, tip, ind, cols=None, visible=None):
                 f'{i2}texture = "{tex}"\n{i2}tooltip = "{key}"\n{i1}}}\n')
         for col, (i, _) in enumerate(recipes):
             best = f"And({eq(read(f'pmr_cbi_{b}'), i)}, {eq(read(f'pmr_cba_{b}'), a)})"
-            out += _cell(col, y, tip(i, a), best, eq(read(f'pmr_cav_{i}_{a}_{b}'), 1), read(f'pmr_cp_{i}_{a}_{b}'), i1)
+            cav = read(f'pmr_cav_{i}_{a}_{b}')
+            out += _cell(col, y, tip(i, a), best, eq(cav, 1), read(f'pmr_cp_{i}_{a}_{b}'), i1, f'Not({eq(cav, 0)})')
     return out + f'{ind}}}\n'
