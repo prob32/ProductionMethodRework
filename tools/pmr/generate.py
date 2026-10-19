@@ -3268,11 +3268,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t{chg("pmr_need", "multiply", "pmr_retool_levels_per_level")}\n'
              f'\t{setv("pmr_p", "var:" + v("pmr_lv_to"))}\n'
              f'\t{chg("pmr_p", "divide", "var:" + v("pmr_level"))}\n'
-             f'\t{setv("pmr_cum", 0)}\n'
              + ''.join(f'\t{setv(f"pmr_sh_{i}", "var:" + lv(i))}\n'
-                       f'\t{chg(f"pmr_sh_{i}", "divide", "var:" + v("pmr_level"))}\n'
-                       f'\t{chg("pmr_cum", "add", "var:" + v(f"pmr_sh_{i}"))}\n'
-                       f'\t{setv(f"pmr_cum_{i}", "var:" + v("pmr_cum"))}\n' for i in range(1, k + 1))
+                       f'\t{chg(f"pmr_sh_{i}", "divide", "var:" + v("pmr_level"))}\n' for i in range(1, k + 1))
              + ''.join(f'\t{setv(f"pmr_ash_{a}", 0)}\n'
                        + ''.join(f'\t{chg(f"pmr_ash_{a}", "add", "var:" + v(f"pmr_sh_{i}"))}\n' for i in tiers)
                        for a, tiers in enumerate(auto_tiers, 1))
