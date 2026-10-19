@@ -10,7 +10,7 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: a subsidiary on its parent's Assets tab, test companies as buyers (q42, test mod; your France PMR Test save carries on)
+## Latest: a subsidiary on its parent's Assets tab, test companies as buyers (q42, test mod; your Prussia PMR Test save carries on)
 
 From the build thread, after your 14:10Z message. q41's subsidiary works: it is listed under its parent's Regional
 HQs and has grown from 5 to 10 Tooling Workshop levels.
