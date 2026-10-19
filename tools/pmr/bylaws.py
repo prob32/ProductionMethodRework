@@ -145,6 +145,7 @@ SUB_BASE = 1
 PROFIT_STEPS = (1000, 2000, 5000, 10000, 20000, 50000, 100000)   # £ a week
 PRIVATE_STEPS = [round(k / 20, 2) for k in range(1, 21)]          # private_ownership_fraction, read to 0.05
 TU_SCALE = 20
+TREND = 0.25                          # Pat 20:35Z: a seat's votes move this share of the way to their target a month
 COUNCIL_MIN = 0.05                    # Trade Unions clout a Workers Council needs
 POP_STEP = 10
 OWNED_STEPS = (2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1)   # company_owned_levels, read by halving
@@ -163,7 +164,7 @@ SEATS = ('x', 'b', 'h', 'w')
 VARS = ([f'pmr_bl_{g}' for g, _n, _o in GROUPS] + ['pmr_bl_pg', 'pmr_bl_pv', 'pmr_bl_pp', 'pmr_bl_sup', 'pmr_bl_rt',
         'pmr_bl_v_ex', 'pmr_bl_v_sh', 'pmr_bl_v_wc', 'pmr_bl_wc', 'pmr_bl_ai', 'pmr_bl_shx', 'pmr_bl_wcx', 'pmr_bl_ns',
         'pmr_bl_pm', 'pmr_bl_w_b', 'pmr_bl_tc', 'pmr_bl_tot', 'pmr_bl_wl_x', 'pmr_bl_pr_x', 'pmr_bl_prv']
-        + [f'pmr_bl_{x}_{k}' for x in ('w', 'pm', 'sh') for k in ('x', 'h', 'w')]
+        + [f'pmr_bl_{x}_{k}' for x in ('w', 'pm', 'sh', 'g_w') for k in ('x', 'h', 'w')]
         + [f'pmr_bl_s_{c}' for c in CODES] + [f'pmr_bl_{k}_{c}' for k in SEATS for c in VOTED])
 MIRRORED = VARS + ['pmr_bl_shl', 'pmr_bl_wcl']
 
@@ -270,7 +271,7 @@ def wealth(p, nums, slots):
     o.append('# Country scope: pmr_bl_prv, the share of the country\'s building levels its Manor Houses and Financial Districts\n'
              '# own (the shareholders\' votes), at most once a month (pmr_bl_prvm).\n'
              'pmr_bl_private = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_bl_prvm } }\n'
-             '\t\tset_variable = { name = pmr_bl_prvm value = yes days = 28 }\n\t\tsave_temporary_scope_as = pmr_bl_cty\n'
+             '\t\tsave_temporary_scope_as = pmr_bl_cty\n'
              + ''.join(f'\t\tset_variable = {{ name = pmr_bl_{x} value = 0 }}\n' for x in ('pa', 'pv_', 'pc'))
              + f'\t\tevery_scope_building = {{\n\t\t\tlimit = {{ level > 0 OR = {{ {groups} }} NOR = {{ {excl} }} }}\n'
              '\t\t\tsave_temporary_scope_value_as = { name = pmr_bl_l value = { value = this.level } }\n'
@@ -287,6 +288,12 @@ def wealth(p, nums, slots):
              '\t\t\tset_variable = { name = pmr_bl_prv value = var:pmr_bl_pv_ }\n'
              '\t\t\tchange_variable = { name = pmr_bl_prv divide = var:pmr_bl_pa }\n'
              '\t\t\tclamp_variable = { name = pmr_bl_prv min = 0 max = 1 }\n\t\t}\n'
+             # a read with no levels (seen nowhere yet, kept as a guard) is not cached, so the next count reads again
+             + '\t\tif = { limit = { var:pmr_bl_pa > 0 } set_variable = { name = pmr_bl_prvm value = yes days = 28 } }\n'
+             '\t\tif = { limit = { pmr_logged = yes } debug_log = "PMR;rec=BL_PRIVATE;date=[TimeKeeper.GetCurrentDate.GetString];'
+             'country=[THIS.GetCountry.GetNameNoFormatting];levels=[THIS.Var(\'pmr_bl_pa\').GetValue|1];'
+             'companies=[THIS.Var(\'pmr_bl_pc\').GetValue|1];private=[THIS.Var(\'pmr_bl_pv_\').GetValue|1];'
+             'share=[THIS.Var(\'pmr_bl_prv\').GetValue|3]" }\n'
              + ''.join(f'\t\tremove_variable = pmr_bl_{x}\n' for x in ('pa', 'pv_', 'pc'))
              + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_bl_{x} }} remove_variable = pmr_bl_{x} }}\n' for x in ('x', 't'))
              + '\t}\n}\n\n')
@@ -389,12 +396,24 @@ def effects(log_line):
     o.append('# The votes of character scope:pmr_bl_ch: its ideology\'s, else its interest group\'s; its popularity as a\n'
              '# multiplier of its seat\'s votes (pmr_bl_pm, 1 + popularity / 100).\n'
              'pmr_bl_row_ch = {\n' + disp + '\telse = { pmr_bl_row_none = yes }\n' + pop + '}\n\n')
-    o.append('# A seat\'s votes pmr_bl_$V$: its base $B$ times its character\'s popularity multiplier (pmr_bl_pm, 1 for a seat\n'
-             '# with none), to the nearest vote.\n'
-             'pmr_bl_weigh = {\n\tset_variable = { name = pmr_bl_$V$ value = $B$ }\n'
-             '\tchange_variable = { name = pmr_bl_$V$ multiply = var:pmr_bl_pm }\n'
-             '\tround_variable = { name = pmr_bl_$V$ nearest = 1 }\n'
-             '\tif = { limit = { var:pmr_bl_$V$ < 0 } set_variable = { name = pmr_bl_$V$ value = 0 } }\n}\n\n')
+    o.append('# A seat\'s target votes pmr_bl_g_$V$: its base $B$ times its character\'s popularity multiplier (pmr_bl_pm, 1 for a\n'
+             '# seat with none).\n'
+             'pmr_bl_goal = {\n\tset_variable = { name = pmr_bl_g_$V$ value = $B$ }\n'
+             '\tchange_variable = { name = pmr_bl_g_$V$ multiply = var:pmr_bl_pm }\n'
+             '\tif = { limit = { var:pmr_bl_g_$V$ < 0 } set_variable = { name = pmr_bl_g_$V$ value = 0 } }\n}\n\n'
+             f'# Pat 20:35Z ("these values should trend not swing towards their setpoints"): votes pmr_bl_$V$ move {fmt(TREND)} of the\n'
+             '# way to their target $G$ on the monthly count (pmr_bl_step on scope:pmr_bl_co); a board not yet counted with its\n'
+             '# country\'s ownership read (pmr_bl_live) takes its targets at once.\n'
+             'pmr_bl_trend = {\n\tif = {\n'
+             '\t\tlimit = { OR = { NOT = { has_variable = pmr_bl_$V$ } scope:pmr_bl_co = { NOT = { has_variable = pmr_bl_live } } } }\n'
+             '\t\tset_variable = { name = pmr_bl_$V$ value = $G$ }\n\t}\n'
+             '\telse_if = {\n\t\tlimit = { scope:pmr_bl_co = { has_variable = pmr_bl_step } }\n'
+             '\t\tset_variable = { name = pmr_bl_dt value = $G$ }\n'
+             '\t\tchange_variable = { name = pmr_bl_dt subtract = var:pmr_bl_$V$ }\n'
+             f'\t\tchange_variable = {{ name = pmr_bl_dt multiply = {fmt(TREND)} }}\n'
+             '\t\tchange_variable = { name = pmr_bl_$V$ add = var:pmr_bl_dt }\n\t}\n}\n\n'
+             '# A seat\'s votes: its target, and its votes trending to it.\n'
+             'pmr_bl_weigh = {\n\tpmr_bl_goal = { V = $V$ B = $B$ }\n\tpmr_bl_trend = { V = $V$ G = var:pmr_bl_g_$V$ }\n}\n\n')
     o.append('# The votes of company $WHO$\'s executive.\npmr_bl_row_of = {\n'
              '\tif = {\n\t\tlimit = { $WHO$ = { exists = executive } }\n'
              '\t\t$WHO$ = { executive = { save_scope_as = pmr_bl_ch } }\n\t\tpmr_bl_row_ch = yes\n\t}\n'
@@ -461,10 +480,13 @@ def effects(log_line):
              '\t\t\tpmr_bl_row_of = { WHO = scope:pmr_bl_sub }\n'
              f'\t\t\tset_variable = {{ name = pmr_bl_t value = {SUB_BASE} }}\n'
              '\t\t\tchange_variable = { name = pmr_bl_t add = scope:pmr_bl_sub.var:pmr_bl_pr }\n'
-             '\t\t\tpmr_bl_weigh = { V = w_b B = var:pmr_bl_t }\n'
+             '\t\t\tpmr_bl_goal = { V = w_b B = var:pmr_bl_t }\n\t\t}\n'
+             '\t\tset_variable = { name = pmr_bl_g value = scope:pmr_bl_co.var:pmr_bl_g_w_b }\n'
+             '\t\tpmr_bl_trend = { V = w G = var:pmr_bl_g }\n'
+             '\t\tscope:pmr_bl_co = {\n'
+             '\t\t\tset_variable = { name = pmr_bl_w_b value = scope:pmr_bl_sub.var:pmr_bl_w }\n'
              '\t\t\tpmr_bl_seat = { W = var:pmr_bl_w_b K = b }\n\t\t\tchange_variable = { name = pmr_bl_ns add = 1 }\n\t\t}\n'
              '\t\tset_variable = { name = pmr_bl_v value = scope:pmr_bl_co.var:pmr_bl_vt }\n'
-             '\t\tset_variable = { name = pmr_bl_w value = scope:pmr_bl_co.var:pmr_bl_w_b }\n'
              '\t\tset_variable = { name = pmr_bl_pm value = scope:pmr_bl_co.var:pmr_bl_pm }\n\t}\n'
              f'\t# the shareholders: the Industrialists\' leader, else their view; {SH_SCALE} x the private owners\' share\n'
              '\tset_variable = { name = pmr_bl_pm value = 1 }\n'
@@ -484,7 +506,6 @@ def effects(log_line):
              '\tset_variable = { name = pmr_bl_v_wc value = 0 }\n'
              '\tset_variable = { name = pmr_bl_wcx value = 0 }\n'
              '\tset_variable = { name = pmr_bl_pm value = 1 }\n'
-             '\tset_variable = { name = pmr_bl_w_w value = 0 }\n'
              '\tif = {\n\t\tlimit = { var:pmr_bl_wc > 0 owner ?= { ig:ig_trade_unions ?= { exists = leader } } }\n'
              '\t\towner = { ig:ig_trade_unions = { leader = { save_scope_as = pmr_bl_ch } } }\n'
              '\t\tset_variable = { name = pmr_bl_wcl value = scope:pmr_bl_ch }\n'
@@ -495,6 +516,7 @@ def effects(log_line):
              '\t\tpmr_bl_weigh = { V = w_w B = var:pmr_bl_wc }\n'
              '\t\tpmr_bl_seat = { W = var:pmr_bl_w_w K = w }\n'
              '\t\tset_variable = { name = pmr_bl_v_wc value = var:pmr_bl_vt }\n\t}\n'
+             '\telse = {\n\t\tset_variable = { name = pmr_bl_w_w value = 0 }\n\t\tset_variable = { name = pmr_bl_g_w_w value = 0 }\n\t}\n'
              '\tset_variable = { name = pmr_bl_pm_w value = var:pmr_bl_pm }\n'
              '\t# each seat\'s share of all the votes (the window\'s bars)\n'
              '\tset_variable = { name = pmr_bl_tot value = var:pmr_bl_w_x }\n'
@@ -508,6 +530,8 @@ def effects(log_line):
              + '\tevery_in_list = {\n\t\tvariable = pmr_subs\n\t\tset_variable = { name = pmr_bl_sh value = 0 }\n'
              '\t\tif = { limit = { scope:pmr_bl_co.var:pmr_bl_tot > 0 } set_variable = { name = pmr_bl_sh value = var:pmr_bl_w } '
              'change_variable = { name = pmr_bl_sh divide = scope:pmr_bl_co.var:pmr_bl_tot } }\n\t}\n'
+             # live once a count had its country's ownership read (pmr_bl_prvm: a read that found levels)
+             '\tif = { limit = { NOT = { has_variable = pmr_bl_live } owner ?= { has_variable = pmr_bl_prvm } } set_variable = pmr_bl_live }\n'
              '\tset_variable = { name = pmr_bl_sup value = 0 }\n' + pend
              + '\tset_variable = { name = pmr_bl_rt value = var:pmr_bl_sup }\n'
              f'\tchange_variable = {{ name = pmr_bl_rt multiply = {RATE[1]} }}\n'
@@ -558,17 +582,23 @@ def effects(log_line):
              'pmr_bl_ai_pick = {\n'
              f'\tset_variable = {{ name = pmr_bl_bs value = {AI_MIN - 1} }}\n\tset_variable = {{ name = pmr_bl_new value = 0 }}\n'
              + best + '\tif = { limit = { var:pmr_bl_new > 0 } pmr_bl_start = yes }\n}\n\n')
+    count_log = ';'.join(f"{n}=[THIS.Var('pmr_bl_{a}').GetValue|2]>[THIS.Var('pmr_bl_g_{a}').GetValue|2]"
+                         for n, a in (('chair', 'w_x'), ('shareholders', 'w_h'), ('council', 'w_w'))) + (
+        ";profit=[THIS.Var('pmr_bl_wl_x').GetValue|0];private=[THIS.Var('pmr_bl_prv').GetValue|2];"
+        "total=[THIS.Var('pmr_bl_tot').GetValue|2];")
     harsh = ''.join(f'\tif = {{ limit = {{ var:pmr_bl_{c // 10} = {c % 10} }} change_variable = {{ name = pmr_bl_harsh add = 1 }} }}\n'
                     for c in HARSH)
     o.append('# Monthly, a parent company (company_culture.pmr_cc_tick): the board counts (a player\'s company, or one with a\n'
              '# change under way), the change gains, an AI company proposes one once a year, the harsh bylaws are counted.\n'
-             'pmr_bl_month = {\n\tpmr_bl_init = yes\n\tpmr_bl_focus = yes\n'
+             'pmr_bl_month = {\n\tpmr_bl_init = yes\n\tpmr_bl_focus = yes\n\tset_variable = pmr_bl_step\n'
              '\tif = {\n\t\tlimit = { var:pmr_bl_pg > 0 }\n\t\tpmr_bl_count = yes\n'
              '\t\tchange_variable = { name = pmr_bl_pp add = var:pmr_bl_rt }\n'
              '\t\tif = { limit = { var:pmr_bl_pp >= 100 } pmr_bl_pass = yes }\n\t}\n'
              '\telse_if = {\n\t\tlimit = { owner ?= { is_player = yes } }\n\t\tpmr_bl_count = yes\n\t}\n'
              '\telse_if = {\n\t\tlimit = { NOT = { has_variable = pmr_bl_ai_t } }\n'
              '\t\tset_variable = { name = pmr_bl_ai_t days = 365 }\n\t\tpmr_bl_count = yes\n\t\tpmr_bl_ai_pick = yes\n\t}\n'
+             '\tremove_variable = pmr_bl_step\n'
+             f'\t{log_line("BL_COUNT", count_log)}\n'
              '\tset_variable = { name = pmr_bl_harsh value = 0 }\n' + harsh + '}\n\n')
     o.append(f'# Country scope, monthly: the harsh bylaws of its companies employing {TU_LEVELS} levels or more, at most {TU_CAP},\n'
              f'# as the multiplier of {TU_MODIFIER} (Trade Unions approval and political strength); pmr_bl_focused while\n'
@@ -690,6 +720,11 @@ def localization():
             f' PMR_BL_VOTES_B:0 "Chairman {SUB_BASE}{pf(sv("pmr_bl_wl"), sv("pmr_bl_pr"))}{pm(sv("pmr_bl_pm"))}"',
             f' PMR_BL_VOTES_H:0 "Manor Houses and Financial Districts [{cv("pmr_bl_prv")}|%0]{pm(cv("pmr_bl_pm_h"))}"',
             f' PMR_BL_VOTES_W:0 "Trade Unions\' clout [{cv("pmr_bl_tc")}|%0]{pm(cv("pmr_bl_pm_w"))}"']
+    # a seat's share of the votes (Pat 20:34Z): its votes, all votes, its target
+    tot = cv('pmr_bl_tot')
+    sh = lambda w, g: f'#v [{w}|1]#! of [{tot}|1] votes\\nTarget [{g}|1]'   # noqa: E731
+    loc += [f' PMR_BL_SHARE_{k}:0 "{sh(cv(f"pmr_bl_w_{a}"), cv(f"pmr_bl_g_w_{a}"))}"' for k, a in (('X', 'x'), ('H', 'h'), ('W', 'w'))]
+    loc.append(f' PMR_BL_SHARE_B:0 "{sh(sv("pmr_bl_w"), sv("pmr_bl_g"))}"')
     # a seat's ideology: its name and its views (custom_loc)
     for k, who in WHO.items():
         loc.append(f' PMR_BL_IDEO_{k}:0 "[Ideology.GetName]\\n[{who}.GetCustom(\'pmr_bl_views\')]"')

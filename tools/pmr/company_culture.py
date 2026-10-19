@@ -897,12 +897,17 @@ on_monthly_pulse_country = { on_actions = { pmr_cc_monthly_country } }
 on_company_established = { on_actions = { pmr_cc_on_company_established } }
 on_company_disbanded = { on_actions = { pmr_cc_on_company_disbanded } }
 
-# No root. Every company's numbers and window from the first day, before any monthly pulse.
+# No root. Every company's numbers and window from the first day, before any monthly pulse, and again the next day
+# (pmr_cc.2) with the country's ownership read afresh (Pat 20:35Z: the board preloaded from the game's state).
 pmr_cc_game_started = {
 	effect = {
 		every_country = {
 			every_company = {
 				pmr_cc_refresh = yes
+			}
+			if = {
+				limit = { any_company = { always = yes } }
+				trigger_event = { id = pmr_cc.2 days = 1 }
 			}
 		}
 	}
@@ -974,6 +979,26 @@ pmr_cc.1 = {
 			remove_variable = pmr_cc_gclock
 			set_variable = { name = pmr_cc_gweek value = 0 }
 			set_variable = { name = pmr_cc_rweek value = 0 }
+		}
+	}
+}
+
+# Country, the day after game start (pmr_cc_game_started): the ownership read again (bylaws.pmr_bl_private) and every
+# company's board counted from it, taking its targets at once (bylaws.pmr_bl_trend).
+pmr_cc.2 = {
+	type = country_event
+	hidden = yes
+	immediate = {
+		# an observer game, as pmr.1 (generate.py) marks it: whichever of the two runs first
+		if = {
+			limit = { NOT = { has_global_variable = pmr_obs_chk } }
+			set_global_variable = pmr_obs_chk
+			if = { limit = { NOT = { any_country = { is_player = yes } } } set_global_variable = pmr_obs }
+		}
+		if = { limit = { has_variable = pmr_bl_prvm } remove_variable = pmr_bl_prvm }
+		every_company = {
+			if = { limit = { has_variable = pmr_bl_live } remove_variable = pmr_bl_live }
+			pmr_cc_refresh = yes
 		}
 	}
 }

@@ -1682,7 +1682,8 @@ def main():
           '# groups are administration, military and public works, which only a state\'s owner builds).\n'
           'bg_pmr_retool_gov_abroad = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
           '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n')
-    write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers))
+    write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers)
+          + '\n' + LOGGED_TRIGGER)
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/production_methods/pmr_blend_production_methods.txt', header +
@@ -1695,7 +1696,10 @@ def main():
           + ''.join(trade_budget(g) for g in budget_goods(options)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-'))
-          .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'))
+          .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'
+                   f'\t\tif = {{ limit = {{ has_global_variable = pmr_obs gdp_ranking <= {OBS_TOP} }} pmr_obs_report = yes }}\n'))
+    if not RELEASE:
+        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch))
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -3879,7 +3883,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                        '\t\t\t\tchange_variable = { name = pmr_fu add = var:pmr_t }\n' for d in range(2, nd + 1))
              + lookup('var:pmr_fu', list(range(1, k + 1)),
                       lambda i: (f'if = {{ limit = {{ {can(i)} }} '
-                                 f'if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=FLOOR;'
+                                 f'if = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=FLOOR;'
                                  'date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
                                  f'state=[THIS.GetState.GetNameNoFormatting];building={bk};from=[THIS.Var(\'{now}\').GetValue|0];'
                                  f'to={i};floor=[THIS.Var(\'pmr_fl\').GetValue|0];books=[THIS.Var(\'pmr_bpl_{b}\').GetValue|1]" }} '
@@ -4083,14 +4087,14 @@ def switch_effect(b, bk, k, setv, v, var):
             f'\t\t\t{setv("pmr_swto", "var:" + pick)}\n\t\t\t{setv("pmr_sw", 0)}\n'
             f'\t\t\tif = {{ limit = {{ var:{pick} > var:{now} }} {setv("pmr_swd", 1)} }}\n'
             f'\t\t\telse = {{ {setv("pmr_swd", -1)} }}\n'
-            f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=SWITCH_START;{where};'
+            f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=SWITCH_START;{where};'
             f"default={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};gain={var(v('pmr_swg'), 2)};pts={var(v('pmr_swr'), 2)}\" }}\n\t\t}}\n"
             # Pat 12:59Z: the bigger the gain over the default, the more points a month (pmr_swr_<b>, profit_effect)
             f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_month }}\n'
             f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} change_variable = {{ name = {v("pmr_sw")} add = var:{v("pmr_swr")} }} }}\n'
             f'\t\t\telse = {{ change_variable = {{ name = {v("pmr_sw")} add = 1 }} }}\n\t\t}}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_sw")} >= {SWITCH_MONTHS} }}\n'
-            f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
+            f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};months={var(v('pmr_sw'))}\" }}\n"
             f'\t\t\t{setv("pmr_best_now", "var:" + pick)}\n'
             # a default a loss lowered keeps the floor from raising it while its levels retool (profit_effect)
@@ -6554,6 +6558,42 @@ def option_loc(opt_ui):
     return loc
 
 
+OBS_TOP = 8           # an observer game's OBS lines: the largest economies by GDP
+OBS_LOGGED = 1        # ... and its SWITCH_START, DEFAULT and FLOOR lines: the largest
+LOGGED_TRIGGER = f"""# Country scope: its buildings' SWITCH_START, DEFAULT and FLOOR lines are logged: the player's, or in an
+# observer game (pmr_obs, pmr.1) the largest economy's.
+pmr_logged = {{
+\tOR = {{
+\t\tis_player = yes
+\t\tAND = {{ has_global_variable = pmr_obs gdp_ranking <= {OBS_LOGGED} }}
+\t}}
+}}
+"""
+
+
+def obs_report(dispatch):
+    """Country scope, monthly in an observer game (test builds): one OBS line for each of the OBS_TOP largest
+    economies. types = building types it has in a state, loss = those whose books show a loss (pmr_bpl_<b> < 0),
+    up / down = switching bars filling toward a newer / older default, lowered = defaults a loss lowered (pmr_dn_<b>)."""
+    keys = ('types', 'loss', 'up', 'down', 'lowered')
+    per = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_level_{b} }}\n'
+                  '\t\t\tscope:pmr_obs_c = { change_variable = { name = pmr_obs_types add = 1 } }\n'
+                  f'\t\t\tif = {{ limit = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} < 0 }} '
+                  'scope:pmr_obs_c = { change_variable = { name = pmr_obs_loss add = 1 } } }\n'
+                  f'\t\t\tif = {{ limit = {{ var:pmr_swd_{b} ?= 1 }} scope:pmr_obs_c = {{ change_variable = {{ name = pmr_obs_up add = 1 }} }} }}\n'
+                  f'\t\t\telse_if = {{ limit = {{ var:pmr_swd_{b} ?= -1 }} scope:pmr_obs_c = {{ change_variable = {{ name = pmr_obs_down add = 1 }} }} }}\n'
+                  f'\t\t\tif = {{ limit = {{ has_variable = pmr_dn_{b} }} scope:pmr_obs_c = {{ change_variable = {{ name = pmr_obs_lowered add = 1 }} }} }}\n'
+                  '\t\t}\n' for b in (short(bk) for bk in dispatch))
+    fields = ';'.join(f"{k}=[THIS.Var('pmr_obs_{k}').GetValue|0]" for k in keys)
+    return (''.join(f'# {ln.strip()}\n' for ln in obs_report.__doc__.splitlines()) +
+            'pmr_obs_report = {\n\tsave_scope_as = pmr_obs_c\n'
+            + ''.join(f'\tset_variable = {{ name = pmr_obs_{k} value = 0 }}\n' for k in keys)
+            + '\tevery_scope_state = {\n' + per + '\t}\n'
+            '\tdebug_log = "PMR;rec=OBS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'gdp=[THIS.GetCountry.GetGDP|0];sol=[THIS.GetCountry.GetAverageSoLByPopulation|1];' + fields + '"\n'
+            + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '}\n')
+
+
 ON_ACTIONS = '''# Appended to vanilla on_actions the documented way (_on_actions.md, MODDING INFO):
 # the vanilla on_action calls ours, nothing vanilla is overwritten.
 
@@ -6700,6 +6740,12 @@ pmr.1 = {
 		if = {
 			limit = { is_player = yes }
 			set_global_variable = { name = pmr_player value = ROOT }
+		}
+		# an observer game (no player): pmr_obs, so the largest economies log (pmr_logged, OBS_REPORT)
+		if = {
+			limit = { NOT = { has_global_variable = pmr_obs_chk } }
+			set_global_variable = pmr_obs_chk
+			if = { limit = { NOT = { any_country = { is_player = yes } } } set_global_variable = pmr_obs }
 		}
 		pmr_c_sum_all = yes
 	}

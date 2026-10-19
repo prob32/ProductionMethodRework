@@ -444,17 +444,18 @@ def _ideology(x, y, who):
             f'size = {{ {IDEO} {IDEO} }}\ntexture = "[Ideology.GetTexture]"\ntooltip = "PMR_BL_IDEO_{who}"\n}}\n')
 
 
-def _share(h, share):
+def _share(h, share, tt):
     """A seat's share of all the board's votes (Pat 19:23Z: "bars representing their share of power from the whole"),
-    along the card's foot, and the share."""
-    return (f'widget = {{\nposition = {{ {SEAT_TX} {h - 16} }}\nsize = {{ {BOARD_W - SEAT_TX - 74} {BAR_H} }}\n'
+    along the card's foot, and the share; its votes, all votes and its target on hover (Pat 20:34Z)."""
+    return (f'widget = {{\nposition = {{ {SEAT_TX} {h - 26} }}\nsize = {{ {BOARD_W - SEAT_TX - 10} 24 }}\ntooltip = "{tt}"\n'
+            f'widget = {{\nposition = {{ 0 10 }}\nsize = {{ {BOARD_W - SEAT_TX - 74} {BAR_H} }}\n'
             'alwaystransparent = yes\ngold_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
             f'min = 0\nmax = 1\nvalue = "[FixedPointToFloat({share})]"\n}}\n}}\n}}\n'
-            f'textbox = {{\nposition = {{ {BOARD_W - 66} {h - 24} }}\nsize = {{ 56 22 }}\nalign = right|nobaseline\n'
-            f'fontsize = 16\ntext = "[{share}|%0]"\nalwaystransparent = yes\n}}\n')
+            f'textbox = {{\nposition = {{ {BOARD_W - 66 - SEAT_TX} 2 }}\nsize = {{ 56 22 }}\nalign = right|nobaseline\n'
+            f'fontsize = 16\ntext = "[{share}|%0]"\nalwaystransparent = yes\n}}\n}}\n')
 
 
-def _seat(h, picture, name, sub, weight, vote, share, vis=None, ctx='', who=None, tt=''):
+def _seat(h, picture, name, sub, weight, vote, share, vis=None, ctx='', who=None, tt='', share_tt=''):
     """One seat of the board: its picture, its name (and its company), its character's ideology, its votes, its vote
     and its share of all the votes."""
     yc = h // 2
@@ -464,7 +465,7 @@ def _seat(h, picture, name, sub, weight, vote, share, vis=None, ctx='', who=None
     ideo = _ideology(BOARD_W - BADGE - VOTE - 26 - IDEO, yc - IDEO // 2, who) if who else ''
     return (f'widget = {{\n{_vis(vis)}{ctx}size = {{ {BOARD_W} {h} }}\nbackground = {{\nusing = entry_bg\n}}\n'
             + picture + lines + ideo + _badge(BOARD_W - BADGE - VOTE - 18, yc - BADGE // 2, weight, tt)
-            + _vote(BOARD_W - VOTE - 8, yc - VOTE // 2, vote) + _share(h, share) + '}\n')
+            + _vote(BOARD_W - VOTE - 8, yc - VOTE // 2, vote) + _share(h, share, share_tt) + '}\n')
 
 
 def _ig_picture(h, ig):
@@ -479,13 +480,14 @@ def seats():
     exe = _seat(EXEC_H, f'character_portrait_medium = {{\nposition = {{ {(SEAT_TX - 80) // 2} 4 }}\n'
                          'datacontext = "[Company.GetExecutive]"\n}\n',
                 '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
-                f'text = "[{V("pmr_bl_w_x")}|0]"', V('pmr_bl_v_ex'), V('pmr_bl_sh_x'), who='EX', tt='PMR_BL_VOTES_X')
+                f'text = "[{V("pmr_bl_w_x")}|0]"', V('pmr_bl_v_ex'), V('pmr_bl_sh_x'), who='EX', tt='PMR_BL_VOTES_X',
+                share_tt='PMR_BL_SHARE_X')
     sub = _seat(SEAT_H, f'character_portrait_small2 = {{\nposition = {{ {(SEAT_TX - 60) // 2} 4 }}\n'
                          'datacontext = "[Company.GetExecutive]"\n}\n',
                 '[Company.GetExecutive.GetFullNameNoFormatting]', '[Company.GetNameNoFormatting]',
                 "text = \"[Company.MakeScope.Var('pmr_bl_w').GetValue|0]\"", "Company.MakeScope.Var('pmr_bl_v').GetValue",
                 "Company.MakeScope.Var('pmr_bl_sh').GetValue",
-                ctx='datacontext = "[Scope.GetCompany]"\n', who='EX', tt='PMR_BL_VOTES_B')
+                ctx='datacontext = "[Scope.GetCompany]"\n', who='EX', tt='PMR_BL_VOTES_B', share_tt='PMR_BL_SHARE_B')
     subs = (f'flowcontainer = {{\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n'
             f'datamodel = "[{company_panel.SUBS}]"\nitem = {{\n{sub}}}\n}}\n')
     # Pat 16:53Z: the shareholders' seat is the country's Industrialists' leader (pmr_bl_shl), while there is one;
@@ -493,16 +495,17 @@ def seats():
     share_w = f'text = "[{V("pmr_bl_w_h")}|0]"'
     share = (_seat(SEAT_H, _var_portrait('pmr_bl_shl'), f'[{bylaws.WHO["SH"]}.GetFullNameNoFormatting]',
                    'PMR_BL_SHAREHOLDERS', share_w, V('pmr_bl_v_sh'), V('pmr_bl_sh_h'), vis=EQ('pmr_bl_shx', 1), who='SH',
-                   tt='PMR_BL_VOTES_H')
+                   tt='PMR_BL_VOTES_H', share_tt='PMR_BL_SHARE_H')
              + _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_industrialists'), 'PMR_BL_SHAREHOLDERS', None,
-                     share_w, V('pmr_bl_v_sh'), V('pmr_bl_sh_h'), vis=f'Not({EQ("pmr_bl_shx", 1)})', tt='PMR_BL_VOTES_H'))
+                     share_w, V('pmr_bl_v_sh'), V('pmr_bl_sh_h'), vis=f'Not({EQ("pmr_bl_shx", 1)})', tt='PMR_BL_VOTES_H',
+                     share_tt='PMR_BL_SHARE_H'))
     council_w = f'text = "[{V("pmr_bl_w_w")}|0]"'
     council = (_seat(SEAT_H, _var_portrait('pmr_bl_wcl'), f'[{bylaws.WHO["WC"]}.GetFullNameNoFormatting]',
                      'PMR_BL_COUNCIL', council_w, V('pmr_bl_v_wc'), V('pmr_bl_sh_w'), vis=AND(GT('pmr_bl_wc', 0), EQ('pmr_bl_wcx', 1)),
-                     who='WC', tt='PMR_BL_VOTES_W')
+                     who='WC', tt='PMR_BL_VOTES_W', share_tt='PMR_BL_SHARE_W')
                + _seat(SEAT_H, _ig_picture(SEAT_H, 'ig_trade_unions'), 'PMR_BL_COUNCIL', None, council_w,
                        V('pmr_bl_v_wc'), V('pmr_bl_sh_w'), vis=AND(GT('pmr_bl_wc', 0), f'Not({EQ("pmr_bl_wcx", 1)})'),
-                       tt='PMR_BL_VOTES_W'))
+                       tt='PMR_BL_VOTES_W', share_tt='PMR_BL_SHARE_W'))
     return exe + subs + share + council
 
 
