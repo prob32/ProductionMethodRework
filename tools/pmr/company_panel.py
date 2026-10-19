@@ -26,6 +26,7 @@ import cc_icons
 import methods_row
 
 RETOOL_TYPES = []   # set by generate.py: every retool site type a company lists (report['company_types'])
+SUB_LINKS = False   # set by generate.py in test builds: the Regional HQs subsidiary probe (pmr/test_probes/sub_hq)
 REFRESH = False     # set by write_methods: the company panel's opening recounts the Policies copies (test build)
 REFRESH_SGUI = 'pmr_cm_refresh_sgui'
 TODAY = 'pmr_mv_today'   # country, a day long: the Policies copies were recounted today
@@ -82,11 +83,53 @@ def hide_sites(text, where, lists):
     return text
 
 
+# Subsidiaries (Pat, 2026-10-19 12:54Z: "I only would want a subsidiary IF it was listed under regional HQ of a parent
+# COMPANY"). Script keeps them as a variable list pmr_subs on the parent company and a copy on its executive, and
+# pmr_sub = 1 on the subsidiary (pmr/test_probes/sub_hq). The parent's Regional HQs column lists them, from the company's
+# own list, else (no flag) from its executive's, the route the Company Culture tab reads; the Companies panel's lists
+# skip them.
+SUBS = "Company.MakeScope.GetList('pmr_subs')"
+EXEC_SUBS = "Company.GetExecutive.MakeScope.GetList('pmr_subs')"
+NOT_SUB = "Not(GreaterThan_CFixedPoint(Company.MakeScope.Var('pmr_sub').GetValue, '(CFixedPoint)0'))"
+
+
+def sub_list(model, visible, flag, ind):
+    """A Regional HQs column list of model's companies, as vanilla's regional HQ rows (company_panel.gui)."""
+    i = [ind + '\t' * n for n in range(9)]
+    flag_w = (f'{i[4]}tiny_flag_no_interact = {{\n{i[5]}parentanchor = vcenter\n{i[5]}position = {{ 10 0 }}\n'
+              f'{i[5]}datacontext = "[Company.GetCountry]"\n{i[4]}}}\n') if flag else ''
+    return (f'{i[0]}flowcontainer = {{  # PMR: subsidiaries (company_panel.py, test build)\n'
+            + (f'{i[1]}visible = "[{visible}]"\n' if visible else '')
+            + f'{i[1]}direction = vertical\n{i[1]}spacing = 5\n{i[1]}datamodel = "[{model}]"\n'
+            f'{i[1]}item = {{\n{i[2]}widget = {{\n{i[3]}size = {{ 250 40 }}\n{i[3]}datacontext = "[Scope.GetCompany]"\n'
+            f'{i[3]}button = {{\n{i[4]}size = {{ 250 40 }}\n{i[4]}using = default_button\n'
+            f'{i[4]}onclick = "[InformationPanelBar.OpenCompanyPanel(Company.Self)]"\n{i[4]}tooltip = "GO_TO_BUTTON_COMPANY"\n'
+            + flag_w +
+            f'{i[4]}textbox = {{\n{i[5]}parentanchor = vcenter\n{i[5]}margin_left = {50 if flag else 10}\n'
+            f'{i[5]}autoresize = yes\n{i[5]}align = nobaseline\n{i[5]}elide = right\n{i[5]}fontsize_min = 14\n'
+            f'{i[5]}max_width = {190 if flag else 230}\n{i[5]}text = "[Company.GetName]"\n{i[4]}}}\n'
+            f'{i[3]}}}\n{i[2]}}}\n{i[1]}}}\n{i[0]}}}\n')
+
+
+def sub_regional_hqs(text, where):
+    """The parent's Regional HQs column lists its subsidiaries before its regional HQs; its empty state counts them."""
+    empty = '\t\t\t\t\tvisible = "[IsDataModelEmpty(Company.GetRegionalHQs)]"\n'
+    hqs = '\t\t\t\t### REGIONAL HQS\n'
+    if text.count(empty) != 1 or text.count(hqs) != 1:
+        fail(where, 'the Regional HQs column moved; update sub_regional_hqs')
+    text = text.replace(empty, '\t\t\t\t\tvisible = "[And(IsDataModelEmpty(Company.GetRegionalHQs), '
+                        f'And(IsDataModelEmpty({SUBS}), IsDataModelEmpty({EXEC_SUBS})))]"  # PMR: subsidiaries\n')
+    return text.replace(hqs, sub_list(SUBS, '', True, '\t\t\t\t')
+                        + sub_list(EXEC_SUBS, f'IsDataModelEmpty({SUBS})', False, '\t\t\t\t') + hqs)
+
+
 def patch_company_panel(text):
     """company_panel.gui: Available Industries without the retool sites; with the Methods table, the panel's opening
-    recounts its figures (REFRESH_SGUI)."""
+    recounts its figures (REFRESH_SGUI); in test builds, the parent's subsidiaries under its Regional HQs."""
     where = 'company_panel.gui'
     text = hide_sites(text, where, 1)
+    if SUB_LINKS:
+        text = sub_regional_hqs(text, where)
     if not REFRESH:
         return text
     show = '\t\tblockoverride "animation_state_block" {\n\t\t\tstate = {\n\t\t\t\tname = _show\n'
@@ -106,6 +149,17 @@ def patch_companies_panel(text):
         fail(where, 'company_building_item moved; update patch_companies_panel')
     if RETOOL_TYPES:
         text = text.replace(item, item + f'\t\tvisible = "[{not_site()}]"  # PMR: no retool sites (company_panel.py)\n')
+    if SUB_LINKS:   # the player's companies and every company, without subsidiaries
+        mine = ('\t\t\t\t\t\tdatamodel = "[AccessPlayer.GetCompanies]"\n',
+                '\t\t\t\t\t\titem = {\n\t\t\t\t\t\t\tcompany_item = {}\n')
+        every = ('\t\t\t\t\tdatamodel = "[CompaniesPanel.GetCompanies]"\n',
+                 '\t\t\t\t\titem = {\n\t\t\t\t\t\tflowcontainer = {\n')
+        for model, head in (mine, every):
+            if text.count(model) != 1 or text.count(head) != 1:
+                fail(where, 'a companies list moved; update patch_companies_panel')
+            text = text.replace(model, model + model[:model.index('d')] + 'ignoreinvisible = yes  # PMR: subsidiaries\n')
+        text = text.replace(mine[1], mine[1].replace('company_item = {}', f'company_item = {{ visible = "[{NOT_SUB}]" }}'))
+        text = text.replace(every[1], every[1] + f'\t\t\t\t\t\t\tvisible = "[{NOT_SUB}]"  # PMR: subsidiaries\n')
     return text
 
 

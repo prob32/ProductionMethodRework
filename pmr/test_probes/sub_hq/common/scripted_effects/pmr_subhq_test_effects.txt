@@ -1,0 +1,41 @@
+﻿# Country scope. One PMR;rec=SUBHQ_TEST line, after SUB_TEST's (Subsidiary B's levels and the company count): has_b
+# B exists; sub B has pmr_sub = 1; linked B has pmr_parent; in_list a company holds B in its list pmr_subs; exec_list
+# that company's executive holds it too.
+pmr_subhq_test_log = {
+	save_scope_as = pmr_shq_c
+	set_variable = { name = pmr_shq_has_b value = 0 }
+	set_variable = { name = pmr_shq_sub value = 0 }
+	set_variable = { name = pmr_shq_linked value = 0 }
+	set_variable = { name = pmr_shq_in_list value = 0 }
+	set_variable = { name = pmr_shq_exec value = 0 }
+	if = {
+		limit = { has_company = company_type:company_pmr_sub_test_b }
+		set_variable = { name = pmr_shq_has_b value = 1 }
+	}
+	company:company_pmr_sub_test_b ?= {
+		save_scope_as = pmr_shq_b
+		if = {
+			limit = { var:pmr_sub ?= 1 }
+			scope:pmr_shq_c = { set_variable = { name = pmr_shq_sub value = 1 } }
+		}
+		if = {
+			limit = { has_variable = pmr_parent }
+			scope:pmr_shq_c = { set_variable = { name = pmr_shq_linked value = 1 } }
+		}
+	}
+	if = {
+		limit = { exists = scope:pmr_shq_b }
+		every_company = {
+			limit = { is_target_in_variable_list = { name = pmr_subs target = scope:pmr_shq_b } }
+			scope:pmr_shq_c = { set_variable = { name = pmr_shq_in_list value = 1 } }
+			executive ?= {
+				if = {
+					limit = { is_target_in_variable_list = { name = pmr_subs target = scope:pmr_shq_b } }
+					scope:pmr_shq_c = { set_variable = { name = pmr_shq_exec value = 1 } }
+				}
+			}
+		}
+	}
+	pmr_sub_test_log = yes
+	debug_log = "PMR;rec=SUBHQ_TEST;date=[TimeKeeper.GetCurrentDate.GetString];has_b=[THIS.Var('pmr_shq_has_b').GetValue|0];sub=[THIS.Var('pmr_shq_sub').GetValue|0];linked=[THIS.Var('pmr_shq_linked').GetValue|0];in_list=[THIS.Var('pmr_shq_in_list').GetValue|0];exec_list=[THIS.Var('pmr_shq_exec').GetValue|0]"
+}

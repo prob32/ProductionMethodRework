@@ -1,0 +1,92 @@
+﻿# Regional HQs subsidiary smoke test, test builds only (Pat 2026-10-19 12:54Z: "I only would want a subsidiary IF it
+# was listed under regional HQ of a parent COMPANY"). Links Subsidiary B to a parent company: the one that took the
+# Textile Mills test (pmr_mono_test_co), else the first company that isn't a test company. B is founded first, with 5
+# Tooling Workshop levels in a state without one, if the save has none. The parent holds B in its variable list
+# pmr_subs, and its executive a copy; B gets pmr_sub = 1 and pmr_parent. company_panel.py lists pmr_subs under the
+# parent's Regional HQs and leaves pmr_sub companies off the Companies panel's lists. Logs PMR;rec=SUBHQ_TEST (and
+# SUB_TEST) at once and the next day.
+pmr_subhq_test_decision = {
+	is_shown = {
+		NOT = { has_variable = pmr_subhq_test_on }
+	}
+	possible = {
+		any_company = {
+			NOT = { is_company_type = company_type:company_pmr_sub_test_a }
+			NOT = { is_company_type = company_type:company_pmr_sub_test_b }
+			NOT = { is_company_type = company_type:company_pmr_sub_test_c }
+		}
+	}
+	when_taken = {
+		set_variable = pmr_subhq_test_on
+		if = {
+			limit = { NOT = { has_company = company_type:company_pmr_sub_test_b } }
+			set_variable = pmr_sub_test_on
+			random_scope_state = {
+				limit = {
+					is_incorporated = yes
+					NOT = { any_scope_building = { is_building_type = building_tooling_workshop } }
+				}
+				save_scope_as = pmr_shq_st
+			}
+			if = {
+				limit = { NOT = { exists = scope:pmr_shq_st } }
+				capital = { save_scope_as = pmr_shq_st }
+			}
+			add_company = company_type:company_pmr_sub_test_b
+			company:company_pmr_sub_test_b ?= {
+				set_company_state_region = scope:pmr_shq_st.state_region
+			}
+			scope:pmr_shq_st = {
+				create_building = {
+					building = building_tooling_workshop
+					add_ownership = {
+						company = {
+							type = company_pmr_sub_test_b
+							country = ROOT
+							levels = 5
+						}
+					}
+				}
+			}
+		}
+		if = {
+			limit = { any_company = { has_variable = pmr_mono_test_co } }
+			random_company = {
+				limit = { has_variable = pmr_mono_test_co }
+				save_scope_as = pmr_shq_parent
+			}
+		}
+		else = {
+			random_company = {
+				limit = {
+					NOT = { is_company_type = company_type:company_pmr_sub_test_a }
+					NOT = { is_company_type = company_type:company_pmr_sub_test_b }
+					NOT = { is_company_type = company_type:company_pmr_sub_test_c }
+				}
+				save_scope_as = pmr_shq_parent
+			}
+		}
+		company:company_pmr_sub_test_b ?= {
+			save_scope_as = pmr_shq_sub
+		}
+		if = {
+			limit = {
+				exists = scope:pmr_shq_sub
+				exists = scope:pmr_shq_parent
+			}
+			scope:pmr_shq_sub = {
+				set_variable = { name = pmr_sub value = 1 }
+				set_variable = { name = pmr_parent value = scope:pmr_shq_parent }
+			}
+			scope:pmr_shq_parent = {
+				add_to_variable_list = { name = pmr_subs target = scope:pmr_shq_sub }
+				executive ?= {
+					add_to_variable_list = { name = pmr_subs target = scope:pmr_shq_sub }
+				}
+			}
+		}
+		pmr_subhq_test_log = yes
+		trigger_event = { id = pmr_subhq_test.1 days = 1 }
+	}
+	ai_chance = { value = 0 }
+}

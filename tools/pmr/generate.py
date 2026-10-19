@@ -1803,6 +1803,7 @@ def main():
           bom=False)
     # The company panels without the retool sites that companies list (Pat 2026-10-19 02:32Z, company_panel.py); in the
     # test build company_culture.write_all writes company_panel.gui, with its Company Culture tab.
+    company_panel.SUB_LINKS = not args.release   # the Regional HQs subsidiary probe (pmr/test_probes/sub_hq)
     write('gui/companies_panel.gui', company_panel.patch_companies_panel(vanilla_gui('companies_panel.gui')), bom=False)
     if args.release:
         write('gui/company_panel.gui', company_panel.patch_company_panel(vanilla_gui('company_panel.gui')), bom=False)

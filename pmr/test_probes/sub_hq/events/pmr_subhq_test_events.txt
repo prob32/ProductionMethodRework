@@ -1,0 +1,11 @@
+﻿namespace = pmr_subhq_test
+
+# Country scope, hidden: the Regional HQs subsidiary test's log the day after its decision.
+pmr_subhq_test.1 = {
+	type = country_event
+	hidden = yes
+
+	immediate = {
+		pmr_subhq_test_log = yes
+	}
+}
