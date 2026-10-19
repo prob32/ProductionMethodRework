@@ -771,7 +771,8 @@ def pf_effects(shorts):
     term where positive as pmr_ptp_<b> (productivity), the output term as pmr_pto_<b> (the rest is losses) and the
     pick's employees per level as pmr_pte_<b> (Productivity's nested tooltip, Pat 2026-10-19 12:56Z). They go
     when no state of the country has the type, so it adds nothing there. The player's figures go to debug.log
-    (PMR;rec=PF)."""
+    (PMR;rec=PF). An AI country takes only pmr_pterm_<b> (pmr_pfa_<b>), and a type the country has no level of skips
+    its sweep (country_has_building_type_levels)."""
     o = ['# Country scope. A building type\'s average profit and vanilla score terms (private_investment.pf_effects).\n\n']
     for b in shorts:
         o.append(f'pmr_pf_{b} = {{\n\tset_variable = {{ name = pmr_pf_s_{b} value = 0 }}\n'
@@ -780,6 +781,7 @@ def pf_effects(shorts):
                  f'\tset_variable = {{ name = pmr_pf_p_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pf_o_{b} value = 0 }}\n'
                  f'\tset_variable = {{ name = pmr_pf_e_{b} value = 0 }}\n'
+                 f'\tif = {{\n\t\tlimit = {{ country_has_building_type_levels = {{ target = bt:building_{b} value > 0 }} }}\n'
                  f'\tevery_scope_state = {{\n\t\tlimit = {{ has_variable = pmr_prm_{b} has_variable = pmr_pvs_{b} '
                  f'has_variable = pmr_level_{b} var:pmr_level_{b} > 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_pft value = var:pmr_prm_{b} }}\n'
@@ -804,7 +806,7 @@ def pf_effects(shorts):
                  f'\t\t\towner = {{\n\t\t\t\tchange_variable = {{ name = pmr_pf_p_{b} add = scope:pmr_st.var:pmr_pft }}\n'
                  f'\t\t\t\tchange_variable = {{ name = pmr_pf_o_{b} add = scope:pmr_st.var:pmr_pfu }}\n'
                  f'\t\t\t\tchange_variable = {{ name = pmr_pf_e_{b} add = scope:pmr_st.var:pmr_pfe }}\n\t\t\t}}\n\t\t}}\n'
-                 '\t\tremove_variable = pmr_pft\n\t\tremove_variable = pmr_pfu\n\t\tremove_variable = pmr_pfe\n\t}\n'
+                 '\t\tremove_variable = pmr_pft\n\t\tremove_variable = pmr_pfu\n\t\tremove_variable = pmr_pfe\n\t}\n\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_pf_l_{b} > 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_pavg_{b} value = var:pmr_pf_s_{b} }}\n'
                  f'\t\tchange_variable = {{ name = pmr_pavg_{b} divide = var:pmr_pf_l_{b} }}\n'
@@ -821,7 +823,31 @@ def pf_effects(shorts):
                  f'\telse = {{\n\t\tremove_variable = pmr_pavg_{b}\n\t\tremove_variable = pmr_pterm_{b}\n'
                  f'\t\tremove_variable = pmr_ptp_{b}\n\t\tremove_variable = pmr_pto_{b}\n\t\tremove_variable = pmr_pte_{b}\n\t}}\n'
                  + ''.join(f'\tremove_variable = pmr_pf_{x}_{b}\n' for x in 'stlpoe') + '}\n\n')
-    o.append('pmr_pf_all = {\n' + ''.join(f'\tpmr_pf_{b} = yes\n' for b in shorts) + '}\n')
+        # the sweep sits inside its gate
+        a = o[-1].index('\tevery_scope_state = {')
+        z = o[-1].index('\t}\n\t}\n\tif = {\n\t\tlimit = { var:pmr_pf_l_') + 3
+        o[-1] = o[-1][:a] + ''.join('\t' + ln for ln in o[-1][a:z].splitlines(True)) + o[-1][z:]
+        # An AI country (perf review 4, S-1; Pat 2026-10-19 16:32Z): only the score term its ai_value reads (pmr_pterm_<b>);
+        # the averages and parts are the player's log and Policies tooltip
+        o.append(f'pmr_pfa_{b} = {{\n\tset_variable = {{ name = pmr_pf_t_{b} value = 0 }}\n'
+                 f'\tset_variable = {{ name = pmr_pf_l_{b} value = 0 }}\n'
+                 f'\tif = {{\n\t\tlimit = {{ country_has_building_type_levels = {{ target = bt:building_{b} value > 0 }} }}\n'
+                 f'\t\tevery_scope_state = {{\n\t\t\tlimit = {{ has_variable = pmr_prm_{b} has_variable = pmr_pvs_{b} '
+                 f'has_variable = pmr_level_{b} var:pmr_level_{b} > 0 }}\n'
+                 f'\t\t\tset_variable = {{ name = pmr_pfu value = var:pmr_pvs_{b} }}\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_pfu multiply = var:pmr_level_{b} }}\n'
+                 '\t\t\tsave_temporary_scope_as = pmr_st\n'
+                 f'\t\t\towner = {{\n\t\t\t\tchange_variable = {{ name = pmr_pf_t_{b} add = scope:pmr_st.var:pmr_pfu }}\n'
+                 f'\t\t\t\tchange_variable = {{ name = pmr_pf_l_{b} add = scope:pmr_st.var:pmr_level_{b} }}\n\t\t\t}}\n'
+                 '\t\t\tremove_variable = pmr_pfu\n\t\t}\n\t}\n'
+                 f'\tif = {{\n\t\tlimit = {{ var:pmr_pf_l_{b} > 0 }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pterm_{b} value = var:pmr_pf_t_{b} }}\n'
+                 f'\t\tchange_variable = {{ name = pmr_pterm_{b} divide = var:pmr_pf_l_{b} }}\n\t}}\n'
+                 f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_pterm_{b} }}\n\t\tremove_variable = pmr_pterm_{b}\n\t}}\n'
+                 f'\tremove_variable = pmr_pf_t_{b}\n\tremove_variable = pmr_pf_l_{b}\n}}\n\n')
+    o.append('pmr_pf_all = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
+             + ''.join(f'\t\tpmr_pf_{b} = yes\n' for b in shorts) + '\t}\n\telse = {\n'
+             + ''.join(f'\t\tpmr_pfa_{b} = yes\n' for b in shorts) + '\t}\n}\n')
     return ''.join(o)
 
 

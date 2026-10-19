@@ -71,7 +71,10 @@ EXEC_H, SEAT_H = 96, 74                 # character_portrait_medium (80 x 88), c
 SEAT_TX = 100
 BADGE = 36
 VOTE = 32
-OPT_H, BAR_H = 40, 10
+CARD_W, CARD_H, CARD_COLS = 176, 116, 3   # a bylaw's box, as vanilla's law item (country_panel_law_item, 170 x 65)
+LAW_ICON = 40
+BAR_H = 8
+SCROLL_W = 14                           # the board panel's scrollbar
 APPROVE = 'gfx/interface/icons/generic_icons/approval_icon.dds'
 DISAPPROVE = 'gfx/interface/icons/generic_icons/disapproval_icon.dds'
 
@@ -461,34 +464,45 @@ def seats():
     return exe + subs + share + council
 
 
-def bylaw_group(g, names):
-    """One group of bylaws: its name, the cancel of a change to it under way, a button per bylaw (the one in force
-    lit; a click on another starts the change, bylaws.pmr_bl_pick_sgui) and the change's bar under its bylaw."""
-    n = len(names)
-    bw = (BOARD_W - 6 * (n - 1)) // n
+def bylaw_card(g, i, x, y):
+    """One bylaw's box, as a law in vanilla's laws panel (Pat 16:39Z: "bigger boxes and the effect listed under them"):
+    its icon and name, its effects under them, the bar of a change to it at its foot. The bylaw in force is lit; a
+    click on another starts the change (bylaws.pmr_bl_pick_sgui)."""
+    c = bylaws.code(g, i)
     sg = "GetScriptedGui('pmr_bl_pick_sgui')"
+    scope = f"{SG_SCOPE}.AddScope('opt', MakeScopeValue('(CFixedPoint){c}')).End"
+    inner = (f'icon = {{\nposition = {{ 8 8 }}\nsize = {{ {LAW_ICON} {LAW_ICON} }}\n'
+             f'texture = "{bylaws.LAW_ICON.format(bylaws.ICON[c])}"\nalwaystransparent = yes\n}}\n'
+             f'textbox = {{\nposition = {{ {LAW_ICON + 14} 6 }}\nsize = {{ {CARD_W - LAW_ICON - 20} 44 }}\n'
+             'align = left|vcenter|nobaseline\nmultiline = yes\nfontsize = 17\nfontsize_min = 12\nelide = right\n'
+             f'text = "PMR_BL_NAME_{c}"\nalwaystransparent = yes\n}}\n'
+             + (f'textbox = {{\nposition = {{ 10 {LAW_ICON + 14} }}\nsize = {{ {CARD_W - 16} {CARD_H - LAW_ICON - 14 - BAR_H - 8} }}\n'
+                'align = left|nobaseline\nmultiline = yes\nfontsize = 14\nfontsize_min = 12\nelide = right\n'
+                f'text = "PMR_BL_FX_{c}"\nalwaystransparent = yes\n}}\n' if bylaws.fx(c) else '')
+             + f'widget = {{\n{_vis(AND(EQ("pmr_bl_pg", g), EQ("pmr_bl_pv", i)))}position = {{ 8 {CARD_H - BAR_H - 6} }}\n'
+             f'size = {{ {CARD_W - 16} {BAR_H} }}\ntooltip = "PMR_BL_BAR_TT"\n'
+             'green_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
+             f'min = 0\nmax = 100\nvalue = "[FixedPointToFloat({V("pmr_bl_pp")})]"\n}}\n}}\n}}\n')
+    box = f'position = {{ {x} {y} }}\nsize = {{ {CARD_W} {CARD_H} }}\n'
+    now = EQ(f'pmr_bl_{g}', i)
+    return (f'button = {{\n{_vis(now)}{box}using = default_button_primary\n{inner}}}\n'
+            f'button = {{\n{_vis(f"Not({now})")}{box}using = default_button\n'
+            f'enabled = "[And({LOCAL}, {sg}.IsValid({scope}))]"\nonclick = "[{sg}.Execute({scope})]"\n'
+            f'tooltip = "PMR_BL_TT_{c}"\n{inner}}}\n')
+
+
+def bylaw_group(g, names):
+    """One group of bylaws: its name, the cancel of a change to it under way, and its bylaws' boxes, three a row."""
     cancel = "GetScriptedGui('pmr_bl_cancel_sgui')"
     end = f'{SG_SCOPE}.End'
+    rows = (len(names) + CARD_COLS - 1) // CARD_COLS
     out = (_textbox(0, 0, BOARD_W - 40, 30, f'PMR_BL_GROUP_{g}', 21)
            + f'button_icon_cancel = {{\n{_vis(AND(LOCAL, EQ("pmr_bl_pg", g)))}position = {{ {BOARD_W - 30} 0 }}\n'
            f'size = {{ 30 30 }}\nenabled = "[{cancel}.IsValid({end})]"\nonclick = "[{cancel}.Execute({end})]"\n}}\n')
-    for i in range(1, n + 1):
-        c = bylaws.code(g, i)
-        x, y = (i - 1) * (bw + 6), 34
-        scope = f"{SG_SCOPE}.AddScope('opt', MakeScopeValue('(CFixedPoint){c}')).End"
-        label = (f'textbox = {{\nparentanchor = center\nsize = {{ {bw - 10} {OPT_H - 6} }}\nalign = center|nobaseline\n'
-                 f'fontsize = 17\nfontsize_min = 12\nelide = right\ntext = "PMR_BL_NAME_{c}"\nalwaystransparent = yes\n}}\n')
-        box = f'position = {{ {x} {y} }}\nsize = {{ {bw} {OPT_H} }}\n'
-        fx = f'tooltip = "PMR_BL_FX_{c}"\n' if bylaws.fx(c) else ''
-        out += (f'button = {{\n{_vis(EQ(f"pmr_bl_{g}", i))}{box}using = default_button_primary\n{fx}{label}}}\n'
-                f'button = {{\n{_vis(f"Not({EQ(f"pmr_bl_{g}", i)})")}{box}using = default_button\n'
-                f'enabled = "[And({LOCAL}, {sg}.IsValid({scope}))]"\nonclick = "[{sg}.Execute({scope})]"\n'
-                f'tooltip = "PMR_BL_TT_{c}"\n{label}}}\n'
-                f'widget = {{\n{_vis(AND(EQ("pmr_bl_pg", g), EQ("pmr_bl_pv", i)))}position = {{ {x} {y + OPT_H + 4} }}\n'
-                f'size = {{ {bw} {BAR_H} }}\ntooltip = "PMR_BL_BAR_TT"\n'
-                'green_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
-                f'min = 0\nmax = 100\nvalue = "[FixedPointToFloat({V("pmr_bl_pp")})]"\n}}\n}}\n}}\n')
-    return f'widget = {{\nsize = {{ {BOARD_W} {34 + OPT_H + 4 + BAR_H + 4} }}\n{out}}}\n'
+    for i in range(1, len(names) + 1):
+        col, row = (i - 1) % CARD_COLS, (i - 1) // CARD_COLS
+        out += bylaw_card(g, i, col * (CARD_W + 6), 34 + row * (CARD_H + 6))
+    return f'widget = {{\nsize = {{ {BOARD_W} {34 + rows * (CARD_H + 6)} }}\n{out}}}\n'
 
 
 def board():
@@ -496,7 +510,7 @@ def board():
     def header(key):
         return (f'default_header = {{\nblockoverride "text" {{\ntext = "{key}"\n}}\n'
                 f'blockoverride "size" {{\nsize = {{ {BOARD_W} 38 }}\n}}\n}}\n')
-    return (f'flowcontainer = {{\nposition = {{ {BOARD_M} 10 }}\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n'
+    return (f'flowcontainer = {{\nmargin = {{ {BOARD_M} 10 }}\ndirection = vertical\nspacing = 6\nignoreinvisible = yes\n'
             + header('PMR_CC_BOARD') + seats()
             + 'widget = {\nsize = { 10 8 }\n}\n'
             + header('PMR_BL_HEADER')
@@ -513,9 +527,12 @@ def body(p, ready):
             'background = {\nusing = illu_alpha\nfittype = center\n'
             'texture = "gfx/interface/illustrations/tech_tree/illustration_tech_production.dds"\n}\n'
             + trees(p) + '}\n'
-            f'widget = {{\nsize = {{ {BOARD_W + 2 * BOARD_M} 0 }}\nlayoutpolicy_horizontal = fixed\n'
+            f'widget = {{\nsize = {{ {BOARD_W + 2 * BOARD_M + SCROLL_W} 0 }}\nlayoutpolicy_horizontal = fixed\n'
             'layoutpolicy_vertical = expanding\nscissor = yes\nbackground = {\nusing = dark_area\n}\n'
-            + board() + '}\n}\n')
+            # taller than the window at small resolutions or with several subsidiaries: it scrolls
+            'scrollarea = {\nsize = { 100% 100% }\nscrollbarpolicy_horizontal = always_off\n'
+            'scrollbar_vertical = {\nusing = vertical_scrollbar\n}\nscrollwidget = {\n'
+            + board() + '}\n}\n}\n}\n')
 
 
 # ---------------------------------------------------------------------------------------------------------------

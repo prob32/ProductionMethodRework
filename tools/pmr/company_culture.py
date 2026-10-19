@@ -295,17 +295,17 @@ def plan(game, plain, goods_cost, goods_tex=None):
             # horizontal diversification"; a logging company widens to all extraction)
             for grp in groups.get(key) or []:
                 horiz = sorted((b for b in ownable if b not in bts and grp in (groups.get(b) or [])),
-                               key=lambda b: -total[b])
+                               key=lambda b: (-total[b], b))   # ties by name: ownable is a set
                 if horiz:
                     break
             if not horiz:
                 # no other ownable type in its classes (power plants, art academies): the industries using its main
                 # good, else those making goods of its kind (fine art: other luxuries), else the nearest by output value
                 good = main[key][0]
-                rest = [b for b in ownable if b not in bts and b not in vert]
+                rest = sorted(b for b in ownable if b not in bts and b not in vert)
                 kin = lambda b: sum(v for g, v in out_val[b].items() if kind.get(g) == kind.get(good))  # noqa: E731
-                horiz = (sorted((b for b in rest if good in in_val.get(b, {})), key=lambda b: -in_val[b][good])
-                         or sorted((b for b in rest if kin(b) > 0), key=lambda b: -kin(b))
+                horiz = (sorted((b for b in rest if good in in_val.get(b, {})), key=lambda b: (-in_val[b][good], b))
+                         or sorted((b for b in rest if kin(b) > 0), key=lambda b: (-kin(b), b))
                          or sorted(rest, key=lambda b: (abs(total[b] - total[key]), b)))
         p.comp[c] = {'key': key, 'eg': eg[:2], 'pvars': pvars, 'pg': pg,
                      'sb': [vert[:subsidiaries.SB_SIZE], horiz[:subsidiaries.SB_SIZE]]}
@@ -1135,8 +1135,7 @@ def write_all(game, write, header_text, report, p, out_dir):
     write(PANEL_GUI, cc_tree.patch_panel(company_panel.patch_company_panel(   # without the retool sites
         open(os.path.join(game, PANEL_GUI), encoding='utf-8-sig').read()), TAB), bom=False)
     write(OWN_GUI, cc_tree.tab(p), bom=False)
-    write(cc_tree.HUD_GUI, cc_tree.patch_hud(open(os.path.join(game, cc_tree.HUD_GUI), encoding='utf-8-sig').read()),
-          bom=False)
+    # the HUD (cc_tree.patch_hud) is written by generate.py, with the retool site flags
     n_tex = cc_tree.textures(out_dir)
     sb_loc = subsidiaries.write_all(game, write, header_text, p)
     write(bylaws.TRAIT_FILE, header_text + bylaws.traits())

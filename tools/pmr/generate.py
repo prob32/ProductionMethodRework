@@ -69,6 +69,7 @@ import icons  # noqa: E402
 import pdx  # noqa: E402
 import private_investment  # noqa: E402
 import company_culture  # noqa: E402
+import cc_tree  # noqa: E402
 import subsidiaries  # noqa: E402
 import company_panel  # noqa: E402
 import methods_row  # noqa: E402
@@ -1805,6 +1806,11 @@ def main():
         loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
         private_investment.GRANT_LINE = True   # subsidiary payments in the pool's tooltip (subsidiaries.py)
         private_investment.AI_TAIL = company_culture.ai_value_tail   # the Focus bylaw (company_culture.py)
+    # The HUD: the retool site flags (both builds), and in the test build Company Culture's full-screen window
+    hud = vanilla_gui('ingame_hud.gui')
+    if cc_plan:
+        hud = cc_tree.patch_hud(hud)
+    write('gui/ingame_hud.gui', patch_hud_flags(hud, site_types), bom=False)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
@@ -4524,6 +4530,25 @@ def any_of(exprs):
     return f'Or({any_of(exprs[:mid])}, {any_of(exprs[mid:])})'
 
 
+# A retool site is a GUI variable of its own key, set once as the game's HUD is made (patch_hud_flags): one lookup an
+# item, where a test against all 180 site types cost about 1,000 calls (perf review 4, G-1; Pat 2026-10-19 16:32Z)
+SITE_HIDDEN = {'Building': 'Not(GetVariableSystem.Exists(Building.GetBuildingType.GetKey))',
+               'BuildingType': 'Not(GetVariableSystem.Exists(BuildingType.GetKey))'}
+HUD_ANCHOR = '\t# topbar / alerts / timemanip\n\tvbox = {\n'
+
+
+def patch_hud_flags(text, site_types):
+    """ingame_hud.gui: a widget that, as the HUD is made, marks every retool site type in the GUI variable system
+    (SITE_HIDDEN), before any list that hides them can open."""
+    if text.count(HUD_ANCHOR) != 1:
+        raise SystemExit('ingame_hud.gui: the topbar vbox moved; update patch_hud_flags')
+    flags = ''.join(f"\t\t\ton_start = \"[GetVariableSystem.Set('{t}', 'yes')]\"\n" for t in sorted(site_types))
+    return text.replace(HUD_ANCHOR, '\t# PMR: every retool site type marked once, for the lists that hide them\n'
+                        '\twidget = {\n\t\tsize = { 0 0 }\n\t\talwaystransparent = yes\n'
+                        '\t\tstate = {\n\t\t\tname = pmr_site_flags\n\t\t\ttrigger_on_create = yes\n'
+                        + flags + '\t\t}\n\t}\n\n' + HUD_ANCHOR)
+
+
 def hide_retool_sites(text, site_types):
     """states_panel_buildings.gui: the state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
 
@@ -4533,7 +4558,7 @@ def hide_retool_sites(text, site_types):
     to score it, so its category stays urban. The tab hides it instead: the item is invisible and the grid
     ignores invisible items, as the lens toolbar's grid does. The list view's grid is shared with the rural
     and development lists, which never hold a site."""
-    hidden = 'Not(' + any_of([is_type(t) for t in site_types]) + ')'
+    hidden = SITE_HIDDEN['Building']
     for old, new, what in [
             ('\t\t\t\t\tdatamodel = "[State.AccessUrbanBuildings]"\n\t\t\t\t\tdatamodel_wrap = 4\n'
              '\t\t\t\t\tflipdirection = yes\n\n\t\t\t\t\titem = {\n\t\t\t\t\t\tbuilding_item = {}\n',
@@ -4561,8 +4586,7 @@ def hide_sites_elsewhere(menu, browser, site_types):
     Buildings grids (building_browser_panel.gui's building_panel_potential_buildings, BuildingType context), as
     hide_retool_sites does for the state's Buildings tab: the item is invisible and its list skips invisible items.
     Returns (menu, browser)."""
-    in_building = 'Not(' + any_of([is_type(t) for t in site_types]) + ')'
-    in_type = 'Not(' + any_of([f"ObjectsEqual(BuildingType.Self, GetBuildingType('{t}').Self)" for t in site_types]) + ')'
+    in_building, in_type = SITE_HIDDEN['Building'], SITE_HIDDEN['BuildingType']
     for old, new, what in [
             ('\t\tdatamodel = "[StatesPanel.AccessState.GetPotentialUrbanBuildings]"\n',
              '\t\tdatamodel = "[StatesPanel.AccessState.GetPotentialUrbanBuildings]"\n'

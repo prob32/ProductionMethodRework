@@ -324,12 +324,18 @@ def effects(p):
              f'\t\t\t\t\t\tlevels = {SB_LEVELS}\n\t\t\t\t\t}}\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n\t}}\n}}\n\n')
     o.append('# Country scope: one company slot per subsidiary the country has (Pat 2026-10-19 14:44Z), the static modifier\n'
              f'# {SLOT_MODIFIER} with the count as its multiplier. On a founding, a disbanding (the company going has lost\n'
-             '# pmr_sub by then) and monthly.\n'
+             '# pmr_sub by then) and monthly; the modifier is touched only when the count differs from the one it carries\n'
+             '# (pmr_sb_on), as every touch recomputes the country\'s modifiers (perf review 4, S-3).\n'
              'pmr_sb_slots = {\n\tsave_scope_as = pmr_sb_cty\n\tset_variable = { name = pmr_sb_cnt value = 0 }\n'
              '\tevery_company = {\n\t\tlimit = { has_variable = pmr_sub }\n'
              '\t\tscope:pmr_sb_cty = { change_variable = { name = pmr_sb_cnt add = 1 } }\n\t}\n'
-             f'\tif = {{ limit = {{ has_modifier = {SLOT_MODIFIER} }} remove_modifier = {SLOT_MODIFIER} }}\n'
-             f'\tif = {{ limit = {{ var:pmr_sb_cnt > 0 }} add_modifier = {{ name = {SLOT_MODIFIER} multiplier = var:pmr_sb_cnt }} }}\n'
+             '\tif = {\n\t\tlimit = {\n\t\t\tOR = {\n'
+             '\t\t\t\tNOT = { has_variable = pmr_sb_on }\n\t\t\t\tNOT = { var:pmr_sb_on = var:pmr_sb_cnt }\n'
+             f'\t\t\t\tAND = {{ var:pmr_sb_cnt > 0 NOT = {{ has_modifier = {SLOT_MODIFIER} }} }}\n'
+             '\t\t\t}\n\t\t}\n'
+             f'\t\tif = {{ limit = {{ has_modifier = {SLOT_MODIFIER} }} remove_modifier = {SLOT_MODIFIER} }}\n'
+             f'\t\tif = {{ limit = {{ var:pmr_sb_cnt > 0 }} add_modifier = {{ name = {SLOT_MODIFIER} multiplier = var:pmr_sb_cnt }} }}\n'
+             '\t\tset_variable = { name = pmr_sb_on value = var:pmr_sb_cnt }\n\t}\n'
              '}\n\n')
     # Disbanding.
     clear = ''.join(f'\t\t\t\tif = {{ limit = {{ scope:pmr_sb_gone.var:pmr_sb_n ?= {n} }} set_variable = {{ name = pmr_sb_d{n} value = 0 }} }}\n'

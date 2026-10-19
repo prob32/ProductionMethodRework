@@ -15,7 +15,8 @@ back (+1), oppose (-1) or don't care (0) about a change, by their interest group
 against the one it replaces (VIEWS; a middle bylaw counts 0). Seats: the executive (3), each subsidiary's executive
 (1), the shareholders (2, the Industrialists' view), and the Workers Council where the Trade Unions have 5% clout or
 more (2, 3 at 15%, 4 at 25%; Pat 14:43Z). Support = the sum of weight x view; a change at BLOCK or below can't start;
-otherwise its bar gains 20 + 10 x support a month (5 to 50) and it passes at 100. One change at a time; it can be
+otherwise its bar gains 20 + 2 x support a month (Pat 16:39Z: shareholders' 2 votes against give +16; 5 to 50) and it
+passes at 100. One change at a time; it can be
 cancelled. An AI company proposes, once a year, the Pay or Hours bylaw its board backs most (support 2 or more).
 
 Trade Unions (Pat 14:43Z: "If a company is powerful in a nation and it has harsh worker laws that should add minus
@@ -61,7 +62,8 @@ TRAITS = {
     23: [(COND, -0.30), (THR, -0.02)],
 }
 ICON = {11: 'laissez_faire', 12: 'free_trade', 13: 'wage_controls', 14: 'cooperative_ownership',
-        21: 'no_workers_rights', 22: 'regulatory_bodies', 23: 'worker_protections'}
+        21: 'no_workers_rights', 22: 'regulatory_bodies', 23: 'worker_protections',
+        31: 'protectionism', 32: 'mercantilism', 33: 'corporate_state'}
 FOCUS_AI = {1: (1.5, 0.75), 3: (0.75, 1.5)}   # Focus bylaw -> (the company's factor, its subsidiaries')
 
 # Views by interest group (SPEC.md section 6): code -> +1 backs, -1 opposes.
@@ -82,7 +84,7 @@ IG_TEX = {'ig_industrialists': 'industrialists', 'ig_landowners': 'landowners',
 EXEC_W, SUB_W, SHARE_W = 3, 1, 2
 COUNCIL = [(0.25, 4), (0.15, 3), (0.05, 2)]   # Trade Unions clout -> the council's weight
 BLOCK = -6
-RATE = (20, 10, 5, 50)               # base, per support, least, most
+RATE = (20, 2, 5, 50)                # base, per net vote of support, least, most (Pat 16:39-16:40Z)
 AI_MIN = 2
 TU_LEVELS = 20
 TU_CAP = 5
@@ -348,12 +350,13 @@ def localization():
     loc = [' PMR_BL_HEADER:0 "Bylaws"', ' PMR_BL_SHAREHOLDERS:0 "Shareholders"', ' PMR_BL_COUNCIL:0 "Workers Council"',
            f' {TU_MODIFIER}:0 "Harsh Company Bylaws"', f' {TU_MODIFIER}_desc:0 ""', ' PMR_BL_VOTES_TT:0 "Votes"',
            ' PMR_BL_BAR_TT:0 "#v [Character.MakeScope.Var(\'pmr_bl_pp\').GetValue|0]#! / 100\\n'
-           '#v [Character.MakeScope.Var(\'pmr_bl_rt\').GetValue|+=0]#! a month"']
+           'Support [Character.MakeScope.Var(\'pmr_bl_sup\').GetValue|+=0]\\n'
+           '[Character.MakeScope.Var(\'pmr_bl_rt\').GetValue|+=0] a month"']
     for g, name, _o in GROUPS:
         loc.append(f' PMR_BL_GROUP_{g}:0 "{name}"')
     for c in CODES:
-        sup = f"Support #v [Character.MakeScope.Var('pmr_bl_s_{c}').GetValue|+=0]#!"
-        loc += [f' PMR_BL_NAME_{c}:0 "{NAME[c]}"', f' PMR_BL_TT_{c}:0 "' + '\\n'.join([sup] + fx(c)) + '"']
+        sup = f"Support [Character.MakeScope.Var('pmr_bl_s_{c}').GetValue|+=0]"
+        loc += [f' PMR_BL_NAME_{c}:0 "{NAME[c]}"', f' PMR_BL_TT_{c}:0 "{sup}"']
         if fx(c):
             loc.append(f' PMR_BL_FX_{c}:0 "' + '\\n'.join(fx(c)) + '"')
     for c in TRAITS:
