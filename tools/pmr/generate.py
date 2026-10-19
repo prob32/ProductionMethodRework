@@ -297,8 +297,13 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 # used them (#2). Pat, 2026-10-19 01:18Z: blended by price like the other trade-offs.
                 'pmg_explosives_building_coal_mine', 'pmg_explosives_building_iron_mine',
                 'pmg_explosives_building_lead_mine', 'pmg_explosives_building_sulfur_mine',
-                'pmg_explosives_building_gold_mine')
+                'pmg_explosives_building_gold_mine',
+                # Pat 2026-10-19 21:12Z: the ranches' wool (simple, sheep farms, intensive grazing) blended like
+                # hardwood. Its none, Simple Ranch, makes wool of its own: the options carry their difference from it
+                # (Option.less) and the marker stays on it (option_effects).
+                'pmg_sheep_ranch')
 TRADE_GAIN = 1.0
+kept_none = set()     # (building, none method) of a trade-off whose none has effects: its marker stays on it
 PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal entries (test builds: off)
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
@@ -885,6 +890,20 @@ class Option:
         self.required = [n.value for n in self.node.value if n.key == 'required_input_goods']
         self.elec = ELECTRICITY in self.required or self.goods.get(ELECTRICITY, 0) < 0
 
+    def less(self, base):
+        """Carry only the difference from `base` (an Option read from the group's none method): a none that has
+        effects of its own keeps them, so an option's share adds what it changes."""
+        for k, d in base.mods.items():
+            mine = self.mods.setdefault(k, {})
+            for mk, mv in d.items():
+                mine[mk] = mine.get(mk, 0) - mv
+                if abs(mine[mk]) < 1e-9:
+                    del mine[mk]
+        for g, amt in base.goods.items():
+            self.goods[g] = self.goods.get(g, 0) - amt
+            if abs(self.goods[g]) < 1e-9:
+                del self.goods[g]
+
     def strip(self):
         """Cut the effects and required goods: the share methods carry them."""
         for n in self.node.value:
@@ -1161,6 +1180,7 @@ def main():
     # options[bk] = [(group, gi, mode, none method, [Option], standard methods)], gi counting the
     # building's converted groups from 1 and j (Option.j) its options across them.
     options = {}
+    kept_none.clear()
     treated_keys = {t[0] for t in treated}
     for bk, bn, s, recipes, g0, pg in treated:
         conv, j = [], 0
@@ -1185,6 +1205,12 @@ def main():
             for key, role in picks:
                 j += 1
                 opts.append(Option(bk, j, g, len(conv) + 1, mode, role, key, pms))
+            if mode == 'market':
+                base = Option(bk, 0, g, len(conv) + 1, mode, None, none, pms)
+                if base.goods or base.required:
+                    for x in opts:
+                        x.less(base)
+                    kept_none.add((bk, none))
             conv.append((g, len(conv) + 1, mode, none, opts, std))
         if conv:
             options[bk] = conv
@@ -2550,6 +2576,10 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         o.append(f'pmr_xlock_{x.j}_{b} = {{\n'
                  + bisect(xv('pmr_x', x.j), lambda n, x=x: act(f'pm_pmr_xk_{b}_{x.j}_{n}'), '\t') + '}\n\n')
     o.append(f'pmr_xapply_{b} = {{\n')
+    # a none with effects of its own (Simple Ranch's wool) runs under every share: its marker stays on
+    for g, gi, mode, none, os_, std in conv:
+        if (bk, none) in kept_none:
+            o.append(f'\tif = {{ limit = {{ NOT = {{ {is_on(none)} }} }} {act(none)} }}\n')
     for x in opts:
         anyk = f'pm_pmr_xk_{b}_{x.j}_any'
         o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
