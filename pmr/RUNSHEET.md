@@ -1,4 +1,4 @@
-# PMR run sheet: Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
+# PMR run sheet: Production Methods cards sorted by AI weight, Production Methods cards in one set of columns, AI weight as a share of all weights, base prices at game start, research grants paid from the investment pool, Production Methods cards fixed, less text on the wheel, Production Methods cards sorted and filtered like the Buildings list, a quieter Company Culture wheel, the Investments tab in the side Buildings panel, AI weight by vanilla's own scoring at your average, the Company Culture full-screen fixed, Company Culture full-screen with lock reasons and charter buttons on its nodes, the Company Culture wheel with research grants and company special methods, recipe and automation chosen as pairs, the investment cards and AI weights on Private Owners' Methods, profit figures at market prices, Private Owners' Methods as a Buildings panel tab with recipe + automation pairs, the profit pick logs itself, private owners' methods on the Private tab, each building shows its most profitable recipe, new builds and retooling follow it, a green automation bar, who owns each level of a building, Company Works share probe, automation pays at 1836 wages, PMR translated into every game language, the automation tech gate, Company Culture tab on every company (test mod), one retool site per building with a paid crew so investors can add levels, hidden from the Buildings tab (test mod), your investors retool abroad, companies list their additional industries' retooling, the target follows your best recipe, the Foreign or Domestic bar as a multiplier with a 3-month lock, Arts Academies, power plants and Urban Centers, your government retooling abroad, retooling abroad, priorities on a timer and locked by law, policy costs and Agrarianism policies, ports and railways retool, administration, universities and trade centres always on their best method, Laissez-faire policies and Recent Investments as tree maps, the Private tab (fifth round) and your recipes abroad in the Owners list, retooling what you own abroad, the Private tab (fourth round), faster monthly ticks and a timing test, the Private construction tab (third round), trade-offs pre-loaded from your 1838 save, vanilla group names on the second bar, faster trade-offs, plantation treatment by acceptance, trade-offs by local prices
 
 Every line PMR writes goes to `Documents\Paradox Interactive\Victoria 3\logs\debug.log` and starts
 with `PMR;rec=`. Filter with:
@@ -10,7 +10,29 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: Production Methods cards in one set of columns, AI weight as a share, base prices at game start (q32, test mod; a new game is needed)
+## Latest: the Production Methods cards sorted by AI weight (q33, test mod; a new game is needed)
+
+From the build thread, after your 23:53Z message and screenshot on q32.
+
+- The game's own list can only sort by name, size, building type and productivity, so on Investments there is a fifth
+  sort button, AI weight. It shows the cards from the heaviest AI weight down. The search and filters don't apply to
+  that order, so they step aside while it is on; any other sort button brings them back with the game's order.
+- Everything from q32 below is still to check.
+
+1. Start a new game on the PMR Test playset as France. Open the Buildings panel from the left sidebar and click
+   Investments.
+2. Click the AI weight sort button. Scroll through the cards.
+3. Click Name, then AI weight again.
+4. Then do q32's steps below.
+5. Close the game and tell the build thread; it reads debug.log and error.log.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| S2 | Step 2 | The AI weight button is highlighted, the search and filters are gone, and the cards run from the highest AI weight percentage down; every card you had in step 1 is there | No cards at all: each slot couldn't read its own place in the list (error.log naming `GetIndexInDataModel` or `pmr_methods_slot`); tell the build thread. Cards in the old order: the sort never ran (debug.log `MV_SHARE` line: each `type=weight/share/place` should have places 0, 1, 2... by falling weight) |
+| S3 | Step 3 | Name brings back the filters and the game's alphabetical order; AI weight sorts again | The filters stay hidden after Name: the button didn't clear the AI order; tell the build thread |
+| E6 | error.log | No line naming `pmr_mv_sort`, `pmr_mv_rk`, `pmr_mv_n`, `pmr_bb_mv_ai` or `pmr_methods_slot` | Any such line: that part never ran, and S2-S3 are not results |
+
+## Earlier: Production Methods cards in one set of columns, AI weight as a share, base prices at game start (q32, test mod; seen 2026-10-18 23:53Z on 1 January)
 
 From the build thread, after your 23:22Z message and screenshots on q31. Your q31 logs are saved in
 `pmr_dev_files\logs_q31`: no PMR errors; the game stayed on 1 January 1836.
