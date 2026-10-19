@@ -1701,6 +1701,8 @@ def main():
               for bk, conv in options.items() if conv}
     # the pick row, on every type the profit calculation covers (PROFIT_TARGET)
     pick_ui = {bk: recipe_keys[bk] for bk in dispatch} if PROFIT_TARGET else {}
+    # the details panel's switching bars show what they fill toward (switch_targets, Pat 2026-10-19 02:32Z)
+    SWITCH_ICONS.update((bk, switch_targets(bk, recipe_tex[bk], pair_ui.get(bk), len(keys))) for bk, keys in pick_ui.items())
     mv_keys = pick_ui   # the Private tab's Methods view covers the same types
     ai_of = private_investment.ai_groups(game) if mv_keys else {}   # each row's AI weight (Pat 18:40Z)
     # the policy parts of each AI weight, for its tooltip's nested Policy line (Pat 2026-10-19 00:01Z); in the test
@@ -1717,7 +1719,7 @@ def main():
                     f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
                     '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
                     for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_)
-          + '\n# State scope. The profit pick\'s name and each recipe\'s note on the pick row (pick_row).\n'
+          + '\n# State and country scope. The names on the switching bars\' tooltips (pick_custom_loc).\n'
           + pick_custom_loc(pick_ui) + (methods_view_custom_loc(mv_keys, pair_ui) if mv_keys else ''))
     if mv_keys:
         # who would buy a new private level of each type (Pat 2026-10-19 00:01Z; private_investment.buyer_odds)
@@ -4197,11 +4199,12 @@ def slice_bar(slices, size, icon, ind, tips):
             + f'{ind}}}\n')
 
 
-def switch_bar(sw, swd, size, ind, tip, idle_tip=None, place=''):
+def switch_bar(sw, swd, size, ind, tip, place=''):
     """Pat, 2026-10-19 01:07Z: the bar a new pick fills for SWITCH_MONTHS months before it becomes the default new
     levels and retooling follow (pmr_switch_<b>): green with vanilla's moving arrows toward a newer recipe, red toward an
     older one (the cash reserve bar's changed_value_increased_progressbar_horizontal and its _bad twin). sw and swd are
-    the months filled and the direction (1, -1, 0); with idle_tip an empty bar stands in while nothing is pending."""
+    the months filled and the direction (1, -1, 0). 02:32Z ("it should only pop up when there's momentum for a
+    change"): nothing stands in while no switch is under way."""
     i1, i2 = ind + '\t', ind + '\t\t'
     val = f"FixedPointToFloat(Add_CFixedPoint({sw}, '(CFixedPoint)0.25'))"
 
@@ -4211,14 +4214,57 @@ def switch_bar(sw, swd, size, ind, tip, idle_tip=None, place=''):
                 f'{i1}blockoverride "values" {{\n{i2}min = 0\n{i2}max = {SWITCH_MONTHS}\n{i2}value = "[{val}]"\n{i1}}}\n'
                 f'{i1}blockoverride "arrow_texture_density" {{\n{i2}texture_density = {max(2, size[1] // 4)}\n{i1}}}\n'
                 f'{i1}tooltip = "{key}"\n{i1}using = tooltip_above\n{ind}}}\n')
-    out = (bar('changed_value_increased_progressbar_horizontal', f"GreaterThan_CFixedPoint({swd}, '(CFixedPoint)0')", tip)
-           + bar('changed_value_increased_progressbar_horizontal_bad', f"LessThan_CFixedPoint({swd}, '(CFixedPoint)0')", tip))
-    if idle_tip:
-        out += (f'{ind}default_progressbar_horizontal = {{\n{place}{i1}visible = "[EqualTo_CFixedPoint({swd}, '
-                f"'(CFixedPoint)0')]\"\n{i1}size = {{ {size[0]} {size[1]} }}\n"
-                f'{i1}blockoverride "values" {{\n{i2}min = 0\n{i2}max = 1\n{i2}value = 0\n{i1}}}\n'
-                f'{i1}tooltip = "{idle_tip}"\n{i1}using = tooltip_above\n{ind}}}\n')
-    return out
+    return (bar('changed_value_increased_progressbar_horizontal', f"GreaterThan_CFixedPoint({swd}, '(CFixedPoint)0')", tip)
+            + bar('changed_value_increased_progressbar_horizontal_bad', f"LessThan_CFixedPoint({swd}, '(CFixedPoint)0')", tip))
+
+
+SW_ICON, SW_ICON_GAP = 24, 2   # the switching bar's target icons, at its right end (Pat 02:32Z)
+
+
+def switch_targets(bk, textures, pair, n):
+    """What a switching bar fills toward, as icons (Pat, 2026-10-19 02:32Z: "more clearly an upgrade bar"): a list of
+    icon slots, each [(texture, target indices)], one alternative of which shows, the one whose indices hold the
+    target (pmr_swto_<b>, pmr_c_swto_<b>: an index into the type's n recipes, as pmr_pbest_<b>). Without the split,
+    one slot: recipe i's icon. With it (pair_ui's split) target i is a recipe with an automation option, so two slots:
+    the recipe's icon and the option's (pair_options)."""
+    if pair and pair.get('split'):
+        index = pair['index']
+        slots = [[(textures[r - 1], sorted(i for (ri, _a), i in index.items() if ri == r)) for r in pair['recipes']],
+                 [(tex, sorted(i for (_ri, aa), i in index.items() if aa == a))
+                  for a, (_key, tex) in enumerate(pair_options(bk, pair), 1)]]
+    else:
+        slots = [[(tex, [i]) for i, tex in enumerate(textures, 1)]]
+    for slot in slots:   # every target shows exactly one icon per slot
+        if sorted(i for _tex, idxs in slot for i in idxs) != list(range(1, n + 1)):
+            raise SystemExit(f'switch_targets: {bk}\'s icons do not cover its {n} recipes once each')
+    return slots
+
+
+def switch_row(slots, sw, swd, swto, x, w, h, size, y, ind, tip, room=1):
+    """A switching row (Pat, 2026-10-19 02:32Z): a widget of size, built only while a switch is under way (swd not 0:
+    an item of a list that has one only then, as gate_type_copies, so an idle row costs one empty flowcontainer, which
+    a flowcontainer with ignoreinvisible skips), holding at y a line SW_ICON tall and w wide from x: the bar
+    (switch_bar, h tall), then the target's icons (switch_targets, read from swto) after its right end, with room for
+    at least room icon slots, so the line spans what the bars above it span and, given the most slots any card has,
+    every card's bar ends at the same x."""
+    i1, i2, i3, i4 = ind + '\t', ind + '\t\t', ind + '\t\t\t', ind + '\t\t\t\t'
+    i5 = i4 + '\t'
+    on = f"Not(EqualTo_CFixedPoint({swd}, '(CFixedPoint)0'))"
+    n = max(len(slots), room)
+    icons_w = n * SW_ICON + (n - 1) * SW_ICON_GAP
+    bar_w = w - icons_w - 6
+    out = (f'{ind}flowcontainer = {{  # PMR: built only while a switch is under way\n{i1}visible = "[{on}]"\n'
+           f"{i1}datamodel = \"[DataModelRepeatedItem(Select_int32({on}, '(int32)1', '(int32)0'))]\"\n"
+           f'{i1}item = {{\n{i2}widget = {{\n{i3}size = {{ {size[0]} {size[1]} }}\n'
+           f'{i3}widget = {{\n{i4}position = {{ 0 {y} }}\n{i4}size = {{ {size[0]} {SW_ICON} }}\n'
+           + switch_bar(sw, swd, (bar_w, h), i4, tip, place=f'{i5}position = {{ {x} 0 }}\n{i5}parentanchor = vcenter\n'))
+    for s, alts in enumerate(slots):
+        ix = x + bar_w + 6 + s * (SW_ICON + SW_ICON_GAP)
+        for tex, idxs in alts:
+            out += (f'{i4}icon = {{\n{i5}visible = "[{any_of([methods_row.eq(swto, i) for i in idxs])}]"\n'
+                    f'{i5}position = {{ {ix} 0 }}\n{i5}parentanchor = vcenter\n{i5}size = {{ {SW_ICON} {SW_ICON} }}\n'
+                    f'{i5}texture = "{tex}"\n{i5}tooltip = "{tip}"\n{i5}using = tooltip_above\n{i4}}}\n')
+    return out + f'{i3}}}\n{i2}}}\n{i1}}}\n{ind}}}\n'
 
 
 GOV_ABROAD_CLICKS = 8   # most government retool levels one click queues abroad; more take another click
@@ -4391,26 +4437,22 @@ def automation_bar(bk, group, levels, ind):
             f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
 
 
-SW_ROW_H, SW_BAR_H = 16, 12   # the details panel's switching bar row
+SW_ROW_H, SW_BAR_H = OPTION_ROW_H, OPTION_BAR_H   # the details panel's switching row, as tall as an option row
+SWITCH_ICONS = {}   # building type -> its switching bar's target icons (switch_targets), filled by main()
 
 
 def pick_row(bk, ind):
-    """The details panel's pick row (Pat, 2026-10-18 17:49Z: where a building shows its preferred recipe): the
-    most profitable recipe, the target its new levels and retooling follow, and its profit per level a week. No
-    tooltip: the Policies cards show every recipe's (Pat, 2026-10-19 01:07Z)."""
+    """The details panel's switching row (Pat, 2026-10-19 01:07Z: the bar a new pick fills, under the recipe bar).
+    02:32Z: no "Most profitable" line above it (the Policies cards show every recipe's profit), and the row only while
+    a switch is under way (pmr_swd_<b> not 0), thicker, with the target's icons at its right end (switch_row): the
+    flowcontainer it sits in ignores it otherwise, so it leaves no gap."""
     b = short(bk)
-    i2 = ind + '\t\t'
-    return (f'{ind}# PMR: most profitable recipe of {bk}\n'
-            f'{ind}widget = {{\n{ind}\tvisible = "[And({is_type(bk)}, '
-            f"GreaterThan_CFixedPoint({state_var(b, 'pmr_pbest')}, '(CFixedPoint)0'))]\"\n"
-            f'{ind}\tsize = {{ @panel_width {OPTION_ROW_H} }}\n'
-            f'{ind}\ttextbox = {{\n{i2}position = {{ {ROW_X} 0 }}\n{i2}size = {{ {ROW_W + 235} {OPTION_ROW_H} }}\n'
-            f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "PMR_PICK_ROW_{b}"\n{ind}\t}}\n{ind}}}\n'
-            # Pat, 2026-10-19 01:07Z: the switching bar under it while a new pick fills it
-            f'{ind}widget = {{\n{ind}\tvisible = "[And({is_type(bk)}, Not(EqualTo_CFixedPoint({state_var(b, "pmr_swd")}, '
+    swd = state_var(b, 'pmr_swd')
+    return (f'{ind}# PMR: switching bar of {bk}\n'
+            f'{ind}widget = {{\n{ind}\tvisible = "[And({is_type(bk)}, Not(EqualTo_CFixedPoint({swd}, '
             f"'(CFixedPoint)0')))]\"\n{ind}\tsize = {{ @panel_width {SW_ROW_H} }}\n"
-            + switch_bar(state_var(b, 'pmr_sw'), state_var(b, 'pmr_swd'), (ROW_W, SW_BAR_H), ind + '\t', f'PMR_SW_TT_{b}',
-                         place=f'{ind}\t\tposition = {{ {ROW_X} {(SW_ROW_H - SW_BAR_H) // 2} }}\n')
+            + switch_row(SWITCH_ICONS[bk], state_var(b, 'pmr_sw'), swd, state_var(b, 'pmr_swto'), ROW_X, ROW_W, SW_BAR_H,
+                         ('@panel_width', SW_ROW_H), (SW_ROW_H - SW_ICON) // 2, ind + '\t', f'PMR_SW_TT_{b}')
             + f'{ind}}}\n')
 
 
@@ -4558,11 +4600,11 @@ def pair_options(bk, pair):
 CARD_W, CARD_PAD, ICON_W, ICON_GAP = 540, 8, 60, 8
 AI_W = 100   # the AI weight column's text
 BUY_ICON = 20  # an owner's icon in the AI column's who-buys cells
-CO_SIZE = 30   # the company's round icon on a card's building icon
+CO_SIZE = 26   # the company's round icon, a badge on the top-right corner of a card's building icon (Pat 02:32Z)
 AI_H = 82      # the AI column's height: label, weight and two rows of who-buys cells
 LEFT_H = 78    # the icon column: the icon with the country's levels on it, its productivity under it (Pat 01:07Z)
 MINI_H, MINI_GAP = 10, 4   # the automation and trade-off bars under the grid (Pat 01:07Z: "smaller bars")
-CSW_H = 10     # the switching bar across the card's foot
+CSW_H = 18     # the switching bar under the grid, only while a switch is under way (Pat 02:32Z: "thicker")
 
 
 def mv_cols(recipe_keys, pair_ui):
@@ -4647,18 +4689,21 @@ def card_bars(bk, opt_groups, auto, width, ind):
     return out, len(bars) * (MINI_H + MINI_GAP)
 
 
-def company_badge(bk, h, ind):
-    """The card's company mark (company_mark): vanilla's static selection outline round the card, and its company's
-    icon, a round button that opens the company (as production_methods.gui's company_owned_button), on the building
-    icon's corner."""
+def company_badge(bk, ind, outer):
+    """The card's company mark (company_mark), as (outline, badge): vanilla's static selection outline round the card
+    (at indent outer), and its company's icon, a round button that opens the company (as production_methods.gui's
+    company_owned_button), at indent ind in the card's body.
+    Pat, 2026-10-19 02:32Z ("the company icon is misaligned"): the badge sits on the building icon's top-right corner,
+    clear of the levels at its foot and the productivity under it."""
     b = short(bk)
     on = methods_row.gt(mv_read(f'pmr_mv_cf_{b}'), 0)
-    i1, i2 = ind + '\t', ind + '\t\t'
-    return (f'{ind}icon = {{\n{i1}visible = "[{on}]"\n{i1}size = {{ 100% 100% }}\n'
-            f'{i1}texture = "gfx/interface/selections/selected_square_selection.dds"\n{i1}spriteType = Corneredtiled\n'
-            f'{i1}spriteborder = {{ 22 22 }}\n{i1}texture_density = 2\n{i1}alwaystransparent = yes\n{ind}}}\n'
+    i1, i2, o1 = ind + '\t', ind + '\t\t', outer + '\t'
+    outline = (f'{outer}icon = {{\n{o1}visible = "[{on}]"\n{o1}size = {{ 100% 100% }}\n'
+               f'{o1}texture = "gfx/interface/selections/selected_square_selection.dds"\n{o1}spriteType = Corneredtiled\n'
+               f'{o1}spriteborder = {{ 22 22 }}\n{o1}texture_density = 2\n{o1}alwaystransparent = yes\n{outer}}}\n')
+    return outline, (
             f'{ind}button_icon_round = {{\n{i1}visible = "[{on}]"\n'
-            f'{i1}position = {{ {CARD_PAD + 3 + 54 - CO_SIZE + 6} {CARD_PAD + 54 - CO_SIZE + 6} }}\n'
+            f'{i1}position = {{ {CARD_PAD + 3 + 54 - CO_SIZE + 4} {CARD_PAD - 4} }}\n'
             f'{i1}size = {{ {CO_SIZE} {CO_SIZE} }}\n'
             f'{i1}datacontext = "[{MV_COUNTRY}.MakeScope.Var(\'pmr_mv_co_{b}\').GetCharacter]"\n'
             f'{i1}datacontext = "[Character.GetCompany]"\n'
@@ -4680,38 +4725,50 @@ def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=N
     ai_x = CARD_PAD + ICON_W + ICON_GAP + box_w + 14
     if ai_x + AI_W > CARD_W:
         raise SystemExit(f'methods_view_gui: {cols} recipe columns leave no room for the AI weight')
+    targets = {bk: switch_targets(bk, recipe_tex[bk], pair_ui.get(bk), len(keys)) for bk, keys in recipe_keys.items()}
+    room = max(len(t) for t in targets.values())   # the switching bars end at the same x on every card
     cards, picks, slots = '', '', ''
     for bk, keys in recipe_keys.items():
         b = short(bk)
         pr = pair_ui.get(bk)
         grid, gh = '', 0
+        t4, t5, t6 = '\t' * 4, '\t' * 5, '\t' * 6
         if not (pr and pr.get('split')):   # the recipes are the targets: one row of them
             grid = methods_row.recipes_grid(bk, list(enumerate(recipe_tex[bk], 1)), mv_read,
-                                            lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', '\t\t\t\t', cols=cols)
+                                            lambda i, b=b: f'PMR_MV_TIP_{b}_{i}', t6, cols=cols)
             gh = methods_row.pairs_size(cols, 1)[1]
         if pr:
             names = pr.get('keys') or recipe_keys[bk]
             grid += methods_row.pairs_grid(
                 bk, [(i, recipe_tex[bk][i - 1]) for i in pr['recipes']], pair_options(bk, pr), mv_read,
-                lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', '\t\t\t\t',
+                lambda i, a, b=b, names=names: f'PMR_MVP_TIP_{b}_{i}_{a}' if a else f'{names[i - 1]}', t6,
                 cols=cols)
             gh += (6 if gh else 0) + methods_row.pairs_size(cols, len(pr['options']))[1]
-        mini, mh = card_bars(bk, opt_ui.get(bk, []), auto_ui.get(bk) if pr and pr.get('split') else None,
-                             box_w, '\t\t\t\t')
-        grid = f'\t\t\tflowcontainer = {{\n\t\t\t\tdirection = vertical\n\t\t\t\tspacing = {MINI_GAP}\n{grid}{mini}\t\t\t}}\n'
+        # Pat 02:32Z ("the pm bars are all misaligned"): the bars under the grid, and the switching row below, start at
+        # the grid box's left edge and are box_w wide, as the box
+        mini, mh = card_bars(bk, opt_ui.get(bk, []), auto_ui.get(bk) if pr and pr.get('split') else None, box_w, t6)
+        grid = f'{t5}flowcontainer = {{\n{t6}direction = vertical\n{t6}spacing = {MINI_GAP}\n{grid}{mini}{t5}}}\n'
         inner = max(LEFT_H, gh + mh, AI_H if bk in ai else 0)
-        h = inner + 2 * CARD_PAD + CSW_H + MINI_GAP
-        # Pat, 2026-10-19 01:07Z: the switching bar across the card's foot (switch_bar), at the country's biggest state
-        foot = switch_bar(mv_read(f'pmr_c_sw_{b}'), mv_read(f'pmr_c_swd_{b}'), (CARD_W - 2 * CARD_PAD, CSW_H), '\t\t',
-                          f'PMR_CSW_TT_{b}', f'PMR_CSW_IDLE_{b}',
-                          place=f'\t\t\tposition = {{ {CARD_PAD} {h - CARD_PAD - CSW_H} }}\n') if bk in recipe_keys else ''
+        h = inner + 2 * CARD_PAD
+        outline, badge = company_badge(bk, t4, '\t\t') if bk in companies else ('', '')
+        # Pat, 2026-10-19 01:07Z: the switching bar (switch_bar), at the country's biggest state. 02:32Z ("it should only
+        # pop up when there's momentum for a change and the card should autosize around it"): a row under the card's
+        # body only while a switch is under way, its bar and target icons (switch_row) spanning the grid box, MINI_GAP
+        # under the body's content and CARD_PAD above the card's foot. The card's flowcontainer ignores the row
+        # otherwise and resizes the card to what it shows (resizeparent, as diplomatic_play_panel.gui's items).
+        foot = '\t\t\t# the switching row\n' + switch_row(
+            targets[bk], mv_read(f'pmr_c_sw_{b}'), mv_read(f'pmr_c_swd_{b}'), mv_read(f'pmr_c_swto_{b}'),
+            CARD_PAD + ICON_W + ICON_GAP, box_w, CSW_H, (CARD_W, SW_ICON + MINI_GAP), MINI_GAP - CARD_PAD, '\t\t\t',
+            f'PMR_CSW_TT_{b}', room)
         cards += (f'\ttype pmr_mv_card_{b} = widget {{\n\t\tvisible = "[{methods_row.gt(mv_read(f"pmr_mv_lv_{b}"), 0)}]"\n'
                   f'\t\tsize = {{ {CARD_W} {h} }}\n'
                   '\t\tbackground = {\n\t\t\tusing = entry_bg_simple\n\t\t}\n'
-                  f'\t\tflowcontainer = {{\n\t\t\tposition = {{ {CARD_PAD} {CARD_PAD} }}\n\t\t\tspacing = {ICON_GAP}\n'
-                  + card_left(bk, '\t\t\t') + grid + '\t\t}\n'
-                  + (ai_column(bk, inner + 2 * CARD_PAD, ai_x, '\t\t') if bk in ai else '')
-                  + (company_badge(bk, h, '\t\t') if bk in companies else '') + foot + '\t}\n\n')
+                  '\t\tflowcontainer = {\n\t\t\tresizeparent = yes\n\t\t\tdirection = vertical\n\t\t\tignoreinvisible = yes\n'
+                  f'\t\t\t# the body\n\t\t\twidget = {{\n{t4}size = {{ {CARD_W} {h} }}\n'
+                  f'{t4}flowcontainer = {{\n{t5}position = {{ {CARD_PAD} {CARD_PAD} }}\n{t5}spacing = {ICON_GAP}\n'
+                  + card_left(bk, t5) + grid + f'{t4}}}\n'
+                  + (ai_column(bk, h, ai_x, t4) if bk in ai else '')
+                  + badge + '\t\t\t}\n' + foot + '\t\t}\n' + outline + '\t}\n\n')
         same = f"ObjectsEqual(BuildingType.Self, GetBuildingType('{bk}').Self)"
         picks += (f'\t\tflowcontainer = {{\n\t\t\tdatamodel = "[DataModelRepeatedItem(Select_int32({same}, '
                   "'(int32)1', '(int32)0'))]\"\n"
@@ -4837,9 +4894,9 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
 
 
 def pick_custom_loc(pick_ui):
-    """State scope: pmr_pick_<b>, the pick's name; pmr_sw_now_<b> and pmr_sw_to_<b>, the default and the pick the
-    switching bar fills toward (switch_effect); country scope pmr_csw_now_<b> and pmr_csw_to_<b>, the same at the
-    country's biggest state (pmr_c_now_<b>, pmr_c_swto_<b>)."""
+    """State scope: pmr_sw_now_<b> and pmr_sw_to_<b>, the default and the pick the switching bar fills toward
+    (switch_effect); country scope pmr_csw_now_<b> and pmr_csw_to_<b>, the same at the country's biggest state
+    (pmr_c_now_<b>, pmr_c_swto_<b>). The pick's name for the pick row (pmr_pick_<b>) went with the row (Pat 02:32Z)."""
     out = []
     for bk, keys in pick_ui.items():
         b = short(bk)
@@ -4849,15 +4906,12 @@ def pick_custom_loc(pick_ui):
                        + ''.join(f'\ttext = {{\n\t\ttrigger = {{ var:{var} = {i} }}\n\t\tlocalization_key = {key}\n\t}}\n'
                                  for i, key in enumerate(keys, 1))
                        + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
-        out.append(f'pmr_pick_{b} = {{\n\ttype = state\n\trandom_valid = no\n'
-                   + ''.join(f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = {key}\n\t}}\n'
-                             for i, key in enumerate(keys, 1))
-                   + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     return ''.join(out)
 
 
 def pick_loc(pick_ui):
-    """The pick row, and the notes the Policies cards' tooltips put after a recipe's profit."""
+    """The switching bars' tooltips, and the notes the Policies cards' tooltips put after a recipe's profit. Pat,
+    2026-10-19 02:32Z: no "Most profitable" line (PMR_PICK_ROW_<b>) and no idle bar (PMR_CSW_IDLE_<b>) any more."""
     loc = [' PMR_PICK_NOTE_BEST:0 " (most profitable)"', ' PMR_PICK_NOTE_LOCKED:0 " (not available)"',
            ' PMR_PICK_NOTE_VETO:0 " (input at price cap)"']
     for bk, keys in pick_ui.items():
@@ -4865,15 +4919,12 @@ def pick_loc(pick_ui):
 
         def var(name, f='0'):
             return f"[Building.GetState.MakeScope.Var('{name}').GetValue|{f}]"
-        loc.append(f' PMR_PICK_ROW_{b}:0 "Most profitable: #bold [Building.GetState.GetCustom(\'pmr_pick_{b}\')]#!, '
-                   f'@money!{var(f"pmr_prm_{b}")} per level a week"')
         # the switching bar (switch_bar): from, to, months
         loc.append(f' PMR_SW_TT_{b}:0 "#bold [Building.GetState.GetCustom(\'pmr_sw_now_{b}\')]#! → '
                    f'#bold [Building.GetState.GetCustom(\'pmr_sw_to_{b}\')]#!\\n{var(f"pmr_sw_{b}")} of {SWITCH_MONTHS} months"')
         loc.append(f' PMR_CSW_TT_{b}:0 "#bold [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]#! → '
                    f'#bold [GetPlayer.GetCustom(\'pmr_csw_to_{b}\')]#!\\n'
                    f"[GetPlayer.MakeScope.Var('pmr_c_sw_{b}').GetValue|0] of {SWITCH_MONTHS} months\"")
-        loc.append(f' PMR_CSW_IDLE_{b}:0 "#bold [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]#!"')
     return loc
 
 
@@ -5183,17 +5234,22 @@ def patch_browser_tabs(text, types):
     ai_off = f"GetVariableSystem.Clear('{MV_AI}')"
     if sorts.count('size = { 135 30 }') != 4 or sorts.count('onclick = "[BuildingBrowserPanel.Sort(') != 4:
         raise SystemExit('building_browser_panel.gui: expected four sort buttons; update patch_browser_tabs')
-    # Pat 2026-10-19 01:07Z: no Building Type sort on Policies
-    d1 = sorts.find("BuildingBrowserPanel.Sort('database_order')")
-    if d1 < 0:
-        raise SystemExit('building_browser_panel.gui: no database_order sort button; update patch_browser_tabs')
-    d0 = sorts.rindex('\n', 0, sorts.rindex('sort_button = {', 0, d1))
+    # Pat 2026-10-19 01:07Z: no Building Type sort on Policies; 02:32Z: "remove the productivity column header"
+    inv_sorts = sorts
+    for sort in ('database_order', 'profitability'):
+        d1 = inv_sorts.find(f"BuildingBrowserPanel.Sort('{sort}')")
+        if d1 < 0:
+            raise SystemExit(f'building_browser_panel.gui: no {sort} sort button; update patch_browser_tabs')
+        d0 = inv_sorts.rindex('\n', 0, inv_sorts.rindex('sort_button = {', 0, d1))
+        inv_sorts = inv_sorts[:d0] + inv_sorts[block_end(inv_sorts, d0):]
     inv_sorts = re.sub(r'(\n(\t+)onclick = "\[BuildingBrowserPanel\.Sort\([^\n]*\n)',
-                       lambda m: f'{m.group(1)}{m.group(2)}onclick = "[{ai_off}]"  # PMR\n',
-                       sorts[:d0] + sorts[block_end(sorts, d0):])
+                       lambda m: f'{m.group(1)}{m.group(2)}onclick = "[{ai_off}]"  # PMR\n', inv_sorts)
+    # the three left (Name, Size, the AI weight) fill the row the four vanilla buttons did
+    sort_w = 4 * 135 // (inv_sorts.count('sort_button = {') + 1)
+    inv_sorts = inv_sorts.replace('size = { 135 30 }', f'size = {{ {sort_w} 30 }}  # PMR')
     b4 = '\t\t\t\t'
     inv_sorts = (inv_sorts[:inv_sorts.rindex('}')].rstrip('\t')
-                 + f'\n{b4}# PMR: sorted by AI weight\n{b4}sort_button = {{\n{b4}\tsize = {{ 135 30 }}\n'
+                 + f'\n{b4}# PMR: sorted by AI weight\n{b4}sort_button = {{\n{b4}\tsize = {{ {sort_w} 30 }}\n'
                  f'{b4}\ttext = "PMR_MV_AI_LABEL"\n{b4}\talign = nobaseline\n'
                  f'{b4}\tonclick = "[GetVariableSystem.Set(\'{MV_AI}\', \'yes\')]"\n{b4}\tonclick = "[{refresh}]"\n'
                  f'{b4}\tblockoverride "selected_visibility" {{\n{b4}\t\tvisible = "[{ai_on}]"\n{b4}\t}}\n{b4}}}\n'
