@@ -5154,7 +5154,7 @@ def urban_types(game, report):
     """The building types the tab lists as urban (State.AccessUrbanBuildings, exe filter 0x141a8c560): category urban up
     the group chain, no land_usage = urban and no is_subsistence on it, and buildable, expandable or downsizeable unless
     a company or regional headquarters. In the tab's order among equal levels (comparator 0x141a53120): the group's
-    name, then the type's, in English (the other languages fall back to it until finalization)."""
+    name, then the type's, in English (the other languages fall back to it until finalization). As (type, group)."""
     groups, types, loc = {}, [], {}
     for path in sorted(glob.glob(os.path.join(game, 'common', 'building_groups', '*.txt'))):
         for n in pdx.parse(open(path, encoding='utf-8-sig').read()):
@@ -5188,23 +5188,27 @@ def urban_types(game, report):
             continue
         if fixed and g not in URBAN_HQ_GROUPS:
             continue
-        out.append((loc.get(g, g).lower(), loc.get(bk, bk).lower(), bk))
+        out.append((loc.get(g, g).lower(), loc.get(bk, bk).lower(), bk, g))
     if not out:
         raise SystemExit('urban_types: no urban building types found; the building groups moved')
-    return [bk for _g, _n, bk in sorted(out)]
+    return [(bk, g) for _g, _n, bk, g in sorted(out)]
 
 
 def urban_list_script(order):
-    """(triggers, values, effects) for the state's own urban list (see URB_ON)."""
+    """(triggers, values, effects) for the state's own urban list (see URB_ON), from urban_types' (type, group) pairs."""
     n = len(order)
+    # A headquarters is matched by its group: each company's HQ is a type of its own that the game makes from
+    # building_company_headquarter (building_company_krupp and the like, seen in Pat's save 2026-10-20 19:51Z), so no
+    # script file names it.
+    match = [f'is_building_group = {g}' if g in URBAN_HQ_GROUPS else f'is_building_type = {bk}' for bk, g in order]
     trig = ('# PMR: the state Buildings tab\'s own urban list (generate.py, SITE_GROUPS). Building scope: a retool site.\n'
             'pmr_urb_site = { OR = { ' + ' '.join(f'is_building_group = {g}' for g in SITE_GROUPS) + ' } }\n\n'
             '# Building scope: a type the tab lists as urban.\n'
-            'pmr_urb_type = {\n\tOR = {\n' + ''.join(f'\t\tis_building_type = {bk}\n' for bk in order) + '\t}\n}\n')
+            'pmr_urb_type = {\n\tOR = {\n' + ''.join(f'\t\t{m}\n' for m in match) + '\t}\n}\n')
     value = ('# Building scope: its place in the tab, highest first: its level, then its group\'s name and its own.\n'
              'pmr_urb_key = {\n\tvalue = 0\n\tadd = this.level\n\tmultiply = 100\n'
-             + ''.join(f'\t{"if" if i == 0 else "else_if"} = {{ limit = {{ is_building_type = {bk} }} add = {n - i} }}\n'
-                       for i, bk in enumerate(order)) + '}\n')
+             + ''.join(f'\t{"if" if i == 0 else "else_if"} = {{ limit = {{ {m} }} add = {n - i} }}\n'
+                       for i, m in enumerate(match)) + '}\n')
     eff = ('# State scope: pmr_urb, the urban buildings in the tab\'s order and then the state (the "+" tile), while the state\n'
            '# has a retool site (pmr_urb_on); none without one, and the tab shows vanilla\'s grid.\n'
            'pmr_urb_refresh = {\n\tif = { limit = { has_variable_list = pmr_urb } clear_variable_list = pmr_urb }\n'
@@ -5212,6 +5216,9 @@ def urban_list_script(order):
            '\t\tset_variable = { name = pmr_urb_on value = 1 }\n\t\tsave_temporary_scope_as = pmr_urb_st\n'
            '\t\tordered_scope_building = {\n\t\t\tlimit = { pmr_urb_type = yes }\n\t\t\torder_by = pmr_urb_key\n'
            '\t\t\tmax = 99\n\t\t\tcheck_range_bounds = no\n\t\t\tsave_temporary_scope_as = pmr_urb_b\n'
+           + ''.join(f'\t\t\tif = {{ limit = {{ is_building_group = {g} scope:pmr_urb_st = {{ owner = {{ is_player = yes }} }} }} debug_log = "PMR;rec=URB_HQ;'
+                     'date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetBuilding.GetState.GetNameNoFormatting];'
+                     'hq=[THIS.GetBuilding.GetNameNoFormatting]" }\n' for g in URBAN_HQ_GROUPS) +
            '\t\t\tscope:pmr_urb_st = { add_to_variable_list = { name = pmr_urb target = scope:pmr_urb_b } }\n\t\t}\n'
            '\t\tadd_to_variable_list = { name = pmr_urb target = this }\n\t}\n'
            '\telse_if = { limit = { has_variable = pmr_urb_on } remove_variable = pmr_urb_on }\n}\n\n'
