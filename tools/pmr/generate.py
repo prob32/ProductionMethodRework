@@ -261,11 +261,12 @@ SWITCH_GAIN = 0.25
 # Pat, 2026-10-19 22:47Z (decision card "Both", observer run q51: USA ports went Industrial -> Basic -> Industrial ->
 # Basic in four months on figures of -£45 to +£4, which the relative test reads as +171%): a switch also needs
 # SWITCH_MIN £ a week per level over the default, and a building whose books can't be read (pmr_bsx_<b>: government
-# paid, subsidised, nearly empty) keeps its default.
+# paid, subsidised, nearly empty) keeps its default. Pat 2026-10-20 12:56Z: a subsidised one with staff may still step up (profit_effect).
 SWITCH_MIN = 20
-PROFIT_RULE = 105    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
+PROFIT_RULE = 106    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
                      # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway;
-                     # 104: q50, no step down while the building makes money; 105: q52, SWITCH_MIN and unread books)
+                     # 104: q50, no step down while the building makes money; 105: q52, SWITCH_MIN and unread books;
+                     # 106: q61, a subsidised building with staff steps up)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -1594,6 +1595,10 @@ def main():
                 shares.append(f'{sh}_{val}')
                 loc.append(f' {sh}_{val}:0 "{loc_share(val)}"')
             g, gl = gname
+            # the default first: no self-locked method is available to a building that runs none yet, so a new
+            # building (history's at game start) starts on the group's first method, and with _0 there the
+            # start-of-game hiring found no jobs (q52-q60: every building began about empty, Pat 2026-10-20 13:00Z)
+            shares.sort(key=lambda x: x != f'{sh}_{default_v}')
             blend_groups.append(f'{g} = {{\n\ttexture = "{GENERIC_ICON}"\n'
                                 '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in shares) + '\t}\n}\n')
             loc.append(f' {g}:0 "{gl}"')
@@ -1807,6 +1812,7 @@ def main():
     write('common/on_actions/pmr_on_actions.txt', header + on_actions.replace('TECH_CRUMB', flush_log('TECH', '-'))
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
           .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n')
+          .replace('START_STAFF', '' if RELEASE else START_STAFF)
           + ('' if RELEASE else OBS_ON_ACTIONS))
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab())
@@ -4176,17 +4182,29 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              # the first run at market prices replaces the setup pick (base prices) freely, as it stands at once
              f'\tif = {{ limit = {{ OR = {{ has_global_variable = pmr_setup AND = {{ has_variable = pmr_month '
              f'NOT = {{ has_variable = pmr_pmkt_{b} }} }} }} }} set_variable = {{ name = pmr_hu value = 0 }} }}\n'
-             # books that can't be read keep the default (SWITCH_MIN above); a hurdle under pmr_pv's start, so a default
+             # books that can't be read keep the default (SWITCH_MIN above); a hold under pmr_pv's start, so a default
              # that can no longer run still gives way. Not a building just built (Pat 2026-10-20 00:08Z, Burgundy's and West
              # Bengal's new mines): it has no default yet and no staff to read, so the hold kept the recipe the game built
-             # it on, and its first month's pick sent every level to retooling.
-             f'\tif = {{ limit = {{ has_variable = pmr_bsx_{b} has_variable = {now} NOT = {{ has_variable = {v("pmr_new_build")} }} }} '
-             'set_variable = { name = pmr_hu value = 100000 } }\n')
+             # it on, and its first month's pick sent every level to retooling. Pat 2026-10-20 12:56Z ("subsidizing should
+             # move up; and they should stay frozen if they can't staff"): a subsidised building that has staff may still
+             # step up, onto an option at or above the default on every axis (pmr_da_<d>), at the usual hurdle; one under
+             # BOOKS_OCC staffed holds everything (pmr_da_<d> left above every option)
+             '\tset_variable = { name = pmr_frz value = 0 }\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_bsx_{b} has_variable = {now} NOT = {{ has_variable = {v("pmr_new_build")} }} }}\n'
+             '\t\tset_variable = { name = pmr_frz value = 1 }\n'
+             + ''.join(f'\t\tset_variable = {{ name = pmr_da_{d} value = 1000 }}\n' for d in range(1, nd + 1))
+             + f'\t\tif = {{\n\t\t\tlimit = {{ var:{now} > 0 exists = b:{bk} b:{bk} = {{ occupancy >= {fmt(BOOKS_OCC)} }} }}\n'
+             + lookup(f'var:{now}', list(range(1, k + 1)), put('pmr_da'), '\t\t\t')
+             + '\t\t}\n\t}\n')
     for i in range(1, k + 1):
         o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_rav", i)} = 1 var:{xv("pmr_rveto", i)} = 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_t value = var:{xv("pmr_rm", i)} }}\n'
-                 f'\t\tif = {{ limit = {{ var:pmr_ref > 0 NOT = {{ var:pmr_ref = {i} }} }} '
-                 f'change_variable = {{ name = pmr_t subtract = var:pmr_hu }} }}\n'
+                 f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_ref > 0 NOT = {{ var:pmr_ref = {i} }} }}\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_t subtract = var:pmr_hu }}\n'
+                 # the hold: below the default on some axis while the books can't be read
+                 f'\t\t\tif = {{ limit = {{ var:pmr_frz = 1 OR = {{ '
+                 + ' '.join(f'var:pmr_da_{d} > {axes[i][d - 1]}' for d in range(1, nd + 1))
+                 + ' } } change_variable = { name = pmr_t subtract = 100000 } }\n\t\t}\n'
                  f'\t\tif = {{ limit = {{ var:pmr_t > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:pmr_t }} '
                  f'set_variable = {{ name = pmr_pk value = {i} }} }}\n\t}}\n')
     # bug review q51, P2-2: the pick sits below the default on some axis (pmr_pdn_<b>): a step down, whatever the index
@@ -4241,7 +4259,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     line = (f'PMR;rec=PROFIT;date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
             f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
-            f"ref={var('pmr_ref')};floor={var('pmr_fl')};ok={var('pmr_ok')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};off={var('pmr_off', 1)};"
+            f"ref={var('pmr_ref')};floor={var('pmr_fl')};ok={var('pmr_ok')};frz={var('pmr_frz')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};off={var('pmr_off', 1)};"
             f"earn={var(v('pmr_bke'), 2)};bal={var(v('pmr_bkp'))};occ={var(v('pmr_bko'), 3)};"
             f"rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
             f"can={per('pmr_rav')};veto={per('pmr_rveto')};"
@@ -7061,7 +7079,7 @@ OBS_ON_ACTION
 pmr_on_game_started = {
 	effect = {
 		debug_log = "PMR;rec=LOADED;date=[TimeKeeper.GetCurrentDate.GetString];hook=on_game_started"
-		# No country is a player's yet here (no player state logs INIT), so every country gets its
+START_STAFF		# No country is a player's yet here (no player state logs INIT), so every country gets its
 		# Buildings tab totals now; after this only players' are kept up to date.
 		# The market has no prices yet: the profit calculation uses base prices meanwhile (profit_effect).
 		set_global_variable = pmr_setup
@@ -7180,6 +7198,26 @@ SKIP_REPORT
 	}
 }
 '''
+
+# Test builds: how Great Britain's and Austria's buildings start a new game, before PMR's first tick (q61). half = levels
+# at 50% staffing or more; ranch_100 / ranch_0 = livestock ranches whose first recipe share starts at 100% / 0%.
+START_STAFF = ''.join(
+    f'\t\tif = {{\n\t\t\tlimit = {{ exists = c:{tag} }}\n\t\t\tc:{tag} = {{\n\t\t\t\tsave_temporary_scope_as = pmr_ss_c\n'
+    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('n', 'h', 'r1', 'r0'))
+    + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 }\n'
+    '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_n add = 1 } }\n'
+    '\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_h add = 1 } } }\n'
+    '\t\t\t\t\tif = {\n\t\t\t\t\t\tlimit = { is_building_type = building_livestock_ranch }\n'
+    '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_100 } '
+    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r1 add = 1 } } }\n'
+    '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_0 } '
+    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r0 add = 1 } } }\n\t\t\t\t\t}\n\t\t\t\t}\n'
+    '\t\t\t\tdebug_log = "PMR;rec=START_STAFF;date=[TimeKeeper.GetCurrentDate.GetString];'
+    'country=[THIS.GetCountry.GetNameNoFormatting];'
+    + ';'.join(f"{lab}=[THIS.Var('pmr_ss_{x}').GetValue|0]" for lab, x in
+               (('buildings', 'n'), ('half', 'h'), ('ranch_100', 'r1'), ('ranch_0', 'r0'))) + '"\n'
+    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('n', 'h', 'r1', 'r0'))
+    + '\t\t\t}\n\t\t}\n' for tag in ('GBR', 'AUS'))
 
 # Test builds. The observer game's monthly lines run outside the test pause, so its script-off years (obs_ab) are timed too.
 OBS_ON_ACTIONS = f'''
