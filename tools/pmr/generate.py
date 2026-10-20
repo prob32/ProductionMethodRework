@@ -338,7 +338,7 @@ kept_none = set()     # (building, none method) of a trade-off whose none has ef
 VANILLA_FIXES = [   # (file, text, replacement): vanilla script errors PMR corrects, each text found once
     ('common/ai_strategies/00_default_strategy.txt', 'state_region = s:STATE_HAWAII\n', 'state_region = s:STATE_HAWAIIAN_ISLANDS\n'),
 ]
-PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal entries (test builds: off)
+PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal entries (off: Hallmark Goods gives prestige goods)
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
 # building type, the share of the world's levels whose best-paying option at their state's prices
@@ -1235,13 +1235,13 @@ def main():
             if c is not None:
                 goods_cost[gk] = num(c.value, f'{gk} cost')
 
-    # Company Culture (test builds until Pat ships it): the company types' trees and subsidiaries (company_culture.plan,
-    # Pat 2026-10-19 14:43Z; no special production methods any more).
-    cc_plan = None
-    if not args.release:
-        cc_plan = company_culture.plan(game, {bk: (split_info[bk]['plain'] if bk in split_info else
-                                                   [r for r in recipes if not isinstance(r, ElectricRecipe)])
-                                              for bk, _bn, _s, recipes, _g0, _pg in treated}, goods_cost, goods_tex)
+    # Company Culture: the company types' trees and subsidiaries (company_culture.plan, Pat 2026-10-19 14:43Z; no special
+    # production methods any more). In both builds since Pat 2026-10-20 12:59Z ("Ship it"); its "PMR test:" decisions
+    # only in test builds.
+    company_culture.TEST = not args.release
+    cc_plan = company_culture.plan(game, {bk: (split_info[bk]['plain'] if bk in split_info else
+                                               [r for r in recipes if not isinstance(r, ElectricRecipe)])
+                                          for bk, _bn, _s, recipes, _g0, _pg in treated}, goods_cost, goods_tex)
     THROUGHPUT_KEYS.update(throughput_keys(game, [t[0] for t in treated]))   # pmr_thr (profit_effect)
 
     # A method another method needs (unlocking_production_methods: pm_elastics needs a sewing machines recipe) is
@@ -1684,10 +1684,10 @@ def main():
                      for t in treated}
         for csrc in load_dir(game, 'company_types'):
             for ck, cn in csrc.objects().items():
-                # Pat, 2026-10-19 01:21Z (Krupp making Krupp Guns with no Hallmark Goods): in the test build every
-                # company's prestige goods wait for Company Culture's Hallmark Goods. The 66 vanilla lets make them
-                # whenever prosperous get a trigger; the rest already wait for the variable the node sets.
-                if (not args.release and pdx.get(cn.value, 'possible_prestige_goods')
+                # Pat, 2026-10-19 01:21Z (Krupp making Krupp Guns with no Hallmark Goods): every company's prestige
+                # goods wait for Company Culture's Hallmark Goods. The 66 vanilla lets make them whenever prosperous
+                # get a trigger; the rest already wait for the variable the node sets.
+                if (cc_plan and pdx.get(cn.value, 'possible_prestige_goods')
                         and not pdx.get(cn.value, 'prestige_goods_trigger')):
                     csrc.inserts.append((cn.end - 1, '\tprestige_goods_trigger = { custom_tooltip = { '
                                                      'text = PMR_CC_PG_REQ has_variable = pmr_cc_hallmark } }  # PMR\n'))
@@ -1697,7 +1697,7 @@ def main():
                     continue
                 listed = pdx.items(bt)
                 ext = pdx.get(cn.value, 'extension_building_types')
-                # Pat 2026-10-19 15:40Z: with subsidiaries (test builds) the retooling of an industry the company doesn't
+                # Pat 2026-10-19 15:40Z: with subsidiaries the retooling of an industry the company doesn't
                 # list belongs to the subsidiary that lists it (subsidiaries.RETOOL_OF), not to the parent
                 extra = [] if cc_plan else [x for x in (pdx.items(ext) if ext and ext.is_block else []) if x not in listed]
                 new = [(x, rbx) for x in listed + extra if x in retool_of for rbx in retool_of[x] if rbx not in listed]
@@ -1709,10 +1709,10 @@ def main():
                 report['company_types'].append({'company': ck, 'file': csrc.name, 'added': [rbx for _, rbx in new]})
             if csrc.inserts:
                 write(f'common/company_types/{csrc.name}', csrc.render())
-        # Pat 2026-10-19 18:45Z ("why is this still active as a je?", the Hudson's Bay Company's Select Fish): in the
-        # test build Hallmark Goods gives a company its prestige goods, so vanilla's prestige goods journal entries
-        # never start, and one already running is dropped (invalid).
-        if not args.release:
+        # Pat 2026-10-19 18:45Z ("why is this still active as a je?", the Hudson's Bay Company's Select Fish): Hallmark
+        # Goods gives a company its prestige goods, so vanilla's prestige goods journal entries never start, and one
+        # already running is dropped (invalid).
+        if cc_plan:
             je = load_dir(game, 'journal_entries', only={PRESTIGE_JE_FILE})
             if not je:
                 raise SystemExit(f'common/journal_entries/{PRESTIGE_JE_FILE} is missing from the game copy')
@@ -1871,10 +1871,10 @@ def main():
             d for d in (os.path.join(TEST_PROBES, p, 'common', 'company_types') for p in sorted(os.listdir(TEST_PROBES)))
             if os.path.isdir(d)] if os.path.isdir(TEST_PROBES) else []
     owners_of = private_investment.company_owners(game) if mv_keys else {}
-    if owners_of and cc_plan:   # and the subsidiaries their bundles found (subsidiaries.py, test builds)
+    if owners_of and cc_plan:   # and the subsidiaries their bundles found (subsidiaries.py)
         for bk, types in subsidiaries.owners(cc_plan).items():
             owners_of.setdefault(bk, []).extend(types)
-    # in test builds a company's Focus bylaw ends the weight (company_culture.ai_value_tail), shown as Companies
+    # a company's Focus bylaw ends the weight (company_culture.ai_value_tail), shown as Companies
     ai_parts = {bk: private_investment.ai_parts(bk, owners_of, ai_of)
                 + ([('works', None)] if cc_plan and bk in owners_of else []) for bk in ai_of}
     write('common/customizable_localization/pmr_custom_loc.txt', header +
@@ -1942,12 +1942,10 @@ def main():
     write('common/scripted_triggers/pmr_urb_triggers.txt', header + urb_trig)
     write('common/script_values/pmr_urb_values.txt', header + urb_value)
     write('common/scripted_effects/pmr_urb_effects.txt', header + urb_eff)
-    # The company panels without the retool sites that companies list (Pat 2026-10-19 02:32Z, company_panel.py); in the
-    # test build company_culture.write_all writes company_panel.gui, with its Company Culture tab.
+    # The company panels without the retool sites that companies list (Pat 2026-10-19 02:32Z, company_panel.py);
+    # company_culture.write_all writes company_panel.gui, with its Company Culture tab.
     company_panel.SUB_LINKS = not args.release   # the Regional HQs subsidiary probe (pmr/test_probes/sub_hq)
     write('gui/companies_panel.gui', company_panel.patch_companies_panel(vanilla_gui('companies_panel.gui')), bom=False)
-    if args.release:
-        write('gui/company_panel.gui', company_panel.patch_company_panel(vanilla_gui('company_panel.gui')), bom=False)
     report['gated_type_copies'] = list(GATED)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
@@ -1972,14 +1970,14 @@ def main():
                             body = f.read().split('\n', 1)[1]
                         for lang in OTHER_LANGUAGES:
                             write(f'localization/{lang}/{fn[:-len("english.yml")]}{lang}.yml', f'l_{lang}:\n' + body)
-        # Its tab's Methods table: the Policies grid of the company's own building types (Pat 2026-10-19 02:32Z)
-        loc += company_panel.write_methods(write, header, mv_keys, recipe_tex, pair_ui, pair_options, mv_read,
-                                           mv_cols(mv_keys, pair_ui) if mv_keys else 1)
-        # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, in the test build until Pat ships it.
-        loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
-        private_investment.GRANT_LINE = True   # subsidiary payments in the pool's tooltip (subsidiaries.py)
-        private_investment.AI_TAIL = company_culture.ai_value_tail   # the Focus bylaw (company_culture.py)
-    # The HUD: the retool site flags (both builds), and in the test build Company Culture's full-screen window
+    # Its tab's Methods table: the Policies grid of the company's own building types (Pat 2026-10-19 02:32Z)
+    loc += company_panel.write_methods(write, header, mv_keys, recipe_tex, pair_ui, pair_options, mv_read,
+                                       mv_cols(mv_keys, pair_ui) if mv_keys else 1)
+    # Company Culture (Pat, 2026-10-14 04:01Z): a trait tree tab on every company, shipped 2026-10-20 12:59Z.
+    loc += company_culture.write_all(game, write, header, report, cc_plan, args.out)
+    private_investment.GRANT_LINE = True   # subsidiary payments in the pool's tooltip (subsidiaries.py)
+    private_investment.AI_TAIL = company_culture.ai_value_tail   # the Focus bylaw (company_culture.py)
+    # The HUD: the retool site flags and Company Culture's full-screen window
     hud = vanilla_gui('ingame_hud.gui')
     if cc_plan:
         hud = cc_tree.patch_hud(hud)

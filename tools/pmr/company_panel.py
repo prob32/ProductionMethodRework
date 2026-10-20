@@ -29,7 +29,7 @@ import methods_row
 
 RETOOL_TYPES = []   # set by generate.py: every retool site type a company lists (report['company_types'])
 SUB_LINKS = False   # set by generate.py in test builds: the Regional HQs subsidiary probe (pmr/test_probes/sub_hq)
-REFRESH = False     # set by write_methods: the company panel's opening recounts the Policies copies (test build)
+REFRESH = False     # set by write_methods: the company panel's opening recounts the Policies copies
 REFRESH_SGUI = 'pmr_cm_refresh_sgui'
 TODAY = 'pmr_mv_today'   # country, a day long: the Policies copies were recounted today
 OWN_GUI = 'gui/pmr_company_methods.gui'

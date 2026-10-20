@@ -30,7 +30,8 @@ State lives on the company; every value the window shows is mirrored onto the ex
 Company.GetExecutive.MakeScope), and the clicks are character-scope scripted GUIs that find the company back as the
 owner's company whose executive is that character.
 
-Wiring into generate.py main(), test builds only:
+Wiring into generate.py main(), both builds since Pat shipped it (2026-10-20 12:59Z); the "PMR test:" decisions only
+in test builds (TEST):
 
     import company_culture
     cc_plan = company_culture.plan(game, {bk: plain recipes}, goods_cost, goods_tex)
@@ -89,6 +90,7 @@ PROSPERITY_LADDER = list(range(100, 0, -5))          # 100, 95 .. 5
 SIZE_LADDER = [(n, 1 + n / 50) for n in range(50, 0, -5)]
 MAX_LEVEL = 60
 TEST_POINTS = 12                    # every level of both trees
+TEST = True   # set by generate.py: the "PMR test:" decisions and their text (test builds only)
 
 INVENTION = 'gfx/interface/icons/invention_icons/{}.dds'
 PM_ICON = 'gfx/interface/icons/production_method_icons/{}.dds'
@@ -1190,11 +1192,12 @@ def localization(p):
         f' PMR_RG_FUNDING:0 "@money!{money("pmr_rg_pay")}, {V("pmr_rg_w")} / {GRANT_WEEKS}"',
         ' PMR_CC_COST_TT:0 "Culture points"',
         ' PMR_CC_METHODS_HEADER:0 "Methods"',
+    ] + ([
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
         f' pmr_cc_test_points_decision_desc:0 "Each of your companies gets {TEST_POINTS} Culture points."',
         ' pmr_rg_test_finish_decision:0 "PMR test: finish your research grants"',
         ' pmr_rg_test_finish_decision_desc:0 "Each running research grant is paid up next week."',
-    ]
+    ] if TEST else [])
     sec = f"[Character.GetCustom('pmr_cc_name_{SECTOR_NODE[0]}_{SECTOR_NODE[1]}')]"
     name = lambda k, t: sec if (k, t) == SECTOR_NODE else BY_KEY[k].names[t - 1]   # noqa: E731
     loc += [f' PMR_CC_SEC_{i}:0 "{n}"' for i, (n, _i, _g) in enumerate(SECTORS, 1)]
@@ -1226,7 +1229,7 @@ def localization(p):
 # ---------------------------------------------------------------------------------------------------------------
 
 def write_all(game, write, header_text, report, p, out_dir):
-    """Writes every file of the feature (test builds for now) and returns its loc lines."""
+    """Writes every file of the feature and returns its loc lines."""
     write('common/character_traits/pmr_cc_traits.txt', header_text + traits(p))
     write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + modifier_types(p, game))
     write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(p))
@@ -1235,8 +1238,9 @@ def write_all(game, write, header_text, report, p, out_dir):
     write('common/on_actions/pmr_cc_on_actions.txt', header_text + ON_ACTIONS)
     write('events/pmr_cc_events.txt', header_text + EVENTS.replace('?= CAL_VERSION', f'?= {CAL_VERSION}'))
     write('common/script_values/pmr_cc_values.txt', header_text + viewing_value())
-    write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST'))
-          + subsidiaries.TEST_DECISION)
+    if TEST:
+        write('common/decisions/pmr_cc_test_decisions.txt', header_text + TEST_DECISION.replace('{LOG}', log_line('CC_TEST'))
+              + subsidiaries.TEST_DECISION)
     write('common/customizable_localization/pmr_cc_custom_loc.txt', header_text + custom_loc(p))
     write(CHARTER_FILE, charters(game))
     write('common/defines/zz_pmr_cc.txt', header_text + DEFINE)

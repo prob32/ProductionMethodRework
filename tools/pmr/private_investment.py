@@ -2063,9 +2063,9 @@ def patch_retool_ai(text, btype, parent, invest):
     return text, n
 
 
-# Set by generate.py in test builds: company types -> lines that end pmr_ai_value_<b> (company_culture.ai_value_tail).
+# Set by generate.py: company types -> lines that end pmr_ai_value_<b> (company_culture.ai_value_tail).
 AI_TAIL = None
-# Set by generate.py in test builds: the investment pool's tooltip shows the week's research grants (Company Culture,
+# Set by generate.py: the investment pool's tooltip shows the week's research grants (Company Culture,
 # company_culture.py; Pat 2026-10-19 00:04Z "also where is the cost?", 02:32Z: in the tooltip; replace_loc)
 GRANT_LINE = False
 

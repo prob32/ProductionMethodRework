@@ -155,7 +155,7 @@ def kvals(p, v):
 
 def company_types(p, game):
     art = company_art(game)
-    out = ['# PMR subsidiaries (subsidiaries.py), test builds. Founded only by their parent\'s Vertical Integration or\n'
+    out = ['# PMR subsidiaries (subsidiaries.py). Founded only by their parent\'s Vertical Integration or\n'
            '# Diversification node (pmr_sb_found): potential needs the country variable the founding sets, and possible is\n'
            '# never met, so neither the Companies panel nor the AI founds one.\n\n']
     for c, v in sorted(p.comp.items()):
@@ -223,7 +223,7 @@ def player_log(rec, extra=''):
 
 
 def effects(p):
-    o = ['# PMR subsidiaries (subsidiaries.py), test builds. Company scope unless said otherwise.\n\n']
+    o = ['# PMR subsidiaries (subsidiaries.py). Company scope unless said otherwise.\n\n']
     o.append('# Subsidiary $N$\'s weekly payments start (its node bought, or bought again after the subsidiary went).\n'
              'pmr_sb_start = {\n\tset_variable = { name = pmr_sb_pick value = $N$ }\n'
              '\tset_variable = { name = pmr_sb_w value = 0 }\n'
@@ -416,8 +416,10 @@ def localization(p):
                 f' PMR_SB_POOL_{n}:0 "#N Investment pool needs @money!{money(f"pmr_sb_pay{n}")}#!"']
     loc += [f' PMR_SB_FUNDING:0 "@money!{money("pmr_sb_pay")}, {cc.V("pmr_sb_w")} / {SB_WEEKS}"',
             f' {SLOT_MODIFIER}:0 "Subsidiaries"',
-            f' {SLOT_MODIFIER}_desc:0 ""',
-            ' pmr_sb_test_finish_decision:0 "PMR test: finish your subsidiary payments"',
+            f' {SLOT_MODIFIER}_desc:0 ""']
+    if not cc.TEST:
+        return loc
+    loc += [' pmr_sb_test_finish_decision:0 "PMR test: finish your subsidiary payments"',
             ' pmr_sb_test_finish_decision_desc:0 "Subsidiaries being paid for are founded next week."',
             f' pmr_sb_test_pool_decision:0 "PMR test: £{TEST_POOL:,} to your investment pool"',
             f' pmr_sb_test_pool_decision_desc:0 "Adds £{TEST_POOL:,} to your investment pool."']
