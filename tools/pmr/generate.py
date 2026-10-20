@@ -97,18 +97,18 @@ RETOOL_AI_PER_EARNING = round(7500 / 52)
 RETOOL_AI_MULT = 2
 RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
-# A share of n% runs two methods the engine adds: tens (pm_pmr_share_<b>_<i>_<10t>, t = 0..10) and units
-# (pm_pmr_shu_<b>_<i>_<u>, u = 0..9); options pm_pmr_x_ / pm_pmr_xu_. Each digit unlocks only while it runs
-# itself: 1.14.5 checks unlocking_production_methods against the building's active methods (the player's
-# command, the AI switcher, can_activate and the repair pass alike), and activate_production_method checks
-# nothing, so only script moves a digit and no lock group is needed. 21 methods where 203 were, still 1% steps.
+# A share of n% runs one method the engine adds, pm_pmr_share_<b>_<i>_<n> (n = 0..SHARE_STEPS; options pm_pmr_x_),
+# alone in its group. It unlocks only while it runs itself: 1.14.5 checks unlocking_production_methods against the
+# building's active methods (the player's command, the AI switcher, can_activate and the repair pass alike), and
+# activate_production_method checks nothing, so only script moves a share and no lock group is needed. Measured
+# fastest (q54, 2026-10-20 observer run): ~20% under the tens + units digits of q52/q53 and ~5% under q51's
+# 101 + 102 key groups, though it has more methods than the digits (each one a weekly national-standard cost,
+# vanilla-standard-pms): a building carries half the groups and active methods, and a share's modifiers once.
+# --digit-shares keeps q53's digits: tens (pm_pmr_share_<b>_<i>_<10t>, t = 0..10) and units (pm_pmr_shu_<b>_<i>_<u>,
+# u = 0..9), each self-locking, options pm_pmr_x_ / pm_pmr_xu_.
 TENS = list(range(0, SHARE_STEPS + 1, 10))
 UNITS = list(range(10))
-# --single-shares (q54 candidate): one method per share, 0..SHARE_STEPS, self-locking the same way, in one group per
-# member: q51's one share method per member without its key groups. More methods than the digits (each one a weekly
-# national-standard cost, vanilla-standard-pms) but half the groups and active methods per building, and a blended
-# share carries its modifiers once rather than twice.
-SHARE_DIGITS = True   # set by main()
+SHARE_DIGITS = False   # set by main()
 
 
 def share_digits(stem, default_n):
@@ -969,14 +969,14 @@ def main():
     ap.add_argument('--test-name', default='', metavar='LABEL',
                     help='a test build for its own mod folder: names the mod "Production Method Rework (LABEL)" '
                          'with its own id, so it never replaces the published one')
-    ap.add_argument('--single-shares', action='store_true',
-                    help='one method per share (0..SHARE_STEPS) instead of tens and units digits (SHARE_DIGITS)')
+    ap.add_argument('--digit-shares', action='store_true',
+                    help='each share as tens and units methods (q53) instead of one method per share (SHARE_DIGITS)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
     global RELEASE, SHARE_DIGITS
     RELEASE = args.release
-    SHARE_DIGITS = not args.single_shares
+    SHARE_DIGITS = args.digit_shares
     if args.test_name and args.release:
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
@@ -2578,7 +2578,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     for g, gi, mode, none, os_, std in conv:
         if (bk, none) in kept_none:
             o.append(f'\tif = {{ limit = {{ NOT = {{ {is_on(none)} }} }} {act(none)} }}\n')
-    if not SHARE_DIGITS:   # --single-shares: one method per share
+    if not SHARE_DIGITS:   # one method per share
         for x in opts:
             sm = lambda n, x=x: f'pm_pmr_x_{b}_{x.j}_{n}'   # noqa: E731
             o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
@@ -3007,7 +3007,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     halves = (('pmr_nt', 'pmr_at', 'share', 10, lambda d: 10 * d), ('pmr_nu', 'pmr_au', 'shu', 9, lambda d: d))
     o.append(f'pmr_read_blend_{b} = {{\n')
     for i in range(1, nb + 1):
-        if not SHARE_DIGITS:   # --single-shares: the one method of step pmr_n_<i>
+        if not SHARE_DIGITS:   # the one method of step pmr_n_<i>
             o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
                      + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} '
                               f'{setv(f"pmr_a_{i}", n)} }}', '\t'))
