@@ -1163,13 +1163,13 @@ def main():
         rest = s.text[brace:s.text.find('\n', brace)]
         tail = '' if not rest.strip() else '\n\t\t'   # the list continues on the brace's line
         s.inserts.append((brace, f'\n\t\tpmg_pmr_labour_{short(bk)}  # PMR: blended recipes slot{tail}'))
-        # Last in the list: one share group and one lock group per recipe (per blend member when split).
+        # Last in the list: one share group per recipe (per blend member when split); two with --digit-shares.
         blend_of = ([(j, m.key) for j, _, _, m in split_info[bk]['members']] if bk in split_info
                     else [(i, r.key) for i, r in enumerate(recipes, 1)])
         s.inserts.append((pg.end - 1, ''.join(
             f'\t{g}  # PMR: share of levels on {key}{part}\n\t'
             for i, key in blend_of
-            for g, part in ((f'pmg_pmr_share_{short(bk)}_{i}', ' (tens)'), (f'pmg_pmr_shu_{short(bk)}_{i}', ' (units)'))
+            for g, part in ((f'pmg_pmr_share_{short(bk)}_{i}', ' (tens)' if SHARE_DIGITS else ''), (f'pmg_pmr_shu_{short(bk)}_{i}', ' (units)'))
             if SHARE_DIGITS or 'shu' not in g)))
 
     goods_tex, goods_cost = {}, {}
@@ -1265,7 +1265,7 @@ def main():
         bsrc.inserts.append((bpg.end - 1, ''.join(
             f'\t{xg}  # PMR: share of {o.key}{part}\n\t'
             for g, gi, mode, none, opts, std in conv for o in opts
-            for xg, part in ((f'pmg_pmr_x_{short(bk)}_{o.j}', ' (tens)'), (f'pmg_pmr_xu_{short(bk)}_{o.j}', ' (units)'))
+            for xg, part in ((f'pmg_pmr_x_{short(bk)}_{o.j}', ' (tens)' if SHARE_DIGITS else ''), (f'pmg_pmr_xu_{short(bk)}_{o.j}', ' (units)'))
             if SHARE_DIGITS or 'xu' not in xg)))
     report['options'] = [{'building': bk, 'group': g, 'mode': mode, 'none': none,
                           'options': [{'j': o.j, 'key': o.key, 'role': o.role, 'goods': o.goods, 'electricity': o.elec}
