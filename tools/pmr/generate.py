@@ -2733,14 +2733,20 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         if (bk, none) in kept_none:
             o.append(f'\tif = {{ limit = {{ NOT = {{ {is_on(none)} }} }} {act(none)} }}\n')
     if not SHARE_DIGITS:   # one method per share
+        # Review 8, R8-1: after a full read (pmr_xok_<b>) pmr_xa_<j> holds the share that runs, and only this effect
+        # changes it (the methods self-lock), so a monthly tick reads and activates only an option whose share moved.
+        # pmr_mix_<b> and a building still on its start method (pmr_blend_<b>) remove pmr_xok_<b>.
         for x in opts:
             sm = lambda n, x=x: f'pm_pmr_x_{b}_{x.j}_{n}'   # noqa: E731
-            o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
+            o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ AND = {{ has_variable = pmr_month has_variable = pmr_xok_{b} '
+                     f'var:{xv("pmr_xa", x.j)} = var:{xv("pmr_x", x.j)} }} }} }}\n'
+                     f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
                      + bisect(xv('pmr_x', x.j), lambda n, sm=sm, x=x: f'if = {{ limit = {{ {is_on(sm(n))} }} '
                               f'set_variable = {{ name = {xv("pmr_xa", x.j)} value = {n} }} }}', '\t')
                      + f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_xa", x.j)} = -1 }}\n'
                      + bisect(xv('pmr_x', x.j), lambda n, sm=sm: act(sm(n)), '\t\t')
-                     + f'\t\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = var:{xv("pmr_x", x.j)} }}\n\t}}\n')
+                     + f'\t\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = var:{xv("pmr_x", x.j)} }}\n\t}}\n\t}}\n')
+        o.append(f'\tset_variable = pmr_xok_{b}\n')
     for x in (opts if SHARE_DIGITS else ()):
         o.append(f'\tset_variable = {{ name = {xv("pmr_xqt", x.j)} value = var:{xv("pmr_x", x.j)} }}\n'
                  f'\tchange_variable = {{ name = {xv("pmr_xqt", x.j)} subtract = 4.5 }}\n'
@@ -3258,8 +3264,13 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
             o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"{av}_{i}")} = -1 }}\n'
                      + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, val=val: act(sh, i, val(d)), '\t\t', hi=hi) + '\t}\n')
     # a new building's start method unlocks every share group's default, so it goes once the shares are set (SHARE_STEPS)
-    o.append(f'\tif = {{ limit = {{ is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_start_{b} }} }} '
-             f'activate_production_method = {{ building_type = {bk} production_method = pm_pmr_run_{b} }} }}\n')
+    # Review 8, R8-1: a building still on it is new, so its trade-off shares are read in full too (pmr_xok_<b>)
+    o.append(f'\tif = {{\n\t\tlimit = {{ is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_start_{b} }} }}\n'
+             f'\t\tactivate_production_method = {{ building_type = {bk} production_method = pm_pmr_run_{b} }}\n'
+             f'\t\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n\t}}\n')
+    # R8-1: the share methods now match pmr_n_<i>. Only this blend changes them (each self-locks: available only
+    # while it runs), so until pmr_mix_<b> changes the shares a quiet monthly tick can skip the blend.
+    o.append(f'\tset_variable = pmr_bok_{b}\n')
     o.append('}\n\n')
 
     # The levels the state tracks always add up to the building's level. New levels arrive on the
@@ -3469,6 +3480,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
 
     # Shares for the bar and the blend, the levels still to retool, and p (share on the target).
     o.append(f'pmr_mix_{b} = {{\n'
+             # review 8, R8-1: the shares may change, so the next blend and trade-off read run in full
+             f'\tif = {{ limit = {{ has_variable = pmr_bok_{b} }} remove_variable = pmr_bok_{b} }}\n'
+             f'\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n'
              + on_index('pmr_to', lambda i: setv("pmr_lv_to", "var:" + lv(i)))
              + f'\t{setv("pmr_need", "var:" + v("pmr_level"))}\n'
              f'\t{chg("pmr_need", "subtract", "var:" + v("pmr_lv_to"))}\n'
@@ -3707,17 +3721,24 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # recipe, all and the government's; it writes those levels and mix's shares, which nothing else writes but
     # pmr_reset_levels_<b> (it drops the fingerprint). Run again on what it left with no new retool level and a
     # target, it changes nothing: the levels already add up to the building's, the government's to its own. So as
-    # it finishes it keeps what it read (pmr_fp_*_<b>), and a tick that finds every value the same, level by level,
-    # and no new retool level skips it. A retool level finished on any path is a new level here (pmr_conv_*), and
-    # a level moved by anything else differs from its fingerprint. Mix is in it: it reads nothing else.
-    fp = ([('pmr_level', 'pmr_fp_level'), ('pmr_to', 'pmr_fp_to'), ('pmr_gov_levels', 'pmr_fp_gl')]
-          + [(f'pmr_lv_{i}', f'pmr_fp_lv_{i}') for i in range(1, k + 1)]
-          + [(f'pmr_lvg_{i}', f'pmr_fp_lvg_{i}') for i in range(1, k + 1)])
+    # it finishes it keeps what it read (pmr_fp_*_<b>), and a tick that finds every value the same and no new retool
+    # level skips it. A retool level finished on any path is a new level here (pmr_conv_*). Mix is in it: it reads
+    # nothing else.
+    # Review 8, R8-3: the levels on each recipe (pmr_lv_<i>, pmr_lvg_<i>) are no longer in the fingerprint. Only the
+    # accounting itself writes them (sync_levels, sync_gov, progress), and pmr_reset_levels_<b>, which drops the
+    # fingerprint, so a copy taken as it finished always matched (2 x recipes comparisons a tick, and as many state
+    # variables a building). Anything that writes them outside pmr_recount_<b> must drop pmr_fp_<b> too. Test builds
+    # still check them (SKIP_MISS, pmr_skip_check_<b>).
+    fp = [('pmr_level', 'pmr_fp_level'), ('pmr_to', 'pmr_fp_to'), ('pmr_gov_levels', 'pmr_fp_gl')]
     same = (f'has_variable = pmr_fp_{b} var:{v("pmr_conv_gov")} <= 0 var:{v("pmr_conv_priv")} <= 0 var:{v("pmr_to")} > 0 '
             + ' '.join(f'var:{v(a)} = var:{v(s)}' for a, s in fp))
+    # the copies an older save keeps go as the accounting next runs
+    old_fp = [f'pmr_fp_lv_{i}' for i in range(1, k + 1)] + [f'pmr_fp_lvg_{i}' for i in range(1, k + 1)]
     o.append(f'pmr_recount_{b} = {{\n\tpmr_sync_levels_{b} = yes\n\tpmr_sync_gov_{b} = yes\n\tpmr_progress_{b} = yes\n'
              f'\tpmr_mix_{b} = yes\n\tset_variable = pmr_fp_{b}\n'
-             + ''.join(f'\t{setv(s, "var:" + v(a))}\n' for a, s in fp) + '}\n\n')
+             + ''.join(f'\t{setv(s, "var:" + v(a))}\n' for a, s in fp)
+             + f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_fp_lv_1")} }}\n'
+             + ''.join(f'\t\tremove_variable = {v(n)}\n' for n in old_fp) + '\t}\n}\n\n')
     if not RELEASE:
         # The check (test builds): a player's building that skipped SKIP_CHECK ticks in a row runs the accounting
         # anyway and logs SKIP_MISS for each value it left different from what the skipped ticks had left.
@@ -3854,8 +3875,12 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t\tset_variable = {v("pmr_switched")}\n\t}}\n')
 
     o.append(recount
-             +
-             f'\tpmr_blend_{b} = yes\n'
+             # review 8, R8-1: a monthly tick whose shares are those of the last blend (pmr_bok_<b>: no pmr_mix_<b>
+             # since) skips it; every event tick (built, expanded, method changed, research) and a new building still
+             # on its start method run it in full
+             + f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_month }} NOT = {{ has_variable = pmr_bok_{b} }} '
+             f'is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_start_{b} }} }} }}\n'
+             f'\t\tpmr_blend_{b} = yes\n\t}}\n'
              + ('' if RELEASE else
                 '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
                 f'\tif = {{ limit = {{ owner = {{ is_player = yes }} }} pmr_read_blend_{b} = yes }}\n')
@@ -4549,7 +4574,8 @@ def state_tick_type(bk, t='\t'):
             f'{t}\tif = {{ limit = {{ has_variable = pmr_pending_{b} }} set_variable = {{ name = pmr_pending_{b} value = 0 }} }}\n'
             f'{t}\tpmr_close_retool_{b} = yes\n'
             + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
-                      for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}'))
+                      for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
+                                f'pmr_bok_{b}', f'pmr_xok_{b}'))
             + f'{t}}}\n')
 
 

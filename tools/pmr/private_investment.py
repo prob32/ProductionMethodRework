@@ -892,9 +892,12 @@ def pf_effects(shorts):
         o[-1] = o[-1][:a] + ''.join('\t' + ln for ln in o[-1][a:z].splitlines(True)) + o[-1][z:]
         # An AI country (perf review 4, S-1; Pat 2026-10-19 16:32Z): only the score term its ai_value reads (pmr_pterm_<b>);
         # the averages and parts are the player's log and Policies tooltip
-        o.append(f'pmr_pfa_{b} = {{\n\tset_variable = {{ name = pmr_pf_t_{b} value = 0 }}\n'
-                 f'\tset_variable = {{ name = pmr_pf_l_{b} value = 0 }}\n'
+        # Review 8, R8-2: a type the country has no level of costs the gate and one has_variable (it was seven
+        # statements: two sets, two removes and three tests); the result is the same, pmr_pterm_<b> gone.
+        o.append(f'pmr_pfa_{b} = {{\n'
                  f'\tif = {{\n\t\tlimit = {{ country_has_building_type_levels = {{ target = bt:building_{b} value > 0 }} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pf_t_{b} value = 0 }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pf_l_{b} value = 0 }}\n'
                  f'\t\tevery_scope_state = {{\n\t\t\tlimit = {{ has_variable = pmr_prm_{b} has_variable = pmr_pvs_{b} '
                  f'has_variable = pmr_level_{b} var:pmr_level_{b} > 0 }}\n'
                  f'\t\t\tset_variable = {{ name = pmr_pfu value = var:pmr_pvs_{b} }}\n'
@@ -902,12 +905,13 @@ def pf_effects(shorts):
                  '\t\t\tsave_temporary_scope_as = pmr_st\n'
                  f'\t\t\towner = {{\n\t\t\t\tchange_variable = {{ name = pmr_pf_t_{b} add = scope:pmr_st.var:pmr_pfu }}\n'
                  f'\t\t\t\tchange_variable = {{ name = pmr_pf_l_{b} add = scope:pmr_st.var:pmr_level_{b} }}\n\t\t\t}}\n'
-                 '\t\t\tremove_variable = pmr_pfu\n\t\t}\n\t}\n'
-                 f'\tif = {{\n\t\tlimit = {{ var:pmr_pf_l_{b} > 0 }}\n'
-                 f'\t\tset_variable = {{ name = pmr_pterm_{b} value = var:pmr_pf_t_{b} }}\n'
-                 f'\t\tchange_variable = {{ name = pmr_pterm_{b} divide = var:pmr_pf_l_{b} }}\n\t}}\n'
-                 f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_pterm_{b} }}\n\t\tremove_variable = pmr_pterm_{b}\n\t}}\n'
-                 f'\tremove_variable = pmr_pf_t_{b}\n\tremove_variable = pmr_pf_l_{b}\n}}\n\n')
+                 '\t\t\tremove_variable = pmr_pfu\n\t\t}\n'
+                 f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_pf_l_{b} > 0 }}\n'
+                 f'\t\t\tset_variable = {{ name = pmr_pterm_{b} value = var:pmr_pf_t_{b} }}\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_pterm_{b} divide = var:pmr_pf_l_{b} }}\n\t\t}}\n'
+                 f'\t\telse_if = {{\n\t\t\tlimit = {{ has_variable = pmr_pterm_{b} }}\n\t\t\tremove_variable = pmr_pterm_{b}\n\t\t}}\n'
+                 f'\t\tremove_variable = pmr_pf_t_{b}\n\t\tremove_variable = pmr_pf_l_{b}\n\t}}\n'
+                 f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_pterm_{b} }}\n\t\tremove_variable = pmr_pterm_{b}\n\t}}\n}}\n\n')
     o.append('pmr_pf_all = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
              + ''.join(f'\t\tpmr_pf_{b} = yes\n' for b in shorts) + '\t}\n\telse = {\n'
              + ''.join(f'\t\tpmr_pfa_{b} = yes\n' for b in shorts) + '\t}\n}\n')
