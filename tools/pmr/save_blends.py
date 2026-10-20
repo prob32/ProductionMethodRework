@@ -87,7 +87,9 @@ def main():
     ap.add_argument('--mod', default=os.path.join(os.path.dirname(__file__), '..', '..', 'pmr', 'ProductionMethodRework'))
     args = ap.parse_args()
     report = json.load(open(os.path.join(args.mod, 'GENERATION_REPORT.json')))
-    effects = open(os.path.join(args.mod, 'common', 'scripted_effects', 'pmr_effects.txt'), encoding='utf-8-sig').read()
+    fx = os.path.join(args.mod, 'common', 'scripted_effects')
+    effects = ''.join(open(os.path.join(fx, f), encoding='utf-8-sig').read()   # pmr_effects.txt and its parts
+                      for f in sorted(os.listdir(fx)) if re.fullmatch(r'pmr_effects(_\d+)?\.txt', f))
     groups = collections.defaultdict(list)   # building -> [(gi, group, [(j, key)])]
     for g in report['options']:
         if g['mode'] == 'market':
