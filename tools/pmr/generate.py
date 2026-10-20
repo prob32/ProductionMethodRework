@@ -3889,7 +3889,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
       pmr_rw_<i>_<b>     wages per level per week: wage units x pmr_wage / 10,000
       pmr_rm_<i>_<b>     pmr_rg - pmr_rw, the profit per level per week
       pmr_rav_<i>_<b>    1 while recipe i can become the target here (pmr_newest_<b>'s rule) and this run priced it:
-                         the reference, or one step from it (Pat 13:09Z); 0 otherwise, its figures then an earlier run's
+                         the reference, or one runnable step from it (Pat 13:09Z); 0 otherwise, its figures an earlier run's
       pmr_rveto_<i>_<b>  1 while recipe i needs more of an input than the default and its price is at the cap
       pmr_pbest_<b>      the pick: the best pmr_rm of the runnable, unvetoed recipes, the default unless another beats
                          it by SWITCH_GAIN; 0 if none
@@ -3942,7 +3942,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     # Pat 2026-10-19 13:09Z: "we should only evaluate unlocked items that are +/- from our current to save on calcs. If
     # our current is profitable we should never evaluate going back down." Each option's figures are a scripted effect of
     # their own (pmr_rmx_<i>_<b>), run for the reference (the default where it can run, else the last pick) and then only
-    # for options one step from it on every axis (recipe, each automation group: profit_axes), none below it while it
+    # for options one runnable step from it on every axis (recipe, each automation group: profit_axes), none below it while it
     # makes a profit, and only those the owner can run. Without a reference every option that can run is priced.
     axes = profit_axes(k, pair)
     nd = len(axes[1])
@@ -4043,18 +4043,34 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         return (f'if = {{ limit = {{ has_variable = pmr_bpl_{b} }} set_variable = {{ name = pmr_off value = var:pmr_bpl_{b} }} '
                 f'change_variable = {{ name = pmr_off subtract = var:{rm} }} set_variable = {{ name = {rm} value = var:pmr_bpl_{b} }} }}')
     # its figures (pmr_rr) and the box around it: pmr_lo_<d>, pmr_hi_<d> on axis d, none below it while it makes a profit
+    # (the books at 0 or more, pmr_ok)
+    # q58 (the q57 observer run: Britain's sugar mills stayed on ox-driven rollers to 1849 where q51's vanilla AI had them
+    # on steam evaporation by 1842): a step is to the nearest place on the axis whose option can run here, past locked
+    # ones, as sugar's steam evaporation (fractional distillation) sits beyond the vacuum pan (watertube boiler)
+    at = {ax: i for i, ax in axes.items()}
+
+    def edge(c, d, way):
+        p, name = axes[c][d - 1], ('pmr_hi' if way > 0 else 'pmr_lo')
+        js, q = [], p + way
+        while (*axes[c][:d - 1], q, *axes[c][d:]) in at:
+            js.append((q, at[(*axes[c][:d - 1], q, *axes[c][d:])]))
+            q += way
+        out = f'set_variable = {{ name = {name}_{d} value = {p + way} }}'
+        if len(js) > 1:
+            out += ' ' + ' '.join(f'{"if" if n == 0 else "else_if"} = {{ limit = {{ {can(j)} }} '
+                                  f'set_variable = {{ name = {name}_{d} value = {q} }} }}' for n, (q, j) in enumerate(js))
+        return out
+
+    def box(c):
+        dims = range(1, nd + 1)
+        return (f'{rmx(c)} {calib(c)} set_variable = {{ name = pmr_rr value = var:{xv("pmr_rm", c)} }} '
+                + ' '.join(f'{edge(c, d, 1)} set_variable = {{ name = pmr_lo_{d} value = {axes[c][d - 1]} }}' for d in dims)
+                + ' if = { limit = { var:pmr_rr < 0 NOT = { var:pmr_ok = 1 } } '
+                + ' '.join(edge(c, d, -1) for d in dims) + ' }')
     o.append('\tset_variable = { name = pmr_rr value = 0 }\n'
              + ''.join(f'\tset_variable = {{ name = pmr_lo_{d} value = -1 }}\n'
                        f'\tset_variable = {{ name = pmr_hi_{d} value = 999 }}\n' for d in range(1, nd + 1))
-             + lookup('var:pmr_ref', list(range(1, k + 1)),
-                      lambda c: f'{rmx(c)} {calib(c)} set_variable = {{ name = pmr_rr value = var:{xv("pmr_rm", c)} }} '
-                      + ' '.join(f'set_variable = {{ name = pmr_lo_{d} value = {axes[c][d - 1] - 1} }} '
-                                 f'set_variable = {{ name = pmr_hi_{d} value = {axes[c][d - 1] + 1} }}'
-                                 for d in range(1, nd + 1)))
-             + '\tif = {\n\t\tlimit = { var:pmr_ref > 0 OR = { var:pmr_rr >= 0 var:pmr_ok = 1 } }\n'
-             + ''.join(f'\t\tset_variable = {{ name = pmr_lo_{d} value = var:pmr_hi_{d} }}\n'
-                       f'\t\tchange_variable = {{ name = pmr_lo_{d} subtract = 1 }}\n' for d in range(1, nd + 1))
-             + '\t}\n')
+             + lookup('var:pmr_ref', list(range(1, k + 1)), box))
     # every other option: priced only inside the box and where it can run (pmr_rav_<i>_<b> 1), else pmr_rav 0; the
     # recipe axis first, so a recipe outside the box skips all its automation options at one check
     def inside(i, dims):
@@ -6896,8 +6912,9 @@ OBS_METHODS = [
 def obs_methods(options, dispatch, split_info):
     """Country scope, after pmr_obs_report: one OBSPM line, each row's levels in the country (ranch=) and each option's
     share of them in percent (ranch_sheep=). A trade-off option counts its share of a building's levels, an automation
-    method its blend member's (pmr_rs_<j>), a vanilla method all of them while active."""
-    vars_, body, fields = [], [], []
+    method its blend member's (pmr_rs_<j>), a vanilla method all of them while active; then whether the country knows
+    each automation method's technologies (coffee_mech_t=1)."""
+    vars_, body, fields, techs = [], [], [], {}
     for row, bks, opts in OBS_METHODS:
         lv = f'pmr_obs_{row}_l'
         vars_.append(lv)
@@ -6909,6 +6926,9 @@ def obs_methods(options, dispatch, split_info):
             member = {m.key: j for j, _, _, m in split_info[bk]['members']} if bk in split_info else {}
             add = []
             for lab, key in opts:
+                for _j, _i, _g, m in (split_info[bk]['members'] if bk in split_info else []):
+                    if m.key == key and m.unlock_techs:
+                        techs[f'pmr_obs_{row}_{lab}_t'] = list(m.unlock_techs)
                 x = next((o for k2, o in conv.items() if key in k2), None)
                 ov = f'pmr_obs_{row}_{lab}'
                 if key in member:      # an automation method: its blend member's share of the levels
@@ -6932,6 +6952,9 @@ def obs_methods(options, dispatch, split_info):
         vars_ += [f'pmr_obs_{row}_{lab}' for lab, _k in opts]
         fields.append(f"{row}=[THIS.Var('{lv}').GetValue|0];"
                       + ';'.join(f"{row}_{lab}=[THIS.Var('pmr_obs_{row}_{lab}').GetValue|0]" for lab, _k in opts))
+    # q58: whether the country knows each automation method's technologies (_t=1), so a 0 share reads as locked or unpicked
+    fields.append(';'.join(f"{n[8:]}=[THIS.Var('{n}').GetValue|0]" for n in techs))
+    vars_ += list(techs)
     pct = ''.join(f'\tif = {{ limit = {{ var:pmr_obs_{row}_l > 0 }}\n'
                   + ''.join(f'\t\tchange_variable = {{ name = pmr_obs_{row}_{lab} multiply = 100 }}\n'
                             f'\t\tchange_variable = {{ name = pmr_obs_{row}_{lab} divide = var:pmr_obs_{row}_l }}\n'
@@ -6941,6 +6964,8 @@ def obs_methods(options, dispatch, split_info):
             + ''.join(f'\tset_variable = {{ name = {n} value = 0 }}\n' for n in vars_)
             + '\tevery_scope_state = {\n\t\tsave_scope_as = pmr_obs_s\n' + ''.join(body) + '\t}\n'
             + pct
+            + ''.join(f'\tif = {{ limit = {{ ' + ' '.join(f'has_technology_researched = {t}' for t in ts)
+                      + f' }} set_variable = {{ name = {n} value = 1 }} }}\n' for n, ts in techs.items())
             + '\tdebug_log = "PMR;rec=OBSPM;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
             + ';'.join(fields) + '"\n'
             + ''.join(f'\tremove_variable = {n}\n' for n in vars_) + '}\n')
