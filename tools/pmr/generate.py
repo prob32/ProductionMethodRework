@@ -971,12 +971,15 @@ def main():
                          'with its own id, so it never replaces the published one')
     ap.add_argument('--digit-shares', action='store_true',
                     help='each share as tens and units methods (q53) instead of one method per share (SHARE_DIGITS)')
+    ap.add_argument('--obs-script-off', action='store_true',
+                    help='test build: observer games pause PMR\'s script in OBS_AB_YEARS, to time months without it')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
-    global RELEASE, SHARE_DIGITS
+    global RELEASE, SHARE_DIGITS, OBS_AB
     RELEASE = args.release
     SHARE_DIGITS = args.digit_shares
+    OBS_AB = args.obs_script_off
     if args.test_name and args.release:
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
@@ -6688,7 +6691,8 @@ def obs_report(dispatch):
             + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '\tpmr_obs_methods = yes\n}\n\n')
 
 
-OBS_AB_YEARS = range(1839, 1936, 2)   # an observer game's years with PMR's script off
+OBS_AB_YEARS = range(1839, 1936, 2)   # an observer game's years with PMR's script off (--obs-script-off)
+OBS_AB = False   # set by main()
 
 
 def obs_ab():
@@ -6696,9 +6700,14 @@ def obs_ab():
     method recompute and the months got no faster: PMR's monthly pulses run in the daily event tick, outside the Tick
     Task List, so their cost shows only as a slower month. An observer game turns them off (pmr_ticks_paused, the test
     decision's pause) in OBS_AB_YEARS, so one run times months with and without PMR's script; the methods, buildings
-    and their hooks stay. Once a month, at the first country's pulse; a pause it didn't set (pmr_obs_abp) it leaves."""
-    years = ' '.join(f'AND = {{ game_date >= {y}.1.1 game_date < {y + 1}.1.1 }}' for y in OBS_AB_YEARS)
+    and their hooks stay. Once a month, at the first country's pulse; a pause it didn't set (pmr_obs_abp) it leaves.
+    Opt-in since 2026-10-20 (Pat 01:06Z, the comparison done): other test builds only lift a pause one left in a save."""
     line = 'PMR;rec=TEST;arm=TICKS_{};date=[TimeKeeper.GetCurrentDate.GetString];by=observer'
+    if not OBS_AB:
+        return ('pmr_obs_ab = {\n\tif = {\n\t\tlimit = { has_global_variable = pmr_obs_abp }\n'
+                '\t\tremove_global_variable = pmr_ticks_paused\n\t\tremove_global_variable = pmr_obs_abp\n'
+                f'\t\tdebug_log = "{line.format("RESUMED")}"\n\t}}\n}}\n\n')
+    years = ' '.join(f'AND = {{ game_date >= {y}.1.1 game_date < {y + 1}.1.1 }}' for y in OBS_AB_YEARS)
     return ('pmr_obs_ab = {\n\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_obs_abc } }\n'
             '\t\tset_global_variable = { name = pmr_obs_abc value = yes days = 20 }\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ {years} }} NOT = {{ has_global_variable = pmr_ticks_paused }} }}\n'
@@ -6907,7 +6916,8 @@ SKIP_REPORT
 
 # Test builds. The observer game's monthly lines run outside the test pause, so its script-off years (obs_ab) are timed too.
 OBS_ON_ACTIONS = f'''
-# Root = country, an observer game's monthly pulse (test builds): PMR's script off in alternate years (pmr_obs_ab), and
+# Root = country, an observer game's monthly pulse (test builds): PMR's script off in alternate years with
+# --obs-script-off (pmr_obs_ab), and
 # the OBS lines of the largest economies.
 pmr_obs_monthly_country = {{
 	trigger = {{ has_global_variable = pmr_obs }}
