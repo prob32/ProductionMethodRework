@@ -10,7 +10,28 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: buildings that start a new game staffed, second try (q62, test mod; start a new game)
+## Latest: building types you can click in the Private tab (q63, test mod; your q62 game carries on)
+
+From the build thread, after your 14:07Z message. q63 includes q62.
+
+- On the Private tab, each group's tooltip under Buildings Adding to the Pool lists its building types as buttons.
+  Lock the tooltip, then click a type to open the Buildings panel on it, as the go-to button on vanilla's building
+  type tooltip does.
+
+1. Load your q62 game in PMR Test.
+2. Open the Private tab and hover Light Industries in the legend beside the first tree chart until the tooltip locks.
+3. Click Food Industries (or any type listed).
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| L1 | Step 2 | The heading and level count as before, then one button per type with its icon and levels | No buttons, heading only: the types are not counted yet (the tab counts them as it opens; close and reopen it); no tooltip at all: the tooltip widget failed to load (look in error.log for `pmr_private_investment.gui`) |
+| L2 | Step 3 | The Buildings panel opens on Food Industries | Nothing happens: the click did not reach the button, which needs the tooltip locked first; if it is locked and still nothing opens, the game's go-to for a building type does not run from here |
+
+## Earlier: buildings that start a new game staffed, second try (q62, test mod; start a new game)
+
+Result (your 14:07Z game): S1 and S2 pass. Great Britain 243 of 252 buildings at least half staffed on 1 January
+(q61: 140), Austria 138 of 140; every ranch started on its starting shares and none was left on the start method.
+
 
 From the build thread, after your 13:35Z message. q62 includes q61.
 
