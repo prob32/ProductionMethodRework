@@ -50,10 +50,10 @@ TAB = 'pmr_culture'                 # InformationPanel tab id
 OWN_GUI = 'gui/pmr_company_culture.gui'
 PANEL_GUI = 'gui/company_panel.gui'
 CHARTER_FILE = 'common/company_charter_types/00_company_charter_types.txt'
-CAL_VERSION = 9                     # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
+CAL_VERSION = 10                    # bump to make every company re-read its numbers (pmr_cc_on); 4: the wheel;
                                     # 5: a grant per goods line; 6: the subsidiary bundles; 7: the two trees (an older
                                     # company's nodes are points again); 8: q45 (the trees' nodes kept); 9: q49, the
-                                    # type's id for the board's wealth (pmr_cc_k_id)
+                                    # type's id for the board's wealth (pmr_cc_k_id); 10: q60, grants a sixth the price
 TREES_SINCE = 7                     # a company read in before this gets its nodes back as points
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -71,8 +71,10 @@ OUTPUT = (0.12, 0.16)               # Precision Manufacturing, Hallmark Goods: o
 # Pat 17:42Z: "lvl 1 engineering should require culture points and research grant": Engineering's root too.
 GRANTS = ('er', 'en')
 GRANT_WEEKS = 52
-GRANT_COST = {'er': (250,), 'en': (500, 1000, 1500)}   # £ per employed level a week, by tier (Pat 2026-10-18 22:28Z,
-                                                     # 10-19 00:06Z; q35's); the root's is PMR's pick
+GRANT_COST = {'er': (40,), 'en': (85, 170, 250)}   # £ per employed level a week, by tier (Pat 2026-10-20 03:47Z: "should
+                                                  # be like max 25k": a sixth of q35's 250 and 500/1,000/1,500)
+GRANT_CAP = 25000                   # £ a week for all of a country's grants together (Pat 03:48Z "shouldn't exceed 25k"):
+                                    # a grant that would go over waits for the next week, as one the pool can't cover
 LV_LADDER = list(range(100, 20, -5)) + list(range(20, 0, -1))   # employed levels, for a grant's cost
 GRANT_VARS = ['pmr_rg_t', 'pmr_rg_w', 'pmr_rg_pay', 'pmr_rg_next', 'pmr_rg_ok', 'pmr_rg_paid']   # on the company;
 # pmr_rg_t is the running grant's node (Line.node; 1-3, Process Engineering's tiers, before q48)
@@ -524,9 +526,13 @@ def grant_effects(done):
     wlog = ("tier=[THIS.Var('pmr_rg_t').GetValue|0];w=[THIS.Var('pmr_rg_w').GetValue|0];"
             "pay=[THIS.Var('pmr_rg_pay').GetValue|0];paid=[THIS.Var('pmr_rg_paid').GetValue|0];")
     return ('# Weekly (pmr_cc.1) while an Engineering research grant runs (pmr_rg_t its tier): the owner\'s investment pool pays\n'
-            f'# pmr_rg_pay, or the week waits; after {GRANT_WEEKS} paid weeks the tier is granted (pmr_rg_done).\n'
+            f'# pmr_rg_pay within the country\'s GRANT_CAP ({GRANT_CAP}) a week, or the week waits; after {GRANT_WEEKS} paid weeks the tier is granted (pmr_rg_done).\n'
             'pmr_rg_week = {\n\tsave_scope_as = pmr_cc_gco\n'
-            '\tif = {\n\t\tlimit = { owner ?= { investment_pool >= scope:pmr_cc_gco.var:pmr_rg_pay } }\n'
+            f'\tset_local_variable = {{ name = pmr_rg_room value = {GRANT_CAP} }}\n'
+            '\tif = { limit = { owner ?= { has_variable = pmr_cc_rweek } } '
+            'change_local_variable = { name = pmr_rg_room subtract = owner.var:pmr_cc_rweek } }\n'
+            '\tif = {\n\t\tlimit = {\n\t\t\tvar:pmr_rg_pay <= local_var:pmr_rg_room\n'
+            '\t\t\towner ?= { investment_pool >= scope:pmr_cc_gco.var:pmr_rg_pay }\n\t\t}\n'
             '\t\tchange_variable = { name = pmr_rg_pay multiply = -1 }\n'
             '\t\towner = { add_investment_pool = scope:pmr_cc_gco.var:pmr_rg_pay }\n'
             '\t\tchange_variable = { name = pmr_rg_pay multiply = -1 }\n'
@@ -583,6 +589,8 @@ def effects(p):
              '\t# a subsidiary being paid for pays this build\'s price from now on\n'
              + ''.join(f'\tif = {{ limit = {{ var:pmr_sb_pick = {n} }} set_variable = {{ name = pmr_sb_pay value = var:pmr_sb_pay{n} }} }}\n'
                        for n in subsidiaries.NUMS)
+             + '\t# and a research grant running (its tier not yet counted, so pmr_rg_next is its own) at this build\'s rate\n'
+             '\tif = { limit = { var:pmr_rg_t > 0 var:pmr_rg_next > 0 } set_variable = { name = pmr_rg_pay value = var:pmr_rg_next } }\n'
              + '}\n\n')
     # Cost of the next point.
     costs = ''.join(f'\t{"if" if L == 0 else "else_if"} = {{ limit = {{ var:pmr_cc_level <= {L} }} '

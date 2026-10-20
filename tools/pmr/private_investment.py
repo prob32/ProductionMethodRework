@@ -602,9 +602,11 @@ def sguis():
             f'\t\t\t\tset_variable = {{ name = pmr_fd_wk value = {COOLDOWN_WEEKS} }}\n\t\t\t}}\n'
             '\t\t\tdebug_log = "PMR;rec=FOCUS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
             'notch=[THIS.Var(\'pmr_fd_i\').GetValue|0];bias=[THIS.Var(\'pmr_fd\').GetValue|0]"\n\t\t}\n\t}\n}\n\n')
-    out += ('# The contributors chart, recounted whenever the Private tab is opened (and weekly); opening the tab also\n'
+    out += ('# The contributors chart, recounted whenever the Private tab is opened (and weekly; its tooltips\' building types\n'
+            '# and companies only as it opens: pmr_pt_record, pmr_co_rank); opening the tab also\n'
             '# starts the weekly clock if it is not running.\n'
-            'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n\t\tpmr_pi_v2 = yes\n'
+            'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n\t\tpmr_pt_record = yes\n'
+            '\t\tpmr_co_rank = yes\n\t\tpmr_pi_v2 = yes\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n\t\t}\n'
             '\t\tpmr_pi_start_clock = yes\n\t}\n}\n\n')
     laws = sorted(set(POLICY_LAWS.values()))
@@ -695,6 +697,66 @@ def reinvest_effect():
             '\tdebug_log = "PMR;rec=REINVEST;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
             'weekly=[THIS.Var(\'pmr_rw_0\').GetValue|0];max=[THIS.Var(\'pmr_rw_max\').GetValue|0];'
             'height=[THIS.Var(\'pmr_rw_h_0\').GetValue|1];column_first_group=[THIS.Var(\'pmr_rc_0_0\').GetValue|2]"\n'
+            '}\n')
+
+
+CO_SLOTS = 15   # the Companies row's tooltip: the country's companies, most profitable first (Pat 2026-10-20 03:52Z)
+
+
+def pc_types(game):
+    """GROUPS index -> the building types the contributors chart counts in it, in the game's order (Pat 2026-10-20
+    03:51Z: the group's tooltip says what the industries are)."""
+    btype, parent = building_groups(game)
+    index = {k: i for i, (k, *_r) in enumerate(GROUPS)}
+    out = [[] for _g in GROUPS]
+    for bk, g in btype.items():
+        chain, x = [], g
+        while x:
+            chain.append(x)
+            x = parent.get(x)
+        if any(c in CHART_EXCLUDE for c in chain):
+            continue
+        k = group_of(bk, btype, parent)
+        if k:
+            out[index[k]].append(bk)
+    if sum(map(len, out)) < 40:
+        fail('common/buildings', f'expected about 60 building types in the contributors chart, found {sum(map(len, out))}')
+    return out
+
+
+def rank_effects(types):
+    """Country scope, as the Private tab opens. pmr_pt_record: privately owned levels per building type, pmr_pt_<type>
+    (one pass over the buildings, by group, then type). pmr_co_rank: the country's companies by their week's profit
+    (the board's reading, bylaws.wealth: pmr_bl_wl_x on a parent, pmr_bl_wl on a subsidiary), most first, into
+    pmr_co_<n> (the company), pmr_co_v_<n> (the profit) and pmr_co_s_<n> (1 when filled), n = 1..CO_SLOTS."""
+    zero = ''.join(f'\tset_variable = {{ name = pmr_pt_{bk[9:]} value = 0 }}\n' for ts in types for bk in ts)
+    groups = ''
+    for i, ts in enumerate(t for t in types if t):
+        inner = ''.join(f'\t\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ is_building_type = {bk} }} '
+                        f'scope:pmr_pt_c = {{ change_variable = {{ name = pmr_pt_{bk[9:]} add = scope:pmr_pt_l }} }} }}\n'
+                        for j, bk in enumerate(ts))
+        ors = ' '.join(f'is_building_type = {bk}' for bk in ts)
+        groups += f'\t\t{"if" if i == 0 else "else_if"} = {{\n\t\t\tlimit = {{ OR = {{ {ors} }} }}\n{inner}\t\t}}\n'
+    slots = ''.join(f'\t\t\t{"if" if n == 1 else "else_if"} = {{\n\t\t\t\tlimit = {{ var:pmr_co_k = {n} }}\n'
+                    f'\t\t\t\tset_variable = {{ name = pmr_co_{n} value = scope:pmr_co_x }}\n'
+                    f'\t\t\t\tset_variable = {{ name = pmr_co_v_{n} value = scope:pmr_co_x.var:pmr_co_pf }}\n'
+                    f'\t\t\t\tset_variable = {{ name = pmr_co_s_{n} value = 1 }}\n\t\t\t}}\n' for n in range(1, CO_SLOTS + 1))
+    return ('# Country scope: privately owned levels per building type, for the contributors chart\'s group tooltips.\n'
+            'pmr_pt_record = {\n\tsave_temporary_scope_as = pmr_pt_c\n' + zero
+            + '\tevery_scope_building = {\n\t\tlimit = {\n\t\t\tlevel > 0\n\t\t\tprivate_ownership_fraction >= 0.125\n\t\t}\n'
+            '\t\tsave_temporary_scope_value_as = { name = pmr_pt_l value = pmr_pc_levels }\n' + groups + '\t}\n}\n\n'
+            '# Country scope: its companies by their week\'s profit, for the By owner chart\'s Companies tooltip.\n'
+            'pmr_co_rank = {\n\tsave_temporary_scope_as = pmr_co_c\n\tset_variable = { name = pmr_co_k value = 0 }\n'
+            + ''.join(f'\tset_variable = {{ name = pmr_co_s_{n} value = 0 }}\n' for n in range(1, CO_SLOTS + 1))
+            + '\tevery_company = {\n\t\tset_variable = { name = pmr_co_pf value = 0 }\n'
+            '\t\tif = { limit = { has_variable = pmr_bl_wl_x } set_variable = { name = pmr_co_pf value = var:pmr_bl_wl_x } }\n'
+            '\t\telse_if = { limit = { has_variable = pmr_bl_wl } set_variable = { name = pmr_co_pf value = var:pmr_bl_wl } }\n\t}\n'
+            f'\tordered_company = {{\n\t\torder_by = var:pmr_co_pf\n\t\tmax = {CO_SLOTS}\n\t\tcheck_range_bounds = no\n'
+            '\t\tsave_temporary_scope_as = pmr_co_x\n\t\tscope:pmr_co_c = {\n\t\t\tchange_variable = { name = pmr_co_k add = 1 }\n'
+            + slots + '\t\t}\n\t}\n'
+            '\tdebug_log = "PMR;rec=CO_RANK;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            "n=[THIS.Var('pmr_co_k').GetValue|0];first=[THIS.Var('pmr_co_1').GetCompany.GetNameNoFormatting];"
+            "profit=[THIS.Var('pmr_co_v_1').GetValue|0]\"\n"
             '}\n')
 
 
@@ -2189,7 +2251,7 @@ def patch_ai_value(text, owners, invest):
 
 # ---------------------------------------------------------------------------------------------------------------
 
-def localization(types):
+def localization(types, chart_types=None):
     law = "[GetLawType('law_interventionism').GetName]"
     lf = "[GetLawType('law_laissez_faire').GetName]"
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
@@ -2255,7 +2317,12 @@ def localization(types):
         loc.append(f' PMR_FD_OPEN_{n}:0 "#bold {names[n]}#!{what}"')
     for i, (k, name, _p) in enumerate(OWNERS):
         loc.append(f' PMR_PO_NAME_{k}:0 "{name}"')
-        loc.append(f' PMR_PO_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_po_{i}")}|0]#! levels"')
+        # Pat 2026-10-20 03:52Z: the Companies row lists the companies by their week's profit (pmr_co_rank)
+        cos = ''.join(f"[SelectLocalization(NotZero_CFixedPoint({var(f'pmr_co_s_{n}')}), 'PMR_CO_{n}', 'PMR_EMPTY')]"
+                      for n in range(1, CO_SLOTS + 1)) if k == 'company' else ''
+        loc.append(f' PMR_PO_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_po_{i}")}|0]#! levels{cos}"')
+    loc += [f' PMR_CO_{n}:0 "\\n[{COUNTRY}.MakeScope.Var(\'pmr_co_{n}\').GetCompany.GetName] '
+            f'#v @money![{var(f"pmr_co_v_{n}")}|D]#!"' for n in range(1, CO_SLOTS + 1)]
     for i, (k, name, _c) in enumerate(WHO):
         loc.append(f' PMR_IV_WHO_{k}:0 "{name}"')
         loc.append(f' PMR_IV_WHO_{k}_TT:0 "#header {name}#!\\n#v [{var(f"pmr_iv_w_{i}")}|0]#! points '
@@ -2316,7 +2383,12 @@ def localization(types):
         loc.append(f' PMR_IPW_GROUP_{g}:0 "{name}"')
         loc.append(f' PMR_IPW_ROW_{g}:0 "#header {name}#!\\n{covers}\\n'
                    f'Weight #v ×[{COUNTRY}.MakeScope.ScriptValue(\'{v}\')|2]#!"')
-        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels\\n{covers}"')
+        # Pat 2026-10-20 03:51Z: the building types in it, each with its privately owned levels (pmr_pt_record)
+        ts = (chart_types or [[]] * len(GROUPS))[i]
+        lines = ''.join(f"[SelectLocalization(GreaterThan_CFixedPoint({var(f'pmr_pt_{bk[9:]}')}, '(CFixedPoint)0'), "
+                        f"'PMR_PT_{bk[9:]}', 'PMR_EMPTY')]" for bk in ts)
+        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels{lines}"')
+        loc += [f' PMR_PT_{bk[9:]}:0 "\\n${bk}$ #v [{var(f"pmr_pt_{bk[9:]}")}|0]#!"' for bk in ts]
     return loc
 
 
@@ -2357,6 +2429,7 @@ def write_all(game, write, header_text, out=None):
     def vanilla(rel):
         return open(os.path.join(game, rel), encoding='utf-8-sig').read()
     types = invest_types(game)
+    chart_types = pc_types(game)
     # generate.py's copy of SOURCE_FILE when it wrote one (ports and railways retool), else vanilla's
     mine = os.path.join(out, SOURCE_FILE) if out else None
     buildings, _groups = patch_scores(open(mine, encoding='utf-8-sig').read() if mine and os.path.exists(mine)
@@ -2367,6 +2440,7 @@ def write_all(game, write, header_text, out=None):
     write('common/static_modifiers/pmr_policy_modifiers.txt', header_text + static_modifiers())
     write('common/on_actions/pmr_pi_on_actions.txt', header_text + on_actions())
     write('common/scripted_effects/pmr_pi_effects.txt', header_text + reinvest_effect() + '\n' + chart_effect() + '\n'
+          + rank_effects(chart_types) + '\n'
           + clock_effect() + '\n' + upkeep_effect() + '\n' + policy_effects() + '\n'
           + invest_effects(types, retool_types(game, out)))
     write('common/scripted_triggers/pmr_ipw_triggers.txt', header_text + law_triggers())
@@ -2422,7 +2496,7 @@ def write_all(game, write, header_text, out=None):
     write(SOURCE_FILE, buildings)
     write('common/script_values/pmr_ipw_values.txt', header_text + values)
     write('common/scripted_effects/pmr_pf_effects.txt', header_text + pf_effects(pf_types))
-    return localization(types)
+    return localization(types, chart_types)
 
 
 if __name__ == '__main__':

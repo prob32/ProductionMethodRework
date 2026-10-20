@@ -1786,7 +1786,7 @@ def main():
           'bg_pmr_retool_gov_abroad = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
           '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n')
     write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers)
-          + '\n' + LOGGED_TRIGGER)
+          + '\n' + LOGGED_TRIGGER + '\n' + VIEWER_TRIGGER)
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/production_methods/pmr_blend_production_methods.txt', header +
@@ -1833,6 +1833,15 @@ def main():
     write('common/scripted_guis/pmr_sguis.txt', header + SGUI_DOC + ''.join(gov_retool_sgui(bk) for bk in dispatch)
           + '# The same for every state at once, from the Buildings tab\'s building type row. Country scope.\n\n'
           + ''.join(gov_retool_country_sgui(bk) for bk in dispatch)
+          + ('# The Buildings panel, as it opens (patch_browser_tabs): its country\'s Buildings tab totals, buildings abroad\n'
+             '# included, the first time, and monthly after (pmr_c_viewer). Pat 2026-10-20 03:43Z: an observer game taken\n'
+             '# over as Great Britain showed no bar for its plantations in the East India Company\'s states, and logged no\n'
+             '# CSUM or TECH line, both is_player in country scope, on its research.\n'
+             'pmr_c_view_sgui = {\n\tscope = country\n\teffect = {\n'
+             '\t\tif = {\n\t\t\tlimit = { NOT = { has_variable = pmr_c_view } }\n\t\t\tset_variable = pmr_c_view\n'
+             '\t\t\tpmr_c_sum_every = yes\n'
+             '\t\t\tdebug_log = "PMR;rec=CVIEW;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting]"\n'
+             '\t\t}\n\t}\n}\n\n')
           + ('# The Buildings panel\'s Owners\' Methods tab, recounted from the cached picks when the tab is clicked.\n'
              'pmr_mv_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pf_all = yes\n\t\tpmr_mv_refresh = yes\n'
              # a company panel opening skips its own recount today (company_panel.REFRESH_SGUI)
@@ -3804,7 +3813,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # run state by state (pmr_bulk; see pmr_c_sum_all). The tab also lists buildings abroad that the
     # country or its investors own levels in (Pat's cotton plantations in the East India Company's
     # states, 2026-10-13), so a player's bar counts those buildings too, whole, as their own bars do.
-    # Only a player's: it scans every state in the world. The upgrade button's room stays domestic.
+    # Only a player's (pmr_c_viewer): it scans every state in the world. The upgrade button's room stays domestic.
     live = f'has_variable = pmr_mix_{b} has_building = {bk} b:{bk} = {{ level >= 1 }}'
     cnames = ['level', 'need'] + [f'lv_{i}' for i in range(1, k + 1)]
     adds = ''.join(f'\t\t\tchange_variable = {{ name = pmr_c_{n}_{b} add = scope:pmr_st.var:pmr_{n}_{b} }}\n'
@@ -3831,7 +3840,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              # Buildings abroad: a scan of every state in the world, so it runs with the country-wide sums
              # (pmr_c_abroad, set by pmr_c_sum_every: monthly, on research) and is cached in pmr_cf_*;
              # the sum after a single building's tick adds the cache (performance review, 2026-10-13).
-             '\tif = {\n\t\tlimit = { is_player = yes }\n'
+             '\tif = {\n\t\tlimit = { pmr_c_viewer = yes }\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ has_variable = pmr_c_abroad NOT = {{ has_variable = pmr_cf_level_{b} }} }} }}\n'
              + ''.join(f'\t\t\tset_variable = {{ name = pmr_cf_{n}_{b} value = 0 }}\n' for n in cnames)
              + f'\t\t\tevery_state = {{\n\t\t\t\tlimit = {{\n\t\t\t\t\tNOT = {{ owner = scope:pmr_ctry }}\n\t\t\t\t\t{live}\n'
@@ -4567,7 +4576,7 @@ def dispatch_effects(buildings):
         o.append(f'\tpmr_c_sum_{short(bk)} = yes\n')
     o.append('\tremove_variable = pmr_c_abroad\n}\n\n'
              '# The same for a player\'s country only (monthly, on research).\n'
-             'pmr_c_sum_all = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
+             'pmr_c_sum_all = {\n\tif = {\n\t\tlimit = { pmr_c_viewer = yes }\n'
              '\t\tpmr_c_sum_every = yes\n'
              '\t\tdebug_log = "PMR;rec=CSUM;date=[TimeKeeper.GetCurrentDate.GetString]"\n'
              '\t}\n}\n')
@@ -5693,6 +5702,13 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                     + f'\t\t\tset_variable = {{ name = {sv("ploss")} value = var:{sv("pt")} }}\n'
                     f'\t\t\tchange_variable = {{ name = {sv("ploss")} subtract = var:{sv("pprod")} }}\n'
                     f'\t\t\tchange_variable = {{ name = {sv("ploss")} subtract = var:{sv("pout")} }}\n'
+                    # Pat 2026-10-20 03:57Z (gold mines, "Losses: +2027"): a type the country has only abroad has no split
+                    # of its own (pmr_pto_<b>), and the term read in the state abroad is its owner's whole profit term:
+                    # Profit, not Losses
+                    f'\t\t\tset_variable = {{ name = {sv("pprf")} value = 0 }}\n'
+                    f'\t\t\tif = {{ limit = {{ owner = {{ NOT = {{ has_variable = pmr_pto_{b} }} }} }} '
+                    f'set_variable = {{ name = {sv("pprf")} value = var:{sv("ploss")} }} '
+                    f'set_variable = {{ name = {sv("ploss")} value = 0 }} }}\n'
                     # Pat 2026-10-19 12:56Z: what Productivity and Output value (their nested tooltips): the pick's
                     # employees per level (pmr_pte_<b>, pf_effects), the profit per level that gives Productivity with
                     # them, and the goods per level at base prices that give Output
@@ -5704,7 +5720,7 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                     f'\t\t\tchange_variable = {{ name = {sv("pp")} divide = {fmt(VANILLA_PROFIT_W)} }}\n'
                     f'\t\t\tset_variable = {{ name = {sv("pv")} value = var:{sv("pout")} }}\n'
                     f'\t\t\tchange_variable = {{ name = {sv("pv")} divide = {fmt(VANILLA_OUTPUT_W)} }}\n')
-        snapped = ([f'pmr_mv_{n}_{b}' for n in ('pt', 'pol', 'pworks', 'pprod', 'pout', 'ploss', 'wb', 'pe', 'pp', 'pv')]
+        snapped = ([f'pmr_mv_{n}_{b}' for n in ('pt', 'pol', 'pworks', 'pprod', 'pout', 'ploss', 'pprf', 'wb', 'pe', 'pp', 'pv')]
                    if bk in ai else [])
         # the state's levels and picks, and the figures of the country's biggest state of the type, onto the country
         # (scope:pmr_ctry)
@@ -5777,10 +5793,10 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
                         f"/[THIS.Var('pmr_mv_rk_{b}').GetValue|0]" for b, _m in shown)
              + '"\n'
              # the tooltip's sections (methods_view_loc), which add up to the weight: base/policy/companies/
-             # productivity/losses/output/weight
+             # productivity/losses/output/profit (abroad only)/weight
              '\t\tdebug_log = "PMR;rec=MV_PARTS;date=[TimeKeeper.GetCurrentDate.GetString];'
              + ';'.join(f'{b}=' + '/'.join(f"[THIS.Var('pmr_mv_{n}_{b}').GetValue|0]"
-                                           for n in ('aib', 'pola', 'pworks', 'pprod', 'ploss', 'pout', 'w'))
+                                           for n in ('aib', 'pola', 'pworks', 'pprod', 'ploss', 'pout', 'pprf', 'w'))
                         for b, _m in shown)
              + '"\n\t}\n' if shown else '')
     o.append('pmr_mv_refresh = {\n' + ''.join(f'\tpmr_mv_{short(bk)} = yes\n' for bk in recipe_keys)
@@ -6064,7 +6080,7 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
            ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
            ' PMR_MV_AI_LABEL:0 "Investment chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_BASE:0 "Base"',
-           ' PMR_MV_COMPANIES:0 "Companies"', ' PMR_MV_PROD:0 "Productivity"', ' PMR_MV_LOSS:0 "Losses"',
+           ' PMR_MV_COMPANIES:0 "Companies"', ' PMR_MV_PROD:0 "Productivity"', ' PMR_MV_LOSS:0 "Losses"', ' PMR_MV_PRF:0 "Profit"',
            ' PMR_MV_OUT:0 "Output"', ' PMR_MV_PROFIT_LV:0 "Profit per level a week"',
            ' PMR_MV_EMP_LV:0 "Employees per level"', ' PMR_MV_GOODS_LV:0 "Goods per level a week at base prices"',
            ' PMR_MV_WEIGHT:0 "Weight"']
@@ -6122,7 +6138,7 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
             line(f'PMR_MV_{x.upper()}_{b}',
                  (f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],{nest[lab]} $PMR_MV_{lab}$#!' if lab in nest
                   else f'$PMR_MV_{lab}$'), mv_read(f'pmr_mv_{x}_{b}'))
-            for x, lab in (('pprod', 'PROD'), ('ploss', 'LOSS'), ('pout', 'OUT'))]
+            for x, lab in (('pprod', 'PROD'), ('pprf', 'PRF'), ('ploss', 'LOSS'), ('pout', 'OUT'))]
         loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold $PMR_MV_AI_LABEL$ [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
                    f'$PMR_MV_BASE$: [{aib}|0]\\n'
                    f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],PMR_MV_POL_TT_{b} $PMR_MV_POLICY$#!: [{pola}|=+0]'
@@ -6593,6 +6609,11 @@ def patch_browser_tabs(text, types):
     at = text.index('@@PMR_LIST@@')
     end = block_end(text, at + len('@@PMR_LIST@@'))
     text = text[:at] + text[at + len('@@PMR_LIST@@'):end] + '\n\t\t\t}  # PMR' + text[end:]
+    # opening the panel counts its country's buildings abroad (pmr_c_view_sgui)
+    show = ('\t\t\t\tname = _show\n\t\t\t\tstart_sound = {\n\t\t\t\t\tsoundeffect = "event:/SFX/UI/SideBar/buildings"\n'
+            '\t\t\t\t}\n\n\t\t\t\ton_start = "[BuildingBrowserPanel.Sort(\'database_order\')]"\n')
+    once(show, show + '\t\t\t\ton_start = "[GetScriptedGui(\'pmr_c_view_sgui\').Execute(GuiScope.SetRoot(GetPlayer.MakeScope).End)]"'
+         '  # PMR\n')
     # closing the panel puts it back on Buildings, with the policy window shut
     hide = ('\t\t\t\tname = _hide\n\t\t\t\tstart_sound = {\n\t\t\t\t\tsoundeffect = "event:/SFX/UI/SideBar/buildings_stop"\n'
             '\t\t\t\t}\n\n\t\t\t\ton_start = "[BuildingBrowserPanel.Sort(\'database_order\')]"\n')
@@ -6834,6 +6855,15 @@ def option_loc(opt_ui):
 
 OBS_TOP = 8           # an observer game's OBS lines: the largest economies by GDP
 OBS_LOGGED = 1        # ... and its SWITCH_START, DEFAULT and FLOOR lines: the largest
+VIEWER_TRIGGER = """# Country scope: its Buildings tab totals count its buildings abroad (pmr_c_sum_<b>, pmr_c_sum_all): a player's,
+# or one whose Buildings panel has been opened (pmr_c_view_sgui).
+pmr_c_viewer = {
+\tOR = {
+\t\tis_player = yes
+\t\thas_variable = pmr_c_view
+\t}
+}
+"""
 LOGGED_TRIGGER = f"""# Country scope: its buildings' SWITCH_START, DEFAULT and FLOOR lines are logged: the player's, or in an
 # observer game (pmr_obs, pmr.1) the largest economy's.
 pmr_logged = {{
