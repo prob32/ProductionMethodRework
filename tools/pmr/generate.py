@@ -973,16 +973,21 @@ def main():
                     help='each share as tens and units methods (q53) instead of one method per share (SHARE_DIGITS)')
     ap.add_argument('--obs-script-off', action='store_true',
                     help='test build: observer games pause PMR\'s script in OBS_AB_YEARS, to time months without it')
+    ap.add_argument('--obs-parts-off', action='store_true',
+                    help='test build: observer games switch one part of PMR\'s monthly script off a year (OBS_PARTS)')
     ap.add_argument('--script-profile', action='store_true',
                     help='test build: the HUD writes the script profiler\'s totals every minute (patch_hud_profile); '
                          'the game needs the -script_profiling launch option')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
-    global RELEASE, SHARE_DIGITS, OBS_AB
+    global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON
     RELEASE = args.release
     SHARE_DIGITS = args.digit_shares
     OBS_AB = args.obs_script_off
+    OBS_PARTS_ON = args.obs_parts_off
+    if OBS_PARTS_ON and (args.release or OBS_AB or args.script_profile):
+        raise SystemExit('--obs-parts-off is a test build of its own: not with --release, --obs-script-off or --script-profile')
     if args.test_name and args.release:
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
     if args.script_profile and args.release:
@@ -1338,6 +1343,10 @@ def main():
             text = drop_empty(unlogged.sub('', text))
         if args.trace_from and rel.endswith('.txt'):
             text = add_trace(rel, text, args.trace_from)
+        for old, new in OBS_PART_HOOKS.get(rel, []) if OBS_PARTS_ON else []:
+            if text.count(old) != 1:
+                raise SystemExit(f'{rel}: a part of the monthly script moved; update OBS_PART_HOOKS')
+            text = text.replace(old, new)
         path = os.path.join(args.out, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if bom and not text.startswith('\ufeff'):
@@ -6755,6 +6764,32 @@ def obs_report(dispatch):
 
 OBS_AB_YEARS = range(1839, 1936, 2)   # an observer game's years with PMR's script off (--obs-script-off)
 OBS_AB = False   # set by main()
+# --obs-parts-off (Pat 2026-10-20 01:33Z card): the q56 profiler can't see on_actions, so an observer game times PMR's
+# monthly script part by part, each part off for one year (pmr_off_<part>; 'all' = the test pause) and every part on
+# in the years between: the state tick, the state's other checks, the company tick, the investment and Buildings-tab
+# sums. Pairs (part, year).
+OBS_PARTS = (('tick', 1839), ('checks', 1841), ('companies', 1843), ('invest', 1845), ('all', 1847))
+OBS_PARTS_ON = False   # set by main()
+OBS_PART_HOOKS = {   # file: (text, the same with the part's switch), each found once
+    'common/on_actions/pmr_on_actions.txt': [
+        ('\t\tset_variable = pmr_month\n\t\tpmr_state_tick = yes\n\t\tremove_variable = pmr_month\n',
+         '\t\tif = {\n\t\t\tlimit = { NOT = { has_global_variable = pmr_off_tick } }\n\t\t\tset_variable = pmr_month\n'
+         '\t\t\tpmr_state_tick = yes\n\t\t\tremove_variable = pmr_month\n\t\t}\n'),
+        ('\t\tpmr_auto_best = yes\n\t\tpmr_principle_bonus = yes\n\t\tpmr_probe_state = yes\n'
+         '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n',
+         '\t\tif = {\n\t\t\tlimit = { NOT = { has_global_variable = pmr_off_checks } }\n\t\t\tpmr_auto_best = yes\n'
+         '\t\t\tpmr_principle_bonus = yes\n\t\t\tpmr_probe_state = yes\n\t\t\tpmr_urb_check = yes\n\t\t}\n'),
+        ('pmr_on_monthly_pulse_country = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }',
+         'pmr_on_monthly_pulse_country = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } '
+         'NOT = { has_global_variable = pmr_off_invest } }')],
+    'common/on_actions/pmr_cc_on_actions.txt': [
+        ('pmr_cc_monthly_country = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }',
+         'pmr_cc_monthly_country = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } '
+         'NOT = { has_global_variable = pmr_off_companies } }')],
+    'common/on_actions/pmr_pi_on_actions.txt': [
+        ('pmr_pi_monthly_country = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }',
+         'pmr_pi_monthly_country = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } '
+         'NOT = { has_global_variable = pmr_off_invest } }')]}
 
 
 def obs_ab():
@@ -6765,9 +6800,26 @@ def obs_ab():
     and their hooks stay. Once a month, at the first country's pulse; a pause it didn't set (pmr_obs_abp) it leaves.
     Opt-in since 2026-10-20 (Pat 01:06Z, the comparison done): other test builds only lift a pause one left in a save."""
     line = 'PMR;rec=TEST;arm=TICKS_{};date=[TimeKeeper.GetCurrentDate.GetString];by=observer'
+    flags = ['pmr_ticks_paused'] + [f'pmr_off_{k}' for k, _ in OBS_PARTS if k != 'all']
+    lift = ''.join(f'\t\tif = {{ limit = {{ has_global_variable = {g} }} remove_global_variable = {g} }}\n' for g in flags)
+    if OBS_PARTS_ON:   # --obs-parts-off: one part off a year
+        def year(y):
+            return f'game_date >= {y}.1.1 game_date < {y + 1}.1.1'
+        out = ('pmr_obs_ab = {\n\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_obs_abc } }\n'
+               '\t\tset_global_variable = { name = pmr_obs_abc value = yes days = 20 }\n')
+        for k, y in OBS_PARTS:
+            g = 'pmr_ticks_paused' if k == 'all' else f'pmr_off_{k}'
+            out += (f'\t\tif = {{\n\t\t\tlimit = {{ {year(y)} NOT = {{ has_global_variable = {g} }} }}\n'
+                    f'\t\t\tset_global_variable = {g}\n\t\t\tset_global_variable = pmr_obs_abp\n'
+                    f'\t\t\tdebug_log = "{line.format("PAUSED")};part={k}"\n\t\t}}\n')
+        out += ('\t\tif = {\n\t\t\tlimit = { has_global_variable = pmr_obs_abp NOT = { OR = { '
+                + ' '.join(f'AND = {{ {year(y)} }}' for _, y in OBS_PARTS) + ' } } }\n'
+                + lift.replace('\t\tif', '\t\t\tif') + '\t\t\tremove_global_variable = pmr_obs_abp\n'
+                f'\t\t\tdebug_log = "{line.format("RESUMED")}"\n\t\t}}\n\t}}\n}}\n\n')
+        return out
     if not OBS_AB:
         return ('pmr_obs_ab = {\n\tif = {\n\t\tlimit = { has_global_variable = pmr_obs_abp }\n'
-                '\t\tremove_global_variable = pmr_ticks_paused\n\t\tremove_global_variable = pmr_obs_abp\n'
+                + lift + '\t\tremove_global_variable = pmr_obs_abp\n'
                 f'\t\tdebug_log = "{line.format("RESUMED")}"\n\t}}\n}}\n\n')
     years = ' '.join(f'AND = {{ game_date >= {y}.1.1 game_date < {y + 1}.1.1 }}' for y in OBS_AB_YEARS)
     return ('pmr_obs_ab = {\n\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_obs_abc } }\n'
