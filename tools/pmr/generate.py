@@ -1953,6 +1953,10 @@ def main():
         patch_type_grids(browser_gui, dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
         extra=browser_bars, also=also), dispatch), list(mv_keys))), bom=False)
+    # No reset to the national standard: right-click items and the map action (Pat 2026-10-20 21:40Z).
+    rcm_gui, lens_gui = hide_pm_reset(vanilla_gui('right_click_menu.gui'), vanilla_gui('lens_toolbar.gui'))
+    write('gui/right_click_menu.gui', rcm_gui, bom=False)
+    write('gui/lens_toolbar.gui', lens_gui, bom=False)
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
     write('gui/states_panel_buildings.gui',
           urban_list_gui(hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types)), bom=False)
@@ -5300,6 +5304,38 @@ def hide_retool_sites(text, site_types):
                              'update hide_retool_sites')
         text = text.replace(old, new)
     return text
+
+
+def hide_pm_reset(menu, lens):
+    """Pat 2026-10-20 21:40Z: no "Reset Production Methods" to the national standard. Vanilla offers it in the right-click
+    menus of a building and a building type (right_click_menu.gui, five items) and as the Reset Production Methods map
+    action (lens_toolbar.gui; map interaction reset_production_methods). Each item is made invisible; the lens grid skips
+    invisible items. Returns (menu, lens)."""
+    item = re.compile(r'(\t*)right_click_menu_item = \{\n')
+    out, pos, hidden = [], 0, 0
+    for m in item.finditer(menu):
+        depth, i = 1, m.end()
+        while depth:
+            depth += {'{': 1, '}': -1}.get(menu[i], 0)
+            i += 1
+        block = menu[m.start():i]
+        if 'ResetProductionMethodsToStandard' not in block:
+            continue
+        inner = m.group(1) + '\t'
+        body = re.sub('^' + inner + r'visible = "[^"\n]*"\n', '', block[m.end() - m.start():], count=1)
+        out += [menu[pos:m.end()], f'{inner}visible = no  # PMR: no reset to the national standard\n', body]
+        pos, hidden = i, hidden + 1
+    if hidden != 5:
+        raise SystemExit(f'right_click_menu.gui: expected 5 Reset Production Methods items, found {hidden}; update hide_pm_reset')
+    menu = ''.join(out) + menu[pos:]
+    old = ('\t\t\t\t\t\t\t\t\titem = {\n\t\t\t\t\t\t\t\t\t\tflowcontainer = {\n'
+           '\t\t\t\t\t\t\t\t\t\t\tlens_option_button = {\n')
+    new = ('\t\t\t\t\t\t\t\t\titem = {\n\t\t\t\t\t\t\t\t\t\tflowcontainer = {\n'
+           '\t\t\t\t\t\t\t\t\t\t\tvisible = "[Not(EqualTo_string(LensOption.GetKey, \'reset_production_methods\'))]"  # PMR\n'
+           '\t\t\t\t\t\t\t\t\t\t\tlens_option_button = {\n')
+    if lens.count(old) != 1:
+        raise SystemExit(f'lens_toolbar.gui: expected one lens option item, found {lens.count(old)}; update hide_pm_reset')
+    return menu, lens.replace(old, new)
 
 
 def hide_sites_elsewhere(menu, browser, site_types):
