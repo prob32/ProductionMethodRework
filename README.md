@@ -15,6 +15,7 @@ design, the build and the test handover in `pmr/RUNSHEET.md`.
 | --- | --- | --- |
 | 0.1.0 | `81c609a` | 2026-10-13 |
 | 0.2.0 | `aee27c9` | 2026-10-14 |
+| 0.3.0 | `1d21176` | 2026-10-20 |
 
 Feedback from the Workshop page is tracked as issues labelled `feedback`.
 
