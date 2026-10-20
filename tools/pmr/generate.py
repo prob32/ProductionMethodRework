@@ -104,6 +104,19 @@ SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps 
 # nothing, so only script moves a digit and no lock group is needed. 21 methods where 203 were, still 1% steps.
 TENS = list(range(0, SHARE_STEPS + 1, 10))
 UNITS = list(range(10))
+# --single-shares (q54 candidate): one method per share, 0..SHARE_STEPS, self-locking the same way, in one group per
+# member: q51's one share method per member without its key groups. More methods than the digits (each one a weekly
+# national-standard cost, vanilla-standard-pms) but half the groups and active methods per building, and a blended
+# share carries its modifiers once rather than twice.
+SHARE_DIGITS = True   # set by main()
+
+
+def share_digits(stem, default_n):
+    """the methods one share runs: [(method stem, values, default value, group suffix)]"""
+    if not SHARE_DIGITS:
+        return [(stem, list(range(SHARE_STEPS + 1)), default_n, '')]
+    return [(stem, TENS, default_n, ' (tens)'), (stem.replace('pm_pmr_share_', 'pm_pmr_shu_').replace('pm_pmr_x_', 'pm_pmr_xu_'),
+                                                 UNITS, 0, ' (units)')]
 RETOOL_SLOTS = 2           # private retool buildings per building type: one at home, one abroad (ABROAD_SLOT)
 # The last slot is the player's investors' abroad (Pat 2026-10-13 19:25Z: no level abroad ever retooled). 1.14.5's
 # investment AI picks one state per building type and investor and only then tests can_build_private: Great
@@ -956,11 +969,14 @@ def main():
     ap.add_argument('--test-name', default='', metavar='LABEL',
                     help='a test build for its own mod folder: names the mod "Production Method Rework (LABEL)" '
                          'with its own id, so it never replaces the published one')
+    ap.add_argument('--single-shares', action='store_true',
+                    help='one method per share (0..SHARE_STEPS) instead of tens and units digits (SHARE_DIGITS)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
-    global RELEASE
+    global RELEASE, SHARE_DIGITS
     RELEASE = args.release
+    SHARE_DIGITS = not args.single_shares
     if args.test_name and args.release:
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
@@ -1151,9 +1167,10 @@ def main():
         blend_of = ([(j, m.key) for j, _, _, m in split_info[bk]['members']] if bk in split_info
                     else [(i, r.key) for i, r in enumerate(recipes, 1)])
         s.inserts.append((pg.end - 1, ''.join(
-            f'\tpmg_pmr_share_{short(bk)}_{i}  # PMR: share of levels on {key} (tens)\n\t'
-            f'\tpmg_pmr_shu_{short(bk)}_{i}  # PMR: share of levels on {key} (units)\n\t'
-            for i, key in blend_of)))
+            f'\t{g}  # PMR: share of levels on {key}{part}\n\t'
+            for i, key in blend_of
+            for g, part in ((f'pmg_pmr_share_{short(bk)}_{i}', ' (tens)'), (f'pmg_pmr_shu_{short(bk)}_{i}', ' (units)'))
+            if SHARE_DIGITS or 'shu' not in g)))
 
     goods_tex, goods_cost = {}, {}
     for gsrc in load_dir(game, 'goods'):
@@ -1246,9 +1263,10 @@ def main():
         # The option share groups, after the recipe ones.
         bsrc, bpg = next((t[2], t[5]) for t in treated if t[0] == bk)
         bsrc.inserts.append((bpg.end - 1, ''.join(
-            f'\tpmg_pmr_x_{short(bk)}_{o.j}  # PMR: share of {o.key} (tens)\n\t'
-            f'\tpmg_pmr_xu_{short(bk)}_{o.j}  # PMR: share of {o.key} (units)\n\t'
-            for g, gi, mode, none, opts, std in conv for o in opts)))
+            f'\t{xg}  # PMR: share of {o.key}{part}\n\t'
+            for g, gi, mode, none, opts, std in conv for o in opts
+            for xg, part in ((f'pmg_pmr_x_{short(bk)}_{o.j}', ' (tens)'), (f'pmg_pmr_xu_{short(bk)}_{o.j}', ' (units)'))
+            if SHARE_DIGITS or 'xu' not in xg)))
     report['options'] = [{'building': bk, 'group': g, 'mode': mode, 'none': none,
                           'options': [{'j': o.j, 'key': o.key, 'role': o.role, 'goods': o.goods, 'electricity': o.elec}
                                       for o in opts]}
@@ -1533,8 +1551,8 @@ def main():
                        + '\t\t}\n' if sec == 'building_modifiers' and emp else '')
                     + '\t}\n'
                     for sec in secs)
-            for sh, values, dv, gs in ((f'pm_pmr_share_{b}_{i}', TENS, default_n, f'pmg_pmr_share_{b}_{i}'),
-                                       (f'pm_pmr_shu_{b}_{i}', UNITS, 0, f'pmg_pmr_shu_{b}_{i}')):
+            for sh, values, dv, _part in share_digits(f'pm_pmr_share_{b}_{i}', default_n):
+                gs = sh.replace('pm_', 'pmg_', 1)
                 ladder(sh, values, dv, body_of, r.texture,
                        lambda val, r=r: f'${r.key}$ ({val}% of levels)',
                        (gs, f'${r.key}$ share of levels'))
@@ -1545,9 +1563,9 @@ def main():
         for g, gi, mode, none, opts, std in options.get(bk, []):
             for o in opts:
                 what = 'workforce' if mode == 'treat' else 'building'
-                for sh, values, gs in ((f'pm_pmr_x_{b}_{o.j}', TENS, f'pmg_pmr_x_{b}_{o.j}'),
-                                       (f'pm_pmr_xu_{b}_{o.j}', UNITS, f'pmg_pmr_xu_{b}_{o.j}')):
-                    ladder(sh, values, 0, o.share_body, o.texture,
+                for sh, values, dv, _part in share_digits(f'pm_pmr_x_{b}_{o.j}', 0):
+                    gs = sh.replace('pm_', 'pmg_', 1)
+                    ladder(sh, values, dv, o.share_body, o.texture,
                            lambda val, o=o, what=what: f'${o.key}$ ({val}% of the {what})',
                            (gs, f'${o.key}$ share'))
 
@@ -1692,8 +1710,9 @@ def main():
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/production_methods/pmr_blend_production_methods.txt', header +
           '# Share methods: pm_pmr_share_<b>_<recipe>_<n> carries the recipe\'s workforce-scaled\n'
-          f'# modifiers x n / {SHARE_STEPS}, n = 0, 10 .. 100; pm_pmr_shu_<b>_<recipe>_<u> its units, u = 0..9. Each\n'
-          '# unlocks only while it runs itself; the tick sets digits with activate_production_method.\n\n'
+          + (f'# modifiers x n / {SHARE_STEPS}, n = 0, 10 .. 100; pm_pmr_shu_<b>_<recipe>_<u> its units, u = 0..9. Each\n'
+             if SHARE_DIGITS else f'# modifiers x n / {SHARE_STEPS}, n = 0 .. {SHARE_STEPS}. Each\n')
+          + '# unlocks only while it runs itself; the tick sets them with activate_production_method.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods))
@@ -2559,7 +2578,16 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     for g, gi, mode, none, os_, std in conv:
         if (bk, none) in kept_none:
             o.append(f'\tif = {{ limit = {{ NOT = {{ {is_on(none)} }} }} {act(none)} }}\n')
-    for x in opts:
+    if not SHARE_DIGITS:   # --single-shares: one method per share
+        for x in opts:
+            sm = lambda n, x=x: f'pm_pmr_x_{b}_{x.j}_{n}'   # noqa: E731
+            o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
+                     + bisect(xv('pmr_x', x.j), lambda n, sm=sm, x=x: f'if = {{ limit = {{ {is_on(sm(n))} }} '
+                              f'set_variable = {{ name = {xv("pmr_xa", x.j)} value = {n} }} }}', '\t')
+                     + f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_xa", x.j)} = -1 }}\n'
+                     + bisect(xv('pmr_x', x.j), lambda n, sm=sm: act(sm(n)), '\t\t')
+                     + f'\t\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = var:{xv("pmr_x", x.j)} }}\n\t}}\n')
+    for x in (opts if SHARE_DIGITS else ()):
         o.append(f'\tset_variable = {{ name = {xv("pmr_xqt", x.j)} value = var:{xv("pmr_x", x.j)} }}\n'
                  f'\tchange_variable = {{ name = {xv("pmr_xqt", x.j)} subtract = 4.5 }}\n'
                  f'\tchange_variable = {{ name = {xv("pmr_xqt", x.j)} multiply = 0.1 }}\n'
@@ -2571,13 +2599,14 @@ def option_effects(bk, b, conv, goods_cost, recipes):
             o.append(f'\tset_variable = {{ name = {xv(av, x.j)} value = -1 }}\n'
                      + bisect(xv(qv, x.j), lambda d, x=x, sh=sh, av=av, val=val: f'if = {{ limit = {{ {is_on(f"pm_pmr_{sh}_{b}_{x.j}_{val(d)}")} }} '
                               f'set_variable = {{ name = {xv(av, x.j)} value = {d} }} }}', '\t', hi=hi))
-    o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
-    for x in opts:
+    if SHARE_DIGITS:
+        o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
+    for x in (opts if SHARE_DIGITS else ()):
         for qv, av, sh, hi, val in halves:
             o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv(av, x.j)} = -1 }}\n'
                      + bisect(xv(qv, x.j), lambda d, x=x, sh=sh, val=val: act(f'pm_pmr_{sh}_{b}_{x.j}_{val(d)}'), '\t\t', hi=hi)
                      + f'\t\tset_variable = {{ name = {xv(av, x.j)} value = var:{xv(qv, x.j)} }}\n\t}}\n')
-    for x in opts:
+    for x in (opts if SHARE_DIGITS else ()):
         # the share in % both digits run (the OPT log line's running=), -1 while either is off
         o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
                  f'\tif = {{ limit = {{ var:{xv("pmr_xat", x.j)} >= 0 var:{xv("pmr_xau", x.j)} >= 0 }} '
@@ -2978,6 +3007,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     halves = (('pmr_nt', 'pmr_at', 'share', 10, lambda d: 10 * d), ('pmr_nu', 'pmr_au', 'shu', 9, lambda d: d))
     o.append(f'pmr_read_blend_{b} = {{\n')
     for i in range(1, nb + 1):
+        if not SHARE_DIGITS:   # --single-shares: the one method of step pmr_n_<i>
+            o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
+                     + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} '
+                              f'{setv(f"pmr_a_{i}", n)} }}', '\t'))
+            continue
         o.append(tens_units(i))
         for nv, av, sh, hi, val in halves:
             o.append(f'\t{setv(f"{av}_{i}", -1)}\n'
@@ -3024,6 +3058,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     o.append(f'\tpmr_read_blend_{b} = yes\n')
     o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
     for i in range(1, nb + 1):
+        if not SHARE_DIGITS:
+            o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"pmr_a_{i}")} = -1 }}\n'
+                     + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act('share', i, n), '\t\t') + '\t}\n')
+            continue
         for nv, av, sh, hi, val in halves:
             o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"{av}_{i}")} = -1 }}\n'
                      + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, val=val: act(sh, i, val(d)), '\t\t', hi=hi) + '\t}\n')
@@ -4769,8 +4807,9 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
                             + ' '.join(f'AND = {{ has_variable = {x} var:{x} > 0 }}' for x in lvs) + ' } }\n\t\t}\n')
             elif idx:
                 alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tOR = {{ '
-                            + ' '.join(f'NOT = {{ has_active_production_method = pm_pmr_share_{short(bk)}_{i}_0 }} '
-                                       f'NOT = {{ has_active_production_method = pm_pmr_shu_{short(bk)}_{i}_0 }}'
+                            + ' '.join(f'NOT = {{ has_active_production_method = pm_pmr_share_{short(bk)}_{i}_0 }}'
+                                       + (f' NOT = {{ has_active_production_method = pm_pmr_shu_{short(bk)}_{i}_0 }}'
+                                          if SHARE_DIGITS else '')
                                        for i in idx) + ' }\n\t\t}\n')
         trig.append(f'pmr_has_{p} = {{\n' + (f'\tOR = {{\n{"".join(alts)}\t}}\n' if alts else '\talways = no\n') + '}\n\n')
     for p in sorted(used & set(alias)):
