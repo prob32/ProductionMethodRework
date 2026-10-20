@@ -1700,10 +1700,11 @@ def main():
           + ''.join(trade_budget(g) for g in budget_goods(options)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-'))
-          .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'
-                   f'\t\tif = {{ limit = {{ has_global_variable = pmr_obs gdp_ranking <= {OBS_TOP} }} pmr_obs_report = yes }}\n'))
+          .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
+          .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n')
+          + ('' if RELEASE else OBS_ON_ACTIONS))
     if not RELEASE:
-        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch))
+        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch) + obs_ab())
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -3021,37 +3022,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         o.append(f'\t# {grp}\n\t{setv("pmr_gcum", 0)}\n'
                  + ''.join(step(i, 'pmr_gcum') for i, _, g2 in bm if g2 == grp))
     o.append(f'\tpmr_read_blend_{b} = yes\n')
-    if not RELEASE:   # each member's reading before the blend (pmr_a_<i> is read again after it, for the log)
-        o.append(''.join(f'\t{setv(f"pmr_sl_a_{i}", "var:" + v(f"pmr_a_{i}"))}\n' for i in range(1, nb + 1)))
     o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
     for i in range(1, nb + 1):
         for nv, av, sh, hi, val in halves:
             o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"{av}_{i}")} = -1 }}\n'
                      + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, val=val: act(sh, i, val(d)), '\t\t', hi=hi) + '\t}\n')
-    if not RELEASE:
-        # SELFLOCK smoke test (test builds). moved: members found off their step at the start of a tick although the
-        # step wanted had not changed since the last tick (the engine moved a digit the shut lock should hold). Once
-        # a month the player's buildings (in an observer game the largest economy's: pmr_logged) log it, with
-        # can_activate on both digits member 1 runs (run_can) and on another of its tens digits (other_can).
-        fv = lambda name: f"[THIS.Var('{v(name)}').GetValue|0]"   # noqa: E731
-        can = lambda kind, n: f'can_activate_production_method = {{ building_type = {bk} production_method = {pm(kind, 1, n)} }}'   # noqa: E731
-        o.append(f'\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_sl_moved")} }} }} {setv("pmr_sl_moved", 0)} }}\n'
-                 + ''.join(f'\tif = {{ limit = {{ has_variable = {v(f"pmr_sl_prev_{i}")} '
-                           f'var:{v(f"pmr_sl_prev_{i}")} = var:{v(f"pmr_n_{i}")} var:{v(f"pmr_sl_a_{i}")} = -1 }} '
-                           f'{chg("pmr_sl_moved", "add", 1)} }}\n'
-                           f'\t{setv(f"pmr_sl_prev_{i}", "var:" + v(f"pmr_n_{i}"))}\n' for i in range(1, nb + 1))
-                 + f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month owner = {{ pmr_logged = yes }} }}\n'
-                 f'\t\t{setv("pmr_sl_run", 0)}\n\t\t{setv("pmr_sl_runu", 0)}\n\t\t{setv("pmr_sl_other", 0)}\n'
-                 + bisect(v('pmr_nt_1'), lambda d: f'if = {{ limit = {{ {can("share", 10 * d)} }} {setv("pmr_sl_run", 1)} }}', '\t\t', hi=10)
-                 + bisect(v('pmr_nu_1'), lambda d: f'if = {{ limit = {{ {can("shu", d)} }} {setv("pmr_sl_runu", 1)} }}', '\t\t', hi=9)
-                 + f'\t\tif = {{ limit = {{ var:{v("pmr_sl_runu")} = 0 }} {setv("pmr_sl_run", 0)} }}\n'
-                 f'\t\tif = {{ limit = {{ var:{v("pmr_nt_1")} > 0 {can("share", 0)} }} {setv("pmr_sl_other", 1)} }}\n'
-                 f'\t\telse_if = {{ limit = {{ var:{v("pmr_nt_1")} = 0 {can("share", SHARE_STEPS)} }} {setv("pmr_sl_other", 1)} }}\n'
-                 '\t\tdebug_log = "PMR;rec=SELFLOCK;date=[TimeKeeper.GetCurrentDate.GetString];'
-                 'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
-                 f'building={bk};moved={fv("pmr_sl_moved")};run_can={fv("pmr_sl_run")};other_can={fv("pmr_sl_other")};'
-                 f'n1={fv("pmr_n_1")}"\n'
-                 f'\t\t{setv("pmr_sl_moved", 0)}\n\t}}\n')
     o.append('}\n\n')
 
     # The levels the state tracks always add up to the building's level. New levels arrive on the
@@ -4024,8 +3999,11 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\tif = {{ limit = {{ OR = {{ has_global_variable = pmr_setup AND = {{ has_variable = pmr_month '
              f'NOT = {{ has_variable = pmr_pmkt_{b} }} }} }} }} set_variable = {{ name = pmr_hu value = 0 }} }}\n'
              # books that can't be read keep the default (SWITCH_MIN above); a hurdle under pmr_pv's start, so a default
-             # that can no longer run still gives way
-             f'\tif = {{ limit = {{ has_variable = pmr_bsx_{b} }} set_variable = {{ name = pmr_hu value = 100000 }} }}\n')
+             # that can no longer run still gives way. Not a building just built (Pat 2026-10-20 00:08Z, Burgundy's and West
+             # Bengal's new mines): it has no default yet and no staff to read, so the hold kept the recipe the game built
+             # it on, and its first month's pick sent every level to retooling.
+             f'\tif = {{ limit = {{ has_variable = pmr_bsx_{b} has_variable = {now} NOT = {{ has_variable = {v("pmr_new_build")} }} }} '
+             'set_variable = { name = pmr_hu value = 100000 } }\n')
     for i in range(1, k + 1):
         o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_rav", i)} = 1 var:{xv("pmr_rveto", i)} = 0 }}\n'
                  f'\t\tset_variable = {{ name = pmr_t value = var:{xv("pmr_rm", i)} }}\n'
@@ -6671,6 +6649,27 @@ def obs_report(dispatch):
             + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '\tpmr_obs_methods = yes\n}\n\n')
 
 
+OBS_AB_YEARS = range(1839, 1936, 2)   # an observer game's years with PMR's script off
+
+
+def obs_ab():
+    """Country scope, from pmr_obs_monthly_country (test builds). Pat 2026-10-20 00:01Z, after q52 removed the weekly
+    method recompute and the months got no faster: PMR's monthly pulses run in the daily event tick, outside the Tick
+    Task List, so their cost shows only as a slower month. An observer game turns them off (pmr_ticks_paused, the test
+    decision's pause) in OBS_AB_YEARS, so one run times months with and without PMR's script; the methods, buildings
+    and their hooks stay. Once a month, at the first country's pulse; a pause it didn't set (pmr_obs_abp) it leaves."""
+    years = ' '.join(f'AND = {{ game_date >= {y}.1.1 game_date < {y + 1}.1.1 }}' for y in OBS_AB_YEARS)
+    line = 'PMR;rec=TEST;arm=TICKS_{};date=[TimeKeeper.GetCurrentDate.GetString];by=observer'
+    return ('pmr_obs_ab = {\n\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_obs_abc } }\n'
+            '\t\tset_global_variable = { name = pmr_obs_abc value = yes days = 20 }\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ {years} }} NOT = {{ has_global_variable = pmr_ticks_paused }} }}\n'
+            '\t\t\tset_global_variable = pmr_ticks_paused\n\t\t\tset_global_variable = pmr_obs_abp\n'
+            f'\t\t\tdebug_log = "{line.format("PAUSED")}"\n\t\t}}\n'
+            f'\t\telse_if = {{\n\t\t\tlimit = {{ NOT = {{ OR = {{ {years} }} }} has_global_variable = pmr_obs_abp }}\n'
+            '\t\t\tremove_global_variable = pmr_ticks_paused\n\t\t\tremove_global_variable = pmr_obs_abp\n'
+            f'\t\t\tdebug_log = "{line.format("RESUMED")}"\n\t\t}}\n\t}}\n}}\n\n')
+
+
 # Pat 2026-10-19 21:20Z: the observer run tracks the ranches' wool, the mines' explosives and the plantations' processing
 # methods. Each row: a label, its building types, and per option a label and how a state's building reads it: a trade-off
 # option's share (pmr_x_<j>_<b>, 0..SHARE_STEPS) or a vanilla method's marker (all its levels while active).
@@ -6741,6 +6740,7 @@ on_building_expanded = { on_actions = { pmr_on_building_expanded } }
 on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }
 on_monthly_pulse_country = { on_actions = { pmr_on_monthly_pulse_country } }
 on_acquired_technology = { on_actions = { pmr_on_acquired_technology } }
+OBS_ON_ACTION
 
 # No root. Adopt every building's starting recipe, all levels on it.
 pmr_on_game_started = {
@@ -6864,6 +6864,19 @@ pmr_on_monthly_pulse_country = {
 SKIP_REPORT
 	}
 }
+'''
+
+# Test builds. The observer game's monthly lines run outside the test pause, so its script-off years (obs_ab) are timed too.
+OBS_ON_ACTIONS = f'''
+# Root = country, an observer game's monthly pulse (test builds): PMR's script off in alternate years (pmr_obs_ab), and
+# the OBS lines of the largest economies.
+pmr_obs_monthly_country = {{
+	trigger = {{ has_global_variable = pmr_obs }}
+	effect = {{
+		pmr_obs_ab = yes
+		if = {{ limit = {{ gdp_ranking <= {OBS_TOP} }} pmr_obs_report = yes }}
+	}}
+}}
 '''
 
 EVENTS = '''namespace = pmr
