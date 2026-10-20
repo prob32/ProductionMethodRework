@@ -1857,6 +1857,7 @@ def main():
     write('common/scripted_guis/pmr_sguis.txt', header + SGUI_DOC + ''.join(gov_retool_sgui(bk) for bk in dispatch)
           + '# The same for every state at once, from the Buildings tab\'s building type row. Country scope.\n\n'
           + ''.join(gov_retool_country_sgui(bk) for bk in dispatch)
+          + '# Every building type at once, from the Buildings panel. Country scope.\n\n' + gov_retool_all_sgui(list(dispatch))
           + ('# The Buildings panel, as it opens (patch_browser_tabs): its country\'s Buildings tab totals, buildings abroad\n'
              '# included, the first time, and monthly after (pmr_c_viewer). Pat 2026-10-20 03:43Z: an observer game taken\n'
              '# over as Great Britain showed no bar for its plantations in the East India Company\'s states, and logged no\n'
@@ -1949,10 +1950,10 @@ def main():
     menu_gui, browser_gui = hide_sites_elsewhere(vanilla_gui('build_urban_buildings_menu.gui'),
                                                  vanilla_gui('building_browser_panel.gui'), site_types)
     write('gui/build_urban_buildings_menu.gui', menu_gui, bom=False)
-    write('gui/building_browser_panel.gui', gate_type_copies(patch_browser_tabs(patch_browser_actions(patch_grid_instance(
+    write('gui/building_browser_panel.gui', gate_type_copies(patch_browser_tabs(patch_browser_retool_all(patch_browser_actions(patch_grid_instance(
         patch_type_grids(browser_gui, dispatch, 'building_browser_panel.gui', 1, also=also),
         dispatch, '\t\t\t', 'building_browser_panel.gui', outer=(214, 50), cell=50, anchor='vcenter',
-        extra=browser_bars, also=also), dispatch), list(mv_keys))), bom=False)
+        extra=browser_bars, also=also), dispatch)), list(mv_keys))), bom=False)
     # No reset to the national standard: right-click items and the map action (Pat 2026-10-20 21:40Z).
     rcm_gui, lens_gui = hide_pm_reset(vanilla_gui('right_click_menu.gui'), vanilla_gui('lens_toolbar.gui'))
     write('gui/right_click_menu.gui', rcm_gui, bom=False)
@@ -1972,6 +1973,7 @@ def main():
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts, opt_ui, auto_ui)
+    loc += [' PMR_GOV_RETOOL_ALL:0 "Retool Government Levels"']
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     # the "PMR test:" decision is for testing only: every player would see it. Pat 2026-10-20 13:26Z: out of the test
@@ -2993,6 +2995,44 @@ def gov_retool_sgui(bk):
             f'\tis_shown = {{ exists = b:{bk} }}\n'
             f'\tis_valid = {{ has_variable = pmr_abroad_{b} b:{bk} ?= {{ level >= 1 }} }}\n'
             f'\teffect = {{ pmr_tick_{b} = yes }}\n}}\n\n')
+
+
+def gov_retool_all_sgui(buildings):
+    """The Buildings panel's Retool Government Levels button (Pat 2026-10-20 21:54Z): every building type row's
+    upgrade button at once, the player's own states only (abroad goes through the game's queue, building by building)."""
+    def open_(bk):
+        return f'has_variable = pmr_retool_open_gov_{short(bk)} b:{bk} ?= {{ level >= 1 }}'
+    any_open = ''.join(f'\t\t\t\tAND = {{ {open_(bk)} }}\n' for bk in buildings)
+    queue = ''.join(f'\t\t\tif = {{ limit = {{ {open_(bk)} }} pmr_queue_gov_{short(bk)} = yes }}\n' for bk in buildings)
+    return ('pmr_gov_retool_all_sgui = {\n\tscope = country\n'
+            f'\tis_valid = {{\n\t\tany_scope_state = {{\n\t\t\tOR = {{\n{any_open}'
+            '\t\t\t}\n\t\t}\n\t}\n'
+            f'\teffect = {{\n\t\tevery_scope_state = {{\n\t\t\tset_variable = pmr_bulk\n{queue}'
+            '\t\t\tremove_variable = pmr_bulk\n\t\t}\n'
+            + '\t\tpmr_c_sum_all = yes\n\t\tdebug_log = "PMR;rec=GOV_ALL;date=[TimeKeeper.GetCurrentDate.GetString]"\n\t}\n}\n\n')
+
+
+def patch_browser_retool_all(text):
+    """building_browser_panel.gui: the Retool Government Levels button above Nationalize Filtered Buildings, in its
+    style (pmr_gov_retool_all_sgui)."""
+    anchor = '\t\t\t\t\t\t# NATIONALIZE FILTERED BUILDINGS BUTTON\n'
+    if text.count(anchor) != 1:
+        raise SystemExit(f'building_browser_panel.gui: expected one Nationalize Filtered Buildings button, found '
+                         f'{text.count(anchor)}; update patch_browser_retool_all')
+    ind = '\t\t\t\t\t\t'
+    scope = 'GuiScope.SetRoot(GetPlayer.MakeScope).End'
+    button = (f'{ind}# PMR: government retooling for every building at once\n{ind}button = {{\n'
+              f'{ind}\tsize = {{ 404 50 }}\n{ind}\tusing = default_button_primary\n{ind}\tusing = confirm_button_sound\n'
+              f"{ind}\tenabled = \"[GetScriptedGui('pmr_gov_retool_all_sgui').IsValid({scope})]\"\n"
+              f"{ind}\tonclick = \"[GetScriptedGui('pmr_gov_retool_all_sgui').Execute({scope})]\"\n\n"
+              f'{ind}\tflowcontainer = {{\n{ind}\t\tparentanchor = center\n{ind}\t\tspacing = 5\n\n'
+              f'{ind}\t\ticon = {{\n{ind}\t\t\tparentanchor = vcenter\n{ind}\t\t\tsize = {{ 40 40 }}\n'
+              f'{ind}\t\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t\t}}\n\n'
+              f'{ind}\t\ttextbox = {{\n{ind}\t\t\tparentanchor = vcenter\n{ind}\t\t\tusing = fontsize_large\n'
+              f'{ind}\t\t\talign = hcenter|nobaseline\n{ind}\t\t\tautoresize = yes\n{ind}\t\t\tmax_width = 350\n'
+              f'{ind}\t\t\tfontsize_min = 14\n{ind}\t\t\telide = right\n{ind}\t\t\ttext = "PMR_GOV_RETOOL_ALL"\n'
+              f'{ind}\t\t}}\n{ind}\t}}\n{ind}}}\n\n')
+    return text.replace(anchor, button + anchor)
 
 
 def gov_retool_country_sgui(bk):
