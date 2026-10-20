@@ -104,6 +104,12 @@ SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps 
 # fastest (q54, 2026-10-20 observer run): ~20% under the tens + units digits of q52/q53 and ~5% under q51's
 # 101 + 102 key groups, though it has more methods than the digits (each one a weekly national-standard cost,
 # vanilla-standard-pms): a building carries half the groups and active methods, and a share's modifiers once.
+# A building that runs no method yet has none of them available, so the game leaves every share group empty when it
+# builds one, history's included, and start-of-game hiring found no jobs (q52-q61: every building began the game
+# empty; q61's START_STAFF line read no share at all on Great Britain's and Austria's ranches). So each building also
+# has pmg_pmr_start_<b>: pm_pmr_start_<b> (its default, always available) also unlocks every share group's default, so
+# a new building starts on recipe 1 at 100% and the rest at 0%, and the first tick moves it to pm_pmr_run_<b> (listed
+# first), which unlocks nothing (pmr_blend_<b>).
 # --digit-shares keeps q53's digits: tens (pm_pmr_share_<b>_<i>_<10t>, t = 0..10) and units (pm_pmr_shu_<b>_<i>_<u>,
 # u = 0..9), each self-locking, options pm_pmr_x_ / pm_pmr_xu_.
 TENS = list(range(0, SHARE_STEPS + 1, 10))
@@ -1220,7 +1226,8 @@ def main():
         brace = s.text.index('{', pg.start) + 1
         rest = s.text[brace:s.text.find('\n', brace)]
         tail = '' if not rest.strip() else '\n\t\t'   # the list continues on the brace's line
-        s.inserts.append((brace, f'\n\t\tpmg_pmr_labour_{short(bk)}  # PMR: blended recipes slot{tail}'))
+        s.inserts.append((brace, f'\n\t\tpmg_pmr_labour_{short(bk)}  # PMR: blended recipes slot'
+                                 f'\n\t\tpmg_pmr_start_{short(bk)}  # PMR: a new building\'s starting shares{tail}'))
         # Last in the list: one share group per recipe (per blend member when split); two with --digit-shares.
         blend_of = ([(j, m.key) for j, _, _, m in split_info[bk]['members']] if bk in split_info
                     else [(i, r.key) for i, r in enumerate(recipes, 1)])
@@ -1483,6 +1490,11 @@ def main():
             f'pmg_pmr_labour_{b} = {{\n'
             f'\ttexture = "gfx/interface/icons/generic_icons/mixed_icon_base.dds"\n'
             f'\tproduction_methods = {{\n\t\tpm_pmr_labour_{b}\n\t}}\n}}\n')
+        # A new building's starting shares (see SHARE_STEPS): two methods, so the panels hide the group like the shares
+        labour_pms.append(f'pm_pmr_run_{b} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n'
+                          f'pm_pmr_start_{b} = {{\n\ttexture = "{GENERIC_ICON}"\n\tis_default = yes\n}}\n')
+        labour_groups.append(f'pmg_pmr_start_{b} = {{\n\ttexture = "{GENERIC_ICON}"\n'
+                             f'\tproduction_methods = {{\n\t\tpm_pmr_run_{b}\n\t\tpm_pmr_start_{b}\n\t}}\n}}\n')
 
         rc = pdx.get(bn.value, 'required_construction')
         base_cost = cost_values.get(rc.value) if rc else None
@@ -1506,6 +1518,9 @@ def main():
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
         loc += [f' pmg_pmr_labour_{b}:0 "Recipes"',
                 f' pm_pmr_labour_{b}:0 "Blended Recipes"',
+                f' pmg_pmr_start_{b}:0 "Recipes"',
+                f' pm_pmr_run_{b}:0 "Blended Recipes"',
+                f' pm_pmr_start_{b}:0 "Blended Recipes"',
                 f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
                 f' building_pmr_retool_gov_{b}_desc:0 "Switches the government\'s levels of ${bk}$ to the new recipe."',
                 f' building_pmr_retool_gova_{b}:0 "Retooling (Government): ${bk}$"',
@@ -1594,16 +1609,13 @@ def main():
             shares = []
             for val in values:
                 dflt = '\tis_default = yes\n' if val == default_v else ''
+                start = f' pm_pmr_start_{b}' if val == default_v else ''   # a new building's (SHARE_STEPS)
                 blend_pms.append(f'{sh}_{val} = {{\n\ttexture = "{tex}"\n{dflt}'
-                                 f'\tunlocking_production_methods = {{ {sh}_{val} }}\n'
+                                 f'\tunlocking_production_methods = {{ {sh}_{val}{start} }}\n'
                                  f'{body_of(val / SHARE_STEPS) if val else ""}}}\n')
                 shares.append(f'{sh}_{val}')
                 loc.append(f' {sh}_{val}:0 "{loc_share(val)}"')
             g, gl = gname
-            # the default first: no self-locked method is available to a building that runs none yet, so a new
-            # building (history's at game start) starts on the group's first method, and with _0 there the
-            # start-of-game hiring found no jobs (q52-q60: every building began about empty, Pat 2026-10-20 13:00Z)
-            shares.sort(key=lambda x: x != f'{sh}_{default_v}')
             blend_groups.append(f'{g} = {{\n\ttexture = "{GENERIC_ICON}"\n'
                                 '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in shares) + '\t}\n}\n')
             loc.append(f' {g}:0 "{gl}"')
@@ -1818,6 +1830,7 @@ def main():
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
           .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n')
           .replace('START_STAFF', '' if RELEASE else START_STAFF)
+          .replace('START_LEFT', '' if RELEASE else START_LEFT)
           + ('' if RELEASE else OBS_ON_ACTIONS))
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab())
@@ -3200,6 +3213,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         for nv, av, sh, hi, val in halves:
             o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"{av}_{i}")} = -1 }}\n'
                      + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, val=val: act(sh, i, val(d)), '\t\t', hi=hi) + '\t}\n')
+    # a new building's start method unlocks every share group's default, so it goes once the shares are set (SHARE_STEPS)
+    o.append(f'\tif = {{ limit = {{ is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_start_{b} }} }} '
+             f'activate_production_method = {{ building_type = {bk} production_method = pm_pmr_run_{b} }} }}\n')
     o.append('}\n\n')
 
     # The levels the state tracks always add up to the building's level. New levels arrive on the
@@ -7098,7 +7114,7 @@ START_STAFF		# No country is a player's yet here (no player state logs INIT), so
 			trigger_event = { id = pmr.1 days = 1 }
 		}
 		remove_global_variable = pmr_setup
-	}
+START_LEFT	}
 }
 
 # Root = building whose production method changed. The switch is seen the moment it happens.
@@ -7205,14 +7221,18 @@ SKIP_REPORT
 '''
 
 # Test builds: how Great Britain's and Austria's buildings start a new game, before PMR's first tick (q61). half = levels
-# at 50% staffing or more; ranch_100 / ranch_0 = livestock ranches whose first recipe share starts at 100% / 0%.
+# at 50% staffing or more; ranches, of them ranch_100 / ranch_0 with the first recipe share at 100% / 0% and
+# ranch_start on the start method (q62).
 START_STAFF = ''.join(
     f'\t\tif = {{\n\t\t\tlimit = {{ exists = c:{tag} }}\n\t\t\tc:{tag} = {{\n\t\t\t\tsave_temporary_scope_as = pmr_ss_c\n'
-    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('n', 'h', 'r1', 'r0'))
+    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs'))
     + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 }\n'
     '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_n add = 1 } }\n'
     '\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_h add = 1 } } }\n'
     '\t\t\t\t\tif = {\n\t\t\t\t\t\tlimit = { is_building_type = building_livestock_ranch }\n'
+    '\t\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_r add = 1 } }\n'
+    '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_start_livestock_ranch } '
+    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_rs add = 1 } } }\n'
     '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_100 } '
     'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r1 add = 1 } } }\n'
     '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_0 } '
@@ -7220,8 +7240,23 @@ START_STAFF = ''.join(
     '\t\t\t\tdebug_log = "PMR;rec=START_STAFF;date=[TimeKeeper.GetCurrentDate.GetString];'
     'country=[THIS.GetCountry.GetNameNoFormatting];'
     + ';'.join(f"{lab}=[THIS.Var('pmr_ss_{x}').GetValue|0]" for lab, x in
-               (('buildings', 'n'), ('half', 'h'), ('ranch_100', 'r1'), ('ranch_0', 'r0'))) + '"\n'
-    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('n', 'h', 'r1', 'r0'))
+               (('buildings', 'n'), ('half', 'h'), ('ranches', 'r'), ('ranch_100', 'r1'), ('ranch_0', 'r0'),
+                ('ranch_start', 'rs'))) + '"\n'
+    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs'))
+    + '\t\t\t}\n\t\t}\n' for tag in ('GBR', 'AUS'))
+
+# Test builds: after the setup, the ranches still on the start method (S2, q62: none, the setup's blend moved them on).
+START_LEFT = ''.join(
+    f'\t\tif = {{\n\t\t\tlimit = {{ exists = c:{tag} }}\n\t\t\tc:{tag} = {{\n\t\t\t\tsave_temporary_scope_as = pmr_ss_c\n'
+    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('r', 'rs'))
+    + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 is_building_type = building_livestock_ranch }\n'
+    '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_r add = 1 } }\n'
+    '\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_start_livestock_ranch } '
+    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_rs add = 1 } } }\n\t\t\t\t}\n'
+    '\t\t\t\tdebug_log = "PMR;rec=START_LEFT;date=[TimeKeeper.GetCurrentDate.GetString];'
+    'country=[THIS.GetCountry.GetNameNoFormatting];'
+    "ranches=[THIS.Var('pmr_ss_r').GetValue|0];ranch_start=[THIS.Var('pmr_ss_rs').GetValue|0]\"\n"
+    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('r', 'rs'))
     + '\t\t\t}\n\t\t}\n' for tag in ('GBR', 'AUS'))
 
 # Test builds. The observer game's monthly lines run outside the test pause, so its script-off years (obs_ab) are timed too.

@@ -10,7 +10,31 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: buildings that start a new game staffed, subsidised buildings that step up (q61, test mod; start a new game)
+## Latest: buildings that start a new game staffed, second try (q62, test mod; start a new game)
+
+From the build thread, after your 13:35Z message. q62 includes q61.
+
+- q61's guess was wrong. Its `START_STAFF` lines showed Great Britain's and Austria's ranches running no share
+  method at all (`ranch_100=0`, `ranch_0=0`), so the order of the list never mattered. A share method is available
+  only while it runs, so a building that runs nothing yet has none available, the game left every share group
+  empty, and start-of-game hiring found no jobs.
+- Each PMR building now also has a hidden start method, its default, which makes its starting shares available:
+  the first recipe at 100% and the rest at 0%. PMR's setup then sets the history recipe as before and moves the
+  building off the start method.
+- A building whose history recipe is not its first may hire and fire a little in its first weeks while its jobs
+  change.
+
+1. Start a new game in PMR Test (any country).
+2. On 1 January, open a few buildings (Food Industries, farms, mines).
+3. Play a month.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| S1 | Step 2 | Buildings start staffed as in vanilla. Two `START_STAFF` lines (Great Britain, Austria): `ranch_start=` and `ranch_100=` both the `ranches=` count, `ranch_0=0`, `half=` most of `buildings=` | `ranch_start=0`: the game does not give a new building its default method either, and the shares are still empty; `ranch_start` and `ranch_100` right but `half` near 0: something else empties buildings at the start; no `START_STAFF` line: the game-start hook did not run (look in error.log) |
+| S2 | Step 2 | Two `START_LEFT` lines with `ranch_start=0` | `ranch_start=` the ranch count: the setup never moved them off the start method, which costs nothing by itself, but a building on it can be switched by the AI to its default shares |
+| U1 | Step 3 | As in q61 below | As in q61 below |
+
+## Earlier: buildings that start a new game staffed, subsidised buildings that step up (q61, test mod; start a new game)
 
 From the build thread, after your 12:56Z and 13:00Z messages. q61 includes q60.
 
