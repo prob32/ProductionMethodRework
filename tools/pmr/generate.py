@@ -8,7 +8,7 @@ testing; it rewrites the mod folder in place.
 
 With ``--release`` it writes the build players get, to pmr/release/ProductionMethodRework: no "PMR test:"
 decision, no GENERATION_REPORT.json, and no PMR log lines but TRIP and AUTO_TRIP (the loop breakers) and LOADED.
-The default build keeps the test tools. Both write every game language: localise.py translates the English text
+The default build keeps the test logs; the "PMR test:" decisions and test probes need ``--test-decisions``. Both write every game language: localise.py translates the English text
 from tools/pmr/translations/, and a line no table has yet stays English.
 
 What it does, building by building (see pmr/README.md for the design):
@@ -1005,6 +1005,9 @@ def main():
     ap.add_argument('--test-name', default='', metavar='LABEL',
                     help='a test build for its own mod folder: names the mod "Production Method Rework (LABEL)" '
                          'with its own id, so it never replaces the published one')
+    ap.add_argument('--test-decisions', action='store_true',
+                    help='test build: the "PMR test:" decisions and the test probes (pmr/test_probes). Off by default '
+                         'since Pat 2026-10-20 13:26Z: the test build stays close to the release')
     ap.add_argument('--digit-shares', action='store_true',
                     help='each share as tens and units methods (q53) instead of one method per share (SHARE_DIGITS)')
     ap.add_argument('--obs-script-off', action='store_true',
@@ -1028,6 +1031,8 @@ def main():
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
     if args.script_profile and args.release:
         raise SystemExit('--script-profile is for test builds')
+    if args.test_decisions and args.release:
+        raise SystemExit('--test-decisions is for test builds; players never see a "PMR test:" decision')
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
         raise SystemExit('--trace-from takes a game date like 1838.8.15 and never goes into a release build')
     args.out = args.out or (RELEASE_OUT if args.release else DEFAULT_OUT)
@@ -1237,8 +1242,8 @@ def main():
 
     # Company Culture: the company types' trees and subsidiaries (company_culture.plan, Pat 2026-10-19 14:43Z; no special
     # production methods any more). In both builds since Pat 2026-10-20 12:59Z ("Ship it"); its "PMR test:" decisions
-    # only in test builds.
-    company_culture.TEST = not args.release
+    # only with --test-decisions.
+    company_culture.TEST = args.test_decisions
     cc_plan = company_culture.plan(game, {bk: (split_info[bk]['plain'] if bk in split_info else
                                                [r for r in recipes if not isinstance(r, ElectricRecipe)])
                                           for bk, _bn, _s, recipes, _g0, _pg in treated}, goods_cost, goods_tex)
@@ -1866,7 +1871,7 @@ def main():
     mv_keys = pick_ui   # the Private tab's Methods view covers the same types
     ai_of = private_investment.ai_groups(game) if mv_keys else {}   # each row's AI weight (Pat 18:40Z)
     # the policy parts of each AI weight, for its tooltip's nested Policy line (Pat 2026-10-19 00:01Z)
-    if not args.release:    # the test probes' companies buy levels like any other (Pat 2026-10-19 14:10Z)
+    if args.test_decisions:    # the test probes' companies buy levels like any other (Pat 2026-10-19 14:10Z)
         private_investment.EXTRA_COMPANY_DIRS[:] = [
             d for d in (os.path.join(TEST_PROBES, p, 'common', 'company_types') for p in sorted(os.listdir(TEST_PROBES)))
             if os.path.isdir(d)] if os.path.isdir(TEST_PROBES) else []
@@ -1944,7 +1949,7 @@ def main():
     write('common/scripted_effects/pmr_urb_effects.txt', header + urb_eff)
     # The company panels without the retool sites that companies list (Pat 2026-10-19 02:32Z, company_panel.py);
     # company_culture.write_all writes company_panel.gui, with its Company Culture tab.
-    company_panel.SUB_LINKS = not args.release   # the Regional HQs subsidiary probe (pmr/test_probes/sub_hq)
+    company_panel.SUB_LINKS = args.test_decisions   # the Regional HQs subsidiary probe (pmr/test_probes/sub_hq)
     write('gui/companies_panel.gui', company_panel.patch_companies_panel(vanilla_gui('companies_panel.gui')), bom=False)
     report['gated_type_copies'] = list(GATED)
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
@@ -1952,7 +1957,9 @@ def main():
     loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts, opt_ui, auto_ui)
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
-    if not args.release:    # the "PMR test:" decision is for testing only: every player would see it
+    # the "PMR test:" decision is for testing only: every player would see it. Pat 2026-10-20 13:26Z: out of the test
+    # build too ("closer to release I want these to be more similar"), unless asked for
+    if args.test_decisions:
         write('common/decisions/pmr_test_decisions.txt', header + DECISIONS)
         loc += DECISION_LOC
         for probe in sorted(os.listdir(TEST_PROBES)) if os.path.isdir(TEST_PROBES) else []:

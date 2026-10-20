@@ -20,6 +20,8 @@ From the build thread, after your 12:56Z and 13:00Z messages. q61 includes q60.
   the GDP of the q51 and q52 observer games; the `START_STAFF` lines settle it.
 - A subsidised building with staff may move up to a newer method by the usual 25% bar, never down. One under 5%
   staffed keeps its method, as before.
+- Company Culture and the company rework now ship in the release. The "PMR test:" decisions and the test companies are
+  gone from both builds, so the test build matches the release apart from its log lines.
 
 1. Start a new game in PMR Test (any country).
 2. On 1 January, open a few buildings (Food Industries, farms, mines).
