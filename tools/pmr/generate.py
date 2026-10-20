@@ -973,6 +973,9 @@ def main():
                     help='each share as tens and units methods (q53) instead of one method per share (SHARE_DIGITS)')
     ap.add_argument('--obs-script-off', action='store_true',
                     help='test build: observer games pause PMR\'s script in OBS_AB_YEARS, to time months without it')
+    ap.add_argument('--script-profile', action='store_true',
+                    help='test build: the HUD writes the script profiler\'s totals every minute (patch_hud_profile); '
+                         'the game needs the -script_profiling launch option')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
@@ -982,6 +985,8 @@ def main():
     OBS_AB = args.obs_script_off
     if args.test_name and args.release:
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
+    if args.script_profile and args.release:
+        raise SystemExit('--script-profile is for test builds')
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
         raise SystemExit('--trace-from takes a game date like 1838.8.15 and never goes into a release build')
     args.out = args.out or (RELEASE_OUT if args.release else DEFAULT_OUT)
@@ -1721,7 +1726,12 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods))
           + ''.join(trade_budget(g) for g in budget_goods(options)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
-    write('common/on_actions/pmr_on_actions.txt', header + ON_ACTIONS.replace('TECH_CRUMB', flush_log('TECH', '-'))
+    on_actions = ON_ACTIONS
+    if args.script_profile:
+        if on_actions.count(PULSE_STATE_HOOK) != 1 or on_actions.count(PULSE_STATE_EFFECT) != 1:
+            raise SystemExit('pmr_on_monthly_pulse_state changed; update PULSE_STATE_EFFECT and profile_pulse_state')
+        on_actions = on_actions.replace(PULSE_STATE_HOOK, profile_pulse_state(dispatch))
+    write('common/on_actions/pmr_on_actions.txt', header + on_actions.replace('TECH_CRUMB', flush_log('TECH', '-'))
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
           .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n')
           + ('' if RELEASE else OBS_ON_ACTIONS))
@@ -1885,6 +1895,8 @@ def main():
     hud = vanilla_gui('ingame_hud.gui')
     if cc_plan:
         hud = cc_tree.patch_hud(hud)
+    if args.script_profile:
+        hud = patch_hud_profile(hud)
     write('gui/ingame_hud.gui', patch_hud_flags(hud, site_types), bom=False)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
@@ -4319,6 +4331,44 @@ pmr_read_elec = {
                 for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n')
 
 
+def state_tick_type(bk, t='\t'):
+    """pmr_state_tick's step for one building type, indented by t: its tick, or the clean-up once it is gone."""
+    b = short(bk)
+    return (f'{t}if = {{ limit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }} pmr_tick_{b} = yes }}\n'
+            # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up
+            f'{t}else_if = {{\n{t}\tlimit = {{ has_variable = pmr_mix_{b} NOT = {{ exists = b:{bk} }} }}\n'
+            # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
+            f'{t}\tif = {{ limit = {{ has_variable = pmr_pending_{b} }} set_variable = {{ name = pmr_pending_{b} value = 0 }} }}\n'
+            f'{t}\tpmr_close_retool_{b} = yes\n'
+            + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
+                      for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}'))
+            + f'{t}}}\n')
+
+
+# --script-profile: the text profiler keys its totals by top-level block, so the monthly state pulse runs as one
+# on_action per step, each its own effect block: the opening (pmr_month, the state's electricity), each building
+# type's tick, the closing, then the four state checks. The same effects in the same order as
+# pmr_on_monthly_pulse_state (PULSE_STATE_EFFECT, checked), which the other builds run.
+PULSE_STATE_EFFECT = ('\t\tset_variable = pmr_month\n\t\tpmr_state_tick = yes\n\t\tremove_variable = pmr_month\n'
+                      '\t\tpmr_auto_best = yes\n\t\tpmr_principle_bonus = yes\n\t\tpmr_probe_state = yes\n'
+                      '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n')
+PULSE_STATE_HOOK = 'on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }\n'
+
+
+def profile_pulse_state(buildings):
+    """on_actions text: the monthly state pulse split into steps (--script-profile), replacing PULSE_STATE_HOOK."""
+    paused = 'trigger = { NOT = { has_global_variable = pmr_ticks_paused } }'
+    steps = [('open', '\t\tset_variable = pmr_month\n\t\tset_variable = pmr_bulk\n\t\tpmr_read_elec = yes\n'
+                      '\t\tset_variable = pmr_elec_read\n')]
+    steps += [(f't_{short(bk)}', state_tick_type(bk, '\t\t')) for bk in buildings]
+    steps += [('close', '\t\tremove_variable = pmr_elec_read\n\t\tremove_variable = pmr_bulk\n\t\tremove_variable = pmr_month\n')]
+    steps += [(k, f'\t\t{e} = yes\n') for k, e in (('auto_best', 'pmr_auto_best'), ('principle', 'pmr_principle_bonus'),
+                                                     ('probe', 'pmr_probe_state'), ('urb', 'pmr_urb_check'))]
+    return ('# --script-profile: the monthly state pulse one step per on_action, for the script profiler\n'
+            'on_monthly_pulse_state = { on_actions = { ' + ' '.join(f'pmr_prof_{k}' for k, _ in steps) + ' } }\n\n'
+            + ''.join(f'pmr_prof_{k} = {{\n\t{paused}\n\teffect = {{\n{e}\t}}\n}}\n' for k, e in steps) + '\n')
+
+
 def dispatch_effects(buildings):
     def live(bk):
         return f'has_building = {bk} b:{bk} = {{ level >= 1 }}'
@@ -4371,16 +4421,7 @@ def dispatch_effects(buildings):
     # (a rebuild starts on the newest recipe, as a new one), no abroad flag, no books and no step-down mark. It runs once,
     # as it removes pmr_mix_<b>.
     for bk in buildings:
-        b = short(bk)
-        o.append(f'\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n'
-                 # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up
-                 f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_mix_{b} NOT = {{ exists = b:{bk} }} }}\n'
-                 # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
-                 f'\t\tif = {{ limit = {{ has_variable = pmr_pending_{b} }} set_variable = {{ name = pmr_pending_{b} value = 0 }} }}\n'
-                 f'\t\tpmr_close_retool_{b} = yes\n'
-                 + ''.join(f'\t\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
-                           for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}'))
-                 + '\t}\n')
+        o.append(state_tick_type(bk))
     o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
              '# State scope (on_acquired_technology): tick only the buildings whose best recipe the research\n'
              '# changed, and any not seen yet. The rest wait for the month; until then a newly unlocked\n'
@@ -4910,6 +4951,27 @@ def patch_hud_flags(text, site_types):
                         '\twidget = {\n\t\tsize = { 0 0 }\n\t\talwaystransparent = yes\n'
                         '\t\tstate = {\n\t\t\tname = pmr_site_flags\n\t\t\ttrigger_on_create = yes\n'
                         + flags + '\t\t}\n\t}\n\n' + HUD_ANCHOR)
+
+
+# --script-profile (Pat 2026-10-20: checks log on their own, no console steps). 1.14.5's text script profiler collects
+# from launch with -script_profiling, but only the console command ScriptProfiling.Dump writes it, to
+# logs/script_profiling.txt: totals since launch, a row per top-level effect / trigger / script value block (type,
+# file:line, seconds, calls), the file replaced each time. A HUD widget runs that command every PROFILE_DUMP_S real
+# seconds through ExecuteConsoleCommand, as vanilla console.gui's buttons do, on a two-state loop like error_deer.gui's.
+PROFILE_DUMP_S = 60
+
+
+def patch_hud_profile(text):
+    """ingame_hud.gui: a widget that dumps the script profiler's totals every PROFILE_DUMP_S seconds."""
+    if text.count(HUD_ANCHOR) != 1:
+        raise SystemExit('ingame_hud.gui: the topbar vbox moved; update patch_hud_profile')
+    return text.replace(HUD_ANCHOR, '\t# PMR: the script profiler written out every minute (--script-profile)\n'
+                        '\twidget = {\n\t\tsize = { 0 0 }\n\t\talwaystransparent = yes\n'
+                        '\t\tstate = {\n\t\t\tname = pmr_prof_wait\n\t\t\ttrigger_on_create = yes\n'
+                        f'\t\t\tnext = pmr_prof_dump\n\t\t\tduration = {PROFILE_DUMP_S}\n\t\t\talpha = 0\n\t\t}}\n'
+                        '\t\tstate = {\n\t\t\tname = pmr_prof_dump\n\t\t\tnext = pmr_prof_wait\n\t\t\tduration = 1\n'
+                        '\t\t\talpha = 1\n\t\t\ton_start = "[ExecuteConsoleCommand(\'ScriptProfiling.Dump\')]"\n\t\t}\n'
+                        '\t}\n\n' + HUD_ANCHOR)
 
 
 # The state Buildings tab's own urban list (Pat 2026-10-19 18:27Z, "push this in as well"). A hidden site keeps its cell:
