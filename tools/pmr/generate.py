@@ -215,6 +215,11 @@ SPLIT_AUTOMATION = True
 # refrigeration, wharf and whaling refrigeration (AUTOMATION_GROUPS, read from the group files).
 AUTOMATION_ICON = 'gfx/interface/icons/generic_icons/mixed_icon_automation.dds'
 AUTOMATION_GROUPS = set()
+# Pat, 2026-10-19 21:18Z ("Retool, next batch"): the plantations' processing groups leave vanilla's hidden selectors for
+# the automation axis, changed through retooling like the labour savers. Vanilla draws them with the base icon. They
+# keep vanilla's numbers (no AUTOMATION_WAGE buff): most add jobs and output rather than save wages.
+PROCESSING_GROUPS = {'pmg_drying_coffee_plantation', 'pmg_manufacture_tobacco', 'pmg_refinement_building_sugar_plantation'}
+AUTOMATION_GROUPS |= PROCESSING_GROUPS
 
 
 def is_automation(g):
@@ -427,7 +432,9 @@ AUTO_BEST = {
     'building_government_administration': ('pmg_base_building_government_administration',
                                            'pmg_government_administration_bureaucrat_professionalism',
                                            'pmg_government_administration_religious_administration'),
-    'building_university': ('pmg_base_building_university', 'pmg_university_academia'),
+    # q57: the Freedom of Movement principle variant too, as the Arts Academy's; with the panel's grid hidden nothing
+    # else could switch it on
+    'building_university': ('pmg_base_building_university', 'pmg_university_academia', 'pmg_principle_freedom_of_movement_3'),
     'building_trade_center': ('pmg_base_building_trade_center', 'pmg_trade_quantity_trade_center'),
     'building_railway': ('pmg_passenger_trains',),   # "always produce transport": carriages always on
     # Pat, 2026-10-13 21:51Z: Urban Centers "automatically retool to max level". The game grows them with
@@ -563,6 +570,22 @@ class Recipe:
                 for n in block.value:
                     if n.key and n.key.startswith('building_employment_'):
                         self.employment[n.key] = self.employment.get(n.key, 0) + num(n.value, f'{key}.{n.key}')
+        # What the share methods don't carry, by (section, block): unscaled effects (sugar's slave mortality and
+        # standard of living, patio drying's mortality) and level-scaled ones that aren't jobs. A recipe keeps
+        # them on its own method; a pair marker repeats its recipe's, and an automation member carries its own
+        # x its share of the levels (the automation methods themselves never run).
+        self.rest = {}
+        for sec in BLEND_SECTIONS:
+            sn = pdx.get(node.value, sec)
+            for sub in (sn.value if sn else []):
+                if not sub.key or sub.key == 'workforce_scaled':
+                    continue
+                if not sub.is_block:
+                    raise SystemExit(f'{key}.{sec}.{sub.key} is not a block; extend Recipe before shipping')
+                for n in sub.value:
+                    if n.key and not (sub.key == 'level_scaled' and n.key.startswith('building_employment_')):
+                        d = self.rest.setdefault((sec, sub.key), {})
+                        d[n.key] = d.get(n.key, 0) + num(n.value, f'{key}.{sec}.{sub.key}.{n.key}')
         # Abroad (pmr_best_<b>): the technologies the recipe needs, and whether anything else gates it
         # (laws, principles), in which case only the host's can_activate_production_method decides.
         ut = pdx.get(node.value, 'unlocking_technologies')
@@ -651,10 +674,18 @@ class PairRecipe:
         return self.base.needs(good) or any(m.needs(good) for m in self.opt)
 
     def method(self):
+        # the recipe's own unscaled effects, as its method carries them while it is the marker (Recipe.rest)
+        secs = {}
+        for (sec, sub), mods in self.base.rest.items():
+            if mods:
+                secs.setdefault(sec, []).append((sub, mods))
         return (f'{self.key} = {{\n\ttexture = "{self.texture}"\n'
                 + (f'\tunlocking_technologies = {{\n' + ''.join(f'\t\t{t}\n' for t in self.techs) + '\t}\n'
                    if self.techs else '')
                 + ''.join(f'\t{g}\n' for g in self.gates)
+                + ''.join(f'\t{sec} = {{\n' + ''.join(
+                    f'\t\t{sub} = {{\n' + ''.join(f'\t\t\t{mk} = {fmt(mv)}\n' for mk, mv in mods.items()) + '\t\t}\n'
+                    for sub, mods in subs) + '\t}\n' for sec, subs in secs.items())
                 + '}\n')
 
 
@@ -766,6 +797,7 @@ def buff_automation(game, p_srcs, groups, b_srcs):
     def rec(p):
         return Recipe(p, *pms[p])
 
+    processing = {p for g in PROCESSING_GROUPS for p in groups.get(g, [])}   # vanilla's numbers, unbuffed
     # Where each method runs, as generate's own folding rules put it: (building, where, base employment, methods).
     places = []
     for s in b_srcs:
@@ -782,7 +814,7 @@ def buff_automation(game, p_srcs, groups, b_srcs):
             if SPLIT_AUTOMATION:
                 # every recipe with every automation option, the option's methods running together
                 for opt in automation_options(ag, groups, pms)[1:]:
-                    autos = [a for a in opt if a.employment]
+                    autos = [a for a in opt if a.employment and a.key not in processing]
                     if autos:
                         places += [(bk, f'{r.key} + ' + ' + '.join(a.key for a in opt), r.employment, autos)
                                    for r in recipes]
@@ -1068,7 +1100,8 @@ def main():
     for bk, bn, s, g0, pg in candidates:
         why = None
         lst = groups.get(g0, [])
-        if len(lst) < 2:
+        # q57: one recipe is enough where a trade-off follows it (rayon, radios: second-groups.md), as nothing retools
+        if len(lst) < 2 and not (lst and any(g in TRADE_GROUPS for g in pdx.items(pg))):
             why = f'{g0} has {len(lst)} method(s); nothing to switch between'
         elif not group_users.get(g0, set()) <= {c[0] for c in candidates}:
             why = f'{g0} is also used by out-of-scope buildings'
@@ -1127,7 +1160,7 @@ def main():
             entry = {'building': bk, 'groups': auto_groups, 'folded': [a.key for a in automation[bk]],
                      'from_tier': AUTOMATION_FROM_TIER}
             if SPLIT_AUTOMATION:
-                # every recipe with every automation option; (recipe, none) keeps the vanilla recipe as its marker
+                # every recipe with every automation option; (recipe, first option) keeps the vanilla recipe as its marker
                 if group_users.get(g0, set()) != {bk}:
                     raise SystemExit(f'{bk}: {g0} is shared with {sorted(group_users[g0] - {bk})}; '
                                      'the recipe + automation pairs would need one marker per building')
@@ -1136,7 +1169,10 @@ def main():
                 pairs_l, index = [], {}
                 for ri, r in enumerate(plain_r, 1):
                     for a, opt in enumerate(options, 1):
-                        none = a == 1 and not any(m.blend or m.employment for m in opt)
+                        # (recipe, first option) marks on the recipe itself unless the option is gated: a first
+                        # option that does something (patio drying, hand rolling) is carried by its member's share,
+                        # and the game's history and new buildings start on the recipe
+                        none = a == 1 and not any(m.unlock_techs or m.gated_otherwise for m in opt)
                         pairs_l.append(r if none else PairRecipe(bk, r, ri, a, opt, pms))
                         index[(ri, a)] = len(pairs_l)
                 recipes[:] = pairs_l
@@ -1145,7 +1181,7 @@ def main():
                 for g in auto_groups:
                     for pk in groups[g]:
                         m = Recipe(pk, *pms[pk])
-                        if m.blend or m.employment:
+                        if m.blend or m.employment or m.rest:
                             members.append((len(members) + 1,
                                             [index[(ri, a)] for ri in range(1, len(plain_r) + 1)
                                              for a, opt in enumerate(options, 1) if any(x.key == pk for x in opt)],
@@ -1510,7 +1546,10 @@ def main():
                 autos = r.autos
                 blend, emp, elec, clamped = effective(r.base, autos)
             else:
-                autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER and not sp else []
+                if sp:   # the recipe as the marker of (recipe, first option): that option's methods run with it
+                    autos = [m for m in sp['options'][0] if m.blend or m.employment]
+                else:
+                    autos = automation.get(bk, []) if i >= AUTOMATION_FROM_TIER else []
                 blend, emp, elec, clamped = effective(r, autos)
             fold_techs[i] = [] if sp else list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
             econ.append(recipe_econ(blend, emp, weight))
@@ -1533,10 +1572,11 @@ def main():
                     blend = {sec: {k2: v2 for k2, v2 in mods.items() if v2} for sec, mods in m.blend.items()}
                     blend = {sec: mods for sec, mods in blend.items() if mods}
                     emp = {k2: v2 for k2, v2 in m.employment.items() if v2}
-                members.append((j, m, blend, emp, SHARE_STEPS if j == 1 else 0,
+                rest = {} if grp == 'recipe' else {k2: d for k2, d in m.rest.items() if d}   # a recipe keeps its own
+                members.append((j, m, blend, emp, rest, SHARE_STEPS if j == 1 else 0,
                                 {'member': j, 'kind': grp, 'pairs': idxs}))
         else:
-            members = [(i, r, blend, emp, SHARE_STEPS if i == 1 else 0,
+            members = [(i, r, blend, emp, {}, SHARE_STEPS if i == 1 else 0,
                         {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
                        for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
         def ladder(sh, values, default_v, body_of, tex, loc_share, gname):
@@ -1554,26 +1594,33 @@ def main():
                                 '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in shares) + '\t}\n}\n')
             loc.append(f' {g}:0 "{gl}"')
 
-        for i, r, blend, emp, default_n, rep in members:
-            secs = list(dict.fromkeys(list(blend) + (['building_modifiers'] if emp else [])))
+        for i, r, blend, emp, rest, default_n, rep in members:
+            # section -> block -> {modifier: amount at 100%}: goods by workforce, jobs by level, the rest as vanilla's
+            subs = {}
+            for sec, mods in blend.items():
+                subs.setdefault(sec, {})['workforce_scaled'] = dict(mods)
+            if emp:
+                subs.setdefault('building_modifiers', {})['level_scaled'] = dict(emp)
+            for (sec, sub), mods in rest.items():
+                d = subs.setdefault(sec, {}).setdefault(sub, {})
+                for mk, mv in mods.items():
+                    d[mk] = d.get(mk, 0) + mv
 
-            def body_of(f, blend=blend, emp=emp, secs=secs):
+            def body_of(f, subs=subs):
                 return ''.join(
                     f'\t{sec} = {{\n'
-                    + (f'\t\tworkforce_scaled = {{\n'
-                       + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in blend[sec].items())
-                       + '\t\t}\n' if sec in blend else '')
-                    + (f'\t\tlevel_scaled = {{\n'
-                       + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in emp.items())
-                       + '\t\t}\n' if sec == 'building_modifiers' and emp else '')
+                    + ''.join(f'\t\t{sub} = {{\n'
+                              + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in mods.items())
+                              + '\t\t}\n' for sub, mods in bs.items())
                     + '\t}\n'
-                    for sec in secs)
+                    for sec, bs in subs.items())
             for sh, values, dv, _part in share_digits(f'pm_pmr_share_{b}_{i}', default_n):
                 gs = sh.replace('pm_', 'pmg_', 1)
                 ladder(sh, values, dv, body_of, r.texture,
                        lambda val, r=r: f'${r.key}$ ({val}% of levels)',
                        (gs, f'${r.key}$ share of levels'))
-            report['blended'].append({'building': bk, 'recipe': r.key, **rep, 'blend': blend, 'employment': emp})
+            report['blended'].append({'building': bk, 'recipe': r.key, **rep, 'blend': blend, 'employment': emp,
+                                      **({'other': {f'{sec}.{sub}': mods for (sec, sub), mods in rest.items()}} if rest else {})})
 
         # Option shares: the same share / lock / switching-lock pattern as the recipes, carrying the
         # option's every effect x n / SHARE_STEPS. n = 0 is the default: a new building starts on none.
@@ -1745,7 +1792,7 @@ def main():
           .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n')
           + ('' if RELEASE else OBS_ON_ACTIONS))
     if not RELEASE:
-        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch) + obs_ab())
+        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab())
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -6846,10 +6893,10 @@ OBS_METHODS = [
 ]
 
 
-def obs_methods(options, dispatch):
+def obs_methods(options, dispatch, split_info):
     """Country scope, after pmr_obs_report: one OBSPM line, each row's levels in the country (ranch=) and each option's
-    share of them in percent (ranch_sheep=). A trade-off option counts its share of a building's levels, a vanilla method
-    all of them while active."""
+    share of them in percent (ranch_sheep=). A trade-off option counts its share of a building's levels, an automation
+    method its blend member's (pmr_rs_<j>), a vanilla method all of them while active."""
     vars_, body, fields = [], [], []
     for row, bks, opts in OBS_METHODS:
         lv = f'pmr_obs_{row}_l'
@@ -6859,11 +6906,18 @@ def obs_methods(options, dispatch):
                 raise SystemExit(f'OBS_METHODS: {bk} is not a PMR building')
             b = short(bk)
             conv = {o.key: o for *_g, os_, _std in options.get(bk, []) for o in os_}
+            member = {m.key: j for j, _, _, m in split_info[bk]['members']} if bk in split_info else {}
             add = []
             for lab, key in opts:
                 x = next((o for k2, o in conv.items() if key in k2), None)
                 ov = f'pmr_obs_{row}_{lab}'
-                if x is not None:      # a trade-off option: its share of the levels
+                if key in member:      # an automation method: its blend member's share of the levels
+                    j = member[key]
+                    add.append(f'\t\t\tif = {{ limit = {{ has_variable = pmr_rs_{j}_{b} }} '
+                               f'set_variable = {{ name = pmr_t value = var:pmr_level_{b} }} '
+                               f'change_variable = {{ name = pmr_t multiply = var:pmr_rs_{j}_{b} }} '
+                               f'scope:pmr_obs_c = {{ change_variable = {{ name = {ov} add = scope:pmr_obs_s.var:pmr_t }} }} }}\n')
+                elif x is not None:      # a trade-off option: its share of the levels
                     add.append(f'\t\t\tif = {{ limit = {{ has_variable = pmr_x_{x.j}_{b} }} '
                                f'set_variable = {{ name = pmr_t value = var:pmr_level_{b} }} '
                                f'change_variable = {{ name = pmr_t multiply = var:pmr_x_{x.j}_{b} }} '
