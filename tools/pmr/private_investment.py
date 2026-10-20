@@ -1485,8 +1485,7 @@ def tree_chart(ind, items, prefix, tooltip, caption, empty):
     pool's sources the GUI could chart (1.14.5 exe: only the GetInvestmentPoolChangeFromInvestmentBreakdown text),
     so the tiles are building levels (<prefix>_<i>, chart_effect) and the game's list in money is the tooltip.
     The tiles come from vanilla's repeated-item datamodel; each tile finds its item by its index in it, and takes
-    its pop type's colour (Pat 15:33Z: the game's palette). items: (name loc key, pop type, colour, row tooltip),
-    where the row tooltip is a loc key, or a tooltipwidget block (type_links)."""
+    its pop type's colour (Pat 15:33Z: the game's palette). items: (name loc key, pop type, colour, row tooltip)."""
     n = len(items)
     idx = 'PdxGuiWidget.GetIndexInDataModel'
     pidx = 'PdxGuiWidget.AccessParent.GetIndexInDataModel'
@@ -1503,9 +1502,7 @@ def tree_chart(ind, items, prefix, tooltip, caption, empty):
     i1, i2, i3, i4, i5 = (ind + '\t' * k for k in range(1, 6))
     rows = ''
     for i, (k, _pop, (r, gg, b), tt) in enumerate(items):
-        tip = (tt.rstrip('\n').replace('\n', '\n' + i3) + '\n' if tt.startswith('tooltipwidget')
-               else f'tooltip = "{tt}"\n')
-        rows += (f'{i2}widget = {{\n{i3}size = {{ 260 26 }}\n{i3}{tip}{i3}using = tooltip_above\n'
+        rows += (f'{i2}widget = {{\n{i3}size = {{ 260 26 }}\n{i3}tooltip = "{tt}"\n{i3}using = tooltip_above\n'
                  f'{i3}icon = {{\n{i4}parentanchor = vcenter\n{i4}size = {{ 18 18 }}\n'
                  f'{i4}texture = "gfx/interface/piechart/piechart_legend.dds"\n{i4}color = {{ {r} {gg} {b} 1 }}\n{i3}}}\n'
                  f'{i3}textbox = {{\n{i4}parentanchor = vcenter\n{i4}position = {{ 26 0 }}\n{i4}size = {{ 180 24 }}\n'
@@ -1535,37 +1532,10 @@ def tree_chart(ind, items, prefix, tooltip, caption, empty):
             + rows + f'{i1}}}\n{ind}}}\n')
 
 
-def type_links(head, types):
-    """A group row's tooltip (Pat 2026-10-20 14:07Z: "add linkage to this tool tip so i can click and go to food
-    industries"): its heading, then a button for each building type with privately owned levels (pmr_pt_<type>)
-    that opens the Buildings panel on the type, as vanilla's FancyTooltip_BuildingType go-to button. Clickable once
-    the tooltip is locked, like vanilla's own."""
-    var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"  # noqa: E731
-    out = ('tooltipwidget = {\n\tRegularTooltip = {\n\t\tblockoverride "tooltip_content_after" {\n'
-           '\t\t\tflowcontainer = {\n\t\t\t\tdirection = vertical\n\t\t\t\tignoreinvisible = yes\n\t\t\t\tspacing = 2\n'
-           '\t\t\t\tDefaultTooltipTextBox = {\n\t\t\t\t\tmultiline = yes\n\t\t\t\t\tmaximumsize = { 280 -1 }\n\t\t\t\t\tmargin_bottom = 4\n'
-           f'\t\t\t\t\tfonttintcolor = "[TooltipInfo.GetTintColor]"\n\t\t\t\t\ttext = "{head}"\n\t\t\t\t}}\n')
-    for bk in types:
-        bt = f"GetBuildingType('{bk}')"
-        out += ('\t\t\t\tbutton = {\n'
-                f'\t\t\t\t\tvisible = "[GreaterThan_CFixedPoint({var(f"pmr_pt_{bk[9:]}")}, \'(CFixedPoint)0\')]"\n'
-                '\t\t\t\t\tsize = { 280 30 }\n\t\t\t\t\tusing = default_button\n'
-                f'\t\t\t\t\tonclick = "[InformationPanelBar.OpenBuildingBrowserPanelForType(GetPlayer.Self, {bt}.Self)]"\n'
-                f'\t\t\t\t\ticon = {{\n\t\t\t\t\t\tparentanchor = vcenter\n\t\t\t\t\t\tposition = {{ 6 0 }}\n'
-                f'\t\t\t\t\t\tsize = {{ 24 24 }}\n\t\t\t\t\t\ttexture = "[{bt}.GetIcon]"\n\t\t\t\t\t}}\n'
-                '\t\t\t\t\ttextbox = {\n\t\t\t\t\t\tparentanchor = vcenter\n\t\t\t\t\t\tposition = { 36 0 }\n'
-                '\t\t\t\t\t\tsize = { 236 26 }\n\t\t\t\t\t\talign = left|nobaseline\n\t\t\t\t\t\telide = right\n'
-                f'\t\t\t\t\t\ttext = "PMR_PT_{bk[9:]}"\n\t\t\t\t\t}}\n\t\t\t\t}}\n')
-    return out + '\t\t\t}\n\t\t}\n\t}\n}\n'
-
-
-def contributors_charts(ind, chart_types=None):
-    """What feeds the pool: privately owned levels by priority group (Pat 13:05Z), each row's tooltip linking its
-    building types (type_links), then levels by owner (Pat 15:33Z: Government, Local Shop Owners, Manor Houses,
-    Financial Districts, company headquarters)."""
-    ts = chart_types or [[]] * len(GROUPS)
-    groups = [(f'PMR_IPW_GROUP_{g}', pop, rgb, type_links(f'PMR_PC_ROW_{i}', ts[i]))
-              for i, (g, _n, pop, rgb, _b) in enumerate(GROUPS)]
+def contributors_charts(ind):
+    """What feeds the pool: privately owned levels by priority group (Pat 13:05Z), then levels by owner (Pat
+    15:33Z: Government, Local Shop Owners, Manor Houses, Financial Districts, company headquarters)."""
+    groups = [(f'PMR_IPW_GROUP_{g}', pop, rgb, f'PMR_PC_ROW_{i}') for i, (g, _n, pop, rgb, _b) in enumerate(GROUPS)]
     owners = [(f'PMR_PO_NAME_{k}', pop, pop_rgb(pop), f'PMR_PO_ROW_{i}') for i, (k, _n, pop) in enumerate(OWNERS)]
     return (tree_chart(ind, groups, 'pmr_pc', 'PMR_PC_TT', 'PMR_PC_CAPTION', 'PMR_PC_EMPTY')
             + tree_chart(ind, owners, 'pmr_po', 'PMR_PO_TT', 'PMR_PO_CAPTION', 'PMR_PC_EMPTY'))
@@ -1941,7 +1911,7 @@ def replace_loc():
             f'[SelectLocalization({on("pmr_cc_rweek")}, \'PMR_PI_RESEARCH_TT\', \'PMR_EMPTY\')]"']
 
 
-def private_tab(chart_types=None):
+def private_tab():
     i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
     filt = []
     for mode, key, tt in (('off', 'ALL', 'LOCATION_FILTER_ALL'), ('yes', 'DOMESTIC', 'LOCATION_FILTER_DOMESTIC'),
@@ -1979,7 +1949,7 @@ def private_tab(chart_types=None):
         # 2. the weekly re-investment over time beside the pool (Pat 14:28Z), titled inside their frames like vanilla's
         + charts_row(i1) +
         # 3. contributors, as tree charts by group (Pat 13:05Z) and by owner (Pat 15:33Z)
-        header('PMR_PI_SOURCES_HEADER', i1) + contributors_charts(i1, chart_types) +
+        header('PMR_PI_SOURCES_HEADER', i1) + contributors_charts(i1) +
         # 4. private construction, then recent investments (the law, policy and priorities moved to the Buildings
         # panel's Owners' Methods tab, Pat 2026-10-18 18:40Z: policy_block)
         f'{i1}default_header_2texts = {{\n{i1}\tblockoverride "text1" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_HEADER"\n{i1}\t}}\n'
@@ -2413,11 +2383,13 @@ def localization(types, chart_types=None):
         loc.append(f' PMR_IPW_GROUP_{g}:0 "{name}"')
         loc.append(f' PMR_IPW_ROW_{g}:0 "#header {name}#!\\n{covers}\\n'
                    f'Weight #v ×[{COUNTRY}.MakeScope.ScriptValue(\'{v}\')|2]#!"')
-        # Pat 2026-10-20 03:51Z: the building types in it, each with its privately owned levels (pmr_pt_record), each a
-        # button to the type (type_links, Pat 14:07Z)
+        # Pat 2026-10-20 03:51Z: the building types in it, each with its privately owned levels (pmr_pt_record); each
+        # name is the game's own link (GetName, not $key$), whose nested tooltip goes to the type (Pat 14:50Z)
         ts = (chart_types or [[]] * len(GROUPS))[i]
-        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels"')
-        loc += [f' PMR_PT_{bk[9:]}:0 "${bk}$ #v [{var(f"pmr_pt_{bk[9:]}")}|0]#!"' for bk in ts]
+        lines = ''.join(f"[SelectLocalization(GreaterThan_CFixedPoint({var(f'pmr_pt_{bk[9:]}')}, '(CFixedPoint)0'), "
+                        f"'PMR_PT_{bk[9:]}', 'PMR_EMPTY')]" for bk in ts)
+        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels{lines}"')
+        loc += [f' PMR_PT_{bk[9:]}:0 "\\n[GetBuildingType(\'{bk}\').GetName] #v [{var(f"pmr_pt_{bk[9:]}")}|0]#!"' for bk in ts]
     return loc
 
 
@@ -2477,7 +2449,7 @@ def write_all(game, write, header_text, out=None):
     write(IDEOLOGY_FILE, header_text + patch_ideologies(vanilla(IDEOLOGY_SOURCE)))
     write(QUEUE_GUI, patch_queue(vanilla(QUEUE_GUI)), bom=False)
     write(PANEL_GUI, patch_panel(vanilla(PANEL_GUI)), bom=False)
-    write(OWN_GUI, '# GENERATED by tools/pmr/private_investment.py\n' + private_tab(chart_types), bom=False)
+    write(OWN_GUI, '# GENERATED by tools/pmr/private_investment.py\n' + private_tab(), bom=False)
     if out:
         btype, parent = building_groups(game)
         rpath = os.path.join(out, 'common', 'buildings', 'pmr_retool_buildings.txt')
