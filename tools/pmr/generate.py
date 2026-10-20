@@ -334,6 +334,9 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 'pmg_sheep_ranch')
 TRADE_GAIN = 1.0
 kept_none = set()     # (building, none method) of a trade-off whose none has effects: its marker stays on it
+VANILLA_FIXES = [   # (file, text, replacement): vanilla script errors PMR corrects, each text found once
+    ('common/ai_strategies/00_default_strategy.txt', 'state_region = s:STATE_HAWAII\n', 'state_region = s:STATE_HAWAIIAN_ISLANDS\n'),
+]
 PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal entries (test builds: off)
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
@@ -1721,6 +1724,19 @@ def main():
                                                      '\tinvalid = { always = yes }  # PMR: Hallmark Goods gives prestige goods\n'))
                     report.setdefault('prestige_je_off', []).append(jk)
                 write(f'common/journal_entries/{jsrc.name}', jsrc.render())
+    # Pat 2026-10-20 03:35Z ("can we patch that so it doesn't hurt our performance"): vanilla's default AI strategy
+    # compares a state to s:STATE_HAWAII, a region that doesn't exist (STATE_HAWAIIAN_ISLANDS, as vanilla's own
+    # 00_scripted_triggers.txt has it), so every evaluation in a game with the Hawaiian Interest journal entry writes a
+    # script error (q51: about 86 a second by 1868). The file is copied with the name corrected.
+    for rel, old_s, new_s in VANILLA_FIXES:
+        path = os.path.join(game, rel)
+        if not os.path.exists(path):
+            raise SystemExit(f'{rel} is missing from the game copy')
+        text = open(path, encoding='utf-8-sig').read()
+        if text.count(old_s) != 1:
+            raise SystemExit(f'{rel}: {old_s.strip()!r} found {text.count(old_s)} times; check the vanilla fix')
+        write(rel, text.replace(old_s, new_s))
+        report.setdefault('vanilla_fixes', []).append(rel)
     # the panels listing a company's industries hide them (Pat 2026-10-19 02:32Z, company_panel.py)
     company_panel.RETOOL_TYPES = sorted({rbx for c in report['company_types'] for rbx in c['added']})
     if COMPANY_RETOOL and cc_plan:   # each subsidiary type lists the retooling of its industries (subsidiaries.py)
