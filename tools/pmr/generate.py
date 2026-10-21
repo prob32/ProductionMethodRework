@@ -265,6 +265,12 @@ PROFIT_TARGET = True
 # of the state tick. Each rate that was "a month" grows by TICK_EVERY an update to keep its pace: a trade-off's step and
 # the switching bar's points. The wage watch reads the wage at each update, so every other month as before (review 8, T-1).
 TICK_EVERY = 2
+# Run A (Pat's observer game 2026-10-21 14:08-14:37Z): the trade-off step (pmr_opts_<b> of a building with trade-offs)
+# cost 0.85 s of a game month at every update, the largest part of PMR's monthly script. Pat 2026-10-21 19:35Z: four
+# times a year instead of six. A state runs it at all but the last of every OPTS_CYCLE updates (pmr_xc, state_turn), so
+# 2 and 4 months apart in turn, the states taking turns, and a step grows to the months since the last (opts_pace).
+# Builds, expansions, method changes and research still run it at once; treatment (no prices, ~0 s) runs at every update.
+OPTS_CYCLE = 3
 PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
@@ -1463,6 +1469,7 @@ def main():
     auto_ui = {}           # building -> (its first automation group, auto_tiers), for the automation bar
     profit_goods = set()   # every good a recipe's profit is read at (pmr_price_<good>)
     pair_ui = {}           # building -> pairs(): every plain recipe with every automation, for the Methods view
+    start_shares = {}      # building -> (short name, [(recipe history names, [(member, share)])]): start_shares_history
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
@@ -1617,6 +1624,18 @@ def main():
             members = [(i, r, blend, emp, {}, SHARE_STEPS if i == 1 else 0,
                         {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
                        for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
+        if not SHARE_DIGITS:
+            # history's buildings: per recipe history can name, the shares its levels take (start_shares_history)
+            start = []
+            for ti, r in enumerate(recipes, 1):
+                if r.key.startswith('pm_pmr_'):
+                    continue   # a pair or electric target, which no history building names
+                moves = [(j, SHARE_STEPS if ti in rep.get('pairs', [rep.get('tier')]) else 0, dflt)
+                         for j, _r, _b, _e, _x, dflt, rep in members]
+                moves = [(j, n) for j, n, dflt in moves if n != dflt]
+                if moves:
+                    start.append((r.key, moves))
+            start_shares[bk] = (b, start)
         def ladder(sh, values, default_v, body_of, tex, loc_share, gname):
             """digit methods <sh>_<v> carrying v% (body_of(v / SHARE_STEPS)); each unlocks only while it runs"""
             shares = []
@@ -1850,6 +1869,8 @@ def main():
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab()
               + obs_pad())
+    if start_shares:
+        write('common/history/global/pmr_start_shares.txt', header + start_shares_history(start_shares))
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -2660,8 +2681,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                  '\t\t\tround_variable = { name = pmr_m nearest = 1 }\n'
                  f'\t\t\tif = {{ limit = {{ var:pmr_m < {TRADE_STEP_MIN} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MIN} }} }}\n'
                  f'\t\t\tif = {{ limit = {{ var:pmr_m > {TRADE_STEP_MAX} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MAX} }} }}\n'
-                 # TICK_EVERY (Pat 2026-10-21 12:37Z): the step of TICK_EVERY months, capped below by what the options hold
-                 + every_other(f'change_variable = {{ name = pmr_m multiply = {TICK_EVERY} }}', '\t\t\t') +
+                 # TICK_EVERY (Pat 2026-10-21 12:37Z) and OPTS_CYCLE (19:35Z): the step of the months since the last,
+                 # capped below by what the options hold
+                 + opts_pace('\t\t\t') +
                  f'\t\t\tif = {{ limit = {{ var:pmr_wi = 0 var:{xv("pmr_xn", gi)} < var:pmr_m }} '
                  f'set_variable = {{ name = pmr_m value = var:{xv("pmr_xn", gi)} }} }}\n'
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} var:{xv("pmr_x", x.j)} < var:pmr_m }} '
@@ -3907,8 +3929,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + ('' if RELEASE else
                 '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
                 f'\tif = {{ limit = {{ owner = {{ is_player = yes }} }} pmr_read_blend_{b} = yes }}\n')
-             + ((f'\tif = {{ limit = {{ OR = {{ NOT = {{ has_global_variable = pmr_off_opts }} NOT = {{ has_variable = pmr_xinit_{b} }} }} }} '
-                 f'pmr_opts_{b} = yes }}\n' if OBS_PARTS_ON else f'\tpmr_opts_{b} = yes\n') if opts else '') +
+             + (opts_call(b, any(mode == 'market' for _, _, mode, *_ in opts)) if opts else '') +
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
              f'\t\tset_variable = {v("pmr_retooling")}\n'
              f'\t\tpmr_read_earnings_{b} = yes\n'
@@ -4623,14 +4644,27 @@ def state_tick_type(bk, t='\t'):
 # on_action per step, each its own effect block: the opening (pmr_month, the state's electricity), each building
 # type's tick, the closing, then the four state checks. The same effects in the same order as
 # pmr_on_monthly_pulse_state (pulse_state_effect, checked), which the other builds run.
+XTURN_DONE = '\t\t\tif = { limit = { has_variable = pmr_xturn } remove_variable = pmr_xturn }\n'
+
+
 def state_turn():
     """pmr_on_monthly_pulse_state's building update, every TICK_EVERY-th pulse of the state (Pat 2026-10-21 12:37Z):
     pmr_ph 1 runs it, then 2 waits a pulse. A state seen the first time (a new game, or a save from before) takes the
     phase after the last state's (pmr_ph_g), so half the states update each month. --obs-pad: in OBS_MONTHLY_YEARS
-    (pmr_b1_off) every pulse runs it, as before."""
-    tick = ('\t\t\tset_variable = pmr_month\n'
-            "\t\t\tpmr_state_tick = yes   # this state's turn\n"
-            '\t\t\tremove_variable = pmr_month\n')
+    (pmr_b1_off) every pulse runs it, as before. Each update counts pmr_xc round OPTS_CYCLE (a state seen the first
+    time takes the count after the last state's, pmr_xc_g); all but the last count are the trade-off step's turn
+    (pmr_xturn, Pat 19:35Z)."""
+    turn = ('\t\t\tif = {\n\t\t\t\tlimit = { NOT = { has_variable = pmr_xc } }\n'
+            '\t\t\t\tif = { limit = { NOT = { has_global_variable = pmr_xc_g } } set_global_variable = { name = pmr_xc_g value = 0 } }\n'
+            '\t\t\t\tset_variable = { name = pmr_xc value = global_var:pmr_xc_g }\n'
+            '\t\t\t\tchange_global_variable = { name = pmr_xc_g add = 1 }\n'
+            f'\t\t\t\tif = {{ limit = {{ global_var:pmr_xc_g >= {OPTS_CYCLE} }} set_global_variable = {{ name = pmr_xc_g value = 0 }} }}\n'
+            '\t\t\t}\n\t\t\telse = {\n\t\t\t\tchange_variable = { name = pmr_xc add = 1 }\n'
+            f'\t\t\t\tif = {{ limit = {{ var:pmr_xc >= {OPTS_CYCLE} }} set_variable = {{ name = pmr_xc value = 0 }} }}\n\t\t\t}}\n'
+            f'\t\t\tif = {{ limit = {{ var:pmr_xc < {OPTS_CYCLE - 1} }} set_variable = pmr_xturn }}\n')
+    tick = ('\t\t\tset_variable = pmr_month\n' + turn
+            + "\t\t\tpmr_state_tick = yes   # this state's turn\n"
+            '\t\t\tremove_variable = pmr_month\n' + XTURN_DONE)
     out = ('\t\tif = {\n\t\t\tlimit = { NOT = { has_variable = pmr_ph } }\n'
            '\t\t\tif = { limit = { has_global_variable = pmr_ph_g } remove_global_variable = pmr_ph_g '
            'set_variable = { name = pmr_ph value = 2 } }\n'
@@ -4643,11 +4677,35 @@ def state_turn():
             + '\t\t}\n\t\telse = { set_variable = { name = pmr_ph value = 1 } }\n')
 
 
-def every_other(effect, t):
-    """effect, one line indented by t, that makes a step TICK_EVERY months long; --obs-pad skips it in OBS_MONTHLY_YEARS
-    (pmr_b1_off), when every monthly pulse updates"""
+def opts_call(b, market):
+    """The tick's trade-off step (pmr_opts_<b>): for a building with trade-offs (market), on a monthly update only at
+    the state's turn (pmr_xturn, OPTS_CYCLE), at every event tick, and for a building not yet set up (pmr_xinit_<b>);
+    treatment only, at every update"""
+    conds = []
+    if market:
+        conds.append(f'OR = {{ NOT = {{ has_variable = pmr_month }} has_variable = pmr_xturn NOT = {{ has_variable = pmr_xinit_{b} }} }}')
+    if OBS_PARTS_ON:
+        conds.append(f'OR = {{ NOT = {{ has_global_variable = pmr_off_opts }} NOT = {{ has_variable = pmr_xinit_{b} }} }}')
+    if not conds:
+        return f'\tpmr_opts_{b} = yes\n'
+    return f'\tif = {{ limit = {{ {" ".join(conds)} }} pmr_opts_{b} = yes }}\n'
+
+
+def opts_pace(t):
+    """The trade-off step's multiplier, lines indented by t: the months since the state's last turn (OPTS_CYCLE), two
+    updates at the cycle's first count (pmr_xc 0, after the skipped one), one at the others"""
+    def by(updates):
+        return every_other(f'change_variable = {{ name = pmr_m multiply = {TICK_EVERY * updates} }}', '',
+                           f'change_variable = {{ name = pmr_m multiply = {updates} }}' if updates > 1 else '').strip()
+    return f'{t}if = {{ limit = {{ var:pmr_xc = 0 }} {by(2)} }}\n{t}else = {{ {by(1)} }}\n'
+
+
+def every_other(effect, t, monthly=''):
+    """effect, one line indented by t, that makes a step TICK_EVERY months long; --obs-pad runs monthly instead (a
+    step of a month, or nothing) in OBS_MONTHLY_YEARS (pmr_b1_off), when every monthly pulse updates"""
     if OBS_PAD:
-        return f'{t}if = {{ limit = {{ NOT = {{ has_global_variable = pmr_b1_off }} }} {effect} }}\n'
+        return (f'{t}if = {{ limit = {{ NOT = {{ has_global_variable = pmr_b1_off }} }} {effect} }}'
+                + (f' else = {{ {monthly} }}' if monthly else '') + '\n')
     return f'{t}{effect}\n'
 
 
@@ -4662,17 +4720,45 @@ def profile_pulse_state(buildings):
     """on_actions text: the monthly state pulse split into steps (--script-profile), replacing PULSE_STATE_HOOK."""
     paused = 'trigger = { NOT = { has_global_variable = pmr_ticks_paused } }'
     # this state's turn (state_turn) sets pmr_month for the steps between open and close
-    turn = state_turn().replace("\t\t\tpmr_state_tick = yes   # this state's turn\n", '').replace('\t\t\tremove_variable = pmr_month\n', '')
+    turn = (state_turn().replace("\t\t\tpmr_state_tick = yes   # this state's turn\n", '').replace('\t\t\tremove_variable = pmr_month\n', '')
+            .replace(XTURN_DONE, ''))
     steps = [('open', turn + '\t\tset_variable = pmr_bulk\n\t\tpmr_read_elec = yes\n\t\tset_variable = pmr_elec_read\n')]
     steps += [(f't_{short(bk)}', '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_month }\n' + state_tick_type(bk, '\t\t\t') + '\t\t}\n')
               for bk in buildings]
     steps += [('close', '\t\tremove_variable = pmr_elec_read\n\t\tremove_variable = pmr_bulk\n'
-                        '\t\tif = { limit = { has_variable = pmr_month } remove_variable = pmr_month }\n')]
+                        '\t\tif = { limit = { has_variable = pmr_month } remove_variable = pmr_month }\n'
+                        + XTURN_DONE.replace('\t\t\t', '\t\t', 1))]
     steps += [(k, f'\t\t{e} = yes\n') for k, e in (('auto_best', 'pmr_auto_best'), ('principle', 'pmr_principle_bonus'),
                                                      ('probe', 'pmr_probe_state'), ('urb', 'pmr_urb_check'))]
     return ('# --script-profile: the monthly state pulse one step per on_action, for the script profiler\n'
             'on_monthly_pulse_state = { on_actions = { ' + ' '.join(f'pmr_prof_{k}' for k, _ in steps) + ' } }\n\n'
             + ''.join(f'pmr_prof_{k} = {{\n\t{paused}\n\teffect = {{\n{e}\t}}\n}}\n' for k, e in steps) + '\n')
+
+
+def start_shares_history(start_shares):
+    """common/history/global (run last among all history, vanilla's 00_global.txt says): each history building still on
+    its start method takes the shares of the recipe history named, as PMR's setup would give it (pmr_blend_<b>, all
+    levels on that recipe). Pat 2026-10-21 19:31Z, France: every port began the game short of workers. The start method
+    puts a new building on recipe 1 at 100% (SHARE_STEPS), and the game staffs history's buildings on that; the setup
+    then moved them to the recipe history named, a port from an anchorage's 100 jobs a level to a basic port's 1,000.
+    The same moves are made here, before the game staffs them, the way vanilla's history/production_methods activates a
+    method. pmr_in_tick keeps on_production_method_changed from ticking them."""
+    o = []
+    for bk, (b, start) in start_shares.items():
+        if not start:
+            continue
+        is_on = lambda pm, bk=bk: f'is_production_method_active = {{ building_type = {bk} production_method = {pm} }}'   # noqa: E731
+        o.append(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ {is_on(f"pm_pmr_start_{b}")} }}\n')
+        for n, (key, moves) in enumerate(start):
+            o.append(f'\t\t\t\t{"else_if" if n else "if"} = {{\n\t\t\t\t\tlimit = {{ {is_on(key)} }}\n'
+                     + ''.join(f'\t\t\t\t\tactivate_production_method = {{ building_type = {bk} '
+                               f'production_method = pm_pmr_share_{b}_{j}_{val} }}\n' for j, val in moves)
+                     + '\t\t\t\t}\n')
+        o.append('\t\t\t}\n')
+    return (''.join(f'# {ln.strip()}\n' for ln in start_shares_history.__doc__.splitlines())
+            + 'GLOBAL = {\n\tevery_country = {\n\t\tevery_scope_state = {\n'
+            '\t\t\tset_variable = { name = pmr_in_tick value = yes days = 1 }\n' + ''.join(o)
+            + '\t\t\tremove_variable = pmr_in_tick\n\t\t}\n\t}\n}\n')
 
 
 def dispatch_effects(buildings):
@@ -7476,10 +7562,19 @@ SKIP_REPORT
 
 # Test builds: how Great Britain's and Austria's buildings start a new game, before PMR's first tick (q61). half = levels
 # at 50% staffing or more; ranches, of them ranch_100 / ranch_0 with the first recipe share at 100% / 0% and
-# ranch_start on the start method (q62).
+# ranch_start on the start method (q62); ports, of them port_basic on a basic port, and of those port_share2 with its
+# share at 100% and port_half at 50% staffing or more (q73, start_shares_history).
+START_PORTS = ('\t\t\t\t\tif = {\n\t\t\t\t\t\tlimit = { is_building_type = building_port }\n'
+               '\t\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_p add = 1 } }\n'
+               '\t\t\t\t\t\tif = {\n\t\t\t\t\t\t\tlimit = { has_active_production_method = pm_basic_port }\n'
+               '\t\t\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_pb add = 1 } }\n'
+               '\t\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_port_2_100 } '
+               'scope:pmr_ss_c = { change_variable = { name = pmr_ss_p2 add = 1 } } }\n'
+               '\t\t\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_ph add = 1 } } }\n'
+               '\t\t\t\t\t\t}\n\t\t\t\t\t}\n')
 START_STAFF = ''.join(
     f'\t\tif = {{\n\t\t\tlimit = {{ exists = c:{tag} }}\n\t\t\tc:{tag} = {{\n\t\t\t\tsave_temporary_scope_as = pmr_ss_c\n'
-    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs'))
+    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs', 'p', 'pb', 'p2', 'ph'))
     + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 }\n'
     '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_n add = 1 } }\n'
     '\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_h add = 1 } } }\n'
@@ -7490,27 +7585,36 @@ START_STAFF = ''.join(
     '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_100 } '
     'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r1 add = 1 } } }\n'
     '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_0 } '
-    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r0 add = 1 } } }\n\t\t\t\t\t}\n\t\t\t\t}\n'
+    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r0 add = 1 } } }\n\t\t\t\t\t}\n'
+    + START_PORTS + '\t\t\t\t}\n'
     '\t\t\t\tdebug_log = "PMR;rec=START_STAFF;date=[TimeKeeper.GetCurrentDate.GetString];'
     'country=[THIS.GetCountry.GetNameNoFormatting];'
     + ';'.join(f"{lab}=[THIS.Var('pmr_ss_{x}').GetValue|0]" for lab, x in
                (('buildings', 'n'), ('half', 'h'), ('ranches', 'r'), ('ranch_100', 'r1'), ('ranch_0', 'r0'),
-                ('ranch_start', 'rs'))) + '"\n'
-    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs'))
+                ('ranch_start', 'rs'), ('ports', 'p'), ('port_basic', 'pb'), ('port_share2', 'p2'), ('port_half', 'ph')))
+    + '"\n'
+    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs', 'p', 'pb', 'p2', 'ph'))
     + '\t\t\t}\n\t\t}\n' for tag in ('GBR', 'AUS'))
 
-# Test builds: after the setup, the ranches still on the start method (S2, q62: none, the setup's blend moved them on).
+# Test builds: after the setup, the ranches still on the start method (S2, q62: none, the setup's blend moved them on),
+# and the basic ports at 50% staffing or more (q73).
 START_LEFT = ''.join(
     f'\t\tif = {{\n\t\t\tlimit = {{ exists = c:{tag} }}\n\t\t\tc:{tag} = {{\n\t\t\t\tsave_temporary_scope_as = pmr_ss_c\n'
-    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('r', 'rs'))
+    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('r', 'rs', 'pb', 'ph'))
     + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 is_building_type = building_livestock_ranch }\n'
     '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_r add = 1 } }\n'
     '\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_start_livestock_ranch } '
     'scope:pmr_ss_c = { change_variable = { name = pmr_ss_rs add = 1 } } }\n\t\t\t\t}\n'
+    '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 is_building_type = building_port '
+    'has_active_production_method = pm_basic_port }\n'
+    '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_pb add = 1 } }\n'
+    '\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_ph add = 1 } } }\n'
+    '\t\t\t\t}\n'
     '\t\t\t\tdebug_log = "PMR;rec=START_LEFT;date=[TimeKeeper.GetCurrentDate.GetString];'
     'country=[THIS.GetCountry.GetNameNoFormatting];'
-    "ranches=[THIS.Var('pmr_ss_r').GetValue|0];ranch_start=[THIS.Var('pmr_ss_rs').GetValue|0]\"\n"
-    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('r', 'rs'))
+    "ranches=[THIS.Var('pmr_ss_r').GetValue|0];ranch_start=[THIS.Var('pmr_ss_rs').GetValue|0];"
+    "port_basic=[THIS.Var('pmr_ss_pb').GetValue|0];port_half=[THIS.Var('pmr_ss_ph').GetValue|0]\"\n"
+    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('r', 'rs', 'pb', 'ph'))
     + '\t\t\t}\n\t\t}\n' for tag in ('GBR', 'AUS'))
 
 # Test builds. The observer game's monthly lines run outside the test pause, so its script-off years (obs_ab) are timed too.
