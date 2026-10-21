@@ -2016,7 +2016,7 @@ def main():
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts, opt_ui, auto_ui)
-    loc += [' PMR_GOV_RETOOL_ALL:0 "Retool Government Levels"']
+    loc += [' PMR_GOV_RETOOL_ALL:0 "Retool Government Levels"'] + GOV_ALL_LOC
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     # the "PMR test:" decision is for testing only: every player would see it. Pat 2026-10-20 13:26Z: out of the test
@@ -2052,7 +2052,7 @@ def main():
         hud = cc_tree.patch_hud(hud)
     if args.script_profile:
         hud = patch_hud_profile(hud)
-    write('gui/ingame_hud.gui', patch_hud_flags(hud, site_types), bom=False)
+    write('gui/ingame_hud.gui', patch_hud_flags(patch_hud_gov_all(hud), site_types), bom=False)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
@@ -3062,27 +3062,61 @@ def gov_retool_all_sgui(buildings):
         return f'has_variable = pmr_retool_open_gov_{short(bk)} b:{bk} ?= {{ level >= 1 }}'
     any_open = ''.join(f'\t\t\t\tAND = {{ {open_(bk)} }}\n' for bk in buildings)
     queue = ''.join(f'\t\t\tif = {{ limit = {{ {open_(bk)} }} pmr_queue_gov_{short(bk)} = yes }}\n' for bk in buildings)
+    # Pat 2026-10-21 21:18Z: the button asks first, with how much it will queue: the levels (pmr_gall_l, one
+    # construction each, pmr_queue_gov_<b>) and the buildings (pmr_gall_b), counted as it is clicked
+    count = ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ {open_(bk)} NOT = {{ has_variable = pmr_abroad_{short(bk)} }} '
+                    f'has_variable = pmr_room_gov_{short(bk)} }}\n'
+                    f'\t\t\t\troot = {{ change_variable = {{ name = pmr_gall_l add = scope:pmr_st.var:pmr_room_gov_{short(bk)} }} '
+                    'change_variable = { name = pmr_gall_b add = 1 } }\n\t\t\t}\n' for bk in buildings)
     return ('pmr_gov_retool_all_sgui = {\n\tscope = country\n'
             f'\tis_valid = {{\n\t\tany_scope_state = {{\n\t\t\tOR = {{\n{any_open}'
             '\t\t\t}\n\t\t}\n\t}\n'
             f'\teffect = {{\n\t\tevery_scope_state = {{\n\t\t\tset_variable = pmr_bulk\n{queue}'
             '\t\t\tremove_variable = pmr_bulk\n\t\t}\n'
-            + '\t\tpmr_c_sum_all = yes\n\t\tdebug_log = "PMR;rec=GOV_ALL;date=[TimeKeeper.GetCurrentDate.GetString]"\n\t}\n}\n\n')
+            '\t\tif = { limit = { has_variable = pmr_gall_l var:pmr_gall_l >= 0 var:pmr_gall_b >= 0 } '
+            'remove_variable = pmr_gall_l remove_variable = pmr_gall_b }\n'
+            + '\t\tpmr_c_sum_all = yes\n\t\tdebug_log = "PMR;rec=GOV_ALL;date=[TimeKeeper.GetCurrentDate.GetString]"\n\t}\n}\n\n'
+            'pmr_gov_retool_count_sgui = {\n\tscope = country\n'
+            '\teffect = {\n\t\tset_variable = { name = pmr_gall_l value = 0 }\n\t\tset_variable = { name = pmr_gall_b value = 0 }\n'
+            f'\t\tevery_scope_state = {{\n\t\t\tsave_temporary_scope_as = pmr_st\n{count}\t\t}}\n\t}}\n}}\n\n')
+
+
+GOV_ALL_ASK = 'pmr_gall_ask'   # GUI variable: the Retool Government Levels popup is open (patch_hud_gov_all)
+GOV_ALL_SCOPE = 'GuiScope.SetRoot(GetPlayer.MakeScope).End'
+GOV_ALL_CLICK = (f"onclick = \"[GetScriptedGui('pmr_gov_retool_count_sgui').Execute({GOV_ALL_SCOPE})]\"\n"
+                 f"{{i}}onclick = \"[GetVariableSystem.Set('{GOV_ALL_ASK}', 'yes')]\"\n")
 
 
 def patch_browser_retool_all(text):
-    """building_browser_panel.gui: the Retool Government Levels button above Nationalize Filtered Buildings, in its
-    style (pmr_gov_retool_all_sgui)."""
+    """building_browser_panel.gui: the Retool Government Levels button above the Building Registry's Nationalize Filtered
+    Buildings, in its style, and (Pat 2026-10-21 21:18Z, "right below the gear cog in the same format") a 45 x 45 one
+    under the Buildings panel's map mode button (map_modes_button_position, 607 102). Both open the popup that asks
+    first (patch_hud_gov_all); its Yes runs pmr_gov_retool_all_sgui."""
     anchor = '\t\t\t\t\t\t# NATIONALIZE FILTERED BUILDINGS BUTTON\n'
     if text.count(anchor) != 1:
         raise SystemExit(f'building_browser_panel.gui: expected one Nationalize Filtered Buildings button, found '
                          f'{text.count(anchor)}; update patch_browser_retool_all')
+    modes = ('\t\tblockoverride "map_modes_button" {\n\t\t\tmap_modes_single_button_minimized = {\n'
+             '\t\t\t\tdatacontext = "[BuildingBrowserPanel.GetMapModeList]"\n'
+             '\t\t\t\tusing = map_modes_button_position\n\t\t\t}\n')
+    if text.count(modes) != 1:
+        raise SystemExit('building_browser_panel.gui: expected one map mode button; update patch_browser_retool_all')
     ind = '\t\t\t\t\t\t'
-    scope = 'GuiScope.SetRoot(GetPlayer.MakeScope).End'
+    scope = GOV_ALL_SCOPE
+    i3 = '\t\t\t'
+    gear = (f'{i3}# PMR: Retool Government Levels, under the map mode button\n{i3}button = {{\n{i3}\tposition = {{ 607 152 }}\n'
+            f'{i3}\tsize = {{ 45 45 }}\n{i3}\tusing = default_button\n{i3}\ttooltip = "PMR_GOV_RETOOL_ALL"\n'
+            f'{i3}\tusing = tooltip_ne\n'
+            f"{i3}\tenabled = \"[GetScriptedGui('pmr_gov_retool_all_sgui').IsValid({scope})]\"\n"
+            f'{i3}\t' + GOV_ALL_CLICK.format(i=i3 + '\t')
+            + f'\n{i3}\ticon = {{\n{i3}\t\tparentanchor = center\n{i3}\t\tsize = {{ 30 30 }}\n'
+            f'{i3}\t\ttexture = "{GOV_RETOOL_ICON}"\n{i3}\t\talwaystransparent = yes\n{i3}\t}}\n{i3}}}\n')
+    text = text.replace(modes, modes + gear)
     button = (f'{ind}# PMR: government retooling for every building at once\n{ind}button = {{\n'
               f'{ind}\tsize = {{ 404 50 }}\n{ind}\tusing = default_button_primary\n{ind}\tusing = confirm_button_sound\n'
               f"{ind}\tenabled = \"[GetScriptedGui('pmr_gov_retool_all_sgui').IsValid({scope})]\"\n"
-              f"{ind}\tonclick = \"[GetScriptedGui('pmr_gov_retool_all_sgui').Execute({scope})]\"\n\n"
+              f'{ind}\t' + GOV_ALL_CLICK.format(i=ind + '\t') + '\n'
+
               f'{ind}\tflowcontainer = {{\n{ind}\t\tparentanchor = center\n{ind}\t\tspacing = 5\n\n'
               f'{ind}\t\ticon = {{\n{ind}\t\t\tparentanchor = vcenter\n{ind}\t\t\tsize = {{ 40 40 }}\n'
               f'{ind}\t\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t\t}}\n\n'
@@ -5378,6 +5412,39 @@ def patch_hud_flags(text, site_types):
                         + flags + '\t\t}\n\t}\n\n' + HUD_ANCHOR)
 
 
+def patch_hud_gov_all(text):
+    """ingame_hud.gui: Retool Government Levels asks first (Pat 2026-10-21 21:18Z: "do you want to re-tool all government
+    OWNED buildings and the amount of buildings it will queue up"), in vanilla's confirmation window style
+    (popups.gui default_confirmation_window), over the side panels; GOV_ALL_ASK opens it (patch_browser_retool_all)."""
+    if text.count(HUD_ANCHOR) != 1:
+        raise SystemExit('ingame_hud.gui: the topbar vbox moved; update patch_hud_gov_all')
+    i = '\t'
+    close = f"onclick = \"[GetVariableSystem.Clear('{GOV_ALL_ASK}')]\""
+    return text.replace(HUD_ANCHOR, f'{i}# PMR: Retool Government Levels, confirm (patch_hud_gov_all)\n'
+                        f'{i}container = {{\n{i}\tvisible = "[GetVariableSystem.Exists(\'{GOV_ALL_ASK}\')]"\n'
+                        f'{i}\tparentanchor = center\n{i}\tusing = clickthrough_blocker\n'
+                        f'{i}\tbackground = {{\n{i}\t\tusing = default_background\n{i}\t}}\n'
+                        f'{i}\tbackground = {{\n{i}\t\tusing = frame_small\n{i}\t}}\n'
+                        f'{i}\tflowcontainer = {{\n{i}\t\tdirection = vertical\n{i}\t\tmargin = {{ 30 20 }}\n{i}\t\tspacing = 20\n'
+                        f'{i}\t\ttextbox = {{\n{i}\t\t\tminimumsize = {{ 300 -1 }}\n{i}\t\t\tmaximumsize = {{ 300 800 }}\n'
+                        f'{i}\t\t\tmultiline = yes\n{i}\t\t\tautoresize = yes\n{i}\t\t\talign = hcenter|nobaseline\n'
+                        f'{i}\t\t\ttext = "PMR_GALL_ASK"\n{i}\t\t}}\n'
+                        f'{i}\t\tflowcontainer = {{\n{i}\t\t\tdirection = horizontal\n{i}\t\t\tusing = default_list_position\n'
+                        f'{i}\t\t\tspacing = 20\n'
+                        f'{i}\t\t\tbutton = {{\n{i}\t\t\t\tusing = default_button\n{i}\t\t\t\tusing = close_button_sound\n'
+                        f'{i}\t\t\t\tsize = {{ 140 40 }}\n{i}\t\t\t\ttext = "CONFIRM_NO"\n{i}\t\t\t\t{close}\n{i}\t\t\t}}\n'
+                        f'{i}\t\t\tbutton = {{\n{i}\t\t\t\tusing = default_button_primary_action\n{i}\t\t\t\tusing = confirm_button_sound\n'
+                        f'{i}\t\t\t\tsize = {{ 140 40 }}\n{i}\t\t\t\ttext = "CONFIRM_YES"\n'
+                        f"{i}\t\t\t\tenabled = \"[GetScriptedGui('pmr_gov_retool_all_sgui').IsValid({GOV_ALL_SCOPE})]\"\n"
+                        f"{i}\t\t\t\tonclick = \"[GetScriptedGui('pmr_gov_retool_all_sgui').Execute({GOV_ALL_SCOPE})]\"\n"
+                        f'{i}\t\t\t\t{close}\n{i}\t\t\t}}\n{i}\t\t}}\n{i}\t}}\n{i}}}\n\n' + HUD_ANCHOR)
+
+
+GALL_N = "#v [GetPlayer.MakeScope.Var('{v}').GetValue|0]#!"
+GOV_ALL_LOC = [f' PMR_GALL_ASK:0 "Retool all government-owned buildings?\\n\\n{GALL_N.format(v="pmr_gall_l")} levels in '
+               f'{GALL_N.format(v="pmr_gall_b")} buildings"']
+
+
 # --script-profile (Pat 2026-10-20: checks log on their own, no console steps). 1.14.5's text script profiler collects
 # from launch with -script_profiling, but only the console command ScriptProfiling.Dump writes it, to
 # logs/script_profiling.txt: totals since launch, a row per top-level effect / trigger / script value block (type,
@@ -6926,7 +6993,7 @@ def patch_browser_tabs(text, types):
              '\t\t\t\tdatacontext = "[BuildingBrowserPanel.GetMapModeList]"\n'
              '\t\t\t\tusing = map_modes_button_position\n\t\t\t}\n')
     once(modes, modes + f'\t\t\tpmr_policy_popout = {{  # PMR\n\t\t\t\tvisible = "[{shown}]"\n'
-         '\t\t\t\tposition = { 622 150 }\n\t\t\t}\n')
+         '\t\t\t\tposition = { 622 204 }\n\t\t\t}\n')   # under Retool Government Levels (patch_browser_retool_all)
     # vanilla's lists of buildings that could be built stay on Buildings
     for f in ('is_development', 'is_rural', 'is_urban'):
         once(f'\t\t\t\tbuilding_panel_potential_buildings = {{\n\t\t\t\t\tvisible = "[BuildingBrowserPanel.IsFilterYes(\'{f}\')]"\n',
@@ -6959,6 +7026,7 @@ def patch_browser_tabs(text, types):
     hide = ('\t\t\t\tname = _hide\n\t\t\t\tstart_sound = {\n\t\t\t\t\tsoundeffect = "event:/SFX/UI/SideBar/buildings_stop"\n'
             '\t\t\t\t}\n\n\t\t\t\ton_start = "[BuildingBrowserPanel.Sort(\'database_order\')]"\n')
     once(hide, hide + f'\t\t\t\ton_start = "[GetVariableSystem.Clear(\'{MV_TAB}\')]"  # PMR\n'
+         f'\t\t\t\ton_start = "[GetVariableSystem.Clear(\'{GOV_ALL_ASK}\')]"  # PMR\n'
          f'\t\t\t\ton_start = "[{pick_off}]"  # PMR\n'
          f'\t\t\t\ton_start = "[{ai_off}]"  # PMR\n')
     return text
