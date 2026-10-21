@@ -33,6 +33,14 @@ From the build thread, after your 12:37Z card ("Try it") and 12:38Z message ("q7
 | T4 | Step 1 | error.log has no "Failed to fetch variable" or "used but never set" line naming `pmr_` | Such a line: a read that lost its number; the build thread fixes it first |
 | T5 | Step 2 | A player state's `TICK` lines come every other month, and its switching bars and trade-off shares still move | TICK lines every month for one state: the turn never alternates |
 
+Results, from your observer run of 2026-10-21 12:49-13:18Z to February 1855 (review: /mnt/project-files/pmr/perf/review-10-q71.md):
+
+- **T1 passed:** `padded=` about 870 in 1839, 1843, 1847 and 1851, 0 otherwise; `monthly=1` only in 1841, 1845, 1849 and 1853.
+- **T2 passed:** the monthly years ran 0.78, 0.52, 1.79 and 0.32 s a month slower than their neighbours (median 0.65 s), so updating every other month stays.
+- **T3:** the dummy years ran 0.01, 0.09, 0.06 and 0.24 s slower (mean 0.10 s), so the zeros stay.
+- **T4 passed:** no such lines beyond the 7 older load-time ones.
+- **T5:** not run yet.
+
 ## Earlier: fewer stored numbers and a timing run (q70, test mod; step 1 run 2026-10-21, step 2 replaced by q71)
 
 From the build thread, after your 02:58Z message. q70 is q69 plus performance review 9
