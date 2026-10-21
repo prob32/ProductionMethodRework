@@ -1469,7 +1469,7 @@ def main():
     auto_ui = {}           # building -> (its first automation group, auto_tiers), for the automation bar
     profit_goods = set()   # every good a recipe's profit is read at (pmr_price_<good>)
     pair_ui = {}           # building -> pairs(): every plain recipe with every automation, for the Methods view
-    start_shares = {}      # building -> (short name, [(recipe history names, [(member, share)])]): start_shares_history
+    start_shares = {}      # building -> (short name, [(recipe history names, [(member, share)])]): history_start_shares
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
@@ -1625,7 +1625,7 @@ def main():
                         {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
                        for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
         if not SHARE_DIGITS:
-            # history's buildings: per recipe history can name, the shares its levels take (start_shares_history)
+            # history's buildings: per recipe history can name, the shares its levels take (history_start_shares)
             start = []
             for ti, r in enumerate(recipes, 1):
                 if r.key.startswith('pm_pmr_'):
@@ -1636,12 +1636,14 @@ def main():
                 if moves:
                     start.append((r.key, moves))
             start_shares[bk] = (b, start)
-        def ladder(sh, values, default_v, body_of, tex, loc_share, gname):
-            """digit methods <sh>_<v> carrying v% (body_of(v / SHARE_STEPS)); each unlocks only while it runs"""
+        def ladder(sh, values, default_v, body_of, tex, loc_share, gname, start_vals=()):
+            """digit methods <sh>_<v> carrying v% (body_of(v / SHARE_STEPS)); each unlocks only while it runs, the default
+            and start_vals also while the building is on its start method"""
             shares = []
             for val in values:
                 dflt = '\tis_default = yes\n' if val == default_v else ''
-                start = f' pm_pmr_start_{b}' if val == default_v else ''   # a new building's (SHARE_STEPS)
+                # a new building's (SHARE_STEPS), and history's named ones (history_start_shares)
+                start = f' pm_pmr_start_{b}' if val == default_v or val in start_vals else ''
                 blend_pms.append(f'{sh}_{val} = {{\n\ttexture = "{tex}"\n{dflt}'
                                  f'\tunlocking_production_methods = {{ {sh}_{val}{start} }}\n'
                                  f'{body_of(val / SHARE_STEPS) if val else ""}}}\n')
@@ -1676,7 +1678,7 @@ def main():
                 gs = sh.replace('pm_', 'pmg_', 1)
                 ladder(sh, values, dv, body_of, r.texture,
                        lambda val, r=r: f'${r.key}$ ({val}% of levels)',
-                       (gs, f'${r.key}$ share of levels'))
+                       (gs, f'${r.key}$ share of levels'), () if SHARE_DIGITS else (0, SHARE_STEPS))
             report['blended'].append({'building': bk, 'recipe': r.key, **rep, 'blend': blend, 'employment': emp,
                                       **({'other': {f'{sec}.{sub}': mods for (sec, sub), mods in rest.items()}} if rest else {})})
 
@@ -1869,8 +1871,12 @@ def main():
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab()
               + obs_pad())
-    if start_shares:
-        write('common/history/global/pmr_start_shares.txt', header + start_shares_history(start_shares))
+    for rel, text in history_start_shares(args.game, start_shares).items():
+        # vanilla's own text with names added: no header, so the game's line numbers still match vanilla's
+        path = os.path.join(args.out, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write('\ufeff' + text)
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -4735,30 +4741,48 @@ def profile_pulse_state(buildings):
             + ''.join(f'pmr_prof_{k} = {{\n\t{paused}\n\teffect = {{\n{e}\t}}\n}}\n' for k, e in steps) + '\n')
 
 
-def start_shares_history(start_shares):
-    """common/history/global (run last among all history, vanilla's 00_global.txt says): each history building still on
-    its start method takes the shares of the recipe history named, as PMR's setup would give it (pmr_blend_<b>, all
-    levels on that recipe). Pat 2026-10-21 19:31Z, France: every port began the game short of workers. The start method
-    puts a new building on recipe 1 at 100% (SHARE_STEPS), and the game staffs history's buildings on that; the setup
-    then moved them to the recipe history named, a port from an anchorage's 100 jobs a level to a basic port's 1,000.
-    The same moves are made here, before the game staffs them, the way vanilla's history/production_methods activates a
-    method. pmr_in_tick keeps on_production_method_changed from ticking them."""
-    o = []
-    for bk, (b, start) in start_shares.items():
-        if not start:
-            continue
-        is_on = lambda pm, bk=bk: f'is_production_method_active = {{ building_type = {bk} production_method = {pm} }}'   # noqa: E731
-        o.append(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ {is_on(f"pm_pmr_start_{b}")} }}\n')
-        for n, (key, moves) in enumerate(start):
-            o.append(f'\t\t\t\t{"else_if" if n else "if"} = {{\n\t\t\t\t\tlimit = {{ {is_on(key)} }}\n'
-                     + ''.join(f'\t\t\t\t\tactivate_production_method = {{ building_type = {bk} '
-                               f'production_method = pm_pmr_share_{b}_{j}_{val} }}\n' for j, val in moves)
-                     + '\t\t\t\t}\n')
-        o.append('\t\t\t}\n')
-    return (''.join(f'# {ln.strip()}\n' for ln in start_shares_history.__doc__.splitlines())
-            + 'GLOBAL = {\n\tevery_country = {\n\t\tevery_scope_state = {\n'
-            '\t\t\tset_variable = { name = pmr_in_tick value = yes days = 1 }\n' + ''.join(o)
-            + '\t\t\tremove_variable = pmr_in_tick\n\t\t}\n\t}\n}\n')
+def history_start_shares(game, start_shares):
+    """{published path: text}: vanilla's history building files, each treated building's create_building also naming its
+    start method and the shares of the recipe history named (start_shares, all levels on that recipe as PMR's setup
+    would put them, pmr_blend_<b>). Pat 2026-10-21 19:31Z, France: every port began the game short of workers. The start
+    method put a new building on recipe 1 at 100% (SHARE_STEPS), the game staffed history's buildings on that, and the
+    setup then moved them to their own recipe: a port from an anchorage's 100 jobs a level to a basic port's 1,000.
+    q73 set the shares in a history/global file, the last history to run: every basic port took its share (Great
+    Britain 13 of 13) but none was staffed for it (Pat's q73 start, 20:41Z), so the game staffs before that. Named here,
+    the shares go in as create_building makes the building, the way vanilla names a method another one unlocks
+    (pm_increased_hardwood after pm_saw_mills); the start method unlocks 0% and 100% of every recipe for this (ladder).
+    Only the files with a name added are published; the rest of the text is vanilla's, byte for byte."""
+    src = os.path.join(game, 'common', 'history', 'buildings')
+    names = sorted(f for f in os.listdir(src) if f.endswith('.txt')) if os.path.isdir(src) else []
+    if start_shares and not names:
+        raise SystemExit(f'{src}: no history building files; the starting buildings would be staffed on recipe 1')
+    out = {}
+    for fn in names:
+        with open(os.path.join(src, fn), encoding='utf-8-sig', newline='') as f:
+            text = f.read()
+        edits = []   # (position, text to insert)
+        for m in re.finditer(r'\bcreate_building\s*=\s*\{', text):
+            depth, k = 1, m.end()
+            while depth:
+                depth += {'{': 1, '}': -1}.get(text[k], 0)
+                k += 1
+            block = text[m.end():k - 1]
+            bm = re.search(r'\bbuilding\s*=\s*"?(\w+)"?', block)
+            pm = re.search(r'\bactivate_production_methods\s*=\s*\{([^{}]*)\}', block)
+            if not bm or not pm or bm.group(1) not in start_shares:
+                continue
+            b, start = start_shares[bm.group(1)]
+            named = {x.strip('"') for x in pm.group(1).split()}
+            # the recipe the setup reads first (pmr_running_<b>: the targets in order)
+            moves = next((mv for key, mv in start if key in named), None)
+            if moves:
+                add = ''.join(f' "{x}"' for x in [f'pm_pmr_start_{b}'] + [f'pm_pmr_share_{b}_{j}_{n}' for j, n in moves])
+                edits.append((m.end() + pm.end(1), add + ' '))
+        if edits:
+            for pos, add in reversed(edits):
+                text = text[:pos] + add + text[pos:]
+            out[f'common/history/buildings/{fn}'] = text
+    return out
 
 
 def dispatch_effects(buildings):
@@ -7563,7 +7587,7 @@ SKIP_REPORT
 # Test builds: how Great Britain's and Austria's buildings start a new game, before PMR's first tick (q61). half = levels
 # at 50% staffing or more; ranches, of them ranch_100 / ranch_0 with the first recipe share at 100% / 0% and
 # ranch_start on the start method (q62); ports, of them port_basic on a basic port, and of those port_share2 with its
-# share at 100% and port_half at 50% staffing or more (q73, start_shares_history).
+# share at 100% and port_half at 50% staffing or more (q74, history_start_shares).
 START_PORTS = ('\t\t\t\t\tif = {\n\t\t\t\t\t\tlimit = { is_building_type = building_port }\n'
                '\t\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_p add = 1 } }\n'
                '\t\t\t\t\t\tif = {\n\t\t\t\t\t\t\tlimit = { has_active_production_method = pm_basic_port }\n'
