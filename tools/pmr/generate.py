@@ -260,6 +260,11 @@ AUTOMATION_GOODS_STEP = 0.1    # goods rounded down to this, never below it, so 
 # Pat, 2026-10-19 01:07Z: a new pick becomes that default (pmr_best_now_<b>) only once a bar has filled for
 # SWITCH_MONTHS monthly pulses, green up to a newer recipe, red down to an older one (pmr_switch_<b>).
 PROFIT_TARGET = True
+# Pat 2026-10-21 12:37Z (decision card "Try it"; performance review 9, B1): a state's buildings update on every
+# TICK_EVERY-th monthly pulse of the state, half the states each month (pmr_ph, state_turn), so a month runs about half
+# of the state tick. Each rate that was "a month" grows by TICK_EVERY an update to keep its pace: a trade-off's step and
+# the switching bar's points. The wage watch reads the wage at each update, so every other month as before (review 8, T-1).
+TICK_EVERY = 2
 PROFIT_RECHECK_DAYS = 182
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
@@ -1021,8 +1026,9 @@ def main():
     ap.add_argument('--obs-parts-off', action='store_true',
                     help='test build: observer games switch one part of PMR\'s monthly script off a year (OBS_PARTS)')
     ap.add_argument('--obs-pad', action='store_true',
-                    help='test build: observer games give every state OBS_PAD_N dummy variables in OBS_PAD_YEARS, to time '
-                         'what the count of a state\'s variables costs (review 9)')
+                    help='test build: observer games give every state OBS_PAD_N dummy variables in OBS_PAD_YEARS and update '
+                         'every state monthly in OBS_MONTHLY_YEARS, to time what the count of a state\'s variables costs '
+                         '(review 9) and what TICK_EVERY saves')
     ap.add_argument('--script-profile', action='store_true',
                     help='test build: the HUD writes the script profiler\'s totals every minute (patch_hud_profile); '
                          'the game needs the -script_profiling launch option')
@@ -1828,10 +1834,10 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods))
           + ''.join(trade_budget(g) for g in budget_goods(options)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
-    on_actions = ON_ACTIONS
+    on_actions = ON_ACTIONS.replace('STATE_TURN', state_turn())
     if args.script_profile:
-        if on_actions.count(PULSE_STATE_HOOK) != 1 or on_actions.count(PULSE_STATE_EFFECT) != 1:
-            raise SystemExit('pmr_on_monthly_pulse_state changed; update PULSE_STATE_EFFECT and profile_pulse_state')
+        if on_actions.count(PULSE_STATE_HOOK) != 1 or on_actions.count(pulse_state_effect()) != 1:
+            raise SystemExit('pmr_on_monthly_pulse_state changed; update pulse_state_effect and profile_pulse_state')
         on_actions = on_actions.replace(PULSE_STATE_HOOK, profile_pulse_state(dispatch))
     write('common/on_actions/pmr_on_actions.txt', header + on_actions.replace('TECH_CRUMB', flush_log('TECH', '-'))
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
@@ -2654,6 +2660,8 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                  '\t\t\tround_variable = { name = pmr_m nearest = 1 }\n'
                  f'\t\t\tif = {{ limit = {{ var:pmr_m < {TRADE_STEP_MIN} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MIN} }} }}\n'
                  f'\t\t\tif = {{ limit = {{ var:pmr_m > {TRADE_STEP_MAX} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MAX} }} }}\n'
+                 # TICK_EVERY (Pat 2026-10-21 12:37Z): the step of TICK_EVERY months, capped below by what the options hold
+                 + every_other(f'change_variable = {{ name = pmr_m multiply = {TICK_EVERY} }}', '\t\t\t') +
                  f'\t\t\tif = {{ limit = {{ var:pmr_wi = 0 var:{xv("pmr_xn", gi)} < var:pmr_m }} '
                  f'set_variable = {{ name = pmr_m value = var:{xv("pmr_xn", gi)} }} }}\n'
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} var:{xv("pmr_x", x.j)} < var:pmr_m }} '
@@ -4355,10 +4363,10 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                        f'\tchange_variable = {{ name = pmr_wg{e}_{b} multiply = {fmt(1 + s * PRICE_MOVE)} }}\n'
                        for e, s in (('h', 1), ('l', -1)))
              + f'\tset_variable = {{ name = pmr_pmb_{b} value = {len(goods) + PROFIT_RULE} }}\n}}\n\n')
-    # pmr_moved_<b>: on a monthly pulse, pmr_pmv when a good's price or the wage moved PRICE_MOVE off what the last
-    # run used; prices first (read once a day per state anyway), the wage only when they stand, and only every other
-    # monthly pulse (review 8, T-1: a wage move lands up to a month later). Bounds from an older
-    # build (no pmr_pmb_<b>, or another goods count) recompute at once.
+    # pmr_moved_<b>: on a monthly update (TICK_EVERY), pmr_pmv when a good's price or the wage moved PRICE_MOVE off what
+    # the last run used; prices first (read once a day per state anyway), the wage only when they stand. Updates come
+    # every other month, so the wage is read every other month as review 8's T-1 had it (Pat 2026-10-21 02:37Z).
+    # Bounds from an older build (no pmr_pmb_<b>, or another goods count) recompute at once.
     o.append(f'pmr_moved_{b} = {{\n'
              f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pmb_{b} }} NOT = {{ var:pmr_pmb_{b} = {len(goods) + PROFIT_RULE} }} }} }}\n'
              '\t\tset_variable = pmr_pmv\n\t}\n\telse = {\n'
@@ -4366,11 +4374,9 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ('\t\tif = { limit = { OR = { ' + ' '.join(f'var:pmr_px_{g} >= var:pmr_pxh_{g}_{b} var:pmr_px_{g} <= var:pmr_pxl_{g}_{b}'
                                                           for g in goods) + ' } } set_variable = pmr_pmv }\n'
                 '\t\telse = {\n' if goods else '\t\tif = { limit = { always = yes }\n')
-             # review 8, T-1 (Pat 2026-10-21 02:37Z): the wage is read for this every other monthly pulse (pmr_wgo_<b>)
-             + f'\t\t\tif = {{ limit = {{ has_variable = pmr_wgo_{b} }} remove_variable = pmr_wgo_{b} }}\n'
-             f'\t\t\telse = {{\n\t\t\t\tset_variable = pmr_wgo_{b}\n\t\t\t\tpmr_wage_{b} = yes\n'
-             f'\t\t\t\tif = {{ limit = {{ OR = {{ var:pmr_wg_{b} >= var:pmr_wgh_{b} var:pmr_wg_{b} <= var:pmr_wgl_{b} }} }} '
-             'set_variable = pmr_pmv }\n\t\t\t}\n\t\t}\n\t}\n}\n\n')
+             + f'\t\t\tpmr_wage_{b} = yes\n'
+             f'\t\t\tif = {{ limit = {{ OR = {{ var:pmr_wg_{b} >= var:pmr_wgh_{b} var:pmr_wg_{b} <= var:pmr_wgl_{b} }} }} '
+             'set_variable = pmr_pmv }\n\t\t}\n\t}\n}\n\n')
 
     # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
     def var(name, d=0):
@@ -4458,9 +4464,12 @@ def switch_effect(b, bk, k, setv, v, var):
             + clear.replace('\t\t', '\t\t\t')
             + f'\t\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n\t\t}}\n'
             # Pat 12:59Z: the bigger the gain over the default, the more points a month (pmr_swr_<b>, profit_effect)
+            # TICK_EVERY (Pat 2026-10-21 12:37Z): an update every other month adds two months' points
             f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_month NOT = {{ var:{v("pmr_swd")} = 0 }} }}\n'
-            f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} change_variable = {{ name = {v("pmr_sw")} add = var:{v("pmr_swr")} }} }}\n'
-            f'\t\t\telse = {{ change_variable = {{ name = {v("pmr_sw")} add = 1 }} }}\n\t\t}}\n'
+            '\t\t\tset_variable = { name = pmr_t value = 1 }\n'
+            f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} set_variable = {{ name = pmr_t value = var:{v("pmr_swr")} }} }}\n'
+            + every_other(f'change_variable = {{ name = pmr_t multiply = {TICK_EVERY} }}', '\t\t\t')
+            + f'\t\t\tchange_variable = {{ name = {v("pmr_sw")} add = var:pmr_t }}\n\t\t}}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_sw")} >= {SWITCH_MONTHS} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};months={var(v('pmr_sw'))}\" }}\n"
@@ -4606,27 +4615,59 @@ def state_tick_type(bk, t='\t'):
             f'{t}\tpmr_close_retool_{b} = yes\n'
             + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
                       for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
-                                f'pmr_bok_{b}', f'pmr_wgo_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ()))
+                                f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ()))
             + f'{t}}}\n')
 
 
 # --script-profile: the text profiler keys its totals by top-level block, so the monthly state pulse runs as one
 # on_action per step, each its own effect block: the opening (pmr_month, the state's electricity), each building
 # type's tick, the closing, then the four state checks. The same effects in the same order as
-# pmr_on_monthly_pulse_state (PULSE_STATE_EFFECT, checked), which the other builds run.
-PULSE_STATE_EFFECT = ('\t\tset_variable = pmr_month\n\t\tpmr_state_tick = yes\n\t\tremove_variable = pmr_month\n'
-                      '\t\tpmr_auto_best = yes\n\t\tpmr_principle_bonus = yes\n\t\tpmr_probe_state = yes\n'
-                      '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n')
+# pmr_on_monthly_pulse_state (pulse_state_effect, checked), which the other builds run.
+def state_turn():
+    """pmr_on_monthly_pulse_state's building update, every TICK_EVERY-th pulse of the state (Pat 2026-10-21 12:37Z):
+    pmr_ph 1 runs it, then 2 waits a pulse. A state seen the first time (a new game, or a save from before) takes the
+    phase after the last state's (pmr_ph_g), so half the states update each month. --obs-pad: in OBS_MONTHLY_YEARS
+    (pmr_b1_off) every pulse runs it, as before."""
+    tick = ('\t\t\tset_variable = pmr_month\n'
+            "\t\t\tpmr_state_tick = yes   # this state's turn\n"
+            '\t\t\tremove_variable = pmr_month\n')
+    out = ('\t\tif = {\n\t\t\tlimit = { NOT = { has_variable = pmr_ph } }\n'
+           '\t\t\tif = { limit = { has_global_variable = pmr_ph_g } remove_global_variable = pmr_ph_g '
+           'set_variable = { name = pmr_ph value = 2 } }\n'
+           '\t\t\telse = { set_global_variable = pmr_ph_g set_variable = { name = pmr_ph value = 1 } }\n\t\t}\n')
+    if OBS_PAD:
+        out += '\t\tif = {\n\t\t\tlimit = { has_global_variable = pmr_b1_off }\n' + tick + '\t\t}\n\t\telse_if = {\n'
+    else:
+        out += '\t\tif = {\n'
+    return (out + '\t\t\tlimit = { var:pmr_ph = 1 }\n\t\t\tset_variable = { name = pmr_ph value = 2 }\n' + tick
+            + '\t\t}\n\t\telse = { set_variable = { name = pmr_ph value = 1 } }\n')
+
+
+def every_other(effect, t):
+    """effect, one line indented by t, that makes a step TICK_EVERY months long; --obs-pad skips it in OBS_MONTHLY_YEARS
+    (pmr_b1_off), when every monthly pulse updates"""
+    if OBS_PAD:
+        return f'{t}if = {{ limit = {{ NOT = {{ has_global_variable = pmr_b1_off }} }} {effect} }}\n'
+    return f'{t}{effect}\n'
+
+
+def pulse_state_effect():
+    """pmr_on_monthly_pulse_state's effect, as written (checked by --script-profile)"""
+    return (state_turn() + '\t\tpmr_auto_best = yes\n\t\tpmr_principle_bonus = yes\n\t\tpmr_probe_state = yes\n'
+            '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n')
 PULSE_STATE_HOOK = 'on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }\n'
 
 
 def profile_pulse_state(buildings):
     """on_actions text: the monthly state pulse split into steps (--script-profile), replacing PULSE_STATE_HOOK."""
     paused = 'trigger = { NOT = { has_global_variable = pmr_ticks_paused } }'
-    steps = [('open', '\t\tset_variable = pmr_month\n\t\tset_variable = pmr_bulk\n\t\tpmr_read_elec = yes\n'
-                      '\t\tset_variable = pmr_elec_read\n')]
-    steps += [(f't_{short(bk)}', state_tick_type(bk, '\t\t')) for bk in buildings]
-    steps += [('close', '\t\tremove_variable = pmr_elec_read\n\t\tremove_variable = pmr_bulk\n\t\tremove_variable = pmr_month\n')]
+    # this state's turn (state_turn) sets pmr_month for the steps between open and close
+    turn = state_turn().replace("\t\t\tpmr_state_tick = yes   # this state's turn\n", '').replace('\t\t\tremove_variable = pmr_month\n', '')
+    steps = [('open', turn + '\t\tset_variable = pmr_bulk\n\t\tpmr_read_elec = yes\n\t\tset_variable = pmr_elec_read\n')]
+    steps += [(f't_{short(bk)}', '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_month }\n' + state_tick_type(bk, '\t\t\t') + '\t\t}\n')
+              for bk in buildings]
+    steps += [('close', '\t\tremove_variable = pmr_elec_read\n\t\tremove_variable = pmr_bulk\n'
+                        '\t\tif = { limit = { has_variable = pmr_month } remove_variable = pmr_month }\n')]
     steps += [(k, f'\t\t{e} = yes\n') for k, e in (('auto_best', 'pmr_auto_best'), ('principle', 'pmr_principle_bonus'),
                                                      ('probe', 'pmr_probe_state'), ('urb', 'pmr_urb_check'))]
     return ('# --script-profile: the monthly state pulse one step per on_action, for the script profiler\n'
@@ -7103,9 +7144,8 @@ OBS_ALT_PARTS = (('watch', 1849), ('opts', 1851), ('treat', 1853))
 OBS_PARTS_ON = False   # set by main()
 OBS_PART_HOOKS = {   # file: (text, the same with the part's switch), each found once
     'common/on_actions/pmr_on_actions.txt': [
-        ('\t\tset_variable = pmr_month\n\t\tpmr_state_tick = yes\n\t\tremove_variable = pmr_month\n',
-         '\t\tif = {\n\t\t\tlimit = { NOT = { has_global_variable = pmr_off_tick } }\n\t\t\tset_variable = pmr_month\n'
-         '\t\t\tpmr_state_tick = yes\n\t\t\tremove_variable = pmr_month\n\t\t}\n'),
+        ("\t\t\tpmr_state_tick = yes   # this state's turn\n",
+         "\t\t\tif = { limit = { NOT = { has_global_variable = pmr_off_tick } } pmr_state_tick = yes }   # this state's turn\n"),
         ('\t\tpmr_auto_best = yes\n\t\tpmr_principle_bonus = yes\n\t\tpmr_probe_state = yes\n'
          '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n',
          '\t\tif = {\n\t\t\tlimit = { NOT = { has_global_variable = pmr_off_checks } }\n\t\t\tpmr_auto_best = yes\n'
@@ -7175,7 +7215,8 @@ def obs_ab():
 
 
 OBS_PAD_N = 2000                        # --obs-pad: dummy variables per state ...
-OBS_PAD_YEARS = range(1839, 1855, 2)    # ... in these years; none in the years between
+OBS_PAD_YEARS = (1839, 1843, 1847, 1851)        # ... in these years; none in the others
+OBS_MONTHLY_YEARS = (1841, 1845, 1849, 1853)    # every monthly pulse updates every state's buildings (TICK_EVERY off)
 OBS_PAD = False   # set by main()
 OBS_PAD_HOOK = ('\t\tpmr_obs_ab = yes\n', '\t\tpmr_obs_ab = yes\n\t\tif = { limit = { gdp_ranking <= 1 } pmr_obs_pad_month = yes }\n')
 OBS_PAD_ON_ACTIONS = '''
@@ -7191,14 +7232,18 @@ def obs_pad():
     """--obs-pad (review 9): is a variable's cost tied to how many its holder has? The q69 save holds 1.46 million PMR
     variables, a median of 1,149 per state, 75% of them 0. An observer game gives every state OBS_PAD_N more (value 0,
     never read but here) at its first monthly pulse of each year in OBS_PAD_YEARS and takes them away at its first in
-    the year after, so one run times months with and without them; nothing else changes. A dummy created in January
-    sits after the state's older variables and before any it creates later. Monthly, at the largest economy's pulse:
-    one PAD line with the count of states holding them (padded=)."""
+    the year after, so one run times months with and without them. A dummy created in January sits after the state's
+    older variables and before any it creates later. Pat 2026-10-21 12:38Z ("q70/71 in one test"): the same run
+    updates every state's buildings at every monthly pulse in OBS_MONTHLY_YEARS (pmr_b1_off: TICK_EVERY's single
+    steps), every other one in the rest, so it times TICK_EVERY too. Monthly, at the largest economy's pulse: one PAD
+    line with the count of states holding the dummies (padded=) and monthly=1 in OBS_MONTHLY_YEARS."""
     if not OBS_PAD:
         return ''
     on = 'OR = { ' + ' '.join(f'AND = {{ game_date >= {y}.1.1 game_date < {y + 1}.1.1 }}' for y in OBS_PAD_YEARS) + ' }'
+    monthly = 'OR = { ' + ' '.join(f'AND = {{ game_date >= {y}.1.1 game_date < {y + 1}.1.1 }}' for y in OBS_MONTHLY_YEARS) + ' }'
     names = [f'pmr_obs_pad_{n}' for n in range(1, OBS_PAD_N + 1)]
-    line = 'PMR;rec=TEST;arm=PAD;date=[TimeKeeper.GetCurrentDate.GetString];padded='
+    line = ('PMR;rec=TEST;arm=PAD;date=[TimeKeeper.GetCurrentDate.GetString];'
+            'monthly=[THIS.Var(\'pmr_obs_padm\').GetValue|0];padded=')
     return (''.join(f'# {ln.strip()}\n' for ln in obs_pad.__doc__.splitlines())
             + '# State scope.\npmr_obs_pad = {\n\tif = {\n'
             f'\t\tlimit = {{ {on} NOT = {{ has_variable = {names[0]} }} }}\n'
@@ -7207,12 +7252,17 @@ def obs_pad():
             + ''.join(f'\t\tif = {{ limit = {{ has_variable = {v} }} remove_variable = {v} }}\n' for v in names)
             + '\t}\n}\n\n'
             '# Country scope, the largest economy\'s monthly pulse.\npmr_obs_pad_month = {\n'
+            f'\tif = {{\n\t\tlimit = {{ {monthly} }}\n'
+            '\t\tif = { limit = { NOT = { has_global_variable = pmr_b1_off } } set_global_variable = pmr_b1_off }\n\t}\n'
+            '\telse_if = { limit = { has_global_variable = pmr_b1_off } remove_global_variable = pmr_b1_off }\n'
+            '\tset_variable = { name = pmr_obs_padm value = 0 }\n'
+            '\tif = { limit = { has_global_variable = pmr_b1_off } set_variable = { name = pmr_obs_padm value = 1 } }\n'
             '\tset_variable = { name = pmr_obs_padn value = 0 }\n'
             f'\tevery_state = {{\n\t\tlimit = {{ has_variable = {names[-1]} }}\n'
             '\t\troot = { change_variable = { name = pmr_obs_padn add = 1 } }\n\t}\n'
             f'\tif = {{ limit = {{ var:pmr_obs_padn > 0 }} debug_log = "{line}[THIS.Var(\'pmr_obs_padn\').GetValue|0]" }}\n'
             f'\telse = {{ debug_log = "{line}0" }}\n'
-            '\tremove_variable = pmr_obs_padn\n}\n\n')
+            '\tremove_variable = pmr_obs_padn\n\tremove_variable = pmr_obs_padm\n}\n\n')
 
 
 # Pat 2026-10-19 21:20Z: the observer run tracks the ranches' wool, the mines' explosives and the plantations' processing
@@ -7401,15 +7451,12 @@ pmr_on_acquired_technology = {
 	}
 }
 
-# Root = state. Backstop: recompute the shares and re-apply the blend once a month even if no event fired.
-# pmr_month marks the monthly tick: the trade-off shares step and the treatment shares are recounted.
+# Root = state. Backstop: recompute the shares and re-apply the blend every other month (TICK_EVERY) even if no event
+# fired. pmr_month marks that tick: the trade-off shares step and the treatment shares are recounted.
 pmr_on_monthly_pulse_state = {
 	trigger = { NOT = { has_global_variable = pmr_ticks_paused } }
 	effect = {
-		set_variable = pmr_month
-		pmr_state_tick = yes
-		remove_variable = pmr_month
-		pmr_auto_best = yes
+STATE_TURN		pmr_auto_best = yes
 		pmr_principle_bonus = yes
 		pmr_probe_state = yes
 		pmr_urb_check = yes   # the state Buildings tab's own list
