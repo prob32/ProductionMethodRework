@@ -1020,17 +1020,24 @@ def main():
                     help='test build: observer games pause PMR\'s script in OBS_AB_YEARS, to time months without it')
     ap.add_argument('--obs-parts-off', action='store_true',
                     help='test build: observer games switch one part of PMR\'s monthly script off a year (OBS_PARTS)')
+    ap.add_argument('--obs-pad', action='store_true',
+                    help='test build: observer games give every state OBS_PAD_N dummy variables in OBS_PAD_YEARS, to time '
+                         'what the count of a state\'s variables costs (review 9)')
     ap.add_argument('--script-profile', action='store_true',
                     help='test build: the HUD writes the script profiler\'s totals every minute (patch_hud_profile); '
                          'the game needs the -script_profiling launch option')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
-    global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON
+    global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD
     RELEASE = args.release
     SHARE_DIGITS = args.digit_shares
     OBS_AB = args.obs_script_off
     OBS_PARTS_ON = args.obs_parts_off
+    OBS_PAD = args.obs_pad
+    if OBS_PAD and (args.release or OBS_AB or OBS_PARTS_ON or args.script_profile):
+        raise SystemExit('--obs-pad is a test build of its own: not with --release, --obs-script-off, --obs-parts-off '
+                         'or --script-profile')
     if OBS_PARTS_ON and (args.release or OBS_AB or args.script_profile):
         raise SystemExit('--obs-parts-off is a test build of its own: not with --release, --obs-script-off or --script-profile')
     if args.test_name and args.release:
@@ -1828,12 +1835,15 @@ def main():
         on_actions = on_actions.replace(PULSE_STATE_HOOK, profile_pulse_state(dispatch))
     write('common/on_actions/pmr_on_actions.txt', header + on_actions.replace('TECH_CRUMB', flush_log('TECH', '-'))
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
-          .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n')
+          .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n'
+                   + ('on_monthly_pulse_state = { on_actions = { pmr_obs_monthly_state } }\n' if OBS_PAD else ''))
           .replace('START_STAFF', '' if RELEASE else START_STAFF)
           .replace('START_LEFT', '' if RELEASE else START_LEFT)
-          + ('' if RELEASE else OBS_ON_ACTIONS))
+          + ('' if RELEASE else OBS_ON_ACTIONS.replace(OBS_PAD_HOOK[0], OBS_PAD_HOOK[1]) + OBS_PAD_ON_ACTIONS if OBS_PAD else
+             OBS_ON_ACTIONS))
     if not RELEASE:
-        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab())
+        write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab()
+              + obs_pad())
     write('events/pmr_events.txt', header + EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
@@ -2786,7 +2796,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
              + ''.join(f'\t\tpmr_xinit_{gi}_{b} = yes\n' if mode == 'market' else f'\t\tpmr_xtreat_{gi}_{b} = yes\n'
                        for g, gi, mode, *_ in conv)
              + '\t}\n\telse_if = {\n\t\tlimit = { has_variable = pmr_month }\n'
-             + ''.join(f'\t\tpmr_xstep_{gi}_{b} = yes\n' if mode == 'market' else f'\t\tpmr_xtreat_{gi}_{b} = yes\n'
+             + ''.join(f'\t\tpmr_xstep_{gi}_{b} = yes\n' if mode == 'market' else
+                       (f'\t\tif = {{ limit = {{ NOT = {{ has_global_variable = pmr_off_treat }} }} pmr_xtreat_{gi}_{b} = yes }}\n'
+                        if OBS_PARTS_ON else f'\t\tpmr_xtreat_{gi}_{b} = yes\n')
                        for g, gi, mode, *_ in conv)
              + f'\t}}\n\tif = {{ limit = {{ has_variable = {bv("pmr_xnew")} }} remove_variable = {bv("pmr_xnew")} }}\n'
              f'\tpmr_xapply_{b} = yes\n')
@@ -3887,7 +3899,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + ('' if RELEASE else
                 '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
                 f'\tif = {{ limit = {{ owner = {{ is_player = yes }} }} pmr_read_blend_{b} = yes }}\n')
-             + (f'\tpmr_opts_{b} = yes\n' if opts else '') +
+             + ((f'\tif = {{ limit = {{ OR = {{ NOT = {{ has_global_variable = pmr_off_opts }} NOT = {{ has_variable = pmr_xinit_{b} }} }} }} '
+                 f'pmr_opts_{b} = yes }}\n' if OBS_PARTS_ON else f'\tpmr_opts_{b} = yes\n') if opts else '') +
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
              f'\t\tset_variable = {v("pmr_retooling")}\n'
              f'\t\tpmr_read_earnings_{b} = yes\n'
@@ -3962,6 +3975,17 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + f'\tif = {{ limit = {{ var:pmr_c_need_{b} > 0 }} set_variable = {{ name = pmr_c_retooling_{b} value = 1 }} }}\n'
              f'\telse = {{ set_variable = {{ name = pmr_c_retooling_{b} value = 0 }} }}\n'
              '}\n\n')
+    # Country scope: drop the totals above from a country no player views (pmr_c_sum_all). Saves from before review 9
+    # carry a copy for every country from game start, about 380,000 variables by 1855 (q69), none ever read: every
+    # reader is the player's (GUI GetPlayer, pmr_switch_<b> is_player). Each name is checked, as an older version may
+    # have set fewer.
+    c_all = (['level', 'need', 'room_gov'] + [f'lv_{i}' for i in range(1, k + 1)] + ['swm', 'sw', 'swd', 'swto', 'now', 'swg']
+             + [f'sh_{i}' for i in range(1, k + 1)] + [f'rs_{j}' for j, idxs, grp in (bm if split else []) if grp == 'recipe']
+             + ['retooling'])
+    gone = [f'pmr_c_{n}_{b}' for n in c_all] + [f'pmr_cf_{n}_{b}' for n in cnames]
+    o.append(f'pmr_c_clear_{b} = {{\n'
+             + ''.join(f'\tif = {{ limit = {{ has_variable = {g} }} remove_variable = {g} }}\n' for g in gone)
+             + '}\n\n')
 
     # The guarded entry point, after the body it calls (every scripted effect here is defined before use).
     # pmr_runs_<b> counts the day's outermost ticks (pmr_rday_<b> marks the day); past TICK_TRIP the
@@ -4375,7 +4399,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     first = f'has_variable = pmr_month NOT = {{ has_variable = pmr_pmkt_{b} }}'
     o.append(f'pmr_best_{b} = {{\n{newest}'
              '\t# Pat 02:43Z: each monthly pulse after the first pick at market prices looks for moved prices or wage\n'
-             f'\tif = {{ limit = {{ has_variable = pmr_month has_variable = pmr_pmkt_{b} }} pmr_moved_{b} = yes }}\n'
+             f'\tif = {{ limit = {{ has_variable = pmr_month has_variable = pmr_pmkt_{b}'
+             + (' NOT = { has_global_variable = pmr_off_watch }' if OBS_PARTS_ON else '') + f' }} pmr_moved_{b} = yes }}\n'
              f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pchk_{b} }} '
              f'NOT = {{ has_variable = {v("pmr_new")} }} NOT = {{ var:{v("pmr_new")} = var:{v("pmr_new_now")} }} '
              f'has_variable = {v("pmr_new_build")} AND = {{ {first} }} has_variable = pmr_pmv }} }}\n'
@@ -4690,10 +4715,19 @@ def dispatch_effects(buildings):
     for bk in buildings:
         o.append(f'\tpmr_c_sum_{short(bk)} = yes\n')
     o.append('\tremove_variable = pmr_c_abroad\n}\n\n'
-             '# The same for a player\'s country only (monthly, on research).\n'
+             '# Country scope: no Buildings tab totals (a country no player views; pmr_c_sum_all).\n'
+             'pmr_c_clear = {\n')
+    for bk in buildings:
+        o.append(f'\tpmr_c_clear_{short(bk)} = yes\n')
+    o.append('}\n\n'
+             '# The same for a player\'s country only (monthly, on research). Another country\'s totals, left from a save\n'
+             '# made before review 9 (every country\'s, from game start) or by a player gone, are dropped at its next pulse.\n'
              'pmr_c_sum_all = {\n\tif = {\n\t\tlimit = { pmr_c_viewer = yes }\n'
              '\t\tpmr_c_sum_every = yes\n'
              '\t\tdebug_log = "PMR;rec=CSUM;date=[TimeKeeper.GetCurrentDate.GetString]"\n'
+             f'\t}}\n\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_c_level_{short(buildings[0])} }}\n'
+             '\t\tpmr_c_clear = yes\n'
+             '\t\tdebug_log = "PMR;rec=CCLEAR;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting]"\n'
              '\t}\n}\n')
     if not RELEASE:
         counts = ('pmr_sk_skip', 'pmr_sk_ran', 'pmr_sk_checked')
@@ -7060,6 +7094,12 @@ OBS_AB = False   # set by main()
 # in the years between: the state tick, the state's other checks, the company tick, the investment and Buildings-tab
 # sums. Pairs (part, year).
 OBS_PARTS = (('tick', 1839), ('checks', 1841), ('companies', 1843), ('invest', 1845), ('all', 1847))
+# Review 9: three parts inside the state tick, each expected under a year's noise (about 0.4 s a month in q69), so
+# each is off in alternate months for two years from its year instead, switched at the largest economy's pulse: the
+# monthly price and wage watch (pmr_moved_<b>, and with it most profit re-checks), the trade-off and treatment step
+# (pmr_opts_<b>, a building already set up), and of that only the treatment recount over the state's pops
+# (pmr_xtreat_<j>_<b>).
+OBS_ALT_PARTS = (('watch', 1849), ('opts', 1851), ('treat', 1853))
 OBS_PARTS_ON = False   # set by main()
 OBS_PART_HOOKS = {   # file: (text, the same with the part's switch), each found once
     'common/on_actions/pmr_on_actions.txt': [
@@ -7106,8 +7146,19 @@ def obs_ab():
         out += ('\t\tif = {\n\t\t\tlimit = { has_global_variable = pmr_obs_abp NOT = { OR = { '
                 + ' '.join(f'AND = {{ {year(y)} }}' for _, y in OBS_PARTS) + ' } } }\n'
                 + lift.replace('\t\tif', '\t\t\tif') + '\t\t\tremove_global_variable = pmr_obs_abp\n'
-                f'\t\t\tdebug_log = "{line.format("RESUMED")}"\n\t\t}}\n\t}}\n}}\n\n')
-        return out
+                f'\t\t\tdebug_log = "{line.format("RESUMED")}"\n\t\t}}\n\t}}\n')
+        # OBS_ALT_PARTS: each interval between two of these lines is a month with the part off (PART_OFF) or on
+        alt = 'PMR;rec=TEST;arm=PART_{};date=[TimeKeeper.GetCurrentDate.GetString];part={}'
+        out += '\tif = {\n\t\tlimit = { gdp_ranking <= 1 }\n'
+        for k, y in OBS_ALT_PARTS:
+            g = f'pmr_off_{k}'
+            out += (f'\t\tif = {{\n\t\t\tlimit = {{ game_date >= {y}.1.1 game_date < {y + 2}.1.1 }}\n'
+                    f'\t\t\tif = {{ limit = {{ has_global_variable = {g} }} remove_global_variable = {g} '
+                    f'debug_log = "{alt.format("ON", k)}" }}\n'
+                    f'\t\t\telse = {{ set_global_variable = {g} debug_log = "{alt.format("OFF", k)}" }}\n\t\t}}\n'
+                    f'\t\telse_if = {{ limit = {{ has_global_variable = {g} }} remove_global_variable = {g} '
+                    f'debug_log = "{alt.format("ON", k)}" }}\n')
+        return out + '\t}\n}\n\n'
     if not OBS_AB:
         return ('pmr_obs_ab = {\n\tif = {\n\t\tlimit = { has_global_variable = pmr_obs_abp }\n'
                 + lift + '\t\tremove_global_variable = pmr_obs_abp\n'
@@ -7121,6 +7172,47 @@ def obs_ab():
             f'\t\telse_if = {{\n\t\t\tlimit = {{ NOT = {{ OR = {{ {years} }} }} has_global_variable = pmr_obs_abp }}\n'
             '\t\t\tremove_global_variable = pmr_ticks_paused\n\t\t\tremove_global_variable = pmr_obs_abp\n'
             f'\t\t\tdebug_log = "{line.format("RESUMED")}"\n\t\t}}\n\t}}\n}}\n\n')
+
+
+OBS_PAD_N = 2000                        # --obs-pad: dummy variables per state ...
+OBS_PAD_YEARS = range(1839, 1855, 2)    # ... in these years; none in the years between
+OBS_PAD = False   # set by main()
+OBS_PAD_HOOK = ('\t\tpmr_obs_ab = yes\n', '\t\tpmr_obs_ab = yes\n\t\tif = { limit = { gdp_ranking <= 1 } pmr_obs_pad_month = yes }\n')
+OBS_PAD_ON_ACTIONS = '''
+# Root = state, an observer game's monthly pulse (--obs-pad): the dummy variables of OBS_PAD_YEARS (pmr_obs_pad).
+pmr_obs_monthly_state = {
+	trigger = { has_global_variable = pmr_obs }
+	effect = { pmr_obs_pad = yes }
+}
+'''
+
+
+def obs_pad():
+    """--obs-pad (review 9): is a variable's cost tied to how many its holder has? The q69 save holds 1.46 million PMR
+    variables, a median of 1,149 per state, 75% of them 0. An observer game gives every state OBS_PAD_N more (value 0,
+    never read but here) at its first monthly pulse of each year in OBS_PAD_YEARS and takes them away at its first in
+    the year after, so one run times months with and without them; nothing else changes. A dummy created in January
+    sits after the state's older variables and before any it creates later. Monthly, at the largest economy's pulse:
+    one PAD line with the count of states holding them (padded=)."""
+    if not OBS_PAD:
+        return ''
+    on = 'OR = { ' + ' '.join(f'AND = {{ game_date >= {y}.1.1 game_date < {y + 1}.1.1 }}' for y in OBS_PAD_YEARS) + ' }'
+    names = [f'pmr_obs_pad_{n}' for n in range(1, OBS_PAD_N + 1)]
+    line = 'PMR;rec=TEST;arm=PAD;date=[TimeKeeper.GetCurrentDate.GetString];padded='
+    return (''.join(f'# {ln.strip()}\n' for ln in obs_pad.__doc__.splitlines())
+            + '# State scope.\npmr_obs_pad = {\n\tif = {\n'
+            f'\t\tlimit = {{ {on} NOT = {{ has_variable = {names[0]} }} }}\n'
+            + ''.join(f'\t\tset_variable = {{ name = {v} value = 0 }}\n' for v in names)
+            + f'\t}}\n\telse_if = {{\n\t\tlimit = {{ NOT = {{ {on} }} has_variable = {names[0]} }}\n'
+            + ''.join(f'\t\tif = {{ limit = {{ has_variable = {v} }} remove_variable = {v} }}\n' for v in names)
+            + '\t}\n}\n\n'
+            '# Country scope, the largest economy\'s monthly pulse.\npmr_obs_pad_month = {\n'
+            '\tset_variable = { name = pmr_obs_padn value = 0 }\n'
+            f'\tevery_state = {{\n\t\tlimit = {{ has_variable = {names[-1]} }}\n'
+            '\t\troot = { change_variable = { name = pmr_obs_padn add = 1 } }\n\t}\n'
+            f'\tif = {{ limit = {{ var:pmr_obs_padn > 0 }} debug_log = "{line}[THIS.Var(\'pmr_obs_padn\').GetValue|0]" }}\n'
+            f'\telse = {{ debug_log = "{line}0" }}\n'
+            '\tremove_variable = pmr_obs_padn\n}\n\n')
 
 
 # Pat 2026-10-19 21:20Z: the observer run tracks the ranches' wool, the mines' explosives and the plantations' processing
@@ -7215,8 +7307,9 @@ OBS_ON_ACTION
 pmr_on_game_started = {
 	effect = {
 		debug_log = "PMR;rec=LOADED;date=[TimeKeeper.GetCurrentDate.GetString];hook=on_game_started"
-START_STAFF		# No country is a player's yet here (no player state logs INIT), so every country gets its
-		# Buildings tab totals now; after this only players' are kept up to date.
+START_STAFF		# No country is a player's yet here (no player state logs INIT), so no Buildings tab totals: pmr.1
+		# sums the players' a day later, and the Buildings panel its own country's as it opens (pmr_c_view_sgui).
+		# Review 9: every country's copy was about 380,000 variables by 1855 (q69), none ever read.
 		# The market has no prices yet: the profit calculation uses base prices meanwhile (profit_effect).
 		set_global_variable = pmr_setup
 		every_country = {
@@ -7224,8 +7317,7 @@ START_STAFF		# No country is a player's yet here (no player state logs INIT), so
 				pmr_state_tick = yes
 				pmr_auto_best = yes   # AUTO_BEST: government administration, universities, trade centres, carriages
 			}
-			pmr_c_sum_every = yes
-			# A day later the players exist: their totals then add buildings abroad (pmr.1).
+			# A day later the players exist: their totals, buildings abroad included (pmr.1).
 			trigger_event = { id = pmr.1 days = 1 }
 		}
 		remove_global_variable = pmr_setup
