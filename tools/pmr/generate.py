@@ -352,9 +352,11 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 'pmg_sheep_ranch')
 TRADE_GAIN = 1.0
 kept_none = set()     # (building, none method) of a trade-off whose none has effects: its marker stays on it
-VANILLA_FIXES = [   # (file, text, replacement): vanilla script errors PMR corrects, each text found once
-    ('common/ai_strategies/00_default_strategy.txt', 'state_region = s:STATE_HAWAII\n', 'state_region = s:STATE_HAWAIIAN_ISLANDS\n'),
-]
+# (file, text, replacement): vanilla script errors PMR corrects, each text found once. Empty since 0.3.1 (Pat
+# 2026-10-21 21:27Z): q59's Hawaii fix shipped a whole copy of common/ai_strategies/00_default_strategy.txt, which
+# overrides any AI or military mod's own copy (a Discord report of the AI dismantling its army). Vanilla's
+# s:STATE_HAWAII script error comes back in games with the Hawaiian Interest journal entry.
+VANILLA_FIXES = []
 PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal entries (off: Hallmark Goods gives prestige goods)
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
@@ -1780,10 +1782,7 @@ def main():
                                                      '\tinvalid = { always = yes }  # PMR: Hallmark Goods gives prestige goods\n'))
                     report.setdefault('prestige_je_off', []).append(jk)
                 write(f'common/journal_entries/{jsrc.name}', jsrc.render())
-    # Pat 2026-10-20 03:35Z ("can we patch that so it doesn't hurt our performance"): vanilla's default AI strategy
-    # compares a state to s:STATE_HAWAII, a region that doesn't exist (STATE_HAWAIIAN_ISLANDS, as vanilla's own
-    # 00_scripted_triggers.txt has it), so every evaluation in a game with the Hawaiian Interest journal entry writes a
-    # script error (q51: about 86 a second by 1868). The file is copied with the name corrected.
+    # each fix copies a whole vanilla file with one text corrected (VANILLA_FIXES)
     for rel, old_s, new_s in VANILLA_FIXES:
         path = os.path.join(game, rel)
         if not os.path.exists(path):
