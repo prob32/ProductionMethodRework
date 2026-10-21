@@ -2490,12 +2490,16 @@ def trade_budget(good):
             + ladder + '\t}\n}\n\n')
 
 
+OPTION_TYPES = set()   # building types with trade-off options (option_effects), the only ones with pmr_xok_<b>
+
+
 def option_effects(bk, b, conv, goods_cost, recipes):
     """State scope, for one building type with converted second groups: pmr_opts_<b>, run by every
     tick after the recipe blend. Sets each option's share (pmr_x_<j>_<b>, 0..SHARE_STEPS) at first
     sight and once a month (pmr_month, set by the monthly pulse), then makes the share methods match."""
     if not conv:
         return ''
+    OPTION_TYPES.add(bk)   # R8-1: only these set pmr_xok_<b>
     opts = [o for _, _, _, _, os_, _ in conv for o in os_]
     bv = lambda name: f'{name}_{b}'               # noqa: E731
     xv = lambda name, j: f'{name}_{j}_{b}'        # noqa: E731
@@ -3267,7 +3271,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # Review 8, R8-1: a building still on it is new, so its trade-off shares are read in full too (pmr_xok_<b>)
     o.append(f'\tif = {{\n\t\tlimit = {{ is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_start_{b} }} }}\n'
              f'\t\tactivate_production_method = {{ building_type = {bk} production_method = pm_pmr_run_{b} }}\n'
-             f'\t\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n\t}}\n')
+             + (f'\t\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n' if opts else '')
+             + '\t}\n')
     # R8-1: the share methods now match pmr_n_<i>. Only this blend changes them (each self-locks: available only
     # while it runs), so until pmr_mix_<b> changes the shares a quiet monthly tick can skip the blend.
     o.append(f'\tset_variable = pmr_bok_{b}\n')
@@ -3482,7 +3487,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     o.append(f'pmr_mix_{b} = {{\n'
              # review 8, R8-1: the shares may change, so the next blend and trade-off read run in full
              f'\tif = {{ limit = {{ has_variable = pmr_bok_{b} }} remove_variable = pmr_bok_{b} }}\n'
-             f'\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n'
+             + (f'\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n' if opts else '')
              + on_index('pmr_to', lambda i: setv("pmr_lv_to", "var:" + lv(i)))
              + f'\t{setv("pmr_need", "var:" + v("pmr_level"))}\n'
              f'\t{chg("pmr_need", "subtract", "var:" + v("pmr_lv_to"))}\n'
@@ -3732,13 +3737,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     fp = [('pmr_level', 'pmr_fp_level'), ('pmr_to', 'pmr_fp_to'), ('pmr_gov_levels', 'pmr_fp_gl')]
     same = (f'has_variable = pmr_fp_{b} var:{v("pmr_conv_gov")} <= 0 var:{v("pmr_conv_priv")} <= 0 var:{v("pmr_to")} > 0 '
             + ' '.join(f'var:{v(a)} = var:{v(s)}' for a, s in fp))
-    # the copies an older save keeps go as the accounting next runs
-    old_fp = [f'pmr_fp_lv_{i}' for i in range(1, k + 1)] + [f'pmr_fp_lvg_{i}' for i in range(1, k + 1)]
+    # (an older save keeps its pmr_fp_lv/lvg copies, unread: removing them names variables a new game never sets,
+    # which error.log lists at every load)
     o.append(f'pmr_recount_{b} = {{\n\tpmr_sync_levels_{b} = yes\n\tpmr_sync_gov_{b} = yes\n\tpmr_progress_{b} = yes\n'
              f'\tpmr_mix_{b} = yes\n\tset_variable = pmr_fp_{b}\n'
-             + ''.join(f'\t{setv(s, "var:" + v(a))}\n' for a, s in fp)
-             + f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_fp_lv_1")} }}\n'
-             + ''.join(f'\t\tremove_variable = {v(n)}\n' for n in old_fp) + '\t}\n}\n\n')
+             + ''.join(f'\t{setv(s, "var:" + v(a))}\n' for a, s in fp) + '}\n\n')
     if not RELEASE:
         # The check (test builds): a player's building that skipped SKIP_CHECK ticks in a row runs the accounting
         # anyway and logs SKIP_MISS for each value it left different from what the skipped ticks had left.
@@ -4578,7 +4581,7 @@ def state_tick_type(bk, t='\t'):
             f'{t}\tpmr_close_retool_{b} = yes\n'
             + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
                       for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
-                                f'pmr_bok_{b}', f'pmr_xok_{b}', f'pmr_wgo_{b}'))
+                                f'pmr_bok_{b}', f'pmr_wgo_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ()))
             + f'{t}}}\n')
 
 
