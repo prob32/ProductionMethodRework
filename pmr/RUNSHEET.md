@@ -31,6 +31,12 @@ switched off at a time:
 | A3 | Step 1 | The build thread compares each off year with its neighbours, and the off months with the on months | A part within 0.15 s of the rest costs nothing worth cutting. The largest gap is where the next cut goes |
 | A4 | Step 1 | error.log has no "Failed to fetch variable" line and no new "used but never set" line naming `pmr_` | Such a line: a read that lost its number; the build thread fixes it first |
 
+Results, from your observer run of 2026-10-21 14:08-14:37Z to January 1856 (/mnt/project-files/pmr/perf/run-a-results.md):
+
+- **A1, A2 and A4 passed.**
+- **A3, off every other month** (autosave months left out): the trade-off and treatment step costs 0.85 s a month, the price and wage watch 0.25 s, the treatment count about nothing.
+- **A3, whole years off** (noisy, about ±0.4 s): the building update 0.78 s, companies 0.38 s, the country pulse 0.28 s, all of PMR 0.71 s; checks no saving.
+
 ## Earlier: buildings updated every other month, timed in one run with the dummy numbers (q71, test mod; run 2026-10-21)
 
 From the build thread, after your 12:37Z card ("Try it") and 12:38Z message ("q70/71 in one test"). q71 is q70 plus:
