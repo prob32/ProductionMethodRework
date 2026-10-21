@@ -5567,7 +5567,9 @@ def hide_pm_reset(menu, lens):
     """Pat 2026-10-20 21:40Z: no "Reset Production Methods" to the national standard. Vanilla offers it in the right-click
     menus of a building and a building type (right_click_menu.gui, five items) and as the Reset Production Methods map
     action (lens_toolbar.gui; map interaction reset_production_methods). Each item is made invisible; the lens grid skips
-    invisible items. Returns (menu, lens)."""
+    invisible items. The lens option's key is the interaction's plus _lens_option (exe strings, like
+    move_capital_lens_option): q67 matched the bare interaction key and the button stayed (Pat 2026-10-21 21:04Z, State
+    Actions). Returns (menu, lens)."""
     item = re.compile(r'(\t*)right_click_menu_item = \{\n')
     out, pos, hidden = [], 0, 0
     for m in item.finditer(menu):
@@ -5588,7 +5590,7 @@ def hide_pm_reset(menu, lens):
     old = ('\t\t\t\t\t\t\t\t\titem = {\n\t\t\t\t\t\t\t\t\t\tflowcontainer = {\n'
            '\t\t\t\t\t\t\t\t\t\t\tlens_option_button = {\n')
     new = ('\t\t\t\t\t\t\t\t\titem = {\n\t\t\t\t\t\t\t\t\t\tflowcontainer = {\n'
-           '\t\t\t\t\t\t\t\t\t\t\tvisible = "[Not(EqualTo_string(LensOption.GetKey, \'reset_production_methods\'))]"  # PMR\n'
+           '\t\t\t\t\t\t\t\t\t\t\tvisible = "[Not(EqualTo_string(LensOption.GetKey, \'reset_production_methods_lens_option\'))]"  # PMR\n'
            '\t\t\t\t\t\t\t\t\t\t\tlens_option_button = {\n')
     if lens.count(old) != 1:
         raise SystemExit(f'lens_toolbar.gui: expected one lens option item, found {lens.count(old)}; update hide_pm_reset')
