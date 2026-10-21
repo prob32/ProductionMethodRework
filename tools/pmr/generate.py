@@ -4329,7 +4329,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                        for e, s in (('h', 1), ('l', -1)))
              + f'\tset_variable = {{ name = pmr_pmb_{b} value = {len(goods) + PROFIT_RULE} }}\n}}\n\n')
     # pmr_moved_<b>: on a monthly pulse, pmr_pmv when a good's price or the wage moved PRICE_MOVE off what the last
-    # run used; prices first (read once a day per state anyway), the wage only when they stand. Bounds from an older
+    # run used; prices first (read once a day per state anyway), the wage only when they stand, and only every other
+    # monthly pulse (review 8, T-1: a wage move lands up to a month later). Bounds from an older
     # build (no pmr_pmb_<b>, or another goods count) recompute at once.
     o.append(f'pmr_moved_{b} = {{\n'
              f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pmb_{b} }} NOT = {{ var:pmr_pmb_{b} = {len(goods) + PROFIT_RULE} }} }} }}\n'
@@ -4338,9 +4339,11 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ('\t\tif = { limit = { OR = { ' + ' '.join(f'var:pmr_px_{g} >= var:pmr_pxh_{g}_{b} var:pmr_px_{g} <= var:pmr_pxl_{g}_{b}'
                                                           for g in goods) + ' } } set_variable = pmr_pmv }\n'
                 '\t\telse = {\n' if goods else '\t\tif = { limit = { always = yes }\n')
-             + f'\t\t\tpmr_wage_{b} = yes\n'
-             f'\t\t\tif = {{ limit = {{ OR = {{ var:pmr_wg_{b} >= var:pmr_wgh_{b} var:pmr_wg_{b} <= var:pmr_wgl_{b} }} }} '
-             'set_variable = pmr_pmv }\n\t\t}\n\t}\n}\n\n')
+             # review 8, T-1 (Pat 2026-10-21 02:37Z): the wage is read for this every other monthly pulse (pmr_wgo_<b>)
+             + f'\t\t\tif = {{ limit = {{ has_variable = pmr_wgo_{b} }} remove_variable = pmr_wgo_{b} }}\n'
+             f'\t\t\telse = {{\n\t\t\t\tset_variable = pmr_wgo_{b}\n\t\t\t\tpmr_wage_{b} = yes\n'
+             f'\t\t\t\tif = {{ limit = {{ OR = {{ var:pmr_wg_{b} >= var:pmr_wgh_{b} var:pmr_wg_{b} <= var:pmr_wgl_{b} }} }} '
+             'set_variable = pmr_pmv }\n\t\t\t}\n\t\t}\n\t}\n}\n\n')
 
     # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
     def var(name, d=0):
@@ -4575,7 +4578,7 @@ def state_tick_type(bk, t='\t'):
             f'{t}\tpmr_close_retool_{b} = yes\n'
             + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
                       for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
-                                f'pmr_bok_{b}', f'pmr_xok_{b}'))
+                                f'pmr_bok_{b}', f'pmr_xok_{b}', f'pmr_wgo_{b}'))
             + f'{t}}}\n')
 
 

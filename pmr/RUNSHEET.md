@@ -12,14 +12,17 @@ error there means the mechanism below never ran, and a missing log line is then 
 
 ## Latest: quieter months (q69, test mod; your q62 game carries on, then one new observer game)
 
-From the build thread, after your 22:30Z message. q69 is q68 plus performance review 8
-(/mnt/project-files/pmr/perf/review-8-q68.md), three changes that leave the game as it was:
+From the build thread, after your 22:30Z and 02:37Z messages. q69 is q68 plus performance review 8
+(/mnt/project-files/pmr/perf/review-8-q68.md):
 
 - A month in which a building's shares did not move skips re-applying them (its blend and trade-off reads).
 - The monthly skip check compares three values a building, not the levels on every recipe.
 - AI countries skip most of the investment-score update for a building type they have none of.
+- Each building checks its wage for a profit re-check every other month, so a wage move lands up to a month later
+  (your 02:37Z call; the only one of the four that changes play).
 
-Estimated 0.3 to 0.45 s off a 7.5 s month, from a count of script statements, not a timing.
+Estimated 0.3 to 0.45 s off a 7.5 s month for the first three and about 6% of PMR's script for the wage check, from
+a count of script statements, not a timing.
 
 1. Load your q62 game in PMR Test and play a year with your PMR buildings.
 2. Close it, start a new observer game in PMR Test at speed 5 and let it run to about January 1841 without opening
