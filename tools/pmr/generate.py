@@ -104,6 +104,8 @@ RETOOL_EARNINGS_LADDER = (50, 40, 30, 25, 20, 15, 12, 10, 8, 6, 4, 2)
 # investment candidates mark every one of the 61 states under 5,000 spare workers (unemployed and peasants: the state's
 # population_employable_qualifications for laborers) short of workers, trade centers with no laborers too, and 4 of the
 # 537 above it (7,376..10,656, as the state stood at the save).
+# Test builds only (Pat 2026-10-23 21:26Z: a smoke check that the pick works; the live mod keeps vanilla's penalty),
+# so a release build writes none of it (RELEASE).
 RETOOL_SPARE_WORKERS = 5000
 RETOOL_NO_WORKERS_MULT = 4
 SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps of 1 / SHARE_STEPS (1%, Pat 2026-10-13)
@@ -428,7 +430,7 @@ GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
 MOD_NAME = 'ProductionMethodRework'
-MOD_VERSION = '0.3.1'
+MOD_VERSION = '0.3.2'
 SUPPORTED_VERSION = '1.14.*'
 
 # Building files whose buildings make goods from goods. Government, military, monuments, canals,
@@ -1864,10 +1866,11 @@ def main():
           + '\n' + LOGGED_TRIGGER + '\n' + VIEWER_TRIGGER)
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n'
+          + ('' if RELEASE else
           '# State scope: the workforce of the state\'s unemployed pops and peasants, those the investment pool counts\n'
           '# as free to staff a building (pmr_read_spare_workers).\n'
           'pmr_spare_workers = {\n\tvalue = 0\n\tevery_scope_pop = {\n'
-          '\t\tlimit = { OR = { is_employed = no is_pop_type = peasants } }\n\t\tadd = workforce\n\t}\n}\n')
+          '\t\tlimit = { OR = { is_employed = no is_pop_type = peasants } }\n\t\tadd = workforce\n\t}\n}\n'))
     write('common/production_methods/pmr_blend_production_methods.txt', header +
           '# Share methods: pm_pmr_share_<b>_<recipe>_<n> carries the recipe\'s workforce-scaled\n'
           + (f'# modifiers x n / {SHARE_STEPS}, n = 0, 10 .. 100; pm_pmr_shu_<b>_<recipe>_<u> its units, u = 0..9. Each\n'
@@ -2984,7 +2987,7 @@ def retool_buildings(b, bk, icon):
              f'\t\t\tmultiply = {RETOOL_AI_MULT}\n'
              + ('\t\t\t# short of workers (pmr_nowf): back from the pool\'s x0.25, as retooling hires no one\n'
                 f'\t\t\tif = {{ limit = {{ has_variable = pmr_nowf }} multiply = {RETOOL_NO_WORKERS_MULT} }}\n'
-                if side == 'priv' else '') +
+                if side == 'priv' and not RELEASE else '') +
              '\t\t}\n\t}\n') +
             f'\trequired_construction = pmr_retool_cost_{b}\n'
             f'\tproduction_method_groups = {{\n\t\t{pmgs}\n\t}}\n'
@@ -3675,8 +3678,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
              f'\t{chg("pmr_cap_gov", "add", "var:" + v("pmr_room_gov"))}\n'
              f'\tset_variable = pmr_retool_gate_{b}\n'
-             f'\tif = {{ limit = {{ var:{v("pmr_room_priv")} > 0 }} pmr_read_spare_workers = yes }}   # pmr_nowf, for the sites\' ai_value\n'
-             f'\tif = {{ limit = {{ has_variable = pmr_rq_{b} }} remove_variable = pmr_rq_{b} }}\n'
+             + ('' if RELEASE else
+                f'\tif = {{ limit = {{ var:{v("pmr_room_priv")} > 0 }} pmr_read_spare_workers = yes }}   # pmr_nowf, for the sites\' ai_value\n')
+             + f'\tif = {{ limit = {{ has_variable = pmr_rq_{b} }} remove_variable = pmr_rq_{b} }}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} > 0 }} set_variable = pmr_retool_open_gov_{b} }}\n'
              f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_gov_{b} }} remove_variable = pmr_retool_open_gov_{b} }}\n'
              '\t# Abroad no script effect queues a construction for the player\'s government: the upgrade button\n'
@@ -4662,7 +4666,7 @@ def moved(b):
 
 
 def shared_effects(price_goods=()):
-    return ''.join(price_effect(g) for g in price_goods) + (books_effect() if PROFIT_TARGET else '') + f'''# State scope, from a tick opening private retooling (pmr_split_retool_<b>), at most once in 28 days: pmr_wfa, the
+    return ''.join(price_effect(g) for g in price_goods) + (books_effect() if PROFIT_TARGET else '') + ('' if RELEASE else f'''# State scope, from a tick opening private retooling (pmr_split_retool_<b>), at most once in 28 days: pmr_wfa, the
 # state's spare workers (pmr_spare_workers), and pmr_nowf while they are under {RETOOL_SPARE_WORKERS}, where the investment pool
 # scores a building x0.25 (RETOOL_NO_WORKERS_MULT in generate.py).
 pmr_read_spare_workers = {{
@@ -4675,7 +4679,7 @@ pmr_read_spare_workers = {{
 	}}
 }}
 
-''' + '''# State scope. pmr_elec: 1 while the state produces electricity (a local good, so only the state's
+''') + '''# State scope. pmr_elec: 1 while the state produces electricity (a local good, so only the state's
 # own power plants count). pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp:
 # the state's unemployment rate in % (lower bound of 1/2/5/10/20), for the log. The investment pool
 # scores a building x0.25 in a state short of workers, which can cost a retool site with a crew a pick.

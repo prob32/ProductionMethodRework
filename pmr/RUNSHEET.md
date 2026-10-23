@@ -10,7 +10,9 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: Arts Academy retooling where workers are short (q80, test mod)
+## Latest: Arts Academy retooling where workers are short (q80, test builds only; R3 passed 2026-10-23 21:26Z)
+
+Pat 21:26Z: a smoke check only; the live mod keeps vanilla's penalty, so release builds leave q80 out. 0.3.2 ships q79 alone.
 
 From the build thread, after your 19:34Z art test ("it doesn't look like the buildings flipped over"). q79's pick worked:
 in your 1867 save the Home Counties Arts Academies target Realist Art, with 3 levels open to retool. No investor took
