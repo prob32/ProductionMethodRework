@@ -280,10 +280,10 @@ SWITCH_GAIN = 0.25
 # SWITCH_MIN £ a week per level over the default, and a building whose books can't be read (pmr_bsx_<b>: government
 # paid, subsidised, nearly empty) keeps its default. Pat 2026-10-20 12:56Z: a subsidised one with staff may still step up (profit_effect).
 SWITCH_MIN = 20
-PROFIT_RULE = 106    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
+PROFIT_RULE = 107    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
                      # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway;
                      # 104: q50, no step down while the building makes money; 105: q52, SWITCH_MIN and unread books;
-                     # 106: q61, a subsidised building with staff steps up)
+                     # 106: q61, a subsidised building with staff steps up; 107: q79, SWITCH_GAIN_OF)
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -435,6 +435,12 @@ BUILDING_ONLY = {'11_private_infrastructure.txt': ('building_port', 'building_ra
 # Buildings whose recipes carry no workforce because vanilla puts it in another group, which stays on the
 # building (kept on its best method by AUTO_BEST). The share methods then blend only the recipes' goods.
 WORKFORCE_ELSEWHERE = {'building_art_academy': 'pmg_ownership_building_art_academy'}
+# Issue #13 (Crimea River, 2026-10-23: Arts Academies never retool; Pat: they should retool like other buildings). Their
+# recipes carry no wages (WORKFORCE_ELSEWHERE), so a recipe's profit is its goods margin alone, and Realist Art (6 art for
+# 15 paper) can never beat Traditional Art (5 for 10) by SWITCH_GAIN at any prices: 6A - 15P >= 1.25 (5A - 10P) needs
+# -0.25A >= 2.5P. As options are priced one step from the default, Photographic and Film Art never came up either. Such a
+# building switches on SWITCH_MIN alone (Realist Art at base prices: GBP 50 a week a level more).
+SWITCH_GAIN_OF = {bk: 0 for bk in WORKFORCE_ELSEWHERE}
 # Power bloc principle variants of a recipe, which vanilla swaps in with replacement_if_valid, leave the
 # recipe group (and the replacement lines go): a building would otherwise have to retool backwards the
 # day its bloc dropped the principle.
@@ -4361,12 +4367,12 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         if body:
             o.append(f'\t{"if" if first else "else_if"} = {{\n\t\tlimit = {{ var:pmr_ref = {c} }}\n{body}\t}}\n')
             first = False
-    # the pick: the reference unless another recipe beats its profit (pmr_rr) by SWITCH_GAIN of it and SWITCH_MIN
-    # (pmr_hu); a pick that can't run sets none
+    # the pick: the reference unless another recipe beats its profit (pmr_rr) by SWITCH_GAIN of it (SWITCH_GAIN_OF) and
+    # SWITCH_MIN (pmr_hu); a pick that can't run sets none
     o.append('\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
     o.append('\tset_variable = { name = pmr_hu value = var:pmr_rr }\n'
              '\tif = { limit = { var:pmr_hu < 0 } change_variable = { name = pmr_hu multiply = -1 } }\n'
-             f'\tchange_variable = {{ name = pmr_hu multiply = {fmt(SWITCH_GAIN)} }}\n'
+             f'\tchange_variable = {{ name = pmr_hu multiply = {fmt(SWITCH_GAIN_OF.get(bk, SWITCH_GAIN))} }}\n'
              f'\tchange_variable = {{ name = pmr_hu max = {fmt(SWITCH_MIN)} }}\n'
              # the first run at market prices replaces the setup pick (base prices) freely, as it stands at once
              f'\tif = {{ limit = {{ OR = {{ has_global_variable = pmr_setup AND = {{ has_variable = pmr_month '
