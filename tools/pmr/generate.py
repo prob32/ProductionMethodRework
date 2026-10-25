@@ -387,8 +387,9 @@ TRADE_DEAD_BAND = 0.05
 # group follows its market's price instead of its options' worth: DEMAND_STEP points a month toward its one option
 # while the market pays DEMAND_BAND over base, away while it pays that much under, never under DEMAND_SEED while the
 # option can run, so a little is always for sale. One or two comparisons an update, no price ladder or valuation.
+# Pat 22:07Z: "10% aero planes is way way to many": the seed is 1%.
 DEMAND_GROUPS = ('pmg_aeroplanes',)
-DEMAND_SEED = 10
+DEMAND_SEED = 1
 DEMAND_STEP = 5
 DEMAND_BAND = 0.25
 # Treatment (pmr/treatment-by-acceptance.md): Violent Treatment's share is the building's workforce
