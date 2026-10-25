@@ -380,6 +380,17 @@ TRADE_PRELOAD = {
 }
 TRADE_STEP_MIN, TRADE_STEP_MAX = 2, 20
 TRADE_DEAD_BAND = 0.05
+# Pat, 2026-10-25 (a player on Discord: "no aeroplanes", tanks and radios came a couple of years late): nobody asks for
+# aeroplanes until some exist. Pops' leisure need weighs a good by its share of the market's sell orders, and Aerial
+# Reconnaissance needs a supply in the market, so with none made the price sits at base, where 10 aeroplanes (£80)
+# for 10 cars (£100) never pays. Pat: "churn out when needed", with chunky thresholds to keep it cheap. A demand-led
+# group follows its market's price instead of its options' worth: DEMAND_STEP points a month toward its one option
+# while the market pays DEMAND_BAND over base, away while it pays that much under, never under DEMAND_SEED while the
+# option can run, so a little is always for sale. One or two comparisons an update, no price ladder or valuation.
+DEMAND_GROUPS = ('pmg_aeroplanes',)
+DEMAND_SEED = 10
+DEMAND_STEP = 5
+DEMAND_BAND = 0.25
 # Treatment (pmr/treatment-by-acceptance.md): Violent Treatment's share is the building's workforce
 # with acceptance under TREAT_BANDS[0], Exploitative Practices' (Pat's "harsh") the workforce from
 # there to under TREAT_BANDS[1], recounted monthly. Every effect of each method, output, penalties and
@@ -1957,7 +1968,7 @@ def main():
                     f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xav_{o.j}_{short(bk)} ?= 0 }}\n'   # unset below level 1 (bug review q48, P3-1)
                     f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
                     + (f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xsh_{o.j}_{short(bk)} ?= 1 }}\n'
-                       '\t\tlocalization_key = PMR_OPT_SHORT\n\t}\n' if mode == 'market' else '')
+                       '\t\tlocalization_key = PMR_OPT_SHORT\n\t}\n' if mode == 'market' and o.group not in DEMAND_GROUPS else '')
                     + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
                     for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_)
           + '\n# State and country scope. The names on the switching bars\' tooltips (pick_custom_loc).\n'
@@ -2509,7 +2520,7 @@ def throughput_keys(game, buildings):
 
 def option_goods(options):
     return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
-                   for o in opts for g in o.goods})
+                   for o in opts if o.group not in DEMAND_GROUPS for g in o.goods})
 
 
 LOCAL_GOODS = ('services', 'transportation', 'electricity')   # local = yes: no market order book to share out
@@ -2519,7 +2530,8 @@ TRADE_BUDGET = (1, 1000000, 1.25)   # the spare supply ladder: least, most, rati
 def budget_goods(options):
     """The market goods a trade-off option takes as an input (trade_budget)."""
     return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
-                   for o in opts for g, amt in o.goods.items() if amt < 0 and g not in LOCAL_GOODS})
+                   for o in opts if o.group not in DEMAND_GROUPS for g, amt in o.goods.items()
+                   if amt < 0 and g not in LOCAL_GOODS})
 
 
 def trade_budget(good):
@@ -2543,6 +2555,40 @@ def trade_budget(good):
 
 
 OPTION_TYPES = set()   # building types with trade-off options (option_effects), the only ones with pmr_xok_<b>
+
+
+def demand_effects(b, gi, os_):
+    """State scope: the step and first sight of a demand-led group (DEMAND_GROUPS) of building b, its one option's share
+    (pmr_x_<j>_<b>) moved by the market's price of what it makes, against base: pmr_xd_<j>_<b> 1 over DEMAND_BAND, -1
+    under, 0 between."""
+    if len(os_) != 1:
+        raise SystemExit(f'{os_[0].bk}: {os_[0].group} is demand-led with {len(os_)} options; extend demand_effects')
+    x = os_[0]
+    made = [g for g, amt in x.goods.items() if amt > 0]
+    if len(made) != 1:
+        raise SystemExit(f'{x.key} makes {made}; a demand-led option follows the price of one good')
+    xs, xd, xa = f'pmr_x_{x.j}_{b}', f'pmr_xd_{x.j}_{b}', f'pmr_xav_{x.j}_{b}'
+
+    def mg(t):
+        return f'market ?= {{ mg:{made[0]} ?= {{ {t} {fmt(DEMAND_BAND)} }} }}'
+    return (f'pmr_xstep_{gi}_{b} = {{\n'
+            f'\tset_variable = {{ name = {xd} value = 0 }}\n'
+            f'\tif = {{ limit = {{ var:{xa} = 0 }} set_variable = {{ name = {xs} value = 0 }} }}\n'
+            '\telse = {\n'
+            f'\t\tif = {{ limit = {{ {mg("market_goods_pricier >")} }} set_variable = {{ name = {xd} value = 1 }} }}\n'
+            f'\t\telse_if = {{ limit = {{ {mg("market_goods_cheaper >")} }} set_variable = {{ name = {xd} value = -1 }} }}\n'
+            f'\t\tset_variable = {{ name = pmr_m value = {DEMAND_STEP} }}\n'
+            + opts_pace('\t\t') +
+            f'\t\tchange_variable = {{ name = pmr_m multiply = var:{xd} }}\n'
+            f'\t\tchange_variable = {{ name = {xs} add = var:pmr_m }}\n'
+            f'\t\tif = {{ limit = {{ var:{xs} > {SHARE_STEPS} }} set_variable = {{ name = {xs} value = {SHARE_STEPS} }} }}\n'
+            f'\t\tif = {{ limit = {{ var:{xs} < {DEMAND_SEED} }} set_variable = {{ name = {xs} value = {DEMAND_SEED} }} }}\n'
+            '\t}\n}\n\n'
+            # first sight: the seed if it can run
+            f'pmr_xinit_{gi}_{b} = {{\n'
+            f'\tset_variable = {{ name = {xs} value = 0 }}\n'
+            f'\tif = {{ limit = {{ var:{xa} = 1 }} set_variable = {{ name = {xs} value = {DEMAND_SEED} }} }}\n'
+            '}\n\n')
 
 
 def option_effects(bk, b, conv, goods_cost, recipes):
@@ -2578,8 +2624,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     def inputs(x):
         return sorted(g for g, amt in x.goods.items() if amt < 0 and goods_cost.get(g) and g not in LOCAL_GOODS)
 
-    # Market options: value per level at local prices; an option that can't run sheds its share first.
-    market = [x for x in opts if x.mode == 'market']
+    # Market options: value per level at local prices; an option that can't run sheds its share first. A demand-led
+    # option (DEMAND_GROUPS) has no value: its step reads the market's price alone.
+    market = [x for x in opts if x.mode == 'market' and x.group not in DEMAND_GROUPS]
     if market:
         goods = sorted({g for x in market for g in x.goods})
         # A good's price is read once a day per state (pmr_pxd_<good>), not once per building type that
@@ -2675,6 +2722,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     # Monthly market step, group by group.
     for g, gi, mode, none, os_, std in conv:
         if mode != 'market':
+            continue
+        if g in DEMAND_GROUPS:
+            o.append(demand_effects(b, gi, os_))
             continue
         scopes = ('\tsave_temporary_scope_as = pmr_xst\n'
                   '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
@@ -2855,6 +2905,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
             + ';x=' + '/'.join(f(xv('pmr_x', x.j)) for x in opts)
             + ';running=' + '/'.join(f(xv('pmr_xa', x.j)) for x in opts)
             + ';can=' + '/'.join(f(xv('pmr_xav', x.j)) for x in opts))
+    demand = [x for x in opts if x.group in DEMAND_GROUPS]
+    if demand:   # the market's price signal at the last demand-led step: 1 over DEMAND_BAND, -1 under, 0 between
+        line += ';demand=' + '/'.join(f(xv('pmr_xd', x.j)) for x in demand)
     if market:
         goods = sorted({g for x in market for g in x.goods})
         line += (';value=' + '/'.join(f(xv('pmr_xv', x.j)) for x in market)
@@ -7260,7 +7313,7 @@ def option_loc(opt_ui):
             lines = [f'${none}$: #bold {var(f"pmr_xn_{gi}")}%#!']
             for o in os_:
                 note = f"[Building.GetState.GetCustom('pmr_xlk_{b}_{o.j}')]"
-                worth = f', @money!{var(f"pmr_xw_{o.j}")}' if mode == 'market' else ''
+                worth = f', @money!{var(f"pmr_xw_{o.j}")}' if mode == 'market' and o.group not in DEMAND_GROUPS else ''
                 lines.append(f'${o.key}$: #bold {var(f"pmr_x_{o.j}")}%#!{worth}{note}')
             foot = ''
             if mode != 'market':
