@@ -358,6 +358,12 @@ kept_none = set()     # (building, none method) of a trade-off whose none has ef
 VANILLA_FIXES = [
     ('common/ai_strategies/00_default_strategy.txt', 'state_region = s:STATE_HAWAII\n', 'state_region = s:STATE_HAWAIIAN_ISLANDS\n'),
 ]
+# Pat 2026-10-25 22:08Z: "Unlock Aerial Recon from requiring supply in the market". A mobilization option here loses
+# the has_potential_supply check of the goods listed, through a REPLACE: of that one option in a file loaded after
+# vanilla's (as Market Liberal, private_investment.IDEOLOGY_FILE), so an army can ask for a good before anyone makes it.
+MOBILIZATION_SOURCE = 'common/mobilization_options/00_mobilization_option.txt'
+MOBILIZATION_FILE = 'common/mobilization_options/zz_pmr_mobilization_options.txt'
+MOBILIZATION_UNGATE = {'mobilization_option_aerial_recon': ('aeroplanes',)}
 PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal entries (off: Hallmark Goods gives prestige goods)
 # Pat, 2026-10-13: new games start each trade-off near where games take it, not on vanilla's history
 # choice. Read from his Great Britain save of 28 October 1838 by tools/pmr/save_blends.py: for each
@@ -386,10 +392,12 @@ TRADE_DEAD_BAND = 0.05
 # for 10 cars (£100) never pays. Pat: "churn out when needed", with chunky thresholds to keep it cheap. A demand-led
 # group follows its market's price instead of its options' worth: DEMAND_STEP points a month toward its one option
 # while the market pays DEMAND_BAND over base, away while it pays that much under, never under DEMAND_SEED while the
-# option can run, so a little is always for sale. One or two comparisons an update, no price ladder or valuation.
-# Pat 22:07Z: "10% aero planes is way way to many": the seed is 1%.
-DEMAND_GROUPS = ('pmg_aeroplanes',)
-DEMAND_SEED = 1
+# option can run. One or two comparisons an update, no price ladder or valuation.
+# Pat 22:07Z: "10% aero planes is way way to many". 22:08Z: Aerial Reconnaissance no longer needs aeroplanes on sale
+# (MOBILIZATION_UNGATE), "that way it would cause a shortage and then pmr automatically would pick it up", so no seed.
+# 22:09Z: "unlock tanks as well please": tanks too (armies already ask for them, without a supply).
+DEMAND_GROUPS = ('pmg_aeroplanes', 'pmg_tanks')
+DEMAND_SEED = 0
 DEMAND_STEP = 5
 DEMAND_BAND = 0.25
 # Treatment (pmr/treatment-by-acceptance.md): Violent Treatment's share is the building's workforce
@@ -1814,6 +1822,7 @@ def main():
             raise SystemExit(f'{rel}: {old_s.strip()!r} found {text.count(old_s)} times; check the vanilla fix')
         write(rel, text.replace(old_s, new_s))
         report.setdefault('vanilla_fixes', []).append(rel)
+    write(MOBILIZATION_FILE, header + ungate_mobilization(open(os.path.join(game, MOBILIZATION_SOURCE), encoding='utf-8-sig').read()))
     # the panels listing a company's industries hide them (Pat 2026-10-19 02:32Z, company_panel.py)
     company_panel.RETOOL_TYPES = sorted({rbx for c in report['company_types'] for rbx in c['added']})
     if COMPANY_RETOOL and cc_plan:   # each subsidiary type lists the retooling of its industries (subsidiaries.py)
@@ -2558,6 +2567,24 @@ def trade_budget(good):
 OPTION_TYPES = set()   # building types with trade-off options (option_effects), the only ones with pmr_xok_<b>
 
 
+def ungate_mobilization(text):
+    """MOBILIZATION_UNGATE's options from vanilla's MOBILIZATION_SOURCE, each as a REPLACE: without the supply check of
+    its listed goods."""
+    out = []
+    for key, goods in MOBILIZATION_UNGATE.items():
+        start = text.find(f'\n{key} = {{')
+        if start < 0:
+            raise SystemExit(f'{MOBILIZATION_SOURCE}: {key} not found')
+        block = text[start + 1:private_investment.block_end(text, text.index('{', start)) + 1]
+        for g in goods:
+            m = re.search(r'\n\t*mg:' + g + r' \?= \{\s*has_potential_supply = yes\s*\}', block)
+            if not m:
+                raise SystemExit(f'{MOBILIZATION_SOURCE}: {key} has no supply check for {g}; check MOBILIZATION_UNGATE')
+            block = block[:m.start()] + block[m.end():]
+        out.append(f'# vanilla\'s {key} without the supply check for {", ".join(goods)}\nREPLACE:{block}\n')
+    return '\n'.join(out)
+
+
 def demand_effects(b, gi, os_):
     """State scope: the step and first sight of a demand-led group (DEMAND_GROUPS) of building b, its one option's share
     (pmr_x_<j>_<b>) moved by the market's price of what it makes, against base: pmr_xd_<j>_<b> 1 over DEMAND_BAND, -1
@@ -2588,8 +2615,9 @@ def demand_effects(b, gi, os_):
             # first sight: the seed if it can run
             f'pmr_xinit_{gi}_{b} = {{\n'
             f'\tset_variable = {{ name = {xs} value = 0 }}\n'
-            f'\tif = {{ limit = {{ var:{xa} = 1 }} set_variable = {{ name = {xs} value = {DEMAND_SEED} }} }}\n'
-            '}\n\n')
+            + (f'\tif = {{ limit = {{ var:{xa} = 1 }} set_variable = {{ name = {xs} value = {DEMAND_SEED} }} }}\n'
+               if DEMAND_SEED else '')
+            + '}\n\n')
 
 
 def option_effects(bk, b, conv, goods_cost, recipes):
