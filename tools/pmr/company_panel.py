@@ -93,6 +93,134 @@ def hide_sites(text, where, lists, models=(MODEL,)):
     return text
 
 
+# Pat 2026-10-27 13:07Z (the company logo over Available Industries): a dynamicgridbox places its items by index, so the
+# hidden retool sites kept their cells. Company.GetBuildingTypes lists the industries, then the sites (generate.py inserts
+# them after them), then the industry charter's industry, which landed a row lower with gaps before it, and the second
+# row ran up under the logo. The industries are drawn in rows of `wrap` instead, each row a flowcontainer, which does
+# skip invisible items: row one = the first `wrap` items' industries, row two = the next `wrap`'s; the charter's
+# industry (HasAdditionalIndustry) joins row one while it has room (fewer than `wrap` items, or the item at wrap - 1 is
+# not an industry) and row two otherwise. The Companies panel's logo shrinks while row one is full, when a second row
+# can be there.
+L = 'Company.GetBuildingTypes'
+EXTRA = 'Company.HasAdditionalIndustry(BuildingType.Self)'
+LOGO_SMALL = 64
+COMPANIES_WRAP, PANEL_WRAP = 5, 4   # vanilla's datamodel_wrap in companies_panel.gui and company_panel.gui
+
+
+def industry():
+    """BuildingType context: one of the company's own industries, not a retool site or the charter's industry."""
+    return f'And({not_site()}, Not({EXTRA}))'
+
+
+def first(n):
+    return f"DataModelFirst({L}, '(int32){n}')"
+
+
+def span(at, n):
+    return f"DataModelSubSpan({L}, '(int32){at}', '(int32){n}')"
+
+
+def few(n):
+    return f"LessThan_int32(GetDataModelSize({L}), '(int32){n}')"
+
+
+def block_end(text, at):
+    """The index just past the block that opens on the line at `at`."""
+    depth, i = 0, text.index('{', at)
+    while True:
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if not depth:
+                return text.index('\n', i) + 1
+        i += 1
+
+
+def deeper(block, n):
+    return ''.join('\t' * n + ln if ln.strip() else ln for ln in block.splitlines(True))
+
+
+def compact_industries(text, where, wrap, right):
+    """The dynamicgridbox of Company.GetBuildingTypes (hide_sites ran) as rows of wrap that skip the retool sites."""
+    head = re.compile(r'^(\t*)dynamicgridbox = \{\n((?:\1\t.*\n)*?)\1\tdatamodel = "\[Company\.GetBuildingTypes\]"\n', re.M)
+    found = list(head.finditer(text))
+    if len(found) != 1 or f'datamodel_wrap = {wrap}\n' not in found[0].group(2):
+        fail(where, f'expected one industries grid of {wrap} a row; update compact_industries')
+    m = found[0]
+    ind, end = m.group(1), block_end(text, m.start())
+    item = text.find(f'\n{ind}\titem = {{\n', m.start(), end)
+    if item < 0:
+        fail(where, 'the industries grid without its item; update compact_industries')
+    w0 = item + len(f'\n{ind}\titem = {{\n')
+    widget = text[w0:block_end(text, w0)]
+    vis = re.compile(r'^\t*visible = "\[' + re.escape(not_site()) + r'\]".*\n', re.M)
+    if not vis.search(widget):
+        fail(where, 'the industries grid item without its retool site test; update compact_industries')
+    widget = vis.sub('', widget, count=1)
+    first_line = widget.index('\n') + 1
+    base = len(ind) + 2   # the widget's own indentation in the grid
+
+    def icon(cond, depth):
+        """The vanilla item widget, visible on cond, at depth tabs."""
+        w = widget[:first_line] + '\t' * (base + 1) + f'visible = "[{cond}]"  # PMR\n' + widget[first_line:]
+        return deeper(w, depth - base)
+
+    def flow(depth, lines, model=None, body=''):
+        t = '\t' * depth
+        out = f'{t}flowcontainer = {{\n' + ''.join(f'{t}\t{x}\n' for x in lines) + f'{t}\tignoreinvisible = yes\n'
+        if model:
+            out += f'{t}\tdatamodel = "[{model}]"\n{t}\titem = {{\n{body}{t}\t}}\n'
+        else:
+            out += body
+        return out + f'{t}}}\n'
+
+    d = len(ind)
+    extras = lambda depth: flow(depth, [], L, icon(EXTRA, depth + 2))
+    # the charter's industry beside the item at wrap - 1, when that item is an industry (on) or not (off)
+    beside = lambda depth, on: flow(depth, [], span(wrap - 1, 1),
+                                    flow(depth + 2, [f'visible = "[{industry() if on else f"Not({industry()})"}]"'],
+                                         L, icon(EXTRA, depth + 4)))
+    anchor = ['parentanchor = right'] if right else []
+    row_one = flow(d + 1, anchor, body=flow(d + 2, [], first(wrap), icon(industry(), d + 4))
+                   + flow(d + 2, [f'visible = "[{few(wrap)}]"'], body=extras(d + 3))
+                   + beside(d + 2, False))
+    row_two = flow(d + 1, anchor, body=flow(d + 2, [], span(wrap, wrap), icon(industry(), d + 4))
+                   + beside(d + 2, True))
+    rows = (f'{ind}flowcontainer = {{  # PMR: the industries in rows of {wrap}, without the retool sites (company_panel.py)\n'
+            f'{ind}\tdirection = vertical\n{ind}\tignoreinvisible = yes\n' + row_one + row_two + f'{ind}}}\n')
+    return text[:m.start()] + rows + text[end:]
+
+
+def small_logo(text, where):
+    """companies_panel.gui: the company item's logo at LOGO_SMALL while its first row of industries is full."""
+    logo = re.compile(r'^(\t*)### COMPANY LOGO\n\1button = \{\n\1\tparentanchor = right\n\1\tposition = \{ -10 10 \}\n'
+                      r'\1\tsize = \{ 130 130 \}\n', re.M)
+    found = list(logo.finditer(text))
+    if len(found) != 1:
+        fail(where, 'the company item\'s logo moved; update small_logo')
+    m = found[0]
+    ind, end = m.group(1), block_end(text, m.start() + len(m.group(1)) + len('### COMPANY LOGO\n'))
+    rest = text[m.end():end]   # the button's lines after its size, to its closing brace
+
+    def button(size, depth):
+        return deeper(f'{ind}button = {{\n{ind}\tsize = {{ {size} {size} }}\n' + rest, depth)
+
+    def wrapped(cond, size, depth):
+        t = '\t' * (len(ind) + depth)
+        return (f'{t}widget = {{\n{t}\tvisible = "[{cond}]"\n{t}\tsize = {{ {size} {size} }}\n'
+                + button(size, depth + 1) + f'{t}}}\n')
+
+    place = f'{ind}\tparentanchor = right\n{ind}\tposition = {{ -10 10 }}\n'
+    beside = lambda on, size: (f'{ind}flowcontainer = {{\n' + place + f'{ind}\tignoreinvisible = yes\n'
+                               f'{ind}\tdatamodel = "[{span(COMPANIES_WRAP - 1, 1)}]"\n{ind}\titem = {{\n'
+                               + wrapped(industry() if on else f'Not({industry()})', size, 2) + f'{ind}\t}}\n{ind}}}\n')
+    new = (f'{ind}### COMPANY LOGO (PMR: smaller while a second row of industries can be there, company_panel.py)\n'
+           f'{ind}widget = {{\n{ind}\tvisible = "[{few(COMPANIES_WRAP)}]"\n' + place + f'{ind}\tsize = {{ 130 130 }}\n'
+           + button(130, 1) + f'{ind}}}\n' + beside(False, 130) + beside(True, LOGO_SMALL))
+    return text[:m.start()] + new + text[end:]
+
+
 # Subsidiaries (Pat, 2026-10-19 12:54Z: "I only would want a subsidiary IF it was listed under regional HQ of a parent
 # COMPANY"). Script keeps them as a variable list pmr_subs on the parent company and a copy on its executive, and
 # pmr_sub = 1 on the subsidiary (pmr/test_probes/sub_hq). The parent's Regional HQs column lists them, from the company's
@@ -155,6 +283,8 @@ def patch_company_panel(text):
     recounts its figures (REFRESH_SGUI); in test builds, the parent's subsidiaries under its Regional HQs."""
     where = 'company_panel.gui'
     text = hide_sites(text, where, 1)
+    if RETOOL_TYPES:
+        text = compact_industries(text, where, PANEL_WRAP, False)
     show = '\t\tblockoverride "animation_state_block" {\n\t\t\tstate = {\n\t\t\t\tname = _show\n'
     if text.count(show) != 1:
         fail(where, 'the panel\'s _show state moved; update patch_company_panel')
@@ -172,6 +302,8 @@ def patch_companies_panel(text):
     (company_building_item), without the retool sites."""
     where = 'companies_panel.gui'
     text = hide_sites(text, where, 5, [MODEL] + TYPE_MODELS)
+    if RETOOL_TYPES:
+        text = small_logo(compact_industries(text, where, COMPANIES_WRAP, True), where)
     show = '\t\t\t\tname = _show\n\t\t\t\ton_start = "[GetVariableSystem.Clear(\'hide_current_companies\')]"\n'
     if text.count(show) != 1:
         fail(where, 'the panel\'s _show state moved; update patch_companies_panel')
