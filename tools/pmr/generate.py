@@ -384,6 +384,26 @@ TRADE_PRELOAD = {
     'building_glassworks': {'pm_ceramics': 99},
     'building_food_industry': {'pm_pot_stills': 3, 'pm_patent_stills': 10},   # canning stays none
 }
+# Pat 2026-10-30 (#12): more paper mills at game start, so paper starts near vanilla's price, erring low. AUTO_BEST runs
+# administrations and universities on their newest methods from day one, about 1,690 more paper a week than vanilla's
+# history methods; these 33 levels make about 1,800-1,920 (/mnt/project-files/pmr/paper-start/PLAN.md). Only states
+# that import paper, each on vanilla's own block and start method. (state, region_state tag, building): ((owner entry,
+# its building type, its region), levels added); the owner entry is a building of add_ownership, or its country (None).
+START_LEVELS = {
+    ('STATE_WEST_BENGAL', 'BIC', 'building_paper_mill'): (('building', 'building_paper_mill', 'STATE_WEST_BENGAL'), 8),
+    ('STATE_GUJARAT', 'BIC', 'building_paper_mill'): (('building', 'building_paper_mill', 'STATE_GUJARAT'), 3),
+    ('STATE_HYDERABAD', 'HYD', 'building_paper_mill'): (('building', 'building_paper_mill', 'STATE_HYDERABAD'), 1),
+    ('STATE_NEW_YORK', 'USA', 'building_paper_mill'): (('building', 'building_financial_district', 'STATE_NEW_YORK'), 5),
+    ('STATE_AUSTRIA', 'AUS', 'building_paper_mill'): (('building', 'building_financial_district', 'STATE_AUSTRIA'), 5),
+    ('STATE_VENETIA', 'AUS', 'building_paper_mill'): (('building', 'building_financial_district', 'STATE_VENETIA'), 2),
+    ('STATE_HOME_COUNTIES', 'GBR', 'building_paper_mill'): (('building', 'building_financial_district', 'STATE_HOME_COUNTIES'), 2),
+    ('STATE_WALES', 'GBR', 'building_paper_mill'): (('building', 'building_financial_district', 'STATE_HOME_COUNTIES'), 1),
+    ('STATE_BRANDENBURG', 'PRU', 'building_paper_mill'): (('building', 'building_financial_district', 'STATE_BRANDENBURG'), 2),
+    ('STATE_FLANDERS', 'BEL', 'building_paper_mill'): (('country', None, None), 1),
+    ('STATE_PIEDMONT', 'SAR', 'building_paper_mill'): (('country', None, None), 1),
+    ('STATE_ESTREMADURA', 'POR', 'building_paper_mill'): (('building', 'building_paper_mill', 'STATE_ESTREMADURA'), 1),
+    ('STATE_CAMPANIA', 'SIC', 'building_paper_mill'): (('country', None, None), 1),
+}
 TRADE_STEP_MIN, TRADE_STEP_MAX = 2, 20
 TRADE_DEAD_BAND = 0.05
 # Pat, 2026-10-25 (a player on Discord: "no aeroplanes", tanks and radios came a couple of years late): nobody asks for
@@ -4874,15 +4894,22 @@ def history_start_shares(game, start_shares):
     Britain 13 of 13) but none was staffed for it (Pat's q73 start, 20:41Z), so the game staffs before that. Named here,
     the shares go in as create_building makes the building, the way vanilla names a method another one unlocks
     (pm_increased_hardwood after pm_saw_mills); the start method unlocks 0% and 100% of every recipe for this (ladder).
-    Only the files with a name added are published; the rest of the text is vanilla's, byte for byte."""
+    START_LEVELS raises the levels of the owner entries it lists (a number replaced, so line numbers stay vanilla's).
+    Only the files with a name or a level added are published; the rest of the text is vanilla's, byte for byte."""
     src = os.path.join(game, 'common', 'history', 'buildings')
     names = sorted(f for f in os.listdir(src) if f.endswith('.txt')) if os.path.isdir(src) else []
     if start_shares and not names:
         raise SystemExit(f'{src}: no history building files; the starting buildings would be staffed on recipe 1')
     out = {}
+    hits = {key: 0 for key in START_LEVELS}
     for fn in names:
         with open(os.path.join(src, fn), encoding='utf-8-sig', newline='') as f:
             text = f.read()
+        raised = False
+        for key in START_LEVELS:
+            text, n = start_levels(text, key)
+            hits[key] += n
+            raised = raised or n > 0
         edits = []   # (position, text to insert)
         for m in re.finditer(r'\bcreate_building\s*=\s*\{', text):
             depth, k = 1, m.end()
@@ -4901,11 +4928,62 @@ def history_start_shares(game, start_shares):
             if moves:
                 add = ''.join(f' "{x}"' for x in [f'pm_pmr_start_{b}'] + [f'pm_pmr_share_{b}_{j}_{n}' for j, n in moves])
                 edits.append((m.end() + pm.end(1), add + ' '))
-        if edits:
+        if edits or raised:
             for pos, add in reversed(edits):
                 text = text[:pos] + add + text[pos:]
             out[f'common/history/buildings/{fn}'] = text
+    missed = [k for k, n in hits.items() if n != 1]
+    if missed and names:
+        raise SystemExit('START_LEVELS: no single owner entry matched for ' + ', '.join('/'.join(k) for k in missed))
     return out
+
+
+def _block_end(text, k):
+    """The position just past the } closing the block whose { ends at k."""
+    depth = 1
+    while depth:
+        depth += {'{': 1, '}': -1}.get(text[k], 0)
+        k += 1
+    return k
+
+
+def start_levels(text, key):
+    """(text, matches): START_LEVELS[key] added to the levels of its owner entry in one history file's text, inside
+    s:<state> > region_state:<tag> > the create_building of the building > add_ownership."""
+    (st, tag, bk), ((kind, otype, oreg), add) = key, START_LEVELS[key]
+    found = []   # (start, end) of each matching levels number
+    for sm in re.finditer(rf'\bs:{st}\s*=\s*\{{', text):
+        se = _block_end(text, sm.end())
+        for rm in re.finditer(rf'\bregion_state:{tag}\s*=\s*\{{', text[sm.end():se]):
+            r0 = sm.end() + rm.end()
+            re_ = _block_end(text, r0)
+            for cm in re.finditer(r'\bcreate_building\s*=\s*\{', text[r0:re_]):
+                c0 = r0 + cm.end()
+                ce = _block_end(text, c0)
+                if not re.search(rf'\bbuilding\s*=\s*"?{bk}"?\s', text[c0:ce]):
+                    continue
+                om = re.search(r'\badd_ownership\s*=\s*\{', text[c0:ce])
+                if not om:
+                    continue
+                o0 = c0 + om.end()
+                oe = _block_end(text, o0)
+                k = o0
+                while True:
+                    em = re.compile(r'\b(building|country)\s*=\s*\{').search(text, k, oe)
+                    if not em:
+                        break
+                    e0, ee = em.end(), _block_end(text, em.end())
+                    body = text[e0:ee]
+                    if em.group(1) == kind and (kind == 'country' or (
+                            re.search(rf'\btype\s*=\s*"?{otype}"?\s', body) and re.search(rf'\bregion\s*=\s*"?{oreg}"?\s', body))):
+                        lm = re.search(r'\blevels\s*=\s*(\d+)', body)
+                        if lm:
+                            found.append((e0 + lm.start(1), e0 + lm.end(1)))
+                    k = ee
+    if len(found) == 1:
+        a, b = found[0]
+        text = text[:a] + str(int(text[a:b]) + add) + text[b:]
+    return text, len(found)
 
 
 def dispatch_effects(buildings):
