@@ -218,7 +218,6 @@ POLICY_COST_LOW, POLICY_COST_MID, POLICY_COST_HIGH = 200, 100, 50
 # pmr_policy_lock_m counts the months left, down on each monthly pulse.
 POLICY_LOCK_MONTHS = 60
 AI_SKIP = ('steer',)       # the AI never picks Steer the Economy: it only raises the cap of the player's priorities
-AI_CARDS = True            # set by generate.py: False in an --obs-no-ai-cards test build, where the AI holds no card (#12)
 # Re-investment chart: one column per week (Pat 14:28Z), newest on the right, over the year the engine's investment
 # pool trend covers beside it (Pat 20:28Z: the same dates; the trend held 30 Jan 1840 .. 22 Jan 1841, 52 weeks).
 RI_WEEKS = 52
@@ -964,16 +963,13 @@ def policy_effects():
         tech = f' has_technology_researched = {POLICY_TECH[k]}' if k in POLICY_TECH else ''
         return f'has_law_or_variant = law_type:{POLICY_LAWS[k]}{tech} authority >= pmr_policy_cost'
     picks = [k for k, *_r in POLICIES if k not in AI_SKIP]
-    if not AI_CARDS:
-        out += 'pmr_policy_ai_pick = {\n\t# --obs-no-ai-cards: the AI never adopts a card (#12)\n}\n\n'
-    else:
-        out += ('pmr_policy_ai_pick = {\n\tif = {\n\t\tlimit = {\n\t\t\tis_player = no\n'
-                '\t\t\tNOT = { has_variable = pmr_policy }\n\t\t\tOR = {\n'
-                + ''.join(f'\t\t\t\tAND = {{ {can(k)} }}\n' for k in picks)
-                + '\t\t\t}\n\t\t}\n\t\trandom_list = {\n'
-                + ''.join(f'\t\t\t1 = {{\n\t\t\t\ttrigger = {{ {can(k)} }}\n\t\t\t\tpmr_policy_adopt_{k} = yes\n\t\t\t}}\n'
-                          for k in picks)
-                + '\t\t}\n\t}\n}\n\n')
+    out += ('pmr_policy_ai_pick = {\n\tif = {\n\t\tlimit = {\n\t\t\tis_player = no\n'
+            '\t\t\tNOT = { has_variable = pmr_policy }\n\t\t\tOR = {\n'
+            + ''.join(f'\t\t\t\tAND = {{ {can(k)} }}\n' for k in picks)
+            + '\t\t\t}\n\t\t}\n\t\trandom_list = {\n'
+            + ''.join(f'\t\t\t1 = {{\n\t\t\t\ttrigger = {{ {can(k)} }}\n\t\t\t\tpmr_policy_adopt_{k} = yes\n\t\t\t}}\n'
+                      for k in picks)
+            + '\t\t}\n\t}\n}\n\n')
     out += ('# Country scope, the player (weekly clock, monthly pulse): its Focus on Infrastructure multipliers as globals,\n'
             '# read by the abroad retool slot (pmr_reinvest_mult_abroad_<g>).\n'
             'pmr_reinvest_publish = {\n'

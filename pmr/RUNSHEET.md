@@ -10,24 +10,7 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-## Latest: the AI holds no PMR investment card (q89, test mod)
-
-From the build thread, after the q88 observer run (1836-1851, `pmr/observer-q88/analysis-1851.txt`). q89 is q88 with one
-change: AI countries never adopt a PMR investment card, so none gets a card's modifiers or its building weights. In
-q88, AIs holding a card sat at a median 0% gold and 0.52-0.88 of their barracks target, while AIs without one kept
-10-16% gold and 0.96-1.00. This run separates the cards from the laws they belong to.
-
-1. Use the PMR Test playset with PMR Test as its only mod. Start a new observer game and run it at speed 5 to 1852.
-2. Close the game and tell the build thread.
-
-| # | Do | Pass | A null means |
-| --- | --- | --- | --- |
-| N0 | Step 1 | Every `BUDGET` line reads `pol=0` | A `pol` above 0: an AI still took a card, and the run can't answer the question |
-| N1 | Step 2 | The build thread compares 1838-1851 with q88 by law: gold, barracks against target, construction sectors | Interventionist and agrarian AIs keep 0% gold and the same barracks gap as in q88: the cards play no part, and the law (vanilla's construction for it) is what drains the gold |
-
-Still open: A1-A3 (q83), C1 (q84) and U1 (q85).
-
-## Earlier: the AI's army counted with no AI strategy file and Aerial Recon back (q88, test mod; run 1836-1851 done 2026-10-30)
+## Latest: the AI's army counted with no AI strategy file and Aerial Recon back (q88, test mod)
 
 From the build thread, after your 2026-10-30 03:03Z message ("the test build was supposed to be logging, ai strategies
 removed and tweaks to make aeroplanes worked"). q88 is q87 with q86's yearly `ARMY` line added back: no copy of

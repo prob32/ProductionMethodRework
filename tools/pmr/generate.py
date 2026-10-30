@@ -1064,9 +1064,6 @@ def main():
                     help='test build: observer games give every state OBS_PAD_N dummy variables in OBS_PAD_YEARS and update '
                          'every state monthly in OBS_MONTHLY_YEARS, to time what the count of a state\'s variables costs '
                          '(review 9) and what TICK_EVERY saves')
-    ap.add_argument('--obs-no-ai-cards', action='store_true',
-                    help='test build: AI countries never adopt a PMR investment card, to compare their gold and barracks '
-                         'with a run where they do (#12)')
     ap.add_argument('--script-profile', action='store_true',
                     help='test build: the HUD writes the script profiler\'s totals every minute (patch_hud_profile); '
                          'the game needs the -script_profiling launch option')
@@ -1084,9 +1081,6 @@ def main():
                          'or --script-profile')
     if OBS_PARTS_ON and (args.release or OBS_AB or args.script_profile):
         raise SystemExit('--obs-parts-off is a test build of its own: not with --release, --obs-script-off or --script-profile')
-    if args.obs_no_ai_cards and args.release:
-        raise SystemExit('--obs-no-ai-cards is for test builds')
-    private_investment.AI_CARDS = not args.obs_no_ai_cards
     if args.test_name and args.release:
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
     if args.script_profile and args.release:
