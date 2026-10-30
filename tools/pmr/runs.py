@@ -88,7 +88,7 @@ def log_files(paths):
 
 def current_run(db):
     row = db.execute('SELECT run, build, n, last_date FROM runs ORDER BY rowid DESC LIMIT 1').fetchone()
-    return list(row) if row else None
+    return [*row[:3], datetime.date.fromisoformat(row[3]) if row[3] else None] if row else None
 
 
 def new_run(db, build, kind, header, note):
