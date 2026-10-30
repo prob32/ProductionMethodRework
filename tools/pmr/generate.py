@@ -62,6 +62,7 @@ import math
 import re
 import os
 import shutil
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -547,6 +548,11 @@ OTHER_LANGUAGES = ('braz_por', 'french', 'german', 'japanese', 'korean', 'polish
 # The release build keeps only these log lines: the loop breaker's, and the one saying the mod loaded.
 RELEASE_LOGS = ('TRIP', 'AUTO_TRIP', 'LOADED')
 RELEASE = False   # set by main(): --release, so code that only feeds the log is left out
+# Pat 2026-10-30 12:35Z: "track every single save log we do by build version". A test build made with --build qN
+# stamps itself: a BUILD line at game start and once a game year (the largest economy's monthly pulse), and the global
+# variables pmr_build (the build that ran last) and pmr_build_first (the one that started the game) in every save.
+# tools/pmr/runs.py files each log line and autosave under the build it names.
+BUILD = None      # set by main(): (tag, number, commit) from --build, test builds only
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1087,6 +1093,8 @@ def main():
     ap.add_argument('--script-profile', action='store_true',
                     help='test build: the HUD writes the script profiler\'s totals every minute (patch_hud_profile); '
                          'the game needs the -script_profiling launch option')
+    ap.add_argument('--build', default='', metavar='qN',
+                    help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
@@ -1109,6 +1117,13 @@ def main():
         raise SystemExit('--test-decisions is for test builds; players never see a "PMR test:" decision')
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
         raise SystemExit('--trace-from takes a game date like 1838.8.15 and never goes into a release build')
+    if args.build:
+        if args.release or not re.fullmatch(r'q\d+[a-z]?', args.build):
+            raise SystemExit('--build takes a test build tag like q91 and never goes into a release build')
+        global BUILD
+        sha = subprocess.run(['git', '-C', ROOT, 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip()
+        dirty = subprocess.run(['git', '-C', ROOT, 'status', '--porcelain', '--', 'tools'], capture_output=True, text=True).stdout.strip()
+        BUILD = (args.build, int(re.sub(r'\D', '', args.build)), (sha or 'unknown') + ('+' if dirty else ''))
     args.out = args.out or (RELEASE_OUT if args.release else DEFAULT_OUT)
     game = args.game
 
@@ -1911,13 +1926,15 @@ def main():
           .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
           .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n'
                    + ('on_monthly_pulse_state = { on_actions = { pmr_obs_monthly_state } }\n' if OBS_PAD else ''))
+          .replace('BUILD_ON_ACTION\n', 'on_monthly_pulse_country = { on_actions = { pmr_build_monthly_country } }\n' if BUILD else '')
+          .replace('BUILD_STAMP', '\t\tpmr_build_stamp = yes\n' if BUILD else '')
           .replace('START_STAFF', '' if RELEASE else START_STAFF)
           .replace('START_LEFT', '' if RELEASE else START_LEFT)
           + ('' if RELEASE else OBS_ON_ACTIONS.replace(OBS_PAD_HOOK[0], OBS_PAD_HOOK[1]) + OBS_PAD_ON_ACTIONS if OBS_PAD else
-             OBS_ON_ACTIONS))
+             OBS_ON_ACTIONS) + (BUILD_ON_ACTIONS if BUILD else ''))
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab()
-              + obs_pad() + OBS_ARMY + obs_budget()[0])
+              + obs_pad() + OBS_ARMY + obs_budget()[0] + build_stamp())
         write('common/script_values/pmr_obs_values.txt', header + OBS_ARMY_VALUES + obs_budget()[1])
     for rel, text in history_start_shares(args.game, start_shares).items():
         # vanilla's own text with names added: no header, so the game's line numbers still match vanilla's
@@ -7793,12 +7810,13 @@ on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }
 on_monthly_pulse_country = { on_actions = { pmr_on_monthly_pulse_country } }
 on_acquired_technology = { on_actions = { pmr_on_acquired_technology } }
 OBS_ON_ACTION
+BUILD_ON_ACTION
 
 # No root. Adopt every building's starting recipe, all levels on it.
 pmr_on_game_started = {
 	effect = {
 		debug_log = "PMR;rec=LOADED;date=[TimeKeeper.GetCurrentDate.GetString];hook=on_game_started"
-START_STAFF		# No country is a player's yet here (no player state logs INIT), so no Buildings tab totals: pmr.1
+BUILD_STAMPSTART_STAFF		# No country is a player's yet here (no player state logs INIT), so no Buildings tab totals: pmr.1
 		# sums the players' a day later, and the Buildings panel its own country's as it opens (pmr_c_view_sgui).
 		# Review 9: every country's copy was about 380,000 variables by 1855 (q69), none ever read.
 		# The market has no prices yet: the profit calculation uses base prices meanwhile (profit_effect).
@@ -7986,6 +8004,35 @@ pmr_obs_monthly_country = {{
 	}}
 }}
 '''
+
+BUILD_ON_ACTIONS = '''
+# Root = country (test builds made with --build): the BUILD line once a game year, from the largest economy, so a
+# loaded save says which build carries it on.
+pmr_build_monthly_country = {
+	trigger = { gdp_ranking <= 1 NOT = { has_variable = pmr_build_chk } }
+	effect = {
+		set_variable = { name = pmr_build_chk value = yes days = 350 }
+		pmr_build_stamp = yes
+	}
+}
+'''
+
+
+def build_stamp():
+    """Any scope (test builds made with --build): the BUILD line and the build in the save (BUILD)."""
+    if not BUILD:
+        return ''
+    tag, n, sha = BUILD
+    return ('\n# Any scope (test builds made with --build): the BUILD line, and the build in the save: pmr_build the build\n'
+            '# that ran last, pmr_build_first the one that started the game.\n'
+            'pmr_build_stamp = {\n'
+            f'\tset_global_variable = {{ name = pmr_build value = {n} }}\n'
+            f'\tif = {{ limit = {{ NOT = {{ has_global_variable = pmr_build_first }} }} '
+            f'set_global_variable = {{ name = pmr_build_first value = {n} }} }}\n'
+            f'\tdebug_log = "PMR;rec=BUILD;date=[TimeKeeper.GetCurrentDate.GetString];build={tag};commit={sha};'
+            f'version={MOD_VERSION}"\n'
+            '}\n')
+
 
 EVENTS = '''namespace = pmr
 
