@@ -354,11 +354,12 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
 TRADE_GAIN = 1.0
 kept_none = set()     # (building, none method) of a trade-off whose none has effects: its marker stays on it
 # (file, text, replacement): vanilla script errors PMR corrects, each text found once. Each ships a whole copy of the
-# vanilla file, so a mod with its own copy clashes. Empty since 2026-10-29 (Pat 22:34Z, #12 "AI deletes its army":
-# "lets just remove the ai strategy file completely"): the Hawaii fix (q59, back in q78) shipped vanilla's whole
-# 00_default_strategy.txt, which replaced any other mod's AI strategy; vanilla's s:STATE_HAWAII error comes back
-# (q77 observer run: about 45 a second from the 1850s, months ~6% slower).
-VANILLA_FIXES = []
+# vanilla file, so a mod with its own copy clashes. q77 and 2026-10-29 (#12) dropped the Hawaii fix for that; Pat put it
+# back both times (2026-10-21 22:34Z, and 2026-10-30 13:31Z after the q91 observer run, whose error log filled with it
+# from the 1850s at about 45 a second).
+VANILLA_FIXES = [
+    ('common/ai_strategies/00_default_strategy.txt', 'state_region = s:STATE_HAWAII\n', 'state_region = s:STATE_HAWAIIAN_ISLANDS\n'),
+]
 # Pat 2026-10-25 22:08Z: "Unlock Aerial Recon from requiring supply in the market". A mobilization option here loses
 # the has_potential_supply check of the goods listed, through a REPLACE: of that one option in a file loaded after
 # vanilla's (as Market Liberal, private_investment.IDEOLOGY_FILE), so an army can ask for a good before anyone makes it.
@@ -459,7 +460,7 @@ GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
 MOD_NAME = 'ProductionMethodRework'
-MOD_VERSION = '0.3.2'
+MOD_VERSION = '0.3.3'
 SUPPORTED_VERSION = '1.14.*'
 
 # Building files whose buildings make goods from goods. Government, military, monuments, canals,
@@ -1844,7 +1845,10 @@ def main():
                                                      '\tinvalid = { always = yes }  # PMR: Hallmark Goods gives prestige goods\n'))
                     report.setdefault('prestige_je_off', []).append(jk)
                 write(f'common/journal_entries/{jsrc.name}', jsrc.render())
-    # each VANILLA_FIXES file copied with its text corrected (none since 2026-10-29)
+    # Pat 2026-10-20 03:35Z ("can we patch that so it doesn't hurt our performance"): vanilla's default AI strategy
+    # compares a state to s:STATE_HAWAII, a region that doesn't exist (STATE_HAWAIIAN_ISLANDS, as vanilla's own
+    # 00_scripted_triggers.txt has it), so every evaluation in a game with the Hawaiian Interest journal entry writes a
+    # script error (q51: about 86 a second by 1868). The file is copied with the name corrected.
     for rel, old_s, new_s in VANILLA_FIXES:
         path = os.path.join(game, rel)
         if not os.path.exists(path):

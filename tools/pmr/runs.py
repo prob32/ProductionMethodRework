@@ -192,11 +192,15 @@ def register_save(db, path, run=None):
             s = line.strip()
             if date is None and line.startswith('date='):
                 date = s.split('=')[1]
-            if s.startswith('name="pmr_build"') or s.startswith('name=pmr_build'):
-                pending = 'pmr_build_first' if 'pmr_build_first' in s else 'pmr_build'
-                nxt = next(f, '').strip()
-                v = num(nxt.split('=', 1)[1]) if nxt.startswith('value=') else None
-                if pending == 'pmr_build':
+            # a global variable is saved as flag=<name> then data={ type=value identity=<value x 100000> }
+            if s in ('flag=pmr_build', 'flag=pmr_build_first'):
+                v = None
+                for _ in range(4):
+                    nxt = next(f, '').strip()
+                    if nxt.startswith('identity='):
+                        v = round(num(nxt.split('=', 1)[1]) / 100000)
+                        break
+                if s == 'flag=pmr_build':
                     build = v
                 else:
                     first = v
