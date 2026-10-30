@@ -1897,7 +1897,8 @@ def main():
              OBS_ON_ACTIONS))
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab()
-              + obs_pad())
+              + obs_pad() + OBS_ARMY)
+        write('common/script_values/pmr_obs_values.txt', header + OBS_ARMY_VALUES)
     for rel, text in history_start_shares(args.game, start_shares).items():
         # vanilla's own text with names added: no header, so the game's line numbers still match vanilla's
         path = os.path.join(args.out, rel)
@@ -7396,6 +7397,56 @@ def obs_report(dispatch):
             + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '\tpmr_obs_methods = yes\n}\n\n')
 
 
+# Issue #12 (2026-10-29, Pat's "Run it" card at 22:35Z): players say the AI deletes its army, two of them with PMR as
+# their only mod. An observer game logs one ARMY line a year for every country that can hold an army: its barracks and
+# conscription centre levels, battalions in armies, vanilla's barracks target (wanted_army_size_script_value, what the
+# AI builds and cuts toward), military spending, fixed income, gold reserves, and whether it is at war or borrowing.
+OBS_ARMY = """# Country scope, from pmr_obs_monthly_country (test builds): the ARMY line, once a year (pmr_obs_army_chk).
+pmr_obs_army = {
+	if = {
+		limit = { NOT = { has_variable = pmr_obs_army_chk } NOT = { is_country_type = decentralized } }
+		set_variable = { name = pmr_obs_army_chk value = yes days = 350 }
+		set_variable = { name = pmr_obs_bar value = pmr_obs_barracks }
+		set_variable = { name = pmr_obs_con value = pmr_obs_conscription }
+		set_variable = { name = pmr_obs_bat value = pmr_obs_battalions }
+		set_variable = { name = pmr_obs_want value = wanted_army_size_script_value }
+		set_variable = { name = pmr_obs_mil value = pmr_obs_military_expenses }
+		set_variable = { name = pmr_obs_inc value = pmr_obs_fixed_income }
+		set_variable = { name = pmr_obs_gold value = pmr_obs_gold_reserves }
+		set_variable = { name = pmr_obs_war value = 0 }
+		if = { limit = { is_at_war = yes } set_variable = { name = pmr_obs_war value = 1 } }
+		set_variable = { name = pmr_obs_loan value = 0 }
+		if = { limit = { taking_loans = yes } set_variable = { name = pmr_obs_loan value = 1 } }
+		debug_log = "PMR;rec=ARMY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];gdp=[THIS.GetCountry.GetGDP|0];barracks=[THIS.Var('pmr_obs_bar').GetValue|0];conscription=[THIS.Var('pmr_obs_con').GetValue|0];battalions=[THIS.Var('pmr_obs_bat').GetValue|0];wanted=[THIS.Var('pmr_obs_want').GetValue|1];military=[THIS.Var('pmr_obs_mil').GetValue|0];income=[THIS.Var('pmr_obs_inc').GetValue|0];gold=[THIS.Var('pmr_obs_gold').GetValue|0];war=[THIS.Var('pmr_obs_war').GetValue|0];loans=[THIS.Var('pmr_obs_loan').GetValue|0]"
+		remove_variable = pmr_obs_bar
+		remove_variable = pmr_obs_con
+		remove_variable = pmr_obs_bat
+		remove_variable = pmr_obs_want
+		remove_variable = pmr_obs_mil
+		remove_variable = pmr_obs_inc
+		remove_variable = pmr_obs_gold
+		remove_variable = pmr_obs_war
+		remove_variable = pmr_obs_loan
+	}
+}
+
+"""
+OBS_ARMY_VALUES = """# Country scope, for the ARMY line (pmr_obs_army, test builds).
+pmr_obs_barracks = {
+	value = { every_scope_building = { limit = { is_building_type = building_barrack } add = this.level } }
+}
+pmr_obs_conscription = {
+	value = { every_scope_building = { limit = { is_building_type = building_conscription_center } add = this.level } }
+}
+pmr_obs_battalions = {
+	value = { every_military_formation = { limit = { is_army = yes } every_combat_unit = { add = 1 } } }
+}
+pmr_obs_military_expenses = { value = military_expenses }
+pmr_obs_fixed_income = { value = fixed_income }
+pmr_obs_gold_reserves = { value = gold_reserves }
+"""
+
+
 OBS_AB_YEARS = range(1839, 1936, 2)   # an observer game's years with PMR's script off (--obs-script-off)
 OBS_AB = False   # set by main()
 # --obs-parts-off (Pat 2026-10-20 01:33Z card): the q56 profiler can't see on_actions, so an observer game times PMR's
@@ -7809,6 +7860,7 @@ pmr_obs_monthly_country = {{
 	effect = {{
 		pmr_obs_ab = yes
 		if = {{ limit = {{ gdp_ranking <= {OBS_TOP} }} pmr_obs_report = yes }}
+		pmr_obs_army = yes
 	}}
 }}
 '''
