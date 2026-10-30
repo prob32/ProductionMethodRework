@@ -15,7 +15,11 @@ error there means the mechanism below never ran, and a missing log line is then 
 From the build thread, after your 2026-10-30 03:03Z message ("the test build was supposed to be logging, ai strategies
 removed and tweaks to make aeroplanes worked"). q88 is q87 with q86's yearly `ARMY` line added back: no copy of
 vanilla's AI strategy file, Aerial Recon, tanks and aeroplanes on demand, the four rewritten vanilla files, the company
-panel fix, and one `ARMY` line a year per country in observer games.
+panel fix, and two lines a year per country in observer games: `ARMY` as in q86, and `BUDGET` with what vanilla's
+spending AI weighs (income and expenses, gold and debt against their limits, the investment pool and its income,
+construction sectors and queues, tax and army wage levels, the economic law, PMR's policy and subsidiaries). While you
+run, the build thread reads the logs on a timer, files each game year in a database
+(`pmr/observer-q88/army.db`) and analyses 1836-1856.
 
 The build thread can't delete files on your PC, so q86's strategy file is still in PMR Test, holding vanilla's text.
 
@@ -27,8 +31,8 @@ The build thread can't delete files on your PC, so q86's strategy file is still 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
 | R0 | Step 1 | The `ai_strategies` folder is gone from PMR Test | The folder is still there: the game loads vanilla's own text from it, so the AI still runs vanilla's strategy |
-| R1 | Step 2 | An `ARMY` line for each country early in 1837, then one a year after that | No `ARMY` lines: the yearly line never ran (error.log names why), and the run says nothing about armies |
-| R2 | Step 3 | The build thread compares each AI's barracks, `wanted` and budget with the q86 run, year by year | Barracks fall under `wanted` in the same countries as q86: the strategy file and Aerial Recon play no part in it |
+| R1 | Step 2 | An `ARMY` and a `BUDGET` line for each country early in 1837, then one of each a year | No `ARMY` lines: the yearly line never ran (error.log names why). A `BUDGET` field at 0 for every country: the game can't read that value, and the analysis leaves it out |
+| R2 | Step 3 | For each year to 1856 the build thread names what kept each short AI from adding barracks: income under 1.2x expenses, gold under 10% of its limit, or neither | Barracks fall under `wanted` in the same countries as q86: the strategy file and Aerial Recon play no part in it |
 
 Still open: A1-A3 (q83), C1 (q84) and U1 (q85).
 

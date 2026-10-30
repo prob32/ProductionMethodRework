@@ -1897,8 +1897,8 @@ def main():
              OBS_ON_ACTIONS))
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab()
-              + obs_pad() + OBS_ARMY)
-        write('common/script_values/pmr_obs_values.txt', header + OBS_ARMY_VALUES)
+              + obs_pad() + OBS_ARMY + obs_budget()[0])
+        write('common/script_values/pmr_obs_values.txt', header + OBS_ARMY_VALUES + obs_budget()[1])
     for rel, text in history_start_shares(args.game, start_shares).items():
         # vanilla's own text with names added: no header, so the game's line numbers still match vanilla's
         path = os.path.join(args.out, rel)
@@ -7427,10 +7427,54 @@ pmr_obs_army = {
 		remove_variable = pmr_obs_gold
 		remove_variable = pmr_obs_war
 		remove_variable = pmr_obs_loan
+		pmr_obs_budget = yes
 	}
 }
 
 """
+# Pat 2026-10-30 03:05Z: the yearly checks during an observer run go to a database and 20 years of it are analysed for
+# why the AI doesn't build barracks. The BUDGET line beside ARMY carries what vanilla's money-spending AI weighs
+# (00_ai.txt MONEY_SPENDING_*): fixed and total income and expenses, gold and debt against their limits, the investment
+# pool and its weekly income (the construction target), construction sectors, both queues, tax and military wage
+# levels, wasted construction, the economic system law and PMR's investment policy and subsidiaries.
+OBS_LAWS = ('law_traditionalism', 'law_interventionism', 'law_agrarianism', 'law_laissez_faire',
+            'law_cooperative_ownership', 'law_command_economy', 'law_extraction_economy', 'law_industry_banned')
+OBS_POLICIES = ('steer', 'corporations', 'reinvest', 'small', 'bulls', 'titans', 'landed', 'concessions')
+OBS_BUDGET_VALUES = (('fexp', 'fixed_expenses', 0), ('tinc', 'total_income', 0), ('texp', 'total_expenses', 0),
+                     ('sgold', 'scaled_gold_reserves', 2), ('glim', 'gold_reserves_limit', 0),
+                     ('sdebt', 'scaled_debt', 2), ('pool', 'investment_pool', 0),
+                     ('pinc', 'investment_pool_income', 0), ('gq', 'num_queued_government_constructions', 0),
+                     ('pq', 'num_queued_private_constructions', 0), ('tax', 'tax_level_value', 0),
+                     ('mwage', 'military_wage_level_value', 0))
+
+
+def obs_budget():
+    """pmr_obs_budget (effect) and its script values: the BUDGET line, called from pmr_obs_army."""
+    sets = ''.join(f'\tset_variable = {{ name = pmr_obs_{k} value = pmr_obs_v_{k} }}\n' for k, _v, _d in OBS_BUDGET_VALUES)
+    sets += '\tset_variable = { name = pmr_obs_csec value = pmr_obs_v_csec }\n'
+    sets += '\tset_variable = { name = pmr_obs_subs value = pmr_obs_v_subs }\n'
+    sets += ('\tset_variable = { name = pmr_obs_waste value = 0 }\n'
+             '\tif = { limit = { has_wasted_construction = yes } set_variable = { name = pmr_obs_waste value = 1 } }\n')
+    sets += '\tset_variable = { name = pmr_obs_law value = 0 }\n' + ''.join(
+        f'\t{"if" if i == 0 else "else_if"} = {{ limit = {{ has_law = law_type:{l} }} '
+        f'set_variable = {{ name = pmr_obs_law value = {i + 1} }} }}\n' for i, l in enumerate(OBS_LAWS))
+    sets += '\tset_variable = { name = pmr_obs_pol value = 0 }\n' + ''.join(
+        f'\t{"if" if i == 0 else "else_if"} = {{ limit = {{ has_modifier = pmr_policy_{k} }} '
+        f'set_variable = {{ name = pmr_obs_pol value = {i + 1} }} }}\n' for i, k in enumerate(OBS_POLICIES))
+    fields = [(k, d) for k, _v, d in OBS_BUDGET_VALUES] + [('csec', 0), ('subs', 0), ('waste', 0), ('law', 0), ('pol', 0)]
+    log = ('\tdebug_log = "PMR;rec=BUDGET;date=[TimeKeeper.GetCurrentDate.GetString];'
+           'country=[THIS.GetCountry.GetNameNoFormatting];'
+           + ';'.join(f"{k}=[THIS.Var('pmr_obs_{k}').GetValue|{d}]" for k, d in fields) + '"\n')
+    effect = ('# Country scope, from pmr_obs_army (test builds): the BUDGET line, once a year.\npmr_obs_budget = {\n' + sets + log
+              + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k, _d in fields) + '}\n\n')
+    values = ('# Country scope, for the BUDGET line (pmr_obs_budget, test builds).\n'
+              + ''.join(f'pmr_obs_v_{k} = {{ value = {v} }}\n' for k, v, _d in OBS_BUDGET_VALUES)
+              + 'pmr_obs_v_csec = {\n\tvalue = { every_scope_building = { limit = { is_building_type = '
+                'building_construction_sector } add = this.level } }\n}\n'
+              + 'pmr_obs_v_subs = {\n\tvalue = { every_company = { limit = { has_variable = pmr_sub } add = 1 } }\n}\n')
+    return effect, values
+
+
 OBS_ARMY_VALUES = """# Country scope, for the ARMY line (pmr_obs_army, test builds).
 pmr_obs_barracks = {
 	value = { every_scope_building = { limit = { is_building_type = building_barrack } add = this.level } }
