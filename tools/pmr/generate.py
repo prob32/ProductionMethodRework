@@ -200,7 +200,8 @@ COMPANY_RETOOL_ABROAD = bool(ABROAD_SLOT)
 # building. Pat, 2026-10-13: muted, in Victoria 3's own style, and no red or green, which read as bad
 # and good. Drawn on vanilla's stacked bar chart texture, as the Owners bar is.
 TIER_COLORS = [('Bronze', (0.60, 0.43, 0.27)), ('Ochre', (0.74, 0.60, 0.30)), ('Steel blue', (0.29, 0.43, 0.62)),
-               ('Plum', (0.48, 0.34, 0.53)), ('Slate', (0.43, 0.48, 0.53))]
+               ('Plum', (0.48, 0.34, 0.53)), ('Slate', (0.43, 0.48, 0.53)),
+               ('Moss', (0.42, 0.52, 0.33))]   # 1.15: artillery foundries have six (the bronze cannons and smoothbores)
 RECIPE_ICON_SHARE = 0.25   # a recipe's slice of the bar shows its icon above this share (Pat, 2026-10-13)
 # Pat, 2026-10-13: every recipe from this tier up includes the building's automation, blended with it:
 # from each automation group (vanilla names them pmg_automation_*, pmg_steam_automation_*,
@@ -356,10 +357,9 @@ kept_none = set()     # (building, none method) of a trade-off whose none has ef
 # (file, text, replacement): vanilla script errors PMR corrects, each text found once. Each ships a whole copy of the
 # vanilla file, so a mod with its own copy clashes. q77 and 2026-10-29 (#12) dropped the Hawaii fix for that; Pat put it
 # back both times (2026-10-21 22:34Z, and 2026-10-30 13:31Z after the q91 observer run, whose error log filled with it
-# from the 1850s at about 45 a second).
-VANILLA_FIXES = [
-    ('common/ai_strategies/00_default_strategy.txt', 'state_region = s:STATE_HAWAII\n', 'state_region = s:STATE_HAWAIIAN_ISLANDS\n'),
-]
+# from the 1850s at about 45 a second). 1.15 fixed it in vanilla (00_default_strategy.txt:3009 names
+# s:STATE_HAWAIIAN_ISLANDS), so PMR no longer ships the file.
+VANILLA_FIXES = []
 # Pat 2026-10-25 22:08Z: "Unlock Aerial Recon from requiring supply in the market". A mobilization option here loses
 # the has_potential_supply check of the goods listed, through a REPLACE: of that one option in a file loaded after
 # vanilla's (as Market Liberal, private_investment.IDEOLOGY_FILE), so an army can ask for a good before anyone makes it.
@@ -460,8 +460,8 @@ GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
 MOD_NAME = 'ProductionMethodRework'
-MOD_VERSION = '0.3.3'
-SUPPORTED_VERSION = '1.14.*'
+MOD_VERSION = '0.4.0'
+SUPPORTED_VERSION = '1.15.*'
 
 # Building files whose buildings make goods from goods. Government, military, monuments, canals,
 # subsistence, companies and the construction sector are out of scope: their first group is not a goods
@@ -1836,13 +1836,22 @@ def main():
                 for jk, jn in jsrc.objects().items():
                     if not jk.startswith('je_prestige_goods_'):
                         continue
-                    for key in ('is_shown_when_inactive', 'possible', 'invalid'):
+                    for key in ('is_shown_when_inactive', 'possible'):
                         kn = pdx.get(jn.value, key)
                         if kn:
                             jsrc.cuts.append(line_span(jsrc.text, kn))
+                    # 1.15 folds complete/fail/invalid into outcome blocks, at most one of them invalid_outcome
+                    # (hidden, silent): it takes the place of any vanilla one.
+                    for on in pdx.get_all(jn.value, 'outcome'):
+                        fl = pdx.get(on.value, 'flags')
+                        if fl and any(c.key is None and c.value == 'invalid_outcome' for c in fl.value):
+                            jsrc.cuts.append(line_span(jsrc.text, on))
                     jsrc.inserts.append((jn.end - 1, '\tis_shown_when_inactive = { always = no }  # PMR\n'
                                                      '\tpossible = { always = no }  # PMR\n'
-                                                     '\tinvalid = { always = yes }  # PMR: Hallmark Goods gives prestige goods\n'))
+                                                     '\toutcome = {  # PMR: Hallmark Goods gives prestige goods\n'
+                                                     '\t\tflags = { hidden invalid_outcome }\n'
+                                                     '\t\tconclusion_desc = je_standard_failure_conclusion_desc\n'
+                                                     '\t\ttrigger = { always = yes }\n\t}\n'))
                     report.setdefault('prestige_je_off', []).append(jk)
                 write(f'common/journal_entries/{jsrc.name}', jsrc.render())
     # Pat 2026-10-20 03:35Z ("can we patch that so it doesn't hurt our performance"): vanilla's default AI strategy
@@ -1947,6 +1956,7 @@ def main():
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
             f.write('\ufeff' + text)
     write('events/pmr_events.txt', header + EVENTS)
+    write('events/pmr_error_suppression_events.txt', header + ERROR_SUPPRESSION_EVENTS)
     # Defines merge key by key, so this file holds only the one PMR changes; zz_ loads it after vanilla.
     write('common/defines/zz_pmr_ai.txt', header +
           '# Investment pool randomness (Pat, 2026-10-13): the building-type roll goes from 1/21..21 to\n'
@@ -2146,13 +2156,16 @@ def main():
     # beside the published mod and a playset holds one or the other.
     title = 'Production Method Rework' + (f' ({args.test_name})' if args.test_name else '')
     mod_id = 'org.prob32.pmr' + ('.' + re.sub(r'[^a-z0-9]+', '_', args.test_name.lower()) if args.test_name else '')
-    write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy"\n}}\n'
+    # The Modding Co-op's Mod Template (Pat 2026-11-05 14:23Z, "Template layout only"): its metadata fields, and tags
+    # from its list (the Workshop page's "Economy And Buildings"). The id stays org.prob32.pmr: launchers and playsets
+    # already know the mod by it.
+    write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy And Buildings"\n}}\n'
           f'name="{title}"\nsupported_version="{SUPPORTED_VERSION}"\n', bom=False)
     write('.metadata/metadata.json', json.dumps({
         'name': title, 'id': mod_id, 'version': MOD_VERSION,
-        'game_id': 'victoria3', 'supported_game_version': SUPPORTED_VERSION,
+        'game_id': 'victoria3', 'picture': 'thumbnail.png', 'supported_game_version': SUPPORTED_VERSION,
         'short_description': SHORT_DESCRIPTION,
-        'tags': ['Gameplay', 'Economy'], 'relationships': [],
+        'tags': ['Gameplay', 'Economy And Buildings'], 'relationships': [],
         'game_custom_data': {'multiplayer_synchronized': True}}, indent=2) + '\n', bom=False)
     report['settings'] = {'N': N, 'retool_share': RETOOL_SHARE, 'gov_fraction_step': GOV_FRACTION_STEP,
                           'game': args.version_label}
@@ -6562,6 +6575,10 @@ def methods_view_gui(recipe_keys, recipe_tex, pair_ui=None, ai=None, companies=N
     that type's card: a card per item per type would be thousands of widgets."""
     pair_ui, ai, companies, opt_ui, auto_ui = pair_ui or {}, ai or {}, companies or {}, opt_ui or {}, auto_ui or {}
     cols = mv_cols(recipe_keys, pair_ui)
+    # 1.15's artillery foundries have six recipes: the columns narrow (on every card, so they line up) until the AI
+    # weight fits beside the box
+    fit = CARD_W - AI_W - (CARD_PAD + ICON_W + ICON_GAP + 14) - methods_row.PAIR_LEFT - 10
+    methods_row.PAIR_COL = min(methods_row.PAIR_COL, fit // cols)
     box_w = methods_row.pairs_size(cols, 1)[0]
     ai_x = CARD_PAD + ICON_W + ICON_GAP + box_w + 14
     if ai_x + AI_W > CARD_W:
@@ -7825,6 +7842,8 @@ BUILD_STAMPSTART_STAFF		# No country is a player's yet here (no player state log
 		# Review 9: every country's copy was about 380,000 variables by 1855 (q69), none ever read.
 		# The market has no prices yet: the profit calculation uses base prices meanwhile (profit_effect).
 		set_global_variable = pmr_setup
+		# the Mod Template's "is loaded" flag, so other mods can tell PMR is running (exists = global_var:pmr_is_loaded)
+		set_global_variable = { name = pmr_is_loaded value = yes }
 		every_country = {
 			every_scope_state = {
 				pmr_state_tick = yes
@@ -8036,6 +8055,20 @@ def build_stamp():
             f'\tdebug_log = "PMR;rec=BUILD;date=[TimeKeeper.GetCurrentDate.GetString];build={tag};commit={sha};'
             f'version={MOD_VERSION}"\n'
             '}\n')
+
+
+# The Mod Template's error suppression: pmr_is_loaded is set for other mods to read, never read by PMR itself, so the
+# game would report it unused.
+ERROR_SUPPRESSION_EVENTS = '''namespace = pmr_error_suppression
+
+pmr_error_suppression.0001 = {
+	hidden = yes
+	orphan = yes
+	trigger = {
+		exists = global_var:pmr_is_loaded
+	}
+}
+'''
 
 
 EVENTS = '''namespace = pmr

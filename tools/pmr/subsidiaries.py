@@ -45,7 +45,8 @@ def short(c):
 
 
 def type_key(c, n):
-    return f'company_pmr_sb_{short(c)}_{n}'
+    # 1.15's company_russo-baltic_wagon_factory: a PMR name takes no hyphen (it also names variables)
+    return f'company_pmr_sb_{short(c).replace("-", "_")}_{n}'
 
 
 # ---------------------------------------------------------------------------------------------------------------

@@ -59,7 +59,7 @@ def _box(w, h, ind, visible=None):
 def _head(col, tex, tip, ind):
     """Recipe column col's icon, over its column."""
     i1 = ind + '\t'
-    return (f'{ind}icon = {{\n{i1}position = {{ {PAIR_LEFT + col * PAIR_COL + 9} 5 }}\n{i1}size = {{ 40 40 }}\n'
+    return (f'{ind}icon = {{\n{i1}position = {{ {PAIR_LEFT + col * PAIR_COL + (PAIR_COL - 40) // 2} 5 }}\n{i1}size = {{ 40 40 }}\n'
             f'{i1}texture = "{tex}"\n{i1}tooltip = "{tip}"\n{ind}}}\n')
 
 
