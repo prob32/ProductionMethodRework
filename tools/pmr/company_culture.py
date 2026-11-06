@@ -1230,6 +1230,7 @@ def localization(p):
 
 def write_all(game, write, header_text, report, p, out_dir):
     """Writes every file of the feature and returns its loc lines."""
+    bylaws.check_ideologies(game)
     write('common/character_traits/pmr_cc_traits.txt', header_text + traits(p))
     write('common/modifier_type_definitions/pmr_cc_modifier_types.txt', header_text + modifier_types(p, game))
     write('common/scripted_effects/pmr_cc_effects.txt', header_text + effects(p))

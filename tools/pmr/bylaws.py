@@ -44,6 +44,10 @@ one), pmr_bl_wcl the Trade Unions' leader (pmr_bl_wcx), pmr_bl_<seat>_<code> eac
 numbers.
 """
 
+import glob
+import os
+import re
+
 from private_investment import CHART_EXCLUDE, GROUPS as PRIORITY_GROUPS
 
 THR, WAGE, ATTR = 'building_throughput_add', 'building_minimum_wage_mult', 'building_job_attractiveness_mult'
@@ -121,11 +125,25 @@ IDEOLOGIES = {
     'corporate': ['corporatist_leader', 'fascist', 'integralist', 'despotic_utopian'],
     'reform': ['reformer', 'radical', 'republican_leader', 'humanitarian', 'humanitarian_royalist', 'positivist',
                'utilitarian_leader', 'feminist', 'abolitionist', 'ilustrado_leader', 'land_reformer', 'theocrat'],
-    'labour': ['social_democrat'],
-    'left': ['communist', 'vanguardist', 'anarchist', 'utopian'],
+    'labour': ['state_socialist'],      # 1.15's name for the social democrat leader
+    'left': ['communist_leader', 'communist', 'vanguardist', 'anarchist', 'utopian'],   # 1.15: communist_leader
     'luddite': ['luddite'],
     'slaver': ['slaver'],
 }
+
+
+def check_ideologies(game):
+    """Every ideology a row names exists in the game (1.15 renamed social_democrat, and an unknown one is an error
+    each time the game loads)."""
+    have = set()
+    for path in glob.glob(os.path.join(game, 'common', 'ideologies', '*.txt')):
+        with open(path, encoding='utf-8-sig') as f:
+            have |= set(re.findall(r'^ideology_(\w+)\s*=\s*\{', f.read(), re.M))
+    gone = sorted(x for row in IDEOLOGIES.values() for x in row if x not in have)
+    if gone:
+        raise SystemExit('bylaws.IDEOLOGIES names ideologies the game lacks: ' + ', '.join(gone))
+
+
 IG_TEX = {'ig_industrialists': 'industrialists', 'ig_landowners': 'landowners',
           'ig_petty_bourgeoisie': 'petty_bourgeoisie', 'ig_trade_unions': 'trade_unions',
           'ig_intelligentsia': 'intelligensia', 'ig_devout': 'devout', 'ig_rural_folk': 'rural_folk',

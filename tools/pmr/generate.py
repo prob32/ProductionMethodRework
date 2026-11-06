@@ -1066,6 +1066,91 @@ def short(building_key):
 
 
 # ---------------------------------------------------------------------------------------------
+# Localisation keys sharing a hash. The game files its text by a 32-bit hash of the key and keeps one text for two
+# keys with the same hash, so the other key shows raw (1.15 error.log: "Localization key hash collision. Key
+# 'intelligentsia.1.b' and 'pm_pmr_share_steel_mill_2_27' have the same hash: 4271602869", then "Unrecognized loc
+# key intelligentsia.1.b": a 1.15 event option lost its text). The hash is MurmurHash3 (32-bit, seed 0) of the key.
+
+def murmur3_32(s):
+    data, h = s.encode('utf-8'), 0
+    n = len(data)
+    for i in range(0, n - n % 4, 4):
+        k = int.from_bytes(data[i:i + 4], 'little') * 0xcc9e2d51 & 0xffffffff
+        k = ((k << 15) | (k >> 17)) & 0xffffffff
+        h ^= k * 0x1b873593 & 0xffffffff
+        h = ((h << 13) | (h >> 19)) & 0xffffffff
+        h = (h * 5 + 0xe6546b64) & 0xffffffff
+    if n % 4:
+        k = int.from_bytes(data[n - n % 4:], 'little') * 0xcc9e2d51 & 0xffffffff
+        k = ((k << 15) | (k >> 17)) & 0xffffffff
+        h ^= k * 0x1b873593 & 0xffffffff
+    h ^= n
+    h ^= h >> 16
+    h = h * 0x85ebca6b & 0xffffffff
+    h ^= h >> 13
+    h = h * 0xc2b2ae35 & 0xffffffff
+    return h ^ (h >> 16)
+
+
+LOC_KEY = re.compile(r'^[ \t]+([\w.\-\']+):\d*[ \t]*"', re.M)
+
+
+def loc_keys(folder):
+    keys = set()
+    for dirpath, _dirs, files in os.walk(folder):
+        for fn in files:
+            if fn.endswith('.yml'):
+                with open(os.path.join(dirpath, fn), encoding='utf-8-sig', errors='replace') as f:
+                    keys.update(LOC_KEY.findall(f.read()))
+    return keys
+
+
+def rename_hash_clashes(game, out, release):
+    """Rename, everywhere in the build, each PMR key whose hash a vanilla key (or another PMR key) already has.
+    Returns {old: new}."""
+    vanilla = loc_keys(os.path.join(game, 'localization', 'english'))
+    if len(vanilla) < 50000:
+        msg = f'{len(vanilla)} vanilla localisation keys under --game: the key hash check needs the full install'
+        if release:
+            raise SystemExit(msg)
+        print('warning: ' + msg)
+    mod = loc_keys(os.path.join(out, 'localization', 'english'))
+    owner = {}
+    for k in sorted(vanilla) + sorted(mod - vanilla):
+        owner.setdefault(murmur3_32(k), k)
+    clash = sorted(k for k in mod - vanilla if owner[murmur3_32(k)] != k)
+    if not clash:
+        return {}
+    texts = {}
+    for dirpath, _dirs, files in os.walk(out):
+        for fn in files:
+            if fn.endswith(('.txt', '.yml', '.gui')):
+                path = os.path.join(dirpath, fn)
+                with open(path, encoding='utf-8', newline='') as f:
+                    texts[path] = f.read()
+    renames = {}
+    for k in clash:
+        n = 1
+        while f'{k}_h{n}' in vanilla or f'{k}_h{n}' in mod or murmur3_32(f'{k}_h{n}') in owner:
+            n += 1
+        renames[k] = f'{k}_h{n}'
+        owner[murmur3_32(renames[k])] = renames[k]
+    alt = '|'.join(map(re.escape, renames))
+    tok = re.compile(r'(?<![\w.])(' + alt + r')(?![\w.])')
+    derived = re.compile(r'(?<![\w.])(?:' + alt + r')_\w')   # its _desc and the like would keep the old name
+    for path, text in texts.items():
+        if not any(k in text for k in renames):
+            continue
+        m = derived.search(text)
+        if m:
+            raise SystemExit(f'{path}: {text[m.start():m.end() + 20]!r} extends a key whose hash a vanilla key '
+                             'has; rename that key by hand')
+        with open(path, 'w', encoding='utf-8', newline='') as f:
+            f.write(tok.sub(lambda m: renames[m.group(1)], text))
+    return renames
+
+
+# ---------------------------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
@@ -2167,6 +2252,9 @@ def main():
         'short_description': SHORT_DESCRIPTION,
         'tags': ['Gameplay', 'Economy And Buildings'], 'relationships': [],
         'game_custom_data': {'multiplayer_synchronized': True}}, indent=2) + '\n', bom=False)
+    report['loc_hash_renames'] = rename_hash_clashes(game, args.out, args.release)
+    for old, new in report['loc_hash_renames'].items():
+        print(f'renamed {old} to {new}: another localisation key has its hash')
     report['settings'] = {'N': N, 'retool_share': RETOOL_SHARE, 'gov_fraction_step': GOV_FRACTION_STEP,
                           'game': args.version_label}
     shutil.copyfile(THUMBNAIL, os.path.join(args.out, '.metadata', 'thumbnail.png'))
