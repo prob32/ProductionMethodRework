@@ -1,6 +1,6 @@
 # Production Method Rework
 
-A script-only Victoria 3 mod for 1.14 ([Steam Workshop 3819399957](https://steamcommunity.com/sharedfiles/filedetails/?id=3819399957)).
+A script-only Victoria 3 mod for 1.15 ([Steam Workshop 3819399957](https://steamcommunity.com/sharedfiles/filedetails/?id=3819399957)).
 The mod folder is generated from the installed game by `tools/pmr/generate.py`; see `pmr/README.md` for the
 design, the build and the test handover in `pmr/RUNSHEET.md`.
 
@@ -18,6 +18,7 @@ design, the build and the test handover in `pmr/RUNSHEET.md`.
 | 0.3.0 | `1d21176` | 2026-10-20 |
 | 0.3.1 | `6b6b809` | 2026-10-22 |
 | 0.3.2 | `f4ef573` | 2026-10-23 |
+| 0.4.0 | `27c230c` | 2026-11-06 |
 
 Feedback from the Workshop page is tracked as issues labelled `feedback`.
 

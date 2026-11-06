@@ -18,7 +18,7 @@ them. When in doubt, leave it out.
 
 - The mod is generated: `python3 tools/pmr/generate.py --game <Victoria 3 install> --out <dir>` (`--release` for the
   published build, `--test-name "Queue Test"` for the test build). Never hand-edit generated files.
-- Target Victoria 3 1.14.x only.
+- Target Victoria 3 1.15.x only.
 - English only until finalization: new text goes in English; the other ten languages fall back to it.
 - Every test runs in the test build (`mod\ProductionMethodRework_QueueTest`, "PMR Test" playset), never the published
   release. Checks log on their own (`PMR;rec=` lines in debug.log); the run sheet is `pmr/RUNSHEET.md`.
