@@ -9,7 +9,7 @@ workforce are the mix of the recipes its levels run.
 - `RUNSHEET.md` is the test handover: what to do in game and the exact
   `debug.log` lines to look for, including what each null means.
 - `tools/pmr/generate.py` writes the whole mod from the installed game's own script. Re-run it after
-  every beta update: `python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"`.
+  every game update: `python tools/pmr/generate.py --game "G:/SteamLibrary/steamapps/common/Victoria 3/game"`.
 - `GENERATION_REPORT.json`, written into the generated mod folder, lists every building treated, every building
   skipped and why, and every recipe whose modifiers moved into share methods.
 - `--release` writes the build players get (the Workshop upload) to `pmr/release/ProductionMethodRework`: no
@@ -32,7 +32,7 @@ workforce are the mix of the recipes its levels run.
 
 The mod output is not committed. It is generated locally from the installed game's script and copied
 into the mod folder; only the generator, the design notes and the run sheet live in the repo. Target:
-the 1.14.x open beta, `supported_version = 1.14.*`.
+Victoria 3 1.15.x, `supported_version = 1.15.*`.
 
 ## The design, as built
 

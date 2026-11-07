@@ -1,13 +1,37 @@
 # Production Method Rework
 
-A script-only Victoria 3 mod for 1.15 ([Steam Workshop 3819399957](https://steamcommunity.com/sharedfiles/filedetails/?id=3819399957)).
-The mod folder is generated from the installed game by `tools/pmr/generate.py`; see `pmr/README.md` for the
-design, the build and the test handover in `pmr/RUNSHEET.md`.
+Production Method Rework (PMR) is a script-only mod for Victoria 3 1.15. Research no longer upgrades a building
+overnight. Each level retools to the new recipe through construction, and a building's output is the blend of the
+recipes its levels run. Companies also gain a culture tree, a board and subsidiaries.
 
-## Branches
+The mod is on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3819399957). It needs no
+other mods.
 
-- `dev` is the one working branch. Fixes land here and go through the test build first.
-- `main` moves to `dev` when a release is uploaded.
+## Building the mod
+
+The mod is generated, not written by hand. `tools/pmr/generate.py` reads the installed game's own script and writes
+the whole mod folder, so a new game version only needs a new run. The generated folder is not committed.
+
+```
+python3 tools/pmr/generate.py --game "<Victoria 3 install>/game" --release
+```
+
+- `--release` writes the Workshop build to `pmr/release/ProductionMethodRework`.
+- Without `--release`, it writes a test build with extra logging to `pmr/ProductionMethodRework`.
+- The generator needs Python 3 with Pillow and numpy, and the game's full English localisation.
+
+Copy the generated folder into `Documents\Paradox Interactive\Victoria 3\mod\` and enable it in a playset.
+
+## Repository
+
+| Path | Contents |
+| --- | --- |
+| `tools/pmr/` | The generator, its modules and the translation tables. |
+| `pmr/README.md` | The design as built, with the decision behind each part. |
+| `pmr/RUNSHEET.md` | The in-game checks for each test build. |
+| `pmr/test_probes/` | Small test mods used while building features. |
+
+`main` holds the latest Workshop release. `dev` is the working branch and can be ahead of it.
 
 ## Releases
 
@@ -20,7 +44,7 @@ design, the build and the test handover in `pmr/RUNSHEET.md`.
 | 0.3.2 | `f4ef573` | 2026-10-23 |
 | 0.4.0 | `27c230c` | 2026-11-06 |
 
-Feedback from the Workshop page is tracked as issues labelled `feedback`.
+## Feedback
 
-History before this repository is PMR's commits from Ironroad's `claude/pmr-mod-p71kui` branch, filtered to
-`tools/pmr/` and `pmr/`, so commit ids differ from Ironroad's.
+Report bugs as GitHub issues or in the Workshop comments. Include your game version, the in-game date and your mod
+list.
