@@ -1027,13 +1027,16 @@ class Option:
                 for n in sub.value:
                     if n.key:
                         d[n.key] = d.get(n.key, 0) + num(n.value, f'{key}.{sec}.{sub.key}.{n.key}')
-        # goods per level at full employment: outputs positive, inputs negative
-        self.goods = {}
+        # goods per level at full employment: outputs positive, inputs negative; self.used the inputs alone (q97: a
+        # smaller output, hardwood's wood, is not bought from the market)
+        self.goods, self.used = {}, {}
         for mk, mv in self.mods.get(('building_modifiers', 'workforce_scaled'), {}).items():
             for pre, sign in (('goods_output_', 1), ('goods_input_', -1)):
                 if mk.startswith(pre) and mk.endswith('_add'):
                     g = mk[len(pre):-len('_add')]
                     self.goods[g] = self.goods.get(g, 0) + sign * mv
+                    if sign < 0:
+                        self.used[g] = self.used.get(g, 0) + mv
         self.required = [n.value for n in self.node.value if n.key == 'required_input_goods']
         self.elec = ELECTRICITY in self.required or self.goods.get(ELECTRICITY, 0) < 0
 
@@ -1046,10 +1049,11 @@ class Option:
                 mine[mk] = mine.get(mk, 0) - mv
                 if abs(mine[mk]) < 1e-9:
                     del mine[mk]
-        for g, amt in base.goods.items():
-            self.goods[g] = self.goods.get(g, 0) - amt
-            if abs(self.goods[g]) < 1e-9:
-                del self.goods[g]
+        for mine, theirs in ((self.goods, base.goods), (self.used, base.used)):
+            for g, amt in theirs.items():
+                mine[g] = mine.get(g, 0) - amt
+                if abs(mine[g]) < 1e-9:
+                    del mine[g]
 
     def strip(self):
         """Cut the effects and required goods: the share methods carry them."""
@@ -2701,8 +2705,8 @@ def demand_goods(options):
 def budget_goods(options):
     """The market goods a trade-off option takes as an input (pmr_xb_<good>, market_read)."""
     return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
-                   for o in opts if o.group not in DEMAND_GROUPS for g, amt in o.goods.items()
-                   if amt < 0 and g not in LOCAL_GOODS})
+                   for o in opts if o.group not in DEMAND_GROUPS for g, amt in o.used.items()
+                   if amt > 0 and g not in LOCAL_GOODS})
 
 
 def market_values(goods, spare_goods):
@@ -2836,7 +2840,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     o.append('}\n\n')
 
     def inputs(x):
-        return sorted(g for g, amt in x.goods.items() if amt < 0 and goods_cost.get(g) and g not in LOCAL_GOODS)
+        """The goods x buys from its market (q97: not an output it makes less of, as hardwood's wood: Pat 2026-11-10
+        17:44Z, the step follows the market's prices, and wood short too had held logging camps off hardwood)"""
+        return sorted(g for g, amt in x.used.items() if amt > 0 and goods_cost.get(g) and g not in LOCAL_GOODS)
 
     # Market options: value per level at the market's prices; an option that can't run sheds its share first. A
     # demand-led option (DEMAND_GROUPS) has no value: its step reads the market's price alone.
@@ -2913,7 +2919,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     def budget_cap(x):
         out = f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_bi = {x.j} }}\n'
         for g in inputs(x):
-            per = -x.goods[g] / SHARE_STEPS
+            per = x.used[g] / SHARE_STEPS
             out += ('\t\t\t\tset_variable = { name = pmr_t value = 0 }\n'
                     f'\t\t\t\tif = {{ limit = {{ exists = scope:pmr_xmo }} set_variable = {{ name = pmr_t value = scope:pmr_xmo.var:pmr_xb_{g} }} }}\n'
                     f'\t\t\t\tset_variable = {{ name = pmr_u value = var:pmr_level_{b} }}\n'
@@ -2931,7 +2937,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         out = f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_bi = {x.j} var:pmr_m > 0 exists = scope:pmr_xmo }}\n'
         for g in inputs(x):
             out += (f'\t\t\t\tset_variable = {{ name = pmr_u value = var:pmr_level_{b} }}\n'
-                    f'\t\t\t\tchange_variable = {{ name = pmr_u multiply = {fmt(-x.goods[g] / SHARE_STEPS)} }}\n'
+                    f'\t\t\t\tchange_variable = {{ name = pmr_u multiply = {fmt(x.used[g] / SHARE_STEPS)} }}\n'
                     '\t\t\t\tchange_variable = { name = pmr_u multiply = var:pmr_m }\n'
                     f'\t\t\t\tset_variable = {{ name = pmr_t value = scope:pmr_xmo.var:pmr_xb_{g} }}\n'
                     '\t\t\t\tchange_variable = { name = pmr_t subtract = var:pmr_u }\n'
@@ -2945,9 +2951,10 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         if g in DEMAND_GROUPS:
             o.append(demand_effects(b, gi, os_))
             continue
+        capped = any(inputs(x) for x in os_)
         scopes = ('\tsave_temporary_scope_as = pmr_xst\n'
                   '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
-                  if any(inputs(x) for x in os_) else '')
+                  if capped else '')
         o.append(f'pmr_xstep_{gi}_{b} = {{\n' + scopes + none_share(gi, os_) + best(os_)
                  + '\t# the worst-paying option that holds a share (none, worth 0, included)\n'
                  '\tset_variable = { name = pmr_wi value = -1 }\n\tset_variable = { name = pmr_wv value = 0 }\n'
@@ -2968,9 +2975,15 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                  f'set_variable = {{ name = pmr_m value = var:{xv("pmr_xn", gi)} }} }}\n'
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} var:{xv("pmr_x", x.j)} < var:pmr_m }} '
                            f'set_variable = {{ name = pmr_m value = var:{xv("pmr_x", x.j)} }} }}\n' for x in os_)
+                 # q97: what the best option's spare-supply cap turns away from an option that can't run goes to none
+                 + ('\t\t\tset_variable = { name = pmr_m0 value = var:pmr_m }\n' if capped else '')
                  + ''.join(budget_cap(x) for x in os_ if inputs(x))
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_wi = {x.j} }} '
-                           f'change_variable = {{ name = {xv("pmr_x", x.j)} subtract = var:pmr_m }} }}\n' for x in os_)
+                           + (f'if = {{ limit = {{ var:{xv("pmr_xav", x.j)} = 0 }} '
+                              f'change_variable = {{ name = {xv("pmr_x", x.j)} subtract = var:pmr_m0 }} }} else = {{ '
+                              if capped else '')
+                           + f'change_variable = {{ name = {xv("pmr_x", x.j)} subtract = var:pmr_m }}'
+                           + (' }' if capped else '') + ' }\n' for x in os_)
                  + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_bi = {x.j} }} '
                            f'change_variable = {{ name = {xv("pmr_x", x.j)} add = var:pmr_m }} }}\n' for x in os_)
                  + ''.join(budget_use(x) for x in os_ if inputs(x))
