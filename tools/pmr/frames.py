@@ -20,6 +20,9 @@ blended building holds its union frame's jobs.
 Treatment (the working-conditions shares, pm_pmr_x_<b>_<j>_<n>) stays share methods for now: its goods and jobs are
 "live" amounts here, counted in both the blend (A) and the frames (B), so a "less" modifier on the same good leaves them
 whole.
+
+The AI's lock (LOCK_PURE): a pure frame other than its group's first unlocks only while it runs, as the union frames do,
+so the AI finds nothing to switch a building to, and PMR asks what the frame needs itself (GATES).
 """
 
 import collections
@@ -38,6 +41,56 @@ LESS_NAME = 'Retooling'
 # applied: each was an icon, a Modifiers tab row and a line that did nothing, sized every time the frame ran.
 JOB_LESS = False
 OPTION_UNION_NAME = 'Trade-off'
+# Pat 2026-11-10 21:31Z ("implement this", on the q99 review's "locking the AI out of method swaps"): in q99 and q100 the
+# AI switched a building to another pure frame 194 to 276 times a month all year (the UNDO line), and each switch was
+# two method changes and a whole pmr_tick_<b> to put it back. With LOCK_PURE every pure frame but the first of its
+# group carries unlocking_production_methods = { itself }, like the union frames and the share methods before them
+# (1.14.5 and 1.15 ask it of the player's command, the AI's switch and can_activate_production_method alike;
+# activate_production_method asks nothing, so the tick still sets any frame). The first method of a group stays as
+# vanilla has it: a building that runs nothing yet has no self-locked method available, and the game left such a group
+# empty in every new and every history building (q52-q61). So the AI can still step a building down to that first
+# method, and nothing else.
+# A locked frame fails can_activate_production_method whenever it is not running, so what vanilla's unlock keys ask is
+# asked by PMR (Gate), from the keys themselves. A frame with a key Gate does not know stays unlocked and keeps the
+# game's own check. False gives q100's methods and checks back unchanged.
+LOCK_PURE = True
+GATES = {}   # {(building key, method key): Gate} of the locked frames; generate.py fills it before any effect is built
+
+
+class Gate:
+    """What vanilla's unlock keys ask of one locked frame, as a trigger of PMR's own (state scope).
+    techs: every technology the owner needs; owner: other triggers on the owner (laws, its power bloc); state: triggers
+    on the state (its region, a method the building must run)."""
+    def __init__(self, techs=(), owner=(), state=()):
+        self.techs, self.owner, self.state = list(techs), list(owner), list(state)
+
+    def trigger(self, also=()):
+        """one trigger; also: more technologies to ask of the owner in the same block"""
+        techs = list(dict.fromkeys(list(also) + self.techs))
+        own = [f'has_technology_researched = {t}' for t in techs] + self.owner
+        parts = ([f'owner = {{ {" ".join(own)} }}'] if own else []) + self.state
+        if not parts:
+            return 'always = yes'
+        return parts[0] if len(parts) == 1 else 'AND = { ' + ' '.join(parts) + ' }'
+
+
+def can_activate(bk, key, also=()):
+    """State scope: the game would let the building switch to key. A locked frame: its gate, with the technologies
+    also; any other method: the game's own check (also is then the caller's to ask)."""
+    gate = GATES.get((bk, key))
+    if gate is not None:
+        return gate.trigger(also)
+    return f'can_activate_production_method = {{ building_type = {bk} production_method = {key} }}'
+
+
+def may_run(bk, key):
+    """State scope: the building may run key. A locked frame: its gate alone, running or not (PMR's gate is then the
+    only one that can take a running frame away; the game sees a running locked frame as unlocked by itself). Any
+    other method: it runs, or the game would let the building switch to it."""
+    if (bk, key) in GATES:
+        return GATES[(bk, key)].trigger()
+    spec = f'building_type = {bk} production_method = {key}'
+    return f'OR = {{ is_production_method_active = {{ {spec} }} can_activate_production_method = {{ {spec} }} }}'
 
 
 FRAME_DOC = """# Union frames (method-count rework, frames.py): pm_pmr_union_<b>_<p> stands for retool target p while the building's
@@ -112,8 +165,11 @@ class Live:
 
 class Building:
     """pair_keys[p - 1]: retool target p (the vanilla recipe key or pm_pmr_pair_<b>_<r>_<a>), in pmr_to order.
-    own_mods[key]: modifiers target p's frame carries besides its members' (a recipe's unscaled ones)."""
-    def __init__(self, bk, recipe_group, pair_keys, members, option_groups=(), own_mods=None, live=()):
+    own_mods[key]: modifiers target p's frame carries besides its members' (a recipe's unscaled ones).
+    first: the method the game lists first in the recipe group, the one LOCK_PURE leaves open (an option group's is its
+    none); test builds count the frames put back from it apart."""
+    def __init__(self, bk, recipe_group, pair_keys, members, option_groups=(), own_mods=None, live=(), first=None):
+        self.first = first
         self.bk, self.b, self.recipe_group, self.pair_keys = bk, short(bk), recipe_group, list(pair_keys)
         self.members, self.option_groups = list(members), list(option_groups)
         self.own_mods, self.live = own_mods or {}, list(live)
@@ -392,7 +448,9 @@ def clear_vars(bld, ind='\t'):
 def frame_effect(bld, log=True, count=False):
     """pmr_frame_<b>, state scope, after pmr_blend_<b> and pmr_opts_<b> (the shares pmr_n_<j>_<b>, pmr_x_<j>_<b> and
     pmr_xn_<gi>_<b> are set). Call only where b:<bk> exists. count (test builds): each frame put back after a change
-    from outside PMR's tick (the AI's, the game's) adds 1 to the UNDO line's count (pmr_count_undo)."""
+    from outside PMR's tick (the AI's, the game's) adds 1 to the UNDO line's count (pmr_count_undo), and 1 to its
+    "first" where the building was found on its group's first method (pmr_count_undo_first): the one switch LOCK_PURE
+    leaves the AI."""
     bk, b = bld.bk, bld.b
     v = lambda name: f'{name}_{b}'                     # noqa: E731
     n = lambda j: f'var:{v(f"pmr_n_{j}")}'             # noqa: E731
@@ -400,10 +458,12 @@ def frame_effect(bld, log=True, count=False):
     setv = lambda name, val: f'set_variable = {{ name = {name} value = {val} }}'   # noqa: E731
     spec = lambda key: f'building_type = {bk} production_method = {key}'           # noqa: E731
     on = lambda key: f'is_production_method_active = {{ {spec(key)} }}'           # noqa: E731
-    may = lambda key: f'OR = {{ {on(key)} can_activate_production_method = {{ {spec(key)} }} }}'   # noqa: E731
-    act = lambda key: (f'if = {{ limit = {{ NOT = {{ {on(key)} }} }} '                                     # noqa: E731
-                       f'activate_production_method = {{ {spec(key)} }} {setv("pmr_fm_ch", 1)}'
-                       + (' pmr_count_undo = yes' if count else '') + ' }')
+    may = lambda key: may_run(bk, key)                # noqa: E731
+    def act(key, first=None):
+        was = (f'if = {{ limit = {{ {on(first)} }} pmr_count_undo_first = yes }} ' if count and first and first != key else '')
+        return (f'if = {{ limit = {{ NOT = {{ {on(key)} }} }} {was}'
+                f'activate_production_method = {{ {spec(key)} }} {setv("pmr_fm_ch", 1)}'
+                + (' pmr_count_undo = yes' if count else '') + ' }')
     P = len(bld.pair_keys)
     axes = list(enumerate(bld.auto_axes, 1))
     o = [f'# ===== {bk}: targets ' + ', '.join(f'{p} = {k}' for p, k in enumerate(bld.pair_keys, 1)) + '\n',
@@ -437,7 +497,7 @@ def frame_effect(bld, log=True, count=False):
     o.append('\t# the target the largest shares make\n'
              + lookup('var:pmr_fm_r', sorted(m.j for m in bld.recipes), pair_of))
 
-    # 3. the recipe frame: pure only where the game lets the building run it (technology, laws), else its union; each
+    # 3. the recipe frame: pure only where the building may run it (technology, laws: may_run), else its union; each
     # frame activated only if it isn't running (activate_production_method checks no unlock, and a frame the game
     # can't run would be switched away again, through on_production_method_changed back into this tick)
     pairs = list(range(1, P + 1))
@@ -446,9 +506,9 @@ def frame_effect(bld, log=True, count=False):
                       lambda p: f'if = {{ limit = {{ NOT = {{ {may(bld.pair_keys[p - 1])} }} }} {setv("pmr_fm_pr", 0)} }}', '\t\t')
              + '\t}\n'
              '\tif = {\n\t\tlimit = { var:pmr_fm_pr = 1 }\n'
-             + lookup('var:pmr_fm_pair', pairs, lambda p: act(bld.pair_keys[p - 1]), '\t\t')
+             + lookup('var:pmr_fm_pair', pairs, lambda p: act(bld.pair_keys[p - 1], bld.first), '\t\t')
              + '\t}\n\telse = {\n'
-             + lookup('var:pmr_fm_pair', pairs, lambda p: act(union_key(bld, p)), '\t\t') + '\t}\n')
+             + lookup('var:pmr_fm_pair', pairs, lambda p: act(union_key(bld, p), bld.first), '\t\t') + '\t}\n')
 
     # 4. each trade-off group: the none or option with the largest share; pure where it is at 100% and may run
     for og in bld.option_groups:
@@ -463,8 +523,8 @@ def frame_effect(bld, log=True, count=False):
                           lambda j, keys=keys, gi=gi: f'if = {{ limit = {{ {may(keys[j])} }} {setv(f"pmr_fm_po{gi}", 1)} }}', '\t\t')
                  + '\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_fm_po{gi} = 1 }}\n'
-                 + lookup(f'var:pmr_fm_o{gi}', sorted(keys), lambda j, keys=keys: act(keys[j]), '\t\t')
-                 + f'\t}}\n\telse = {{ {act(option_union_key(bld, og))} }}\n')
+                 + lookup(f'var:pmr_fm_o{gi}', sorted(keys), lambda j, keys=keys, og=og: act(keys[j], og.none), '\t\t')
+                 + f'\t}}\n\telse = {{ {act(option_union_key(bld, og), og.none)} }}\n')
     o.append(f'\t{setv("pmr_fm_pure", 0)}\n'
              '\tif = { limit = { var:pmr_fm_pr = 1 ' + ''.join(f'var:pmr_fm_po{og.gi} = 1 ' for og in bld.option_groups)
              + f'}} {setv("pmr_fm_pure", 1)} }}\n')

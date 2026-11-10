@@ -762,6 +762,7 @@ class PairRecipe:
                     self.gates.append(m.src.text[n.start:n.end])
         self.gates += [f'{k} = {{ ' + ' '.join(xs) + ' }' for k, xs in barred.items()]
         self.gated_otherwise = base.gated_otherwise or bool(barred)
+        self.locked = False   # frame_lock: unlocks only while it runs
 
     def needs(self, good):
         return self.base.needs(good) or any(m.needs(good) for m in self.opt)
@@ -772,7 +773,110 @@ class PairRecipe:
                 + (f'\tunlocking_technologies = {{\n' + ''.join(f'\t\t{t}\n' for t in self.techs) + '\t}\n'
                    if self.techs else '')
                 + ''.join(f'\t{g}\n' for g in self.gates)
+                + (f'\tunlocking_production_methods = {{ {self.key} }}\n' if self.locked else '')
                 + body + '}\n')
+
+
+LOCK_NOTE = '# PMR: unlocks only while it runs (the AI\'s lock); PMR asks the rest itself'
+
+
+def frame_gate(bk, nodes, frames_of_bk, adds):
+    """frames.Gate: what vanilla's unlock keys ask of a method made of nodes (a recipe's or an option's own method; a
+    pair's recipe and its automation methods, each of which must be allowed), or None where a key asks something the
+    gate does not state, and the method keeps the game's own check.
+    - unlocking_technologies: every one (vanilla lists one a method; a pair lists its recipe's and its automation's,
+      and the tick has always asked the owner for each);
+    - disallowing_laws: none of them, in any variant;
+    - unlocking_geographic_regions, unlocking_principles: a single entry only, so no any-or-all is assumed (and an
+      empty region list asks nothing: vanilla's one is on dry process coffee, which every coffee plantation starts on);
+    - unlocking_production_methods: any one of them running, or a frame of bk built on one (adds, as the list itself
+      gained them before the lock)."""
+    techs, owner, state = [], [], []
+    for node in nodes:
+        for n in node.value:
+            if not n.key or not n.key.startswith(('unlocking_', 'disallowing_')):
+                continue
+            xs = pdx.items(n) if n.is_block else None
+            if n.key == 'unlocking_technologies' and xs is not None:
+                techs += [t for t in xs if t not in techs]
+            elif n.key == 'disallowing_laws' and xs:
+                owner += [t for t in (f'NOT = {{ has_law_or_variant = law_type:{x} }}' for x in xs) if t not in owner]
+            elif n.key == 'unlocking_geographic_regions' and xs is not None and len(xs) <= 1:
+                state += [f'is_in_geographic_region = {x}' for x in xs]
+            elif n.key == 'unlocking_principles' and xs and len(xs) == 1:
+                owner.append(f'power_bloc ?= {{ has_principle = principle:{xs[0]} }}')
+            elif n.key == 'unlocking_production_methods' and xs:
+                run = [x for x in dict.fromkeys(xs + adds) if x in frames_of_bk]
+                if not run:
+                    return None
+                on = [f'is_production_method_active = {{ building_type = {bk} production_method = {x} }}' for x in run]
+                state.append(on[0] if len(on) == 1 else 'OR = { ' + ' '.join(on) + ' }')
+            else:
+                return None
+    return frames.Gate(techs, owner, state)
+
+
+def frame_lock(treated, options, groups, pm_groups, pms, frame_adds):
+    """The AI's lock (frames.LOCK_PURE, Pat 2026-11-10 21:31Z): every pure frame but the first of its group unlocks
+    only while it runs, and frames.GATES holds what PMR asks in the game's place. A frame stays open (vanilla's keys,
+    the game's check) where it is the first method of a group, where a group PMR does not frame lists it too, or where
+    one of its keys is not one frame_gate states.
+    Returns {'locked': {method key}, 'open': {method key: why}}."""
+    frames.GATES.clear()
+    out = {'locked': set(), 'open': {}}
+    if not frames.LOCK_PURE:
+        return out
+    frame_groups = {t[4] for t in treated} | {g for conv in options.values() for g, _gi, mode, *_r in conv if mode == 'market'}
+    firsts = {groups[g][0] for g in frame_groups if groups.get(g)}
+    gates, pairs = {}, {}
+    for bk, _bn, _s, recipes, g0, _pg in treated:
+        of_bk = set(groups.get(g0, [])) | {r.key for r in recipes} | {f'pm_pmr_union_{short(bk)}_{p}'
+                                                                       for p in range(1, len(recipes) + 1)}
+        cands = [(r.key, [r.base.node] + [m.node for m in r.opt] if isinstance(r, PairRecipe) else [r.node], r)
+                 for r in recipes]
+        cands += [(o.key, [o.node], None) for _g, _gi, mode, _none, opts, _std in options.get(bk, []) if mode == 'market'
+                  for o in opts]
+        for key, nodes, r in cands:
+            why = None
+            if key in firsts:
+                why = 'the first method of a group'
+            elif not pm_groups.get(key, set()) <= frame_groups:
+                why = 'also in ' + ', '.join(sorted(pm_groups[key] - frame_groups))
+            else:
+                gate = frame_gate(bk, nodes, of_bk, frame_adds.get(key, []))
+                if gate is None:
+                    why = 'an unlock key the gate does not state'
+                else:
+                    gates[(bk, key)] = gate
+                    if isinstance(r, PairRecipe):
+                        pairs[key] = r
+            if why:
+                out['open'][key] = why
+    # replacement_if_valid (vacuum canning and its power bloc variant): the game takes the method away where its
+    # replacement may run, so the gate does too; a replacement with no gate of its own leaves the method open
+    for (bk, key), gate in gates.items():
+        rep = pdx.get(pms[key][0].value, 'replacement_if_valid') if key in pms else None
+        if rep is not None and rep.value in DROP_RECIPES:   # a principle variant PMR drops, the line with it
+            continue
+        if rep is not None and (bk, rep.value) in gates:
+            gate.state.append('NOT = { ' + gates[(bk, rep.value)].trigger() + ' }')
+        elif rep is not None:
+            out['open'][key] = f'replaced by {rep.value}, which has no gate'
+    # a method two buildings share is locked for both or for neither
+    for (bk, key), gate in gates.items():
+        if key not in out['open']:
+            frames.GATES[(bk, key)] = gate
+            out['locked'].add(key)
+    for key in sorted(out['locked']):
+        if key in pairs:
+            pairs[key].locked = True
+            continue
+        n, psrc = pms[key]
+        upm = pdx.get(n.value, 'unlocking_production_methods')
+        if upm is not None:
+            psrc.cuts.append(line_span(psrc.text, upm))
+        psrc.inserts.append((n.end - 1, f'\tunlocking_production_methods = {{ {key} }}  {LOCK_NOTE}\n'))
+    return out
 
 
 def automation_options(auto_groups, groups, pms):
@@ -1449,12 +1553,15 @@ def main():
             if isinstance(r, PairRecipe):
                 pair_of.setdefault(base, []).append(r.key)
             pair_of.setdefault(base, []).append(f'pm_pmr_union_{short(bk)}_{p}')
+    # Written once the AI's lock is known (frame_lock below): a locked method's list becomes the method itself, and
+    # PMR's gate asks for the frames named here.
+    frame_adds = {}
     for key, (n, psrc) in pms.items():
         upm = pdx.get(n.value, 'unlocking_production_methods')
         listed = pdx.items(upm) if upm else []
         add = [pk for x in listed for pk in pair_of.get(x, []) if pk not in listed]
         if add:
-            psrc.inserts.append((upm.end - 1, ''.join(f'\t{pk}  # PMR: a frame of a recipe it names\n\t' for pk in add)))
+            frame_adds[key] = add
 
     # ---- second groups: trade-offs and working conditions become option shares -------------------
     # options[bk] = [(group, gi, mode, none method, [Option], standard methods)], gi counting the
@@ -1535,6 +1642,15 @@ def main():
                           'options': [{'j': o.j, 'key': o.key, 'role': o.role, 'goods': o.goods, 'electricity': o.elec}
                                       for o in opts]}
                          for bk, conv in options.items() for g, gi, mode, none, opts, std in conv]
+
+    # ---- the AI's lock (frames.LOCK_PURE): before any effect is built, as the effects ask the gates ----
+    lock_report = frame_lock(treated, options, groups, pm_groups, pms, frame_adds)
+    for key, add in frame_adds.items():
+        if key not in lock_report['locked']:
+            upm = pdx.get(pms[key][0].value, 'unlocking_production_methods')
+            pms[key][1].inserts.append((upm.end - 1, ''.join(f'\t{pk}  # PMR: a frame of a recipe it names\n\t' for pk in add)))
+    report['frame_lock'] = {'on': frames.LOCK_PURE, 'locked': len(lock_report['locked']),
+                            'open': lock_report['open']}
 
     # ---- groups kept on their best method (AUTO_BEST) -----------------------------------------------
     # auto[bk] = [(group, its methods best first)]
@@ -1819,7 +1935,7 @@ def main():
                     gs = sh.replace('pm_', 'pmg_', 1)
                     ladder(sh, values, dv, o.share_body, o.texture,
                            lambda val, o=o: f'${o.key}$ ({val}% of the workforce)', (gs, f'${o.key}$ share'))
-        fb = frames.Building(bk, g0, [r.key for r in recipes], fm, ogs, own, live)
+        fb = frames.Building(bk, g0, [r.key for r in recipes], fm, ogs, own, live, first=groups[g0][0])
         frames_of[bk] = fb
         FRAMES[bk] = fb
         for p, r in enumerate(recipes, 1):
@@ -2056,6 +2172,10 @@ def main():
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(price_goods)
           + ''.join(market_read(g, g in spare) for g in traded) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
+    hist_text, hist_n = history_frames(game)
+    if hist_n:
+        write('common/scripted_effects/pmr_history_effects.txt', header + hist_text)
+    report['frame_lock']['history'] = hist_n
     on_actions = ON_ACTIONS.replace('STATE_TURN', state_turn())
     if args.script_profile:
         if on_actions.count(PULSE_STATE_HOOK) != 1 or on_actions.count(pulse_state_effect()) != 1:
@@ -2070,6 +2190,8 @@ def main():
           .replace('PMC_ON', '' if RELEASE else '\t\t\tstate = { set_variable = { name = pmr_pmc days = 1 } }   # pmr_count_undo\n')
           .replace('PMC_OFF', '' if RELEASE else '\t\t\tstate = { remove_variable = pmr_pmc }\n')
           .replace('START_STAFF', '' if RELEASE else START_STAFF)
+          .replace('HISTORY_FRAMES', "\t\tpmr_history_frames = yes   # the AI's lock: history's locked frames, before the first tick adopts what runs\n"
+                   if hist_n else '')
           .replace('START_LEFT', '' if RELEASE else START_LEFT)
           + ('' if RELEASE else OBS_ON_ACTIONS.replace(OBS_PAD_HOOK[0], OBS_PAD_HOOK[1]) + OBS_PAD_ON_ACTIONS if OBS_PAD else
              OBS_ON_ACTIONS) + (BUILD_ON_ACTIONS if BUILD else ''))
@@ -2854,7 +2976,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     xv = lambda name, j: f'{name}_{j}_{b}'        # noqa: E731
     act = lambda pm: f'activate_production_method = {{ building_type = {bk} production_method = {pm} }}'   # noqa: E731
     is_on = lambda pm: f'is_production_method_active = {{ building_type = {bk} production_method = {pm} }}'   # noqa: E731
-    can = lambda pm: f'OR = {{ {is_on(pm)} can_activate_production_method = {{ building_type = {bk} production_method = {pm} }} }}'   # noqa: E731
+    can = lambda pm: frames.may_run(bk, pm)       # noqa: E731  a locked option: PMR's gate (frames.LOCK_PURE)
     r0 = recipes[0]
     band = TRADE_DEAD_BAND * sum(v * goods_cost.get(g, 0) for g, v in r0.outputs.items())
     o = []
@@ -4033,7 +4155,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         # the electric recipe: its newest recipe's and its automation's technologies, all of them; any
         # recipe: its folded automation's
         owner_techs = list(dict.fromkeys(list(getattr(r, 'techs', None) or []) + fold_techs.get(i, [])))
-        if owner_techs:   # the technologies first: they rule out most of a split type's pairs before the engine's check
+        if (bk, r.key) in frames.GATES:
+            # a locked frame (frames.LOCK_PURE) fails the engine's check unless it runs: PMR's gate, those technologies in it
+            can = frames.can_activate(bk, r.key, owner_techs)
+        elif owner_techs:   # the technologies first: they rule out most of a split type's pairs before the engine's check
             can = (f'AND = {{ owner = {{ '
                    + ' '.join(f'has_technology_researched = {t}' for t in owner_techs) + f' }} {can} }}')
         if with_abroad and abroad(r, i):
@@ -4877,7 +5002,7 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
                  f'\tchange_variable = {{ name = {cp} subtract = var:pmr_t }}\n'
                  f'\tchange_variable = {{ name = {cp} add = var:pmr_off }}\n')
         techs = pair['techs'][a - 1]
-        cond = (f'OR = {{ {active(r)} can_activate_production_method = {{ building_type = {bk} production_method = {r.key} }} }}'
+        cond = (f'OR = {{ {active(r)} {frames.can_activate(bk, r.key)} }}'
                 + (' owner = { ' + ' '.join(f'has_technology_researched = {t}' for t in techs) + ' }' if techs else '')
                 + (' var:pmr_elec = 1' if pair['elec'][(i, a)] else '')
                 + (' var:pmr_rail = 1' if rails(gd) else ''))
@@ -4924,7 +5049,12 @@ def shared_effects(price_goods=()):
     out += ('# State scope (test builds): count a frame put back after a change from outside PMR\'s tick.\n'
             'pmr_count_undo = {\n\tif = {\n\t\tlimit = { has_variable = pmr_pmc }\n'
             '\t\tif = { limit = { NOT = { has_global_variable = pmr_undo } } set_global_variable = { name = pmr_undo value = 0 } }\n'
-            '\t\tchange_global_variable = { name = pmr_undo add = 1 }\n\t}\n}\n\n')
+            '\t\tchange_global_variable = { name = pmr_undo add = 1 }\n\t}\n}\n\n'
+            '# State scope (test builds): of those, the building was found on the first method of the frame\'s group, the\n'
+            '# one switch the AI\'s lock (frames.LOCK_PURE) leaves open.\n'
+            'pmr_count_undo_first = {\n\tif = {\n\t\tlimit = { has_variable = pmr_pmc }\n'
+            '\t\tif = { limit = { NOT = { has_global_variable = pmr_undo_f } } set_global_variable = { name = pmr_undo_f value = 0 } }\n'
+            '\t\tchange_global_variable = { name = pmr_undo_f add = 1 }\n\t}\n}\n\n')
     # pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp: the state's unemployment rate in %
     # (lower bound of 1/2/5/10/20), for the log, read once a turn. The investment pool scores a building x0.25 in a
     # state short of workers, which can cost a retool site with a crew a pick.
@@ -5064,6 +5194,75 @@ def profile_pulse_state(buildings):
     return ('# --script-profile: the monthly state pulse one step per on_action, for the script profiler\n'
             'on_monthly_pulse_state = { on_actions = { ' + ' '.join(f'pmr_prof_{k}' for k, _ in steps) + ' } }\n\n'
             + ''.join(f'pmr_prof_{k} = {{\n\t{paused}\n\teffect = {{\n{e}\t}}\n}}\n' for k, e in steps) + '\n')
+
+
+HISTORY_FRAMES_DOC = """# The AI's lock (frames.LOCK_PURE): the frames vanilla's history names that unlock only while they run. Whether the
+# game sets such a frame as history makes the building is not known (no build before this one locked a method history
+# names; the share methods history named until q98 were unlocked by a start method on purpose). So at game start,
+# before the first tick adopts what each building runs, every locked frame history names is set here where it is not
+# running and its gate holds. activate_production_method asks nothing, and a running locked frame unlocks itself.
+# Test builds log a HIST line for each frame set: none at all means the game set history's frames itself.
+
+"""
+
+
+def history_frames(game):
+    """(text, entries): pmr_history_frames, no scope, for pmr_on_game_started. One block per state and owner of
+    vanilla's history building files, a line per locked frame (frames.GATES) a create_building there names."""
+    src = os.path.join(game, 'common', 'history', 'buildings')
+    names = sorted(f for f in os.listdir(src) if f.endswith('.txt')) if os.path.isdir(src) and frames.GATES else []
+
+    def creates(nodes):
+        for n in nodes:
+            if n.key == 'create_building' and n.is_block:
+                yield n
+            elif n.is_block:
+                yield from creates(n.value)
+
+    blocks, count = collections.OrderedDict(), 0
+    for fn in names:
+        with open(os.path.join(src, fn), encoding='utf-8-sig') as f:
+            nodes = pdx.parse(pdx.strip_bom(f.read()))
+        for top in nodes:
+            for st in (top.value if top.is_block else []):
+                if not (st.key or '').startswith('s:') or not st.is_block:
+                    continue
+                for rs in st.value:
+                    if not (rs.key or '').startswith('region_state:') or not rs.is_block:
+                        continue
+                    made = [pdx.get(cb.value, 'building') for cb in creates(rs.value)]
+                    twice = {bn.value for bn in made if bn is not None and sum(1 for x in made if x is not None and x.value == bn.value) > 1}
+                    for cb in creates(rs.value):
+                        bn, apm = pdx.get(cb.value, 'building'), pdx.get(cb.value, 'activate_production_methods')
+                        # a building history makes twice in one state (four in 1.15): which entry's methods the game
+                        # keeps is not known, so it is left as the game made it
+                        if bn is None or apm is None or not apm.is_block or bn.value in twice:
+                            continue
+                        for key in pdx.items(apm):
+                            gate = frames.GATES.get((bn.value, key))
+                            if gate is None:
+                                continue
+                            spec = f'building_type = {bn.value} production_method = {key}'
+                            asks = gate.trigger()
+                            line = (f'\t\tif = {{ limit = {{ has_building = {bn.value} NOT = {{ is_production_method_active = {{ {spec} }} }}'
+                                    + ('' if asks == 'always = yes' else f' {asks}')
+                                    + f' }} activate_production_method = {{ {spec} }} '
+                                    'debug_log = "PMR;rec=HIST;date=[TimeKeeper.GetCurrentDate.GetString];'
+                                    'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                                    f'building={bn.value};method={key}" }}\n')
+                            lines = blocks.setdefault((st.key, rs.key), [])
+                            if line not in lines:
+                                lines.append(line)
+                                count += 1
+    if not count:
+        return '', 0
+    # pmr_in_tick: the switch is PMR's own, so pmr_on_production_method_changed leaves it alone
+    out = [HISTORY_FRAMES_DOC, 'pmr_history_frames = {\n']
+    for (st, rs), lines in blocks.items():
+        out.append(f'\t{st}.{rs} ?= {{\n\t\tset_variable = {{ name = pmr_in_tick value = yes days = 1 }}\n'
+                   + ''.join(lines) + '\t\tremove_variable = pmr_in_tick\n\t}\n')
+    out.append('}\n')
+    return ''.join(out), count
 
 
 def history_start_shares(game, start_shares=None):
@@ -5251,9 +5450,14 @@ def dispatch_effects(buildings):
                  '\t\tif = { limit = { has_global_variable = pmr_undo } set_variable = { name = pmr_undo_v value = global_var:pmr_undo } '
                  'set_global_variable = { name = pmr_undo value = 0 } }\n'
                  '\t\telse = { set_variable = { name = pmr_undo_v value = 0 } }\n'
+                 # of those, the ones found on their group's first method (pmr_count_undo_first)
+                 '\t\tif = { limit = { has_global_variable = pmr_undo_f } set_variable = { name = pmr_undo_fv value = global_var:pmr_undo_f } '
+                 'set_global_variable = { name = pmr_undo_f value = 0 } }\n'
+                 '\t\telse = { set_variable = { name = pmr_undo_fv value = 0 } }\n'
                  '\t\tdebug_log = "PMR;rec=UNDO;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
-                 "n=[THIS.Var('pmr_undo_v').GetValue|0]\"\n"
+                 "n=[THIS.Var('pmr_undo_v').GetValue|0];first=[THIS.Var('pmr_undo_fv').GetValue|0]\"\n"
                  '\t\tremove_variable = pmr_undo_v\n'
+                 '\t\tremove_variable = pmr_undo_fv\n'
                  '\t\tdebug_log = "PMR;rec=SKIP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
                  + ';'.join(f"{n[7:]}=[THIS.Var('{n}').GetValue|0]" for n in counts) + '"\n'
                  + ''.join(f'\t\tset_variable = {{ name = {n} value = 0 }}\n' for n in counts) + '\t}\n}\n')
@@ -8129,7 +8333,7 @@ BUILD_STAMPSTART_STAFF		# No country is a player's yet here (no player state log
 		set_global_variable = pmr_setup
 		# the Mod Template's "is loaded" flag, so other mods can tell PMR is running (exists = global_var:pmr_is_loaded)
 		set_global_variable = { name = pmr_is_loaded value = yes }
-		every_country = {
+HISTORY_FRAMES		every_country = {
 			every_scope_state = {
 				pmr_state_tick = yes
 				pmr_auto_best = yes   # AUTO_BEST: government administration, universities, trade centres, carriages
