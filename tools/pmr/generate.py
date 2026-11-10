@@ -118,10 +118,11 @@ UNITS = list(range(10))
 SHARE_DIGITS = False   # set by main()
 
 
-def share_digits(stem, default_n):
-    """the methods one share runs: [(method stem, values, default value, group suffix)]"""
+def share_digits(stem, default_n, step=1):
+    """the methods one share runs: [(method stem, values, default value, group suffix)]; step: the share's grain in
+    points (a trade-off's OPT_STEP, opt_values)"""
     if not SHARE_DIGITS:
-        return [(stem, list(range(SHARE_STEPS + 1)), default_n, '')]
+        return [(stem, list(range(0, SHARE_STEPS + 1, step)), default_n, '')]
     return [(stem, TENS, default_n, ' (tens)'), (stem.replace('pm_pmr_share_', 'pm_pmr_shu_').replace('pm_pmr_x_', 'pm_pmr_xu_'),
                                                  UNITS, 0, ' (units)')]
 RETOOL_SLOTS = 2           # private retool buildings per building type: one at home, one abroad (ABROAD_SLOT)
@@ -323,19 +324,24 @@ FLUSH_PAD = 4500
 # SKIP line a month: the ticks that skipped, ran it, and ran it as that check.
 SKIP_CHECK = 12
 # Second groups (Pat approved both 2026-10-13; built from 03:21Z). A group after the recipe group is
-# either a trade-off, blended by local prices, or a plantation's working conditions, blended by the
+# either a trade-off, blended by market prices, or a plantation's working conditions, blended by the
 # workforce's acceptance. Each of its options (every method but the one that does nothing) gets a share
 # of the building, in 1% steps, through share methods built like the recipe ones; the do-nothing method
 # is the remainder. The vanilla group stays on the building as a marker that carries nothing: it keeps
 # the game's history setup readable at game start and lets can_activate_production_method gate each
 # option by technology, law and recipe as vanilla would.
-# Trade-offs (pmr/second-groups.md): once a month each option is valued at local prices (outputs minus
-# inputs per level, goods only), and points move from the worst-paying option with a share to the
-# best-paying one, when the gap beats TRADE_DEAD_BAND of the building's output value per level. Pat,
-# 2026-10-13 (2 points a month took Yorkshire's rye farms 33 months to reach 66% Apple Orchards): the
-# move is the gap in % of that output value times TRADE_GAIN, within TRADE_STEP_MIN..TRADE_STEP_MAX
-# points, so an option paying 10% more moves 10 points a month, and the move slows as prices answer.
-# "None" is worth 0. A building built during the game starts on the best-paying option.
+# Trade-offs (pmr/second-groups.md): each option is valued at its market's prices (outputs minus inputs per level,
+# goods only), and points move from the worst-paying option with a share to the best-paying one, when the gap beats
+# TRADE_DEAD_BAND of the building's output value per level. "None" is worth 0. A building built during the game starts
+# on the best-paying option.
+# Pat 2026-11-10 (q94): "One of the slowest parts of the mod is the pricier checks; could we instead of doing these set
+# the PM2's to be gated based on Supply/Demand orders of the market and be market based and drop the locality? Also
+# have them operate in larger chunks of 5%?" A good's price is no longer read per state through a state_goods_pricier
+# ladder (about five comparisons a good, a state and a day) but once a month per market from its order book
+# (market_values): vanilla's price from buy and sell orders, base x (1 + PRICE_RANGE x (buy - sell) / the smaller of
+# the two, within -1..1; BUY_SELL_DIFF_AT_MAX_FACTOR 2). A local good (LOCAL_GOODS) counts at base. Shares move
+# OPT_STEP points a month and hold multiples of it, with share methods only at those (21 an option, not 101).
+# Before q94 (Pat 2026-10-13) the move was the gap in % of the output value, 2 to 20 points a month.
 TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_building_textile_mill',
                 'pmg_luxury_building_furniture_manufactory', 'pmg_luxury_building_glassworks',
                 'pmg_aeroplanes', 'pmg_tanks', 'pmg_synthetic_silk', 'pmg_radios_category',
@@ -352,7 +358,8 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 # hardwood. Its none, Simple Ranch, makes wool of its own: the options carry their difference from it
                 # (Option.less) and the marker stays on it (option_effects).
                 'pmg_sheep_ranch')
-TRADE_GAIN = 1.0
+OPT_STEP = 5
+PRICE_RANGE = 0.75   # vanilla's (00_defines.txt): a price runs from 0.25 to 1.75 of base
 kept_none = set()     # (building, none method) of a trade-off whose none has effects: its marker stays on it
 # (file, text, replacement): vanilla script errors PMR corrects, each text found once. Each ships a whole copy of the
 # vanilla file, so a mod with its own copy clashes. q77 and 2026-10-29 (#12) dropped the Hawaii fix for that; Pat put it
@@ -373,7 +380,7 @@ PRESTIGE_JE_FILE = '05_prestige_goods.txt'   # vanilla's prestige goods journal 
 # is each option (none below the dead band). At game start a building takes these shares; an option
 # its state can't run yet passes its share to the option before it in vanilla's order, then to none.
 # Buildings built later still start on their own best-paying option. A type left out keeps vanilla's
-# start (automotive: none built by 1838).
+# start (automotive: none built by 1838). Since q94 each share rounds to OPT_STEP (start_shares).
 TRADE_PRELOAD = {
     'building_rye_farm': {'pm_potatoes': 32, 'pm_apple_orchards': 68},
     'building_wheat_farm': {'pm_citrus_orchards': 100},
@@ -406,7 +413,6 @@ START_LEVELS = {
     ('STATE_ESTREMADURA', 'POR', 'building_paper_mill'): (('building', 'building_paper_mill', 'STATE_ESTREMADURA'), 1),
     ('STATE_CAMPANIA', 'SIC', 'building_paper_mill'): (('country', None, None), 1),
 }
-TRADE_STEP_MIN, TRADE_STEP_MAX = 2, 20
 TRADE_DEAD_BAND = 0.05
 # Pat, 2026-10-25 (a player on Discord: "no aeroplanes", tanks and radios came a couple of years late): nobody asks for
 # aeroplanes until some exist. Pops' leisure need weighs a good by its share of the market's sell orders, and Aerial
@@ -414,13 +420,13 @@ TRADE_DEAD_BAND = 0.05
 # for 10 cars (£100) never pays. Pat: "churn out when needed", with chunky thresholds to keep it cheap. A demand-led
 # group follows its market's price instead of its options' worth: DEMAND_STEP points a month toward its one option
 # while the market pays DEMAND_BAND over base, away while it pays that much under, never under DEMAND_SEED while the
-# option can run. One or two comparisons an update, no price ladder or valuation.
+# option can run. Since q94 the price is the one the market's order book gives (market_values), no valuation.
 # Pat 22:07Z: "10% aero planes is way way to many". 22:08Z: Aerial Reconnaissance no longer needs aeroplanes on sale
 # (MOBILIZATION_UNGATE), "that way it would cause a shortage and then pmr automatically would pick it up", so no seed.
 # 22:09Z: "unlock tanks as well please": tanks too (armies already ask for them, without a supply).
 DEMAND_GROUPS = ('pmg_aeroplanes', 'pmg_tanks')
 DEMAND_SEED = 0
-DEMAND_STEP = 5
+DEMAND_STEP = OPT_STEP
 DEMAND_BAND = 0.25
 # Treatment (pmr/treatment-by-acceptance.md): Violent Treatment's share is the building's workforce
 # with acceptance under TREAT_BANDS[0], Exploitative Practices' (Pat's "harsh") the workforce from
@@ -1837,7 +1843,7 @@ def main():
         for g, gi, mode, none, opts, std in options.get(bk, []):
             for o in opts:
                 what = 'workforce' if mode == 'treat' else 'building'
-                for sh, values, dv, _part in share_digits(f'pm_pmr_x_{b}_{o.j}', 0):
+                for sh, values, dv, _part in share_digits(f'pm_pmr_x_{b}_{o.j}', 0, opt_step(o)):
                     gs = sh.replace('pm_', 'pmg_', 1)
                     ladder(sh, values, dv, o.share_body, o.texture,
                            lambda val, o=o, what=what: f'${o.key}$ ({val}% of the {what})',
@@ -2012,8 +2018,11 @@ def main():
           + '# unlocks only while it runs itself; the tick sets them with activate_production_method.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
-    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(set(option_goods(options)) | profit_goods))
-          + ''.join(trade_budget(g) for g in budget_goods(options)) + '\n'.join(tick_effects)
+    spare = set(budget_goods(options))
+    check_price_defines(game)
+    write('common/script_values/pmr_market_values.txt', header + market_values(option_goods(options), sorted(spare)))
+    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(profit_goods))
+          + ''.join(market_read(g, g in spare) for g in option_goods(options)) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     on_actions = ON_ACTIONS.replace('STATE_TURN', state_turn())
     if args.script_profile:
@@ -2668,40 +2677,70 @@ def throughput_keys(game, buildings):
     return out
 
 
-def option_goods(options):
-    return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
-                   for o in opts if o.group not in DEMAND_GROUPS for g in o.goods})
+def opt_step(o):
+    """an option's share grain in points: a trade-off's OPT_STEP (Pat 2026-11-10), treatment's 1"""
+    return OPT_STEP if o.mode == 'market' else 1
 
 
 LOCAL_GOODS = ('services', 'transportation', 'electricity')   # local = yes: no market order book to share out
-TRADE_BUDGET = (1, 1000000, 1.25)   # the spare supply ladder: least, most, ratio (units a week)
+
+
+def option_goods(options):
+    """The market goods the trade-offs read the market's price of (market_values): every good of a valued option, and
+    the one good a demand-led option makes."""
+    return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
+                   for o in opts for g, amt in o.goods.items()
+                   if g not in LOCAL_GOODS and (o.group not in DEMAND_GROUPS or amt > 0)})
 
 
 def budget_goods(options):
-    """The market goods a trade-off option takes as an input (trade_budget)."""
+    """The market goods a trade-off option takes as an input (pmr_xb_<good>, market_read)."""
     return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
                    for o in opts if o.group not in DEMAND_GROUPS for g, amt in o.goods.items()
                    if amt < 0 and g not in LOCAL_GOODS})
 
 
-def trade_budget(good):
-    """State scope, scope:pmr_xmo its market's owner: pmr_xb_<good> on the owner, the market's spare supply of the
-    good this month in units a week (sell less buy orders, market_goods_delta, to the TRADE_BUDGET rung below; 0 with
-    none), read once a month (pmr_xbm_<good>) and drawn down by the steps onto options using it (option_effects)."""
-    lo, hi, r = TRADE_BUDGET
-    ns, x = [], lo
-    while x <= hi:
-        v = float(f'{x:.3g}')
-        if not ns or v > ns[-1]:
-            ns.append(v)
-        x *= r
-    ladder = highest(ns, lambda v: f'market ?= {{ mg:{good} ?= {{ market_goods_delta >= {fmt(v)} }} }}',
-                     lambda v: f'scope:pmr_xmo = {{ set_variable = {{ name = pmr_xb_{good} value = {fmt(v) if v else 0} }} }}',
-                     '\t\t')
-    return (f'pmr_xbud_{good} = {{\n\tif = {{\n'
-            f'\t\tlimit = {{ exists = scope:pmr_xmo NOT = {{ scope:pmr_xmo = {{ has_variable = pmr_xbm_{good} }} }} }}\n'
-            f'\t\tscope:pmr_xmo = {{ set_variable = {{ name = pmr_xbm_{good} value = yes days = 28 }} }}\n'
-            + ladder + '\t}\n}\n\n')
+def market_values(goods, spare_goods):
+    """Script values, in a country's scope (the market owner's, market_read). pmr_sv_mpx_<good>: the market's price of
+    the good over its base, from its buy and sell orders as vanilla prices them, at the cap once one side is twice the
+    other (BUY_SELL_DIFF_AT_MAX_FACTOR 2); base with neither. pmr_sv_spare_<good>: the market's spare supply of an input
+    (sell less buy orders, at least 0), which the steps draw down (option_effects)."""
+    out = []
+    for g in goods:
+        out.append(f'pmr_sv_mpx_{g} = {{\n\tvalue = 0\n\tmarket ?= {{\n\t\tmg:{g} ?= {{\n'
+                   '\t\t\tadd = market_goods_buy_orders\n\t\t\tsubtract = market_goods_sell_orders\n'
+                   '\t\t\tdivide = {\n\t\t\t\tvalue = market_goods_buy_orders\n\t\t\t\tmax = market_goods_sell_orders\n'
+                   '\t\t\t\tmin = 1\n\t\t\t}\n\t\t}\n\t}\n'
+                   f'\tmin = -1\n\tmax = 1\n\tmultiply = {fmt(PRICE_RANGE)}\n\tadd = 1\n}}\n\n')
+    for g in spare_goods:
+        out.append(f'pmr_sv_spare_{g} = {{\n\tvalue = 0\n\tmarket ?= {{ mg:{g} ?= {{ add = market_goods_delta }} }}\n'
+                   '\tmin = 0\n}\n\n')
+    return ''.join(out)
+
+
+def check_price_defines(game):
+    """market_values copies vanilla's pricing: refuse to build if the game's PRICE_RANGE or BUY_SELL_DIFF_AT_MAX_FACTOR
+    moved"""
+    text = open(os.path.join(game, 'common', 'defines', '00_defines.txt'), encoding='utf-8-sig').read()
+    for key, want in (('PRICE_RANGE', PRICE_RANGE), ('BUY_SELL_DIFF_AT_MAX_FACTOR', 2)):
+        m = re.search(r'^\s*' + key + r'\s*=\s*([0-9.]+)', text, re.M)
+        if not m or float(m.group(1)) != want:
+            raise SystemExit(f'00_defines.txt: {key} is {m.group(1) if m else "missing"}, market_values assumes {want}')
+
+
+def market_read(good, spare):
+    """State scope, scope:pmr_xmo its market's owner: the owner's pmr_mpx_<good> (market_values), and for an input its
+    pmr_xb_<good>, read once a month (pmr_xmm_<good>): two reads a good a market a month, where q93 read the price
+    through about five comparisons a good a state a day and the spare supply through a ladder."""
+    return (f'pmr_xmkt_{good} = {{\n\tif = {{\n'
+            f'\t\tlimit = {{ exists = scope:pmr_xmo NOT = {{ scope:pmr_xmo = {{ has_variable = pmr_xmm_{good} }} }} }}\n'
+            '\t\tscope:pmr_xmo = {\n'
+            # during game setup (pmr_setup) the market has no orders yet: read again at the first monthly pulse
+            f'\t\t\tif = {{ limit = {{ NOT = {{ has_global_variable = pmr_setup }} }} '
+            f'set_variable = {{ name = pmr_xmm_{good} value = yes days = 28 }} }}\n'
+            f'\t\t\tset_variable = {{ name = pmr_mpx_{good} value = pmr_sv_mpx_{good} }}\n'
+            + (f'\t\t\tset_variable = {{ name = pmr_xb_{good} value = pmr_sv_spare_{good} }}\n' if spare else '')
+            + '\t\t}\n\t}\n}\n\n')
 
 
 OPTION_TYPES = set()   # building types with trade-off options (option_effects), the only ones with pmr_xok_<b>
@@ -2727,8 +2766,8 @@ def ungate_mobilization(text):
 
 def demand_effects(b, gi, os_):
     """State scope: the step and first sight of a demand-led group (DEMAND_GROUPS) of building b, its one option's share
-    (pmr_x_<j>_<b>) moved by the market's price of what it makes, against base: pmr_xd_<j>_<b> 1 over DEMAND_BAND, -1
-    under, 0 between."""
+    (pmr_x_<j>_<b>) moved by the market's price of what it makes (its order book, market_read), against base:
+    pmr_xd_<j>_<b> 1 over DEMAND_BAND, -1 under, 0 between."""
     if len(os_) != 1:
         raise SystemExit(f'{os_[0].bk}: {os_[0].group} is demand-led with {len(os_)} options; extend demand_effects')
     x = os_[0]
@@ -2737,14 +2776,15 @@ def demand_effects(b, gi, os_):
         raise SystemExit(f'{x.key} makes {made}; a demand-led option follows the price of one good')
     xs, xd, xa = f'pmr_x_{x.j}_{b}', f'pmr_xd_{x.j}_{b}', f'pmr_xav_{x.j}_{b}'
 
-    def mg(t):
-        return f'market ?= {{ mg:{made[0]} ?= {{ {t} {fmt(DEMAND_BAND)} }} }}'
+    px = f'scope:pmr_xmo.var:pmr_mpx_{made[0]}'
     return (f'pmr_xstep_{gi}_{b} = {{\n'
             f'\tset_variable = {{ name = {xd} value = 0 }}\n'
             f'\tif = {{ limit = {{ var:{xa} = 0 }} set_variable = {{ name = {xs} value = 0 }} }}\n'
             '\telse = {\n'
-            f'\t\tif = {{ limit = {{ {mg("market_goods_pricier >")} }} set_variable = {{ name = {xd} value = 1 }} }}\n'
-            f'\t\telse_if = {{ limit = {{ {mg("market_goods_cheaper >")} }} set_variable = {{ name = {xd} value = -1 }} }}\n'
+            '\t\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
+            f'\t\tpmr_xmkt_{made[0]} = yes\n'
+            f'\t\tif = {{ limit = {{ exists = scope:pmr_xmo {px} > {fmt(1 + DEMAND_BAND)} }} set_variable = {{ name = {xd} value = 1 }} }}\n'
+            f'\t\telse_if = {{ limit = {{ exists = scope:pmr_xmo {px} < {fmt(1 - DEMAND_BAND)} }} set_variable = {{ name = {xd} value = -1 }} }}\n'
             f'\t\tset_variable = {{ name = pmr_m value = {DEMAND_STEP} }}\n'
             + opts_pace('\t\t') +
             f'\t\tchange_variable = {{ name = pmr_m multiply = var:{xd} }}\n'
@@ -2793,38 +2833,44 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     def inputs(x):
         return sorted(g for g, amt in x.goods.items() if amt < 0 and goods_cost.get(g) and g not in LOCAL_GOODS)
 
-    # Market options: value per level at local prices; an option that can't run sheds its share first. A demand-led
-    # option (DEMAND_GROUPS) has no value: its step reads the market's price alone.
+    # Market options: value per level at the market's prices; an option that can't run sheds its share first. A
+    # demand-led option (DEMAND_GROUPS) has no value: its step reads the market's price alone.
     market = [x for x in opts if x.mode == 'market' and x.group not in DEMAND_GROUPS]
     if market:
         goods = sorted({g for x in market for g in x.goods})
-        # A good's price is read once a day per state (pmr_pxd_<good>), not once per building type that
-        # values it: grain, sugar and fruit each feed five or six farm types.
-        o.append(f'pmr_xvalue_{b} = {{\n\towner = {{ save_scope_as = pmr_xown }}\n' + ''.join(
-            f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
-            f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods))
+        traded = [g for g in goods if g not in LOCAL_GOODS]
+        # q94 (Pat 2026-11-10): each good at its market's price from the order book, read once a month per market
+        # (pmr_xmkt_<good>, on the owner) and copied to the state (pmr_mx_<good>); a local good at base
+        o.append(f'pmr_xvalue_{b} = {{\n'
+                 '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
+                 + ''.join(f'\tset_variable = {{ name = pmr_mx_{g} value = 1 }}\n' for g in goods)
+                 + ('\tif = {\n\t\tlimit = { exists = scope:pmr_xmo }\n'
+                    + ''.join(f'\t\tpmr_xmkt_{g} = yes\n'
+                              f'\t\tset_variable = {{ name = pmr_mx_{g} value = scope:pmr_xmo.var:pmr_mpx_{g} }}\n'
+                              for g in traded)
+                    + '\t}\n' if traded else ''))
         for x in market:
             o.append(f'\tset_variable = {{ name = {xv("pmr_xv", x.j)} value = 0 }}\n')
             for g, amt in x.goods.items():
                 if amt and goods_cost.get(g):
-                    o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{g} }}\n'
+                    o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_mx_{g} }}\n'
                              f'\tchange_variable = {{ name = pmr_t multiply = {fmt(amt * goods_cost[g])} }}\n'
                              f'\tchange_variable = {{ name = {xv("pmr_xv", x.j)} add = var:pmr_t }}\n')
             # the panel shows the value whether or not the option can run (pmr_xw_<j>_<b>)
             o.append(f'\tset_variable = {{ name = {xv("pmr_xw", x.j)} value = var:{xv("pmr_xv", x.j)} }}\n'
                      f'\tif = {{ limit = {{ var:{xv("pmr_xav", x.j)} = 0 }} '
                      f'set_variable = {{ name = {xv("pmr_xv", x.j)} value = -1000000 }} }}\n')
-            # an option using an input its market or the owner's states are short of says so in the panel
-            # (pmr_xsh_<j>_<b>). Pat 18:24Z: no shedding for it ("not that it needs to reduce its pm target"); the
-            # step holds its gains to the market's spare supply instead (trade_budget)
+            # an option using an input its market is short of (at the price cap: buy orders twice the sell orders, as
+            # vanilla's GOODS_SHORTAGE_PENALTY_THRESHOLD) says so in the panel (pmr_xsh_<j>_<b>). Pat 18:24Z: no
+            # shedding for it ("not that it needs to reduce its pm target"); the step holds its gains to the market's
+            # spare supply instead (pmr_xb_<good>)
             short_of = inputs(x)
             if short_of:
+                cap = fmt(1 + PRICE_RANGE - 0.001)
                 o.append(f'\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 0 }}\n'
-                         '\tif = {\n\t\tlimit = {\n\t\t\tmarket ?= {\n\t\t\t\tOR = {\n'
-                         + ''.join(f'\t\t\t\t\tmg:{g} ?= {{ OR = {{ market_goods_has_goods_shortage = yes '
-                                   'country_has_local_shortage = scope:pmr_xown } }\n' for g in short_of)
-                         + '\t\t\t\t}\n\t\t\t}\n\t\t}\n'
-                         f'\t\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 1 }}\n\t}}\n')
+                         '\tif = { limit = { OR = { '
+                         + ' '.join(f'var:pmr_mx_{g} >= {cap}' for g in short_of)
+                         + f' }} }} set_variable = {{ name = {xv("pmr_xsh", x.j)} value = 1 }} }}\n')
         o.append('}\n\n')
 
     def none_share(gi, os_):
@@ -2849,6 +2895,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         unknown = set(pre) - {x.key for x in opts}
         if unknown:
             raise SystemExit(f'TRADE_PRELOAD[{bk!r}] names {sorted(unknown)}, not options of the building')
+        pre = {k: OPT_STEP * round(v / OPT_STEP) for k, v in pre.items()}   # whole OPT_STEP chunks (q94)
+        if sum(pre[x.key] for x in os_ if x.key in pre) > SHARE_STEPS:
+            raise SystemExit(f'TRADE_PRELOAD[{bk!r}] rounds to more than {SHARE_STEPS} in one group')
         out = '\t\tset_variable = { name = pmr_t value = 0 }\n'
         for x in reversed(os_):
             if pre.get(x.key):
@@ -2860,20 +2909,22 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     # Pat 2026-10-19 18:24Z (mines across a market moved onto explosives together and ran it short): "explosives should
     # be like hardwood". A step onto an option using an input good gains no more points than the market's spare supply
     # of it covers: the surplus (sell less buy orders) read once a month into the market owner's pmr_xb_<good>
-    # (pmr_xbud_<good>, trade_budget), and each gain takes its demand (points x level x input per level) off it, so
-    # the market's buildings move onto it a surplus at a time. Prices do the rest, as for hardwood.
+    # (pmr_xmkt_<good>, market_read), and each gain takes its demand (points x level x input per level) off it, so
+    # the market's buildings move onto it a surplus at a time, OPT_STEP points at a time. Prices do the rest.
     def budget_cap(x):
         out = f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_bi = {x.j} }}\n'
         for g in inputs(x):
             per = -x.goods[g] / SHARE_STEPS
-            out += (f'\t\t\t\tpmr_xbud_{g} = yes\n'
-                    '\t\t\t\tset_variable = { name = pmr_t value = 0 }\n'
+            out += ('\t\t\t\tset_variable = { name = pmr_t value = 0 }\n'
                     f'\t\t\t\tif = {{ limit = {{ exists = scope:pmr_xmo }} set_variable = {{ name = pmr_t value = scope:pmr_xmo.var:pmr_xb_{g} }} }}\n'
                     f'\t\t\t\tset_variable = {{ name = pmr_u value = var:pmr_level_{b} }}\n'
                     f'\t\t\t\tchange_variable = {{ name = pmr_u multiply = {fmt(per)} }}\n'
                     '\t\t\t\tif = { limit = { var:pmr_u > 0 } change_variable = { name = pmr_t divide = var:pmr_u } }\n'
+                    # down to whole OPT_STEP chunks
+                    f'\t\t\t\tchange_variable = {{ name = pmr_t divide = {OPT_STEP} }}\n'
                     '\t\t\t\tchange_variable = { name = pmr_t subtract = 0.5 }\n'
                     '\t\t\t\tround_variable = { name = pmr_t nearest = 1 }\n'
+                    f'\t\t\t\tchange_variable = {{ name = pmr_t multiply = {OPT_STEP} }}\n'
                     '\t\t\t\tif = { limit = { var:pmr_t < var:pmr_m } set_variable = { name = pmr_m value = var:pmr_t } }\n')
         return out + '\t\t\t\tif = { limit = { var:pmr_m < 0 } set_variable = { name = pmr_m value = 0 } }\n\t\t\t}\n'
 
@@ -2909,12 +2960,8 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                  '\t\tset_variable = { name = pmr_gap value = var:pmr_bv }\n'
                  '\t\tchange_variable = { name = pmr_gap subtract = var:pmr_wv }\n'
                  f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_gap > {fmt(band)} }}\n'
-                 # the gap in % of the output value per level, times TRADE_GAIN
-                 '\t\t\tset_variable = { name = pmr_m value = var:pmr_gap }\n'
-                 f'\t\t\tchange_variable = {{ name = pmr_m multiply = {fmt(TRADE_GAIN * 100 * TRADE_DEAD_BAND / band)} }}\n'
-                 '\t\t\tround_variable = { name = pmr_m nearest = 1 }\n'
-                 f'\t\t\tif = {{ limit = {{ var:pmr_m < {TRADE_STEP_MIN} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MIN} }} }}\n'
-                 f'\t\t\tif = {{ limit = {{ var:pmr_m > {TRADE_STEP_MAX} }} set_variable = {{ name = pmr_m value = {TRADE_STEP_MAX} }} }}\n'
+                 # OPT_STEP points a month (Pat 2026-11-10, q94)
+                 f'\t\t\tset_variable = {{ name = pmr_m value = {OPT_STEP} }}\n'
                  # TICK_EVERY (Pat 2026-10-21 12:37Z) and OPTS_CYCLE (19:35Z): the step of the months since the last,
                  # capped below by what the options hold
                  + opts_pace('\t\t\t') +
@@ -3003,6 +3050,21 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         mid = (lo + hi) // 2
         return (f'{ind}if = {{ limit = {{ var:{var} <= {mid} }}\n' + bisect(var, leaf, ind, lo, mid)
                 + f'{ind}}}\n{ind}else = {{\n' + bisect(var, leaf, ind, mid + 1, hi) + f'{ind}}}\n')
+
+    def bisect_x(x, leaf, ind):
+        """bisect over an option's share methods (opt_values): a trade-off's run every OPT_STEP points, a share
+        between two of them running the nearer"""
+        step = opt_step(x)
+        if step == 1:
+            return bisect(xv('pmr_x', x.j), leaf, ind)
+
+        def by(vals):
+            if len(vals) == 1:
+                return f'{ind}{leaf(vals[0])}\n'
+            mid = (len(vals) - 1) // 2
+            return (f'{ind}if = {{ limit = {{ var:{xv("pmr_x", x.j)} <= {fmt((vals[mid] + vals[mid + 1]) / 2)} }}\n'
+                    + by(vals[:mid + 1]) + f'{ind}}}\n{ind}else = {{\n' + by(vals[mid + 1:]) + f'{ind}}}\n')
+        return by(list(range(0, SHARE_STEPS + 1, step)))
     # each option's tens (pmr_xqt, 0..10) and units (pmr_xqu, 0..9) of its share in % (pmr_x)
     halves = (('pmr_xqt', 'pmr_xat', 'x', 10, lambda d: 10 * d), ('pmr_xqu', 'pmr_xau', 'xu', 9, lambda d: d))
     o.append(f'pmr_xapply_{b} = {{\n')
@@ -3019,10 +3081,10 @@ def option_effects(bk, b, conv, goods_cost, recipes):
             o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ AND = {{ has_variable = pmr_month has_variable = pmr_xok_{b} '
                      f'var:{xv("pmr_xa", x.j)} = var:{xv("pmr_x", x.j)} }} }} }}\n'
                      f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
-                     + bisect(xv('pmr_x', x.j), lambda n, sm=sm, x=x: f'if = {{ limit = {{ {is_on(sm(n))} }} '
-                              f'set_variable = {{ name = {xv("pmr_xa", x.j)} value = {n} }} }}', '\t')
+                     + bisect_x(x, lambda n, sm=sm, x=x: f'if = {{ limit = {{ {is_on(sm(n))} }} '
+                                f'set_variable = {{ name = {xv("pmr_xa", x.j)} value = {n} }} }}', '\t')
                      + f'\tif = {{\n\t\tlimit = {{ var:{xv("pmr_xa", x.j)} = -1 }}\n'
-                     + bisect(xv('pmr_x', x.j), lambda n, sm=sm: act(sm(n)), '\t\t')
+                     + bisect_x(x, lambda n, sm=sm: act(sm(n)), '\t\t')
                      + f'\t\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = var:{xv("pmr_x", x.j)} }}\n\t}}\n\t}}\n')
         o.append(f'\tset_variable = pmr_xok_{b}\n')
     for x in (opts if SHARE_DIGITS else ()):
@@ -3080,7 +3142,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     if market:
         goods = sorted({g for x in market for g in x.goods})
         line += (';value=' + '/'.join(f(xv('pmr_xv', x.j)) for x in market)
-                 + ';px=' + ','.join(f'{g}:{f("pmr_px_" + g, 2)}' for g in goods))
+                 + ';px=' + ','.join(f'{g}:{f("pmr_mx_" + g, 2)}' for g in goods))
     if any(m == 'treat' for _, _, m, *_ in conv):
         # the workforce and its violent / harsh bands in % this month, before the laws
         line += (f";w={f('pmr_tw')};band_v={f('pmr_bandv')};band_h={f('pmr_bandh')};std_ok="
