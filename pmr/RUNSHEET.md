@@ -15,9 +15,11 @@ error there means the mechanism below never ran, and a missing log line is then 
 From the build thread, as one build after your 22:14Z message ("wait till everything is ready we'll put it in one build
 and test"). It holds q101's AI lock (the L rows below, unchanged) and the workforce thread's jobs fix, with your
 "Switch at halfway" (22:01Z card). A retooling building now runs a version of its union method that carries the mix's
-jobs. Laborers move 250 a level at a time (50 on ports, railways and power plants, 500 on wheat and rice farms,
-ranches, sugar plantations and logging camps). Machinists, engineers and the other posts change in one go when the
-retool passes half. Trade-offs move their own posts the same way. No new text on screen. Start a new game.
+jobs. Laborers move 250 a level at a time (50 on ports, railways and power plants, 375 on wheat and rice farms and
+ranches, 500 on artillery foundries and sugar plantations, 750 on logging camps). Machinists, engineers and the other
+posts change in one go when the retool passes half. Trade-offs move their own posts the same way. After your 22:56Z
+question, a recipe's automation levels share these versions, so no method group is longer than the 101 the release
+already runs. No new text on screen. Start a new game.
 
 1. Use the PMR Test playset and launch with -debug_mode. Start a new game as Great Britain.
 2. Any day after the first, take one screenshot each for C1-C4 in the q100 section below.
@@ -35,7 +37,7 @@ rows read the year you play Britain, and the speed row reads the months with no 
 | W2 | `JOBS` lines of a textile mill, furniture manufactory or glassworks with a luxury share between 0 and 100 (`FRAME` `oj=` 0 or more) | `cap_shopkeepers` moves by level x 250 as the share moves: five places from no luxury to all on textile and furniture, three on glassworks | One figure whatever the share: the trade-off union never left its plain key. `oj=-1` on a blended trade-off means the tick took the pure branch |
 | W3 | The month a `FRAME` line's `pair=` changes on a blended building | `cap_machinists` and `cap_engineers` move in one go to the new target's figure x level | Unchanged: the new target's union did not take. `lab=` says whether the tick asked for it, error.log why it was refused |
 | W4 | `occ` in the JOBS lines after `cap` falls | Back in its band within about two months where the state has workers | `occ` falling step after step and recovering only after the last one: each cut holds hiring (the game's 4-week layoff cooldown), and the remedy is fewer, larger steps |
-| W5 | Any `JOBS` line with `place` above 72 (farms, mines, ranch and logging camp reach past 200) | `cap` = `want` there too | Wrong only above 72: the game mishandles methods far down a long group, and the groups get shorter. No such line: no result, not a pass |
+| W8 | The method row of a building retooling between two automation levels of one recipe (a textile mill going from Handsewn Clothes to + Mechanized Looms), or `FRAME` `lab=` beside `pair=` | The name is one of the two targets' and changes once, near the middle | A name from another recipe: a version was filed under the wrong target; `pair=` and the frame's key say which |
 | W7 | Step 3's screenshot | A short list, or none | A long list of locked rows: the game lists locked methods there, and hiding them is a one-line GUI override, your call |
 | L7 + W6 | Speed, February 1837 to February 1839 with no country (the build thread times it) | Under q100's 7.3 s a game month (q96 8.9, vanilla 5.7) | The same or slower: the lock and the job versions are both in this build, so the CSVs (T1) and the UNDO counts say which part to look at |
 
