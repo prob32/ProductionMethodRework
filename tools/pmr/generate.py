@@ -1196,6 +1196,12 @@ def main():
     ap.add_argument('--script-profile', action='store_true',
                     help='test build: the HUD writes the script profiler\'s totals every minute (patch_hud_profile); '
                          'the game needs the -script_profiling launch option')
+    ap.add_argument('--engine-timing', action='store_true',
+                    help='test build: the HUD logs the engine\'s tick task timings and writes them out every '
+                         'TIMING_DUMP_S seconds (timing_widget); the game needs -debug_mode')
+    ap.add_argument('--timing-only', action='store_true',
+                    help='write only a small mod with vanilla\'s HUD and the same timing widget to --out, to time a '
+                         'vanilla game (write_timing_mod)')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
@@ -1216,6 +1222,13 @@ def main():
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
     if args.script_profile and args.release:
         raise SystemExit('--script-profile is for test builds')
+    if args.engine_timing and args.release:
+        raise SystemExit('--engine-timing is for test builds')
+    if args.timing_only:
+        if not args.out or args.release or args.test_name:
+            raise SystemExit('--timing-only takes only --game and --out')
+        write_timing_mod(args.game, args.out)
+        return
     if args.test_decisions and args.release:
         raise SystemExit('--test-decisions is for test builds; players never see a "PMR test:" decision')
     if args.trace_from and (args.release or not re.fullmatch(r'\d{4}\.\d{1,2}\.\d{1,2}', args.trace_from)):
@@ -2239,6 +2252,8 @@ def main():
         hud = cc_tree.patch_hud(hud)
     if args.script_profile:
         hud = patch_hud_profile(hud)
+    if args.engine_timing:
+        hud = patch_hud_timing(hud)
     write('gui/ingame_hud.gui', patch_hud_flags(patch_hud_gov_all(hud), site_types), bom=False)
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
@@ -5853,6 +5868,68 @@ def patch_hud_profile(text):
                         '\t\t\talpha = 1\n\t\t\ton_start = "[ExecuteConsoleCommand(\'ScriptProfiling.Dump\')]"\n\t\t}\n'
                         '\t}\n\n' + HUD_ANCHOR)
 
+
+
+# --engine-timing / --timing-only (Pat 2026-11-10 18:43Z: "the most granular performance tracking data possible"). No
+# PDB ships with the game (the exe names only Paradox's own build path), but 1.15's engine times its own tick tasks: 263
+# named ones (CTickTask_* in the exe's RTTI), among them UpdateBuildingThroughput, RecomputeStandardProductionMethods,
+# ValidateProductionMethods, RecalculateModifierNodes and UpdateEmployment, which is where the engine's work on PMR's
+# methods shows. Console log_ticktask_performance (a toggle) streams them to logs/profiling.log; dump_ticktask_timings
+# <file> writes the frames recorded so far as frame,task,milliseconds,calls,longest_lock and clear_ticktask_timings
+# drops them. The HUD switches the log on once a session (a GUI variable guards the toggle) and writes a CSV every
+# TIMING_DUMP_S real seconds into a ring of TIMING_FILES names, clearing after each, so the files hold the last
+# TIMING_DUMP_S x TIMING_FILES seconds in TIMING_DUMP_S slices. The same widget in a mod of its own times vanilla.
+TIMING_DUMP_S = 300
+TIMING_FILES = 12
+TIMING_ON = 'pmr_tt_on'
+
+
+def timing_widget():
+    """The HUD widget for --engine-timing and --timing-only."""
+    start = ('\t\tstate = {\n\t\t\tname = pmr_tt_start\n'
+              f"\t\t\ttrigger_when = \"[Not(GetVariableSystem.Exists('{TIMING_ON}'))]\"\n"
+              f"\t\t\ton_start = \"[GetVariableSystem.Set('{TIMING_ON}', 'yes')]\"\n"
+              "\t\t\ton_start = \"[ExecuteConsoleCommand('log_ticktask_performance')]\"\n"
+              "\t\t\ton_start = \"[ExecuteConsoleCommand('clear_ticktask_timings')]\"\n\t\t}\n")
+    states = []
+    for n in range(1, TIMING_FILES + 1):
+        nxt = n % TIMING_FILES + 1
+        states.append(f'\t\tstate = {{\n\t\t\tname = pmr_tt_wait_{n}\n'
+                      + ('\t\t\ttrigger_on_create = yes\n' if n == 1 else '')
+                      + f'\t\t\tnext = pmr_tt_dump_{n}\n\t\t\tduration = {TIMING_DUMP_S}\n\t\t}}\n'
+                      f'\t\tstate = {{\n\t\t\tname = pmr_tt_dump_{n}\n\t\t\tnext = pmr_tt_wait_{nxt}\n\t\t\tduration = 1\n'
+                      f"\t\t\ton_start = \"[ExecuteConsoleCommand('dump_ticktask_timings pmr_tt_{n:02d}.csv')]\"\n"
+                      "\t\t\ton_start = \"[ExecuteConsoleCommand('clear_ticktask_timings')]\"\n\t\t}\n")
+    # Two widgets: a widget holds one state at a time, so the once-a-session switch would stop the ring
+    blank = '\twidget = {\n\t\tsize = { 0 0 }\n\t\talwaystransparent = yes\n'
+    return ('\t# PMR: the engine\'s tick task timings logged and written out (--engine-timing / --timing-only)\n'
+            + blank + start + '\t}\n' + blank + ''.join(states) + '\t}\n\n')
+
+
+def patch_hud_timing(text):
+    """ingame_hud.gui: the engine timing widget (timing_widget) before the topbar."""
+    if text.count(HUD_ANCHOR) != 1:
+        raise SystemExit('ingame_hud.gui: the topbar vbox moved; update patch_hud_timing')
+    return text.replace(HUD_ANCHOR, timing_widget() + HUD_ANCHOR)
+
+
+def write_timing_mod(game, out):
+    """--timing-only: a mod holding only vanilla's HUD with the timing widget, to time a vanilla game the same way."""
+    if os.path.isdir(out):
+        shutil.rmtree(out)
+    hud = patch_hud_timing(open(os.path.join(game, 'gui', 'ingame_hud.gui'), encoding='utf-8-sig').read())
+    files = {'gui/ingame_hud.gui': hud,
+             'descriptor.mod': f'version="1"\nname="PMR Engine Timing"\nsupported_version="{SUPPORTED_VERSION}"\n',
+             '.metadata/metadata.json': json.dumps({
+                 'name': 'PMR Engine Timing', 'id': 'org.prob32.pmr.engine_timing', 'version': '1',
+                 'game_id': 'victoria3', 'supported_game_version': SUPPORTED_VERSION, 'short_description': '',
+                 'tags': [], 'relationships': [], 'game_custom_data': {'multiplayer_synchronized': True}}, indent=2) + '\n'}
+    for rel, text in files.items():
+        path = os.path.join(out, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text)
+    print(f'timing-only mod written to {out}')
 
 # The state Buildings tab's own urban list (Pat 2026-10-19 18:27Z, "push this in as well"). A hidden site keeps its cell:
 # 1.14.5's dynamicgridbox places item i at (i % wrap, i / wrap) whether or not it is visible, and the "+" tile after
