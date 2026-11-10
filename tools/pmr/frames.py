@@ -65,11 +65,22 @@ JOB_POP = 'laborers'
 JOB_STEP = 250
 JOB_STEP_SMALL = 50
 JOB_SMALL_BELOW = 2000
-# No build has run a production method group of more than 72 methods (q100's livestock ranch), and nothing says how many
-# the game takes. A count kept in one byte would end at 255, so a recipe group stays under that: where the versions at
-# JOB_STEP would take it over JOB_GROUP_MAX, the building's step is doubled (job_step). The JOBS line names the place of
-# the frame a building runs, so a run shows whether a method far down a long group behaves.
-JOB_GROUP_MAX = 250
+# The longest production method group any build has run holds 101 methods: the plantations' Treatment ladders
+# (pmg_pmr_x_<b>_<n>, a share method a percent), in the release too. Nothing says how many the game takes, so a recipe
+# group stays at that: where the versions at JOB_STEP would take it over JOB_GROUP_MAX, the building takes the first
+# wider step of JOB_STEP_UP that fits (job_step). One and a half is there because farms, ranches and logging camps
+# space their automation levels 750 apart, so 375 lands on them. The JOBS line names the place of the frame a
+# building runs.
+JOB_GROUP_MAX = 101
+JOB_STEP_UP = (1, 1.5, 2, 3, 4, 6, 8, 12, 16)
+# Pat 2026-11-10 22:56Z ("no way to more intelligently blend these into our existing frames and automation PMs,
+# combining and condensing"): the targets of one recipe that differ in JOB_POP alone, its automation levels, share the
+# versions of their unions (job_sets). In all 48 types such targets differ in nothing else but pollution. A version
+# belongs to the target whose own figure is nearest (version_owner), so the versions of two automation levels never
+# overlap: 2,137 recipe unions where each target's own versions made 4,744, and with JOB_GROUP_MAX at 101 no recipe
+# group longer than 100 methods where the longest held 232. Off, every target keeps versions of its own, as q102
+# built them.
+JOB_SHARE = True
 OPT_JOB_STEP = 250
 OPT_JOB_POINTS = 5
 OPT_JOB_FEW = 3
@@ -420,44 +431,92 @@ def _job_steps(bld, p, step):
     return half_up((own - lo) / step), half_up((hi - own) / step)
 
 
+def job_sets(bld):
+    """{target p: the targets that share their unions' versions with p, p among them}: the targets of p's recipe whose
+    jobs differ from p's in JOB_POP alone, so a recipe's automation levels as a rule. In all 48 types such targets
+    differ in nothing else but state_pollution_generation_add. With JOB_SHARE off every target stands alone."""
+    if getattr(bld, '_job_sets', None) is None:
+        sets = {}
+        for p in range(1, len(bld.pair_keys) + 1):
+            other = tuple(sorted((k, x) for k, x in nonneg(pair_amounts(bld, p)[2]).items() if k != JOB_POP))
+            sets.setdefault((bld.pair_recipe(p), other) if JOB_SHARE else p, []).append(p)
+        bld._job_sets = {p: ps for ps in sets.values() for p in ps}
+    return bld._job_sets
+
+
+def version_owner(bld, p, lab):
+    """The target a version at lab JOB_POP a level belongs to, asked for target p: of the targets p shares versions
+    with (job_sets), the one whose own figure is nearest (the first, on a tie). The version is that target's union in
+    all but JOB_POP: its name, its icon, its pollution."""
+    return min(job_sets(bld)[p], key=lambda q: (abs(max(0, pair_jobs(bld, q)) - lab), q))
+
+
+def _versions(bld, p, step):
+    down, up = _job_steps(bld, p, step)
+    own, out = max(0, pair_jobs(bld, p)), []
+    for n in range(-down, up + 1):
+        lab = max(0, own + n * step)
+        o = p if n == 0 else version_owner(bld, p, lab)
+        uk = union_key(bld, o)
+        out.append((n, uk if abs(lab - max(0, pair_jobs(bld, o))) < EPS else f'{uk}_j{fmt(lab)}', lab))
+    return out
+
+
+def _frames_at(bld, step):
+    """{key: (owner target, JOB_POP a level)} at this step: a plain union a target, then the versions, by owner and
+    size, each once however many targets use it"""
+    pairs = range(1, len(bld.pair_keys) + 1)
+    out = collections.OrderedDict((union_key(bld, p), (p, max(0, pair_jobs(bld, p)))) for p in pairs)
+    extra = {}
+    for p in pairs:
+        for n, k, lab in _versions(bld, p, step):
+            if k not in out:
+                extra[k] = (version_owner(bld, p, lab), lab)
+    for k in sorted(extra, key=lambda k: extra[k]):
+        out[k] = extra[k]
+    return out
+
+
 def job_step(bld):
     """JOB_POP a level between two versions of the building's recipe unions: JOB_STEP (JOB_STEP_SMALL on a small
-    type), doubled, tripled... until the recipe group holds JOB_GROUP_MAX methods at most (its pure frames, a union
-    each and the versions)."""
+    type), or the first of its JOB_STEP_UP multiples at which the recipe group holds JOB_GROUP_MAX methods at most
+    (its pure frames and its union frames)."""
     if getattr(bld, '_job_step', None) is None:
         pairs = range(1, len(bld.pair_keys) + 1)
         base = JOB_STEP if max(pair_jobs(bld, p) for p in pairs) >= JOB_SMALL_BELOW else JOB_STEP_SMALL
-        k = 1
-        while 2 * len(bld.pair_keys) + sum(sum(_job_steps(bld, p, base * k)) for p in pairs) > JOB_GROUP_MAX:
-            k += 1
-        bld._job_step = base * k
+        fits = [base * k for k in JOB_STEP_UP
+                if len(bld.pair_keys) + len(_frames_at(bld, base * k)) <= JOB_GROUP_MAX]
+        if not fits:
+            raise SystemExit(f'{bld.bk}: no step in JOB_STEP_UP keeps its recipe group at {JOB_GROUP_MAX} methods')
+        bld._job_step = fits[0]
     return bld._job_step
 
 
+def union_frames(bld):
+    """{key: (owner target, JOB_POP a level)} every recipe union frame of the building: a plain union a target, then
+    the job versions by owner and size"""
+    if getattr(bld, '_union_frames', None) is None:
+        bld._union_frames = _frames_at(bld, job_step(bld))
+    return bld._union_frames
+
+
 def union_versions(bld, p):
-    """[(n, key, JOB_POP a level)] the versions of target p's union frame, fewest first: the target's own figure plus
+    """[(n, key, JOB_POP a level)] the frames target p's union runs as, fewest first: the target's own figure plus
     n x job_step(bld) (never below 0), n from halfway to the target with the fewest to halfway to the one with the
-    most. The target's own (n = 0) keeps the plain key (union_key), the others are <key>_j<JOB_POP a level>."""
-    step = job_step(bld)
-    down, up = _job_steps(bld, p, step)
-    own, uk = max(0, pair_jobs(bld, p)), union_key(bld, p)
-    return [(n, uk if n == 0 else f'{uk}_j{fmt(max(0, own + n * step))}', max(0, own + n * step))
-            for n in range(-down, up + 1)]
+    most. The target's own (n = 0) is its plain union (union_key). The others are versions, <a plain key>_j<JOB_POP a
+    level>, shared between the targets of one recipe that differ in JOB_POP alone (job_sets): each belongs to the
+    target of the set whose own figure is nearest (version_owner) and is that target's plain union where it is the
+    figure itself. So a recipe's automation levels overlap in no frame, and a blend reads as the automation level its
+    laborers are nearest."""
+    return _versions(bld, p, job_step(bld))
 
 
 def union_places(bld):
     """{union key: about its place in the recipe group's list}: the pure frames, then a plain union a target, then the
-    versions by target and size, as generate.py lists them (about: the group can list a method or two that is no
-    target). For the JOBS line: no build before q102 ran a group of more than 72 methods."""
+    versions by owner and size, as generate.py lists them (about: the group can list a method or two that is no
+    target). For the JOBS line."""
     P = len(bld.pair_keys)
-    out = {union_key(bld, p): P + p for p in range(1, P + 1)}
-    at = 2 * P
-    for p in range(1, P + 1):
-        for _, k, _ in union_versions(bld, p):
-            if k not in out:
-                at += 1
-                out[k] = at
-    return out
+    return {k: P + i for i, k in enumerate(union_frames(bld), 1)}
 
 
 def option_job_axes(og):
@@ -524,8 +583,10 @@ def widen_gates(bld):
 
 def extra_union_keys(bld):
     """({target p: [keys]}, {option group key: [keys]}): the versions beyond the plain union keys, which generate.py
-    lists wherever it lists a plain one (the groups, the methods a recipe unlocks, vanilla's checks on a recipe)"""
-    return ({p: [k for _, k, _ in union_versions(bld, p) if k != union_key(bld, p)]
+    lists wherever it lists a plain one (the groups, the methods a recipe unlocks, vanilla's checks on a recipe). A
+    version is listed once, under the target it belongs to (version_owner)."""
+    plain = {union_key(bld, p) for p in range(1, len(bld.pair_keys) + 1)}
+    return ({p: [k for k, (o, _) in union_frames(bld).items() if o == p and k not in plain]
              for p in range(1, len(bld.pair_keys) + 1)},
             {og.key: [k for _, k, _ in option_versions(bld, og) if k != option_union_key(bld, og)]
              for og in bld.option_groups})
@@ -553,14 +614,14 @@ def union_methods(bld, texture):
     """{union key: definition}: the recipe unions, then each option group's, every job version of each. texture(key):
     a frame's icon. Each union unlocks only while it runs, so neither the AI nor the player can pick one; the tick sets
     it. Goods are the union's in every version (the "less" modifiers take them down to the blend); jobs are the
-    version's own, an option union's below 0 where an option's are (rayon's laborers), as vanilla writes them."""
+    version's own, an option union's below 0 where an option's are (rayon's laborers), as vanilla writes them. A recipe
+    union is the target's it belongs to (union_frames) in everything else."""
     out = collections.OrderedDict()
     ui, uo, _ = recipe_union(bld)
-    for p, key in enumerate(bld.pair_keys, 1):
+    for uk, (p, lab) in union_frames(bld).items():
         _, _, pj, rest = pair_amounts(bld, p)
-        for _, uk, lab in union_versions(bld, p):
-            out[uk] = (f'{uk} = {{\n\ttexture = "{texture(key)}"\n\tunlocking_production_methods = {{ {uk} }}\n'
-                       + sections(join(ui, uo, nonneg({**pj, JOB_POP: lab}), rest)) + '}\n')
+        out[uk] = (f'{uk} = {{\n\ttexture = "{texture(bld.pair_keys[p - 1])}"\n\tunlocking_production_methods = {{ {uk} }}\n'
+                   + sections(join(ui, uo, nonneg({**pj, JOB_POP: lab}), rest)) + '}\n')
     for og in bld.option_groups:
         ui2, uo2, _ = option_union(og)
         _, _, _, nrest = option_full(og, None)
@@ -571,8 +632,8 @@ def union_methods(bld, texture):
 
 
 def frame_loc(bld):
-    """English names of the new methods: a union frame reads as the target it stands for, in every job version"""
-    return ([f' {uk}:0 "${k}$"' for p, k in enumerate(bld.pair_keys, 1) for _, uk, _ in union_versions(bld, p)]
+    """English names of the new methods: a union frame reads as the target it belongs to, in every job version"""
+    return ([f' {uk}:0 "${bld.pair_keys[p - 1]}$"' for uk, (p, _) in union_frames(bld).items()]
             + [f' {uk}:0 "{OPTION_UNION_NAME}"' for og in bld.option_groups for _, uk, _ in option_versions(bld, og)])
 
 
