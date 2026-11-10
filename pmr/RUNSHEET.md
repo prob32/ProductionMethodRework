@@ -31,6 +31,21 @@ state again. The installed q98 still drops it in AI states, so skip K1 and K2.
 | K2 | Step 2, the AI state | A blank cell is possible there (vanilla's grid); nothing else changes | Not applicable |
 | K3 | Step 3: the build thread reads your `PROFIT` lines | `pick=` and `pair=` agree with the `rm=` figures as in q97, and the Methods view's pick row shows the pick's profit | A pick row at 0 while `pick=` is set: the pick's figure was not carried |
 
+## Engine timing in a vanilla game (PMR Engine Timing mod)
+
+From the build thread, after your 2026-11-10 18:43Z message ("the most granular performance tracking data possible").
+`mod\PMR_EngineTiming` holds only vanilla's HUD with a timer switch: it turns on the engine's own tick task log and
+writes the engine's task timings to a CSV every five minutes. The next PMR test build carries the same switch.
+
+1. A playset with only PMR Engine Timing. Start a new game with -debug_mode and play as you did for today's benchmark.
+   Don't load a save during the run.
+2. Close the game and tell the build thread.
+
+| # | Do | Pass | A null means |
+| --- | --- | --- | --- |
+| T1 | Step 2: the build thread reads `logs\profiling.log` | It has tick task lines | An empty profiling.log: the switch never fired |
+| T2 | Step 2: the build thread looks for `pmr_tt_01.csv` and on | One CSV per five minutes played | No CSV: the five-minute writer never ran, or wrote somewhere unexpected |
+
 ## Earlier: trade-offs led by their market's prices alone (q97, test mod)
 
 From the build thread, after your 2026-11-10 17:44Z messages ("should our hardwood ratio be augmenting based on the sell
