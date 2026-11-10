@@ -2018,11 +2018,14 @@ def main():
           + '# unlocks only while it runs itself; the tick sets them with activate_production_method.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
+    # q95: every good the profit pick or a trade-off prices, a traded one from its market's order book (market_read)
+    price_goods = sorted(profit_goods | set(option_goods(options)))
+    traded = sorted({g for g in price_goods if g not in LOCAL_GOODS} | set(demand_goods(options)))
     spare = set(budget_goods(options))
     check_price_defines(game)
-    write('common/script_values/pmr_market_values.txt', header + market_values(option_goods(options), sorted(spare)))
-    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(sorted(profit_goods))
-          + ''.join(market_read(g, g in spare) for g in option_goods(options)) + '\n'.join(tick_effects)
+    write('common/script_values/pmr_market_values.txt', header + market_values(traded, sorted(spare)))
+    write('common/scripted_effects/pmr_effects.txt', header + shared_effects(price_goods)
+          + ''.join(market_read(g, g in spare) for g in traded) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
     on_actions = ON_ACTIONS.replace('STATE_TURN', state_turn())
     if args.script_profile:
@@ -2500,10 +2503,18 @@ PRICE_LADDER = list(range(-75, 76, PRICE_STEP))   # % off the base price; the ga
 
 
 def price_effect(good):
-    """State scope: pmr_px_<good>, the local price as a multiple of the base price, to PRICE_STEP %.
-    The game only compares prices (state_goods_pricier / _cheaper, in fractions: the PRICE probe read
-    hardwood at +20% through them and nothing through percent), so this bisects to the step nearest the
-    price in about five comparisons."""
+    """State scope: pmr_px_<good>, the price as a multiple of the base price. Since q95 (Pat 2026-11-10 05:40Z: "we
+    should read those by market and be as cheap as possible there as well") a traded good's is its market's, from the
+    order book read once a month per market (market_read); scope:pmr_xmo is left on the market's owner. A local good
+    (LOCAL_GOODS: its state is its only market) keeps the state's price, read through state_goods_pricier / _cheaper
+    (in fractions: the PRICE probe read hardwood at +20% through them and nothing through percent), bisected to the
+    PRICE_STEP nearest the price in about five comparisons."""
+    if good not in LOCAL_GOODS:
+        return (f'pmr_price_{good} = {{\n'
+                '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
+                f'\tset_variable = {{ name = pmr_px_{good} value = 1 }}\n'
+                f'\tif = {{\n\t\tlimit = {{ exists = scope:pmr_xmo }}\n\t\tpmr_xmkt_{good} = yes\n'
+                f'\t\tset_variable = {{ name = pmr_px_{good} value = scope:pmr_xmo.var:pmr_mpx_{good} }}\n\t}}\n}}\n\n')
     half = PRICE_STEP / 200
 
     def above(k):   # the price is at least k % off base, give or take half a step
@@ -2686,11 +2697,15 @@ LOCAL_GOODS = ('services', 'transportation', 'electricity')   # local = yes: no 
 
 
 def option_goods(options):
-    """The market goods the trade-offs read the market's price of (market_values): every good of a valued option, and
-    the one good a demand-led option makes."""
+    """The goods the trade-offs value (pmr_price_<good>): every good of an option outside DEMAND_GROUPS."""
     return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
-                   for o in opts for g, amt in o.goods.items()
-                   if g not in LOCAL_GOODS and (o.group not in DEMAND_GROUPS or amt > 0)})
+                   for o in opts if o.group not in DEMAND_GROUPS for g in o.goods})
+
+
+def demand_goods(options):
+    """The one good each demand-led option makes, whose market price its step reads (pmr_xmkt_<good>)."""
+    return sorted({g for conv in options.values() for _, _, mode, _, opts, _ in conv if mode == 'market'
+                   for o in opts if o.group in DEMAND_GROUPS for g, amt in o.goods.items() if amt > 0})
 
 
 def budget_goods(options):
@@ -2838,22 +2853,16 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     market = [x for x in opts if x.mode == 'market' and x.group not in DEMAND_GROUPS]
     if market:
         goods = sorted({g for x in market for g in x.goods})
-        traded = [g for g in goods if g not in LOCAL_GOODS]
-        # q94 (Pat 2026-11-10): each good at its market's price from the order book, read once a month per market
-        # (pmr_xmkt_<good>, on the owner) and copied to the state (pmr_mx_<good>); a local good at base
-        o.append(f'pmr_xvalue_{b} = {{\n'
-                 '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
-                 + ''.join(f'\tset_variable = {{ name = pmr_mx_{g} value = 1 }}\n' for g in goods)
-                 + ('\tif = {\n\t\tlimit = { exists = scope:pmr_xmo }\n'
-                    + ''.join(f'\t\tpmr_xmkt_{g} = yes\n'
-                              f'\t\tset_variable = {{ name = pmr_mx_{g} value = scope:pmr_xmo.var:pmr_mpx_{g} }}\n'
-                              for g in traded)
-                    + '\t}\n' if traded else ''))
+        # q95: a good's price is pmr_price_<good>'s (the market's, from its order book once a month; a local good's in
+        # its state), copied once a day per state (pmr_pxd_<good>): grain, sugar and fruit each feed several farm types
+        o.append(f'pmr_xvalue_{b} = {{\n' + ''.join(
+            f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
+            f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods))
         for x in market:
             o.append(f'\tset_variable = {{ name = {xv("pmr_xv", x.j)} value = 0 }}\n')
             for g, amt in x.goods.items():
                 if amt and goods_cost.get(g):
-                    o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_mx_{g} }}\n'
+                    o.append(f'\tset_variable = {{ name = pmr_t value = var:pmr_px_{g} }}\n'
                              f'\tchange_variable = {{ name = pmr_t multiply = {fmt(amt * goods_cost[g])} }}\n'
                              f'\tchange_variable = {{ name = {xv("pmr_xv", x.j)} add = var:pmr_t }}\n')
             # the panel shows the value whether or not the option can run (pmr_xw_<j>_<b>)
@@ -2869,7 +2878,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                 cap = fmt(1 + PRICE_RANGE - 0.001)
                 o.append(f'\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 0 }}\n'
                          '\tif = { limit = { OR = { '
-                         + ' '.join(f'var:pmr_mx_{g} >= {cap}' for g in short_of)
+                         + ' '.join(f'var:pmr_px_{g} >= {cap}' for g in short_of)
                          + f' }} }} set_variable = {{ name = {xv("pmr_xsh", x.j)} value = 1 }} }}\n')
         o.append('}\n\n')
 
@@ -3142,7 +3151,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     if market:
         goods = sorted({g for x in market for g in x.goods})
         line += (';value=' + '/'.join(f(xv('pmr_xv', x.j)) for x in market)
-                 + ';px=' + ','.join(f'{g}:{f("pmr_mx_" + g, 2)}' for g in goods))
+                 + ';px=' + ','.join(f'{g}:{f("pmr_px_" + g, 2)}' for g in goods))
     if any(m == 'treat' for _, _, m, *_ in conv):
         # the workforce and its violent / harsh bands in % this month, before the laws
         line += (f";w={f('pmr_tw')};band_v={f('pmr_bandv')};band_h={f('pmr_bandh')};std_ok="
