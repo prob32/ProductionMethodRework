@@ -212,7 +212,7 @@ def recipe_union(bld):
     for side in range(3):
         keys = {k for s in rec + own for k in s[side]} | {k for s in mem.values() for k in s[side]}
         tot = {}
-        for k in keys:
+        for k in sorted(keys):   # sorted: a set's order moves between runs and churns the generated file
             x = max(s[side].get(k, 0) for s in rec) + max([0] + [s[side].get(k, 0) for s in own])
             for ax in bld.auto_axes:
                 x += max([0] + [mem[m.j][side].get(k, 0) for m in bld.members if m.axis == ax])
@@ -233,7 +233,7 @@ def option_union(og):
     out = []
     for side in range(3):
         keys = {k for f in full for k in f[side]}
-        out.append(nonzero({k: max(f[side].get(k, 0) for f in full) for k in keys}))
+        out.append(nonzero({k: max(f[side].get(k, 0) for f in full) for k in sorted(keys)}))
     return tuple(out)
 
 

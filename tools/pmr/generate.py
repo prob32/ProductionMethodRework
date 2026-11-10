@@ -1196,8 +1196,8 @@ def main():
                     help='test build: the HUD logs the engine\'s tick task timings and writes them out every '
                          'TIMING_DUMP_S seconds (timing_widget); the game needs -debug_mode')
     ap.add_argument('--frame-probe', action='store_true',
-                    help='test build: two British fishing wharves log whether static modifiers move jobs and output '
-                         'and can be read back (frame_probe.py, method-count PLAN section 6)')
+                    help='test build: six British fishing wharves log which of five modifier routes moves a '
+                         'building\'s jobs (frame_probe.py, method-count PLAN section 6)')
     ap.add_argument('--timing-only', action='store_true',
                     help='write only a small mod with vanilla\'s HUD and the same timing widget to --out, to time a '
                          'vanilla game (write_timing_mod)')
