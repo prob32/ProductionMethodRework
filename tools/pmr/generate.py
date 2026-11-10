@@ -4080,12 +4080,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     o.append(best_effect(f"pmr_hbest_{b}", "pmr_hbest_now", False))
     o.append(profit_effect(bk, b, recipes, econ, goods_cost or {}, active, reach, setv, v, pair))
 
-    o.append(f'pmr_activate_{b} = {{\n')
-    for i, r in enumerate(recipes, 1):
-        kw = 'if' if i == 1 else 'else_if'
-        o.append(f'\t{kw} = {{ limit = {{ var:{v("pmr_best_now")} = {i} }} '
-                 f'activate_production_method = {{ building_type = {bk} production_method = {r.key} }} }}\n')
-    o.append('}\n\n')
+    o.append(f'pmr_activate_{b} = {{\n'
+             + lookup(f'var:{v("pmr_best_now")}', list(range(1, k + 1)),
+                      lambda i: f'activate_production_method = {{ building_type = {bk} production_method = {recipes[i - 1].key} }}')
+             + '}\n\n')
 
     def f(name, d=0):
         return f"[THIS.Var('{v(name)}').GetValue|{d}]"
@@ -4655,7 +4653,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     def capped(gs, i):
         return (f'\t\tif = {{ limit = {{ OR = {{ ' + ' '.join(f'var:pmr_px_{g} >= {top}' for g in gs)
                 + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
-    first = True
+    # q98 (Pat 2026-11-10 18:29Z, the check map's savings): the references as a binary search (lookup), not a ladder
+    vetoes = {}
     for c in range(1, k + 1):
         body = ''
         for i in range(1, k + 1):
@@ -4663,11 +4662,13 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
             if c != i and more:
                 body += capped(more, i)
         if body:
-            o.append(f'\t{"if" if first else "else_if"} = {{\n\t\tlimit = {{ var:pmr_ref = {c} }}\n{body}\t}}\n')
-            first = False
+            vetoes[c] = body
+    if vetoes:
+        o.append(lookup('var:pmr_ref', sorted(vetoes), lambda c: '\n' + vetoes[c] + '\t', '\t'))
     # the pick: the reference unless another recipe beats its profit (pmr_rr) by SWITCH_GAIN of it (SWITCH_GAIN_OF) and
     # SWITCH_MIN (pmr_hu); a pick that can't run sets none
-    o.append('\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n')
+    o.append('\tset_variable = { name = pmr_pk value = 0 }\n\tset_variable = { name = pmr_pv value = -1000000 }\n'
+             '\tset_variable = { name = pmr_pkm value = 0 }\n')
     o.append('\tset_variable = { name = pmr_hu value = var:pmr_rr }\n'
              '\tif = { limit = { var:pmr_hu < 0 } change_variable = { name = pmr_hu multiply = -1 } }\n'
              f'\tchange_variable = {{ name = pmr_hu multiply = {fmt(SWITCH_GAIN_OF.get(bk, SWITCH_GAIN))} }}\n'
@@ -4699,7 +4700,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                  + ' '.join(f'var:pmr_da_{d} > {axes[i][d - 1]}' for d in range(1, nd + 1))
                  + ' } } change_variable = { name = pmr_t subtract = 100000 } }\n\t\t}\n'
                  f'\t\tif = {{ limit = {{ var:pmr_t > var:pmr_pv }} set_variable = {{ name = pmr_pv value = var:pmr_t }} '
-                 f'set_variable = {{ name = pmr_pk value = {i} }} }}\n\t}}\n')
+                 f'set_variable = {{ name = pmr_pk value = {i} }} set_variable = {{ name = pmr_pkm value = var:{xv("pmr_rm", i)} }} }}\n\t}}\n')
     # bug review q51, P2-2: the pick sits below the default on some axis (pmr_pdn_<b>): a step down, whatever the index
     # order says (food industry 2 -> 3 drops automation), for the red bar and the floor's pmr_dn_<b> (switch_effect)
     o.append(f'\t{setv("pmr_pdn", 0)}\n'
@@ -4708,9 +4709,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + lookup(f'var:{now}', list(range(1, k + 1)), put('pmr_da'), '\t\t')
              + '\t\tif = { limit = { OR = { ' + ' '.join(f'var:pmr_pa_{d} < var:pmr_da_{d}' for d in range(1, nd + 1))
              + f' }} }} {setv("pmr_pdn", 1)} }}\n\t}}\n')
-    o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n\t{setv("pmr_prm", 0)}\n'
-             + ''.join(f'\tif = {{ limit = {{ var:pmr_pk = {i} }} {setv("pmr_prm", "var:" + xv("pmr_rm", i))} }}\n'
-                       for i in range(1, k + 1))
+    o.append(f'\t{setv("pmr_pbest", "var:pmr_pk")}\n\t{setv("pmr_prm", "var:pmr_pkm")}\n'
              # the gain over the reference (pmr_swg_<b>) and the bar's points a month (pmr_swr_<b>)
              + f'\t{setv("pmr_swg", 0)}\n\t{setv("pmr_swr", 1)}\n'
              f'\tif = {{\n\t\tlimit = {{ var:pmr_ref > 0 var:pmr_pk > 0 NOT = {{ var:pmr_pk = var:pmr_ref }} }}\n'
@@ -4903,8 +4902,9 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
             o.append(f'\tset_variable = {{ name = {cp} value = var:pmr_rm_{x}_{b} }}\n'
                      f'\tset_variable = {{ name = {cav} value = 0 }}\n'
                      f'\tif = {{ limit = {{ var:pmr_rav_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = 1 }} '
-                     f'if = {{ limit = {{ var:pmr_rveto_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = -1 }} }} }}\n'
-                     f'\tif = {{ limit = {{ var:{v("pmr_pbest")} = {x} }} {setv("pmr_cbi", i)} {setv("pmr_cba", a)} }}\n')
+                     f'if = {{ limit = {{ var:pmr_rveto_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = -1 }} }} }}\n')
+        at = {x: ia for ia, x in pair['index'].items()}
+        o.append(lookup(f'var:{v("pmr_pbest")}', sorted(at), lambda x: f'{setv("pmr_cbi", at[x][0])} {setv("pmr_cba", at[x][1])}'))
         return ''.join(o)
     o = [f'\t# recipe + automation pairs (pair_effect)\n\t{setv("pmr_cbi", 0)}\n\t{setv("pmr_cba", 0)}\n'
          '\tset_variable = { name = pmr_pv value = -1000000 }\n']
@@ -5938,12 +5938,20 @@ def urban_list_script(order):
            '\t\t\tscope:pmr_urb_st = { add_to_variable_list = { name = pmr_urb target = scope:pmr_urb_b } }\n\t\t}\n'
            '\t\tadd_to_variable_list = { name = pmr_urb target = this }\n\t}\n'
            '\telse_if = { limit = { has_variable = pmr_urb_on } remove_variable = pmr_urb_on }\n}\n\n'
-           '# State scope: refresh it where a site stands or stood (monthly, and after PMR places one).\n'
-           'pmr_urb_check = {\n\tif = {\n\t\tlimit = { OR = { has_variable = pmr_urb_on any_scope_building = { pmr_urb_site = yes } } }\n'
-           '\t\tpmr_urb_refresh = yes\n\t}\n}\n\n'
-           '# Building scope (a level built or started): refresh its state\'s list if it is a site or the list is in use.\n'
+           # Pat 2026-11-10 18:29Z (the check map's savings): only the tab reads the list, so it is kept only in states a
+           # player owns (is_player: every human in multiplayer) or where the player owns levels abroad (pmr_abroad_any);
+           # a state that has a list and no player clears it once, and its tab shows vanilla's grid.
+           '# State scope: refresh it where a site stands or stood (monthly, and after PMR places one), in a state a player\n'
+           '# owns or holds levels in; elsewhere drop a list left from before.\n'
+           'pmr_urb_check = {\n\tif = {\n\t\tlimit = {\n\t\t\tOR = { owner = { is_player = yes } has_variable = pmr_abroad_any }\n'
+           '\t\t\tOR = { has_variable = pmr_urb_on any_scope_building = { pmr_urb_site = yes } }\n\t\t}\n'
+           '\t\tpmr_urb_refresh = yes\n\t}\n'
+           '\telse_if = {\n\t\tlimit = { has_variable = pmr_urb_on NOR = { owner = { is_player = yes } has_variable = pmr_abroad_any } }\n'
+           '\t\tif = { limit = { has_variable_list = pmr_urb } clear_variable_list = pmr_urb }\n'
+           '\t\tremove_variable = pmr_urb_on\n\t}\n}\n\n'
+           '# Building scope (a level built or started): check its state\'s list if it is a site or the list is in use.\n'
            'pmr_urb_built = {\n\tif = {\n\t\tlimit = { OR = { pmr_urb_site = yes state ?= { has_variable = pmr_urb_on } } }\n'
-           '\t\tstate ?= { pmr_urb_refresh = yes }\n\t}\n}\n')
+           '\t\tstate ?= { pmr_urb_check = yes }\n\t}\n}\n')
     return trig, value, eff
 
 
