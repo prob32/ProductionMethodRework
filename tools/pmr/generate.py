@@ -13,28 +13,19 @@ from tools/pmr/translations/, and a line no table has yet stays English.
 
 What it does, building by building (see pmr/README.md for the design):
 
-1. The building gets one extra production method group, ``pmg_pmr_labour_<b>``, holding one
-   method, ``pm_pmr_labour_<b>``, that carries nothing: it is the slot the building browser rows and
-   market lists show, drawn as the gold main output good. (Until 2026-10-13 it held the default
-   recipe's workforce, fixed; Pat then asked for the workforce to blend like the goods.)
-2. Recipes stay vanilla production methods but carry no goods and no workforce: they mark the
-   recipe the building runs (the retool target) and gate it by technology. Everything they scaled
-   by workforce (goods, pollution, ...) and their employment move into share methods, and so does
-   the best automation that runs without electricity from AUTOMATION_FROM_TIER (the building's
-   automation groups leave it). Automation that needs electricity becomes a recipe of its own on top
-   of the newest one, ``pm_pmr_elec_<b>``, inserted into the vanilla recipe group.
-3. Per recipe i, a share of n% runs two methods the engine adds: tens ``pm_pmr_share_<b>_<i>_<10t>`` in
-   ``pmg_pmr_share_<b>_<i>`` and units ``pm_pmr_shu_<b>_<i>_<u>`` in ``pmg_pmr_shu_<b>_<i>``, each carrying recipe i's
-   workforce-scaled modifiers and its employment x its own % (q52: the engine's weekly national-standard pass
-   costs every country slot x every method defined, so 21 methods where 203 were).
-   The state tracks how many levels run each recipe; the tick activates, in each share group, the
-   method for that recipe's share of the levels. So the building's goods are the level-weighted mix
-   of its recipes, in its own production figures, scaled by employment and throughput like any
-   recipe. Each digit unlocks only while it runs itself (``unlocking_production_methods`` is checked against
-   the building's active methods), so the AI and the player never have a second digit to pick, and the tick
-   sets a digit with activate_production_method, which checks no unlock. No group depends on another, so
-   methods a new building inherits from different buildings always settle (16 August 1838: mutual share/lock
-   pairs with ``_any`` last froze the game).
+1. Frames (method-count rework, Pat 2026-11-10; frames.py): the vanilla recipe group holds every
+   recipe and pair recipe as a pure frame with its full body (its own goods, workforce and automation),
+   plus one union frame per recipe, ``pm_pmr_union_<b>_<p>``, carrying each good and job at the most any
+   mix uses. Each market trade-off group gets an option union, ``pm_pmr_union_<b>_x<g>``. Unions unlock
+   only while they run, so no one else can pick them.
+2. A building that runs one recipe on every level runs that recipe's pure frame and nothing else. A
+   mixed building runs the union of its target and takes the difference off with "less" static
+   modifiers, ``pmr_less_in/out_<good>`` and ``pmr_less_job_<pop>``, each -100% of its key, applied at
+   1 - mix/union. So the building's goods are the level-weighted mix of its recipes, in its own
+   production figures, at one active method per group where the old share ladders ran up to a dozen.
+   The tick resets the frame only when the mix or a trade-off changes, and undoes any swap by the AI.
+3. Treatment shares keep their ladders, ``pm_pmr_x_<b>_<g>_<n>`` in ``pmg_pmr_x_<b>_<g>``, and count
+   in the frame's mix; their 0% method is always open and the others unlock only while they run.
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
    building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, built
    by investors who own part of the building (with ABROAD_SLOT, that one only where the player owns
@@ -51,7 +42,7 @@ What it does, building by building (see pmr/README.md for the design):
    and, on each building type's row, the bar and button over the whole country.
 
 Vanilla files the mod changes are written whole under their vanilla names (file shadowing), with
-only the employment lines and the extra group inserted; every other byte is the installed game's.
+only the frame bodies and groups changed; every other byte is the installed game's.
 """
 
 import argparse
@@ -75,6 +66,8 @@ import subsidiaries  # noqa: E402
 import company_panel  # noqa: E402
 import methods_row  # noqa: E402
 import localise  # noqa: E402
+import frames  # noqa: E402
+import frame_probe  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Tunables. Change here and regenerate; nothing below hard-codes them.
@@ -702,6 +695,16 @@ class Recipe:
     def needs(self, good):
         return good in self.inputs or good in self.required
 
+    def frame_body(self, body):
+        """Method-count rework (Pat 2026-11-10): the recipe is a pure frame, its retool target's full goods, jobs and
+        other modifiers (frames.pure_mods: its own, and its first automation option's with the split). Its modifier
+        blocks are replaced by body; required_input_goods goes, as a frame the game switched off for a missing good
+        would come straight back through the tick. PMR keeps the electricity rule itself (pmr_best_<b>)."""
+        for n in self.node.value:
+            if n.key in BLEND_SECTIONS or n.key == 'required_input_goods':
+                self.src.cuts.append(line_span(self.src.text, n))
+        self.src.inserts.append((self.node.end - 1, body))
+
     def strip_employment(self):
         bm = pdx.get(self.node.value, 'building_modifiers')
         for block in pdx.get_all(bm.value, 'level_scaled'):
@@ -763,20 +766,13 @@ class PairRecipe:
     def needs(self, good):
         return self.base.needs(good) or any(m.needs(good) for m in self.opt)
 
-    def method(self):
-        # the recipe's own unscaled effects, as its method carries them while it is the marker (Recipe.rest)
-        secs = {}
-        for (sec, sub), mods in self.base.rest.items():
-            if mods:
-                secs.setdefault(sec, []).append((sub, mods))
+    def method(self, body):
+        """the pair's pure frame: its gates, then body (frames.sections of its full modifiers)"""
         return (f'{self.key} = {{\n\ttexture = "{self.texture}"\n'
                 + (f'\tunlocking_technologies = {{\n' + ''.join(f'\t\t{t}\n' for t in self.techs) + '\t}\n'
                    if self.techs else '')
                 + ''.join(f'\t{g}\n' for g in self.gates)
-                + ''.join(f'\t{sec} = {{\n' + ''.join(
-                    f'\t\t{sub} = {{\n' + ''.join(f'\t\t\t{mk} = {fmt(mv)}\n' for mk, mv in mods.items()) + '\t\t}\n'
-                    for sub, mods in subs) + '\t}\n' for sec, subs in secs.items())
-                + '}\n')
+                + body + '}\n')
 
 
 def automation_options(auto_groups, groups, pms):
@@ -1199,6 +1195,9 @@ def main():
     ap.add_argument('--engine-timing', action='store_true',
                     help='test build: the HUD logs the engine\'s tick task timings and writes them out every '
                          'TIMING_DUMP_S seconds (timing_widget); the game needs -debug_mode')
+    ap.add_argument('--frame-probe', action='store_true',
+                    help='test build: two British fishing wharves log whether static modifiers move jobs and output '
+                         'and can be read back (frame_probe.py, method-count PLAN section 6)')
     ap.add_argument('--timing-only', action='store_true',
                     help='write only a small mod with vanilla\'s HUD and the same timing widget to --out, to time a '
                          'vanilla game (write_timing_mod)')
@@ -1224,6 +1223,8 @@ def main():
         raise SystemExit('--script-profile is for test builds')
     if args.engine_timing and args.release:
         raise SystemExit('--engine-timing is for test builds')
+    if args.frame_probe and args.release:
+        raise SystemExit('--frame-probe is for test builds')
     if args.timing_only:
         if not args.out or args.release or args.test_name:
             raise SystemExit('--timing-only takes only --game and --out')
@@ -1339,23 +1340,16 @@ def main():
             continue
         treated.append((bk, bn, s, recipes, g0, pg))
 
-    # ---- edit vanilla: strip recipe employment and goods, add the labour and share groups -------
-    # The vanilla recipe methods keep only what is not scaled by workforce: they mark the recipe
-    # the building runs (the retool target) and gate it by technology. Their goods and other
-    # workforce-scaled modifiers move into the share methods.
-    stripped = set()
+    # ---- edit vanilla: the recipe group becomes the frame group ------------------------------------
+    # Method-count rework (Pat 2026-11-10, frames.py): the vanilla recipe methods are pure frames again, each its retool
+    # target's full goods, jobs and other modifiers (their bodies are written in the per-building loop below, once the
+    # members are known); the recipe group also holds the pair frames and one union frame per target.
     automation = {}   # building -> the automation methods folded into its recipes from AUTOMATION_FROM_TIER
     auto_groups_of = {}   # building -> the automation groups that left it (their methods fold into the recipes)
     elec_pms = []     # the electric recipes' marker methods (ElectricRecipe), one per building that has one
     pair_pms = []     # the recipe + automation pairs' marker methods (PairRecipe, SPLIT_AUTOMATION)
     split_info = {}   # building -> its plain recipes, automation options, pair index and blend members
     for bk, bn, s, recipes, g0, pg in treated:
-        for r in recipes:
-            if r.key not in stripped:
-                r.strip_employment()
-                r.strip_blend()
-                r.strip_required()
-                stripped.add(r.key)
         auto_groups = [g for g in pdx.items(pg) if g != g0 and is_automation(g)]
         if auto_groups and (SPLIT_AUTOMATION or len(recipes) >= AUTOMATION_FROM_TIER):
             # Pat, 2026-10-13: recipes from AUTOMATION_FROM_TIER fold the best automation that runs
@@ -1420,21 +1414,10 @@ def main():
                 entry['electric_recipe'] = {'key': er.key, 'automation': [a.key for a in tops],
                                             'technologies': er.techs}
             report.setdefault('automation', []).append(entry)
-        # First in the list, so the building panel's grid shows it in the first slot and the hidden
-        # recipe and automation slots after it leave no gap.
-        brace = s.text.index('{', pg.start) + 1
-        rest = s.text[brace:s.text.find('\n', brace)]
-        tail = '' if not rest.strip() else '\n\t\t'   # the list continues on the brace's line
-        s.inserts.append((brace, f'\n\t\tpmg_pmr_labour_{short(bk)}  # PMR: blended recipes slot'
-                                 f'\n\t\tpmg_pmr_start_{short(bk)}  # PMR: a new building\'s starting shares{tail}'))
-        # Last in the list: one share group per recipe (per blend member when split); two with --digit-shares.
-        blend_of = ([(j, m.key) for j, _, _, m in split_info[bk]['members']] if bk in split_info
-                    else [(i, r.key) for i, r in enumerate(recipes, 1)])
-        s.inserts.append((pg.end - 1, ''.join(
-            f'\t{g}  # PMR: share of levels on {key}{part}\n\t'
-            for i, key in blend_of
-            for g, part in ((f'pmg_pmr_share_{short(bk)}_{i}', ' (tens)' if SHARE_DIGITS else ''), (f'pmg_pmr_shu_{short(bk)}_{i}', ' (units)'))
-            if SHARE_DIGITS or 'shu' not in g)))
+        # The union frames, last in the recipe group: one per retool target (frames.union_key), in pmr_to order.
+        gsrc, gpm = group_src[g0]
+        gsrc.inserts.append((gpm.end - 1, ''.join(f'\tpm_pmr_union_{short(bk)}_{p}  # PMR: union frame of {r.key}\n\t'
+                                                  for p, r in enumerate(recipes, 1))))
 
     goods_tex, goods_cost = {}, {}
     for gsrc in load_dir(game, 'goods'):
@@ -1457,17 +1440,21 @@ def main():
 
     # A method another method needs (unlocking_production_methods: pm_elastics needs a sewing machines recipe) is
     # also met by every pair built on it: with the split, the recipe group's marker on such a building is the pair.
+    # Method-count rework: and by the union frame of every target built on it, which stands for that target while the
+    # building is blended.
     pair_of = {}
-    for sp in split_info.values():
-        for r in sp['pairs']:
+    for bk, _bn, _s, recipes, _g0, _pg in treated:
+        for p, r in enumerate(recipes, 1):
+            base = r.base.key if isinstance(r, PairRecipe) else r.key
             if isinstance(r, PairRecipe):
-                pair_of.setdefault(r.base.key, []).append(r.key)
+                pair_of.setdefault(base, []).append(r.key)
+            pair_of.setdefault(base, []).append(f'pm_pmr_union_{short(bk)}_{p}')
     for key, (n, psrc) in pms.items():
         upm = pdx.get(n.value, 'unlocking_production_methods')
         listed = pdx.items(upm) if upm else []
         add = [pk for x in listed for pk in pair_of.get(x, []) if pk not in listed]
         if add:
-            psrc.inserts.append((upm.end - 1, ''.join(f'\t{pk}  # PMR: a recipe + automation pair\n\t' for pk in add)))
+            psrc.inserts.append((upm.end - 1, ''.join(f'\t{pk}  # PMR: a frame of a recipe it names\n\t' for pk in add)))
 
     # ---- second groups: trade-offs and working conditions become option shares -------------------
     # options[bk] = [(group, gi, mode, none method, [Option], standard methods)], gi counting the
@@ -1512,11 +1499,24 @@ def main():
     elec_of = {t[0]: t[3][-1] for t in treated if isinstance(t[3][-1], ElectricRecipe)}
     for bk, conv in options.items():
         for g, gi, mode, none, opts, std in conv:
+            # Method-count rework: a trade-off group is an option frame group. Its none and options keep vanilla's
+            # bodies (frames), less required_input_goods (Recipe.frame_body); the union frame joins them. Treatment
+            # keeps its share methods for now: its vanilla methods carry nothing.
+            if mode == 'market' and none not in stripped_opts:
+                nn, nsrc = pms[none]
+                nsrc.cuts += [line_span(nsrc.text, n) for n in nn.value if n.key == 'required_input_goods']
+                stripped_opts.add(none)
+            if mode == 'market':
+                gsrc, gpm = group_src[g]
+                gsrc.inserts.append((gpm.end - 1, f'\tpm_pmr_union_{short(bk)}_x{gi}  # PMR: union frame\n\t'))
             for o in opts:
                 if not pm_groups[o.key] <= converted:
                     raise SystemExit(f'{o.key} is also in {sorted(pm_groups[o.key] - converted)}, which PMR does not convert')
                 if o.key not in stripped_opts:
-                    o.strip()
+                    if mode == 'treat':
+                        o.strip()
+                    else:
+                        o.src.cuts += [line_span(o.src.text, n) for n in o.node.value if n.key == 'required_input_goods']
                     stripped_opts.add(o.key)
                 # An option that needs a recipe the electric recipe builds on needs the electric
                 # recipe too: on it, the recipe group's marker is the electric one.
@@ -1524,11 +1524,11 @@ def main():
                 upm = pdx.get(o.node.value, 'unlocking_production_methods')
                 if er and upm and er.base.key in pdx.items(upm) and er.key not in pdx.items(upm):
                     o.src.inserts.append((upm.end - 1, f'\t{er.key}  # PMR: electric recipe\n\t'))
-        # The option share groups, after the recipe ones.
+        # The treatment share groups, last in the building's list.
         bsrc, bpg = next((t[2], t[5]) for t in treated if t[0] == bk)
         bsrc.inserts.append((bpg.end - 1, ''.join(
             f'\t{xg}  # PMR: share of {o.key}{part}\n\t'
-            for g, gi, mode, none, opts, std in conv for o in opts
+            for g, gi, mode, none, opts, std in conv if mode == 'treat' for o in opts
             for xg, part in ((f'pmg_pmr_x_{short(bk)}_{o.j}', ' (tens)' if SHARE_DIGITS else ''), (f'pmg_pmr_xu_{short(bk)}_{o.j}', ' (units)'))
             if SHARE_DIGITS or 'xu' not in xg)))
     report['options'] = [{'building': bk, 'group': g, 'mode': mode, 'none': none,
@@ -1609,25 +1609,10 @@ def main():
     header = ('# GENERATED by tools/pmr/generate.py from the installed game. Do not edit by hand; regenerate.\n'
               f'# N = {N} retool levels per level, retool share = {RETOOL_SHARE}.\n\n')
 
-    for s in {id(t[2]): t[2] for t in treated}.values():
-        write(f'common/buildings/{s.name}', s.render())
-    for s in p_srcs:
-        if s.cuts or s.inserts:
-            write(f'common/production_methods/{s.name}', s.render())
-    # Vanilla recipe groups that gain an electric recipe or lose a principle variant (DROP_RECIPES), whole,
-    # with only those lines changed.
-    for s in g_srcs:
-        if s.inserts or s.cuts:
-            write(f'common/production_method_groups/{s.name}', s.render())
-    write('common/production_methods/pmr_electric_production_methods.txt', header + ELECTRIC_DOC
-          + '\n'.join(er.method() for er in elec_pms))
-    if pair_pms:
-        write('common/production_methods/pmr_pair_production_methods.txt', header
-              + '# Recipe + automation pairs (PairRecipe, SPLIT_AUTOMATION): markers of the retool target only.\n\n'
-              + '\n'.join(r.method() for r in pair_pms))
-
     # ---- new script ------------------------------------------------------------------------------
-    labour_pms, labour_groups, retools, costs, loc = [], [], [], [], []
+    retools, costs, loc = [], [], []
+    frames_of, frame_body_of, frame_pms = {}, {}, []   # the method-count rework (frames.py)
+    less_all = (set(), set(), set())                     # goods in, goods out, pop types the "less" modifiers scale
     site_types = []    # every retool site type, hidden from the state Buildings tab
     blend_pms, blend_groups = [], []
     triggers = []
@@ -1649,7 +1634,7 @@ def main():
     auto_ui = {}           # building -> (its first automation group, auto_tiers), for the automation bar
     profit_goods = set()   # every good a recipe's profit is read at (pmr_price_<good>)
     pair_ui = {}           # building -> pairs(): every plain recipe with every automation, for the Methods view
-    start_shares = {}      # building -> (short name, [(recipe history names, [(member, share)])]): history_start_shares
+    start_shares = {}      # history_start_shares: none since the method-count rework (history names the pure frames)
 
     for bk, bn, s, recipes, g0, pg in treated:
         b = short(bk)
@@ -1679,22 +1664,8 @@ def main():
         for i, r in enumerate(recipes, 1):
             custom_new.append(f'\ttext = {{\n\t\ttrigger = {{ is_building_type = {bk} state = {{ has_variable = pmr_to_{b} var:pmr_to_{b} = {i} }} }}\n'
                               f'\t\tlocalization_key = {r.key}\n\t}}\n')
-        # Carries nothing since the workforce is blended (Pat, 2026-10-13): it is the slot the building
-        # browser rows and market lists show, drawn as the gold main output good.
-        labour_pms.append(
-            f'# {bk}: the blended-recipes slot. Goods and workforce come from the share methods.\n'
-            f'pm_pmr_labour_{b} = {{\n'
-            f'\ttexture = "{icon_tex}"\n'
-            f'\tis_default = yes\n}}\n')
-        labour_groups.append(
-            f'pmg_pmr_labour_{b} = {{\n'
-            f'\ttexture = "gfx/interface/icons/generic_icons/mixed_icon_base.dds"\n'
-            f'\tproduction_methods = {{\n\t\tpm_pmr_labour_{b}\n\t}}\n}}\n')
-        # A new building's starting shares (see SHARE_STEPS): two methods, so the panels hide the group like the shares
-        labour_pms.append(f'pm_pmr_run_{b} = {{\n\ttexture = "{GENERIC_ICON}"\n}}\n'
-                          f'pm_pmr_start_{b} = {{\n\ttexture = "{GENERIC_ICON}"\n\tis_default = yes\n}}\n')
-        labour_groups.append(f'pmg_pmr_start_{b} = {{\n\ttexture = "{GENERIC_ICON}"\n'
-                             f'\tproduction_methods = {{\n\t\tpm_pmr_run_{b}\n\t\tpm_pmr_start_{b}\n\t}}\n}}\n')
+        # Method-count rework: no labour or start group any more. The gold icon (pmr_labour_<b>.dds) stays: the building
+        # browser draws it in the method grid's place (patch_grid_instance).
 
         rc = pdx.get(bn.value, 'required_construction')
         base_cost = cost_values.get(rc.value) if rc else None
@@ -1716,12 +1687,7 @@ def main():
         for r in recipes:
             if isinstance(r, (ElectricRecipe, PairRecipe)):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
-        loc += [f' pmg_pmr_labour_{b}:0 "Recipes"',
-                f' pm_pmr_labour_{b}:0 "Blended Recipes"',
-                f' pmg_pmr_start_{b}:0 "Recipes"',
-                f' pm_pmr_run_{b}:0 "Blended Recipes"',
-                f' pm_pmr_start_{b}:0 "Blended Recipes"',
-                f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
+        loc += [f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
                 f' building_pmr_retool_gov_{b}_desc:0 "Switches the government\'s levels of ${bk}$ to the new recipe."',
                 f' building_pmr_retool_gova_{b}:0 "Retooling (Government): ${bk}$"',
                 f' building_pmr_retool_gova_{b}_desc:0 "Switches your government\'s levels of ${bk}$ here to the new recipe."']
@@ -1804,28 +1770,15 @@ def main():
             members = [(i, r, blend, emp, {}, SHARE_STEPS if i == 1 else 0,
                         {'tier': i, 'automation': [a.key for a in autos], 'needs_electricity': elec})
                        for i, (r, autos, blend, emp, elec) in enumerate(tiers_of, 1)]
-        if not SHARE_DIGITS:
-            # history's buildings: per recipe history can name, the shares its levels take (history_start_shares)
-            start = []
-            for ti, r in enumerate(recipes, 1):
-                if r.key.startswith('pm_pmr_'):
-                    continue   # a pair or electric target, which no history building names
-                moves = [(j, SHARE_STEPS if ti in rep.get('pairs', [rep.get('tier')]) else 0, dflt)
-                         for j, _r, _b, _e, _x, dflt, rep in members]
-                moves = [(j, n) for j, n, dflt in moves if n != dflt]
-                if moves:
-                    start.append((r.key, moves))
-            start_shares[bk] = (b, start)
-        def ladder(sh, values, default_v, body_of, tex, loc_share, gname, start_vals=()):
-            """digit methods <sh>_<v> carrying v% (body_of(v / SHARE_STEPS)); each unlocks only while it runs, the default
-            and start_vals also while the building is on its start method"""
+        def ladder(sh, values, default_v, body_of, tex, loc_share, gname):
+            """share methods <sh>_<v> carrying v% (body_of(v / SHARE_STEPS)); each unlocks only while it runs, the
+            default at all times, so a new building's group is never empty (the start group went with the method-count
+            rework: it unlocked the defaults)"""
             shares = []
             for val in values:
                 dflt = '\tis_default = yes\n' if val == default_v else ''
-                # a new building's (SHARE_STEPS), and history's named ones (history_start_shares)
-                start = f' pm_pmr_start_{b}' if val == default_v or val in start_vals else ''
-                blend_pms.append(f'{sh}_{val} = {{\n\ttexture = "{tex}"\n{dflt}'
-                                 f'\tunlocking_production_methods = {{ {sh}_{val}{start} }}\n'
+                lock = '' if val == default_v else f'\tunlocking_production_methods = {{ {sh}_{val} }}\n'
+                blend_pms.append(f'{sh}_{val} = {{\n\ttexture = "{tex}"\n{dflt}{lock}'
                                  f'{body_of(val / SHARE_STEPS) if val else ""}}}\n')
                 shares.append(f'{sh}_{val}')
                 loc.append(f' {sh}_{val}:0 "{loc_share(val)}"')
@@ -1834,44 +1787,54 @@ def main():
                                 '\tproduction_methods = {\n' + ''.join(f'\t\t{x}\n' for x in shares) + '\t}\n}\n')
             loc.append(f' {g}:0 "{gl}"')
 
+        # Method-count rework (Pat 2026-11-10, frames.py): the blend members as frames.Member, each its modifiers at
+        # 100%. A target's pure frame carries its members' and its base recipe's own (Recipe.rest); its union frame the
+        # most any combination uses. The blend itself is "less" modifiers sized by pmr_frame_<b>.
+        fm, own = [], {}
         for i, r, blend, emp, rest, default_n, rep in members:
-            # section -> block -> {modifier: amount at 100%}: goods by workforce, jobs by level, the rest as vanilla's
-            subs = {}
-            for sec, mods in blend.items():
-                subs.setdefault(sec, {})['workforce_scaled'] = dict(mods)
+            mods = {(sec, 'workforce_scaled'): dict(d) for sec, d in blend.items()}
             if emp:
-                subs.setdefault('building_modifiers', {})['level_scaled'] = dict(emp)
-            for (sec, sub), mods in rest.items():
-                d = subs.setdefault(sec, {}).setdefault(sub, {})
-                for mk, mv in mods.items():
-                    d[mk] = d.get(mk, 0) + mv
-
-            def body_of(f, subs=subs):
-                return ''.join(
-                    f'\t{sec} = {{\n'
-                    + ''.join(f'\t\t{sub} = {{\n'
-                              + ''.join(f'\t\t\t{mk} = {fmt(mv * f)}\n' for mk, mv in mods.items())
-                              + '\t\t}\n' for sub, mods in bs.items())
-                    + '\t}\n'
-                    for sec, bs in subs.items())
-            for sh, values, dv, _part in share_digits(f'pm_pmr_share_{b}_{i}', default_n):
-                gs = sh.replace('pm_', 'pmg_', 1)
-                ladder(sh, values, dv, body_of, r.texture,
-                       lambda val, r=r: f'${r.key}$ ({val}% of levels)',
-                       (gs, f'${r.key}$ share of levels'), () if SHARE_DIGITS else (0, SHARE_STEPS))
+                mods[('building_modifiers', 'level_scaled')] = dict(emp)
+            fm.append(frames.Member(i, r.key, rep.get('kind', 'recipe'), rep.get('pairs', [rep.get('tier')]),
+                                    frames.add_mods(mods, rest)))
             report['blended'].append({'building': bk, 'recipe': r.key, **rep, 'blend': blend, 'employment': emp,
                                       **({'other': {f'{sec}.{sub}': mods for (sec, sub), mods in rest.items()}} if rest else {})})
-
-        # Option shares: the same share / lock / switching-lock pattern as the recipes, carrying the
-        # option's every effect x n / SHARE_STEPS. n = 0 is the default: a new building starts on none.
+        for r in recipes:
+            base = r.base if isinstance(r, PairRecipe) else r
+            own[r.key] = {k2: dict(d) for k2, d in base.rest.items() if d}
+        # Trade-offs: an option frame group each (vanilla's bodies); treatment: share methods as before, "live" amounts
+        # for the frames (frames.Live).
+        ogs, live, tex_of = [], [], {r.key: r.texture for r in recipes}
         for g, gi, mode, none, opts, std in options.get(bk, []):
+            if mode == 'market':
+                nopt = Option(bk, 0, g, gi, mode, None, none, pms)
+                tex_of[none] = nopt.texture
+                ogs.append(frames.OptionGroup(g, gi, none, nopt.mods, [
+                    frames.Option(o.j, o.key, frames.sub_mods(Option(bk, o.j, g, gi, mode, o.role, o.key, pms).mods, nopt.mods))
+                    for o in opts]))
+                continue
             for o in opts:
-                what = 'workforce' if mode == 'treat' else 'building'
+                live.append(frames.Live(o.j, o.mods))
                 for sh, values, dv, _part in share_digits(f'pm_pmr_x_{b}_{o.j}', 0, opt_step(o)):
                     gs = sh.replace('pm_', 'pmg_', 1)
                     ladder(sh, values, dv, o.share_body, o.texture,
-                           lambda val, o=o, what=what: f'${o.key}$ ({val}% of the {what})',
-                           (gs, f'${o.key}$ share'))
+                           lambda val, o=o: f'${o.key}$ ({val}% of the workforce)', (gs, f'${o.key}$ share'))
+        fb = frames.Building(bk, g0, [r.key for r in recipes], fm, ogs, own, live)
+        frames_of[bk] = fb
+        FRAMES[bk] = fb
+        for p, r in enumerate(recipes, 1):
+            body = frames.sections(frames.pure_mods(fb, p))
+            if r.key in frame_body_of:
+                if frame_body_of[r.key] != body:
+                    raise SystemExit(f'{r.key}: a recipe two buildings share, with different frames; extend the rework')
+                continue
+            frame_body_of[r.key] = body
+            if not isinstance(r, PairRecipe):
+                r.frame_body(body)
+        frame_pms.extend(frames.union_methods(fb, lambda key: tex_of[key]).values())
+        loc += frames.frame_loc(fb)
+        for side, names in zip(less_all, frames.frame_goods(fb)):
+            side.update(names)
 
         if sp:
             # the Methods view's grid is the retool targets themselves: pair (r, a) is target index[(r, a)]
@@ -1883,14 +1846,51 @@ def main():
             pair_ui[bk] = pairs(recipes, auto_groups_of[bk], groups, pms, weight)
             profit_goods.update(g for gd, _ in pair_ui[bk]['econ'].values() for g in gd if goods_cost.get(g))
         tick_effects.append(option_effects(bk, b, options.get(bk, []), goods_cost, plain)
+                            + frames.frame_effect(fb, log=not RELEASE, count=not RELEASE)
                             + tick_effect(bk, b, recipes, elec_tiers, options.get(bk, []), fold_techs,
-                                          econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk)))
+                                          econ, goods_cost, [t for _, _, t in auto_tiers], pair_ui.get(bk),
+                                          '' if RELEASE else frames.short_check(fb)))
         recipe_elec[bk] = elec_tiers
         dispatch.append(bk)
         report['treated'].append({'building': bk, 'recipe_group': g0, 'recipes': [r.key for r in recipes],
                                   'icon_good': good,
                                   'electric_tiers': elec_tiers,
                                   'retool_cost': retool_cost})
+
+    # ---- the vanilla files PMR changes, now that the frames have their bodies ----------------------
+    for s in {id(t[2]): t[2] for t in treated}.values():
+        write(f'common/buildings/{s.name}', s.render())
+    for s in p_srcs:
+        if s.cuts or s.inserts:
+            write(f'common/production_methods/{s.name}', s.render())
+    # Vanilla groups that gain frames or lose a principle variant (DROP_RECIPES), whole, with only those lines changed.
+    for s in g_srcs:
+        if s.inserts or s.cuts:
+            write(f'common/production_method_groups/{s.name}', s.render())
+    if elec_pms:
+        raise SystemExit('electric recipes (no SPLIT_AUTOMATION) have no frames yet; extend the method-count rework')
+    if pair_pms:
+        write('common/production_methods/pmr_pair_production_methods.txt', header
+              + '# Recipe + automation pairs (PairRecipe, SPLIT_AUTOMATION): pure frames of their retool targets.\n\n'
+              + '\n'.join(r.method(frame_body_of[r.key]) for r in pair_pms))
+    write('common/production_methods/pmr_frame_production_methods.txt', header + frames.FRAME_DOC + '\n'.join(frame_pms))
+    write('common/static_modifiers/pmr_less_modifiers.txt', header + frames.LESS_DOC + frames.static_modifiers(*less_all))
+    # the goods and job multipliers the engine knows only by pattern: vanilla declares some, Company Culture its own
+    declared = company_culture.vanilla_modifier_types(game) | set(company_culture.goods_mults(cc_plan))
+    less_types = frames.type_keys(*less_all, declared)
+    write('common/modifier_type_definitions/pmr_less_modifier_types.txt', header + frames.TYPES_DOC
+          + frames.modifier_types(less_types))
+    add_names = set()
+    for path in glob.glob(os.path.join(game, 'localization', 'english', '*.yml')):
+        add_names |= set(re.findall(r'^ (goods_\w+_add):', open(path, encoding='utf-8-sig').read(), re.M))
+    loc += frames.static_modifier_loc(*less_all) + frames.modifier_type_loc(less_types, add_names)
+    if args.frame_probe:
+        probe_files, probe_loc = frame_probe.files(declared | set(less_types))
+        for path, text in probe_files:
+            write(path, header + text)
+        loc += probe_loc
+    report['frames'] = {'less_in': sorted(less_all[0]), 'less_out': sorted(less_all[1]), 'less_jobs': sorted(less_all[2]),
+                        'types_added': less_types, 'unions': len(frame_pms)}
 
     # ---- companies: a company that owns a building type may own its private retooling ----------
     # When the investment pool builds a building type a company lists in building_types, the company
@@ -1990,8 +1990,6 @@ def main():
         company_panel.RETOOL_TYPES = sorted(set(company_panel.RETOOL_TYPES)
                                             | {r for rs in subsidiaries.RETOOL_OF.values() for r in rs})
 
-    write('common/production_methods/pmr_labour_production_methods.txt', header + '\n'.join(labour_pms))
-    write('common/production_method_groups/pmr_labour_groups.txt', header + '\n'.join(labour_groups))
     write('common/buildings/pmr_retool_buildings.txt', header + '\n'.join(retools))
     # Written even while RETOOL_CREW is 0 (nothing uses them then), so a deployed folder never keeps a stale copy.
     write('common/production_methods/pmr_retool_production_methods.txt', header + RETOOL_CREW_DOC +
@@ -2036,9 +2034,9 @@ def main():
     write('common/script_values/pmr_values.txt', header +
           f'pmr_retool_levels_per_level = {N}\n\n' + '\n'.join(costs) + '\n')
     write('common/production_methods/pmr_blend_production_methods.txt', header +
-          '# Share methods: pm_pmr_share_<b>_<recipe>_<n> carries the recipe\'s workforce-scaled\n'
-          + (f'# modifiers x n / {SHARE_STEPS}, n = 0, 10 .. 100; pm_pmr_shu_<b>_<recipe>_<u> its units, u = 0..9. Each\n'
-             if SHARE_DIGITS else f'# modifiers x n / {SHARE_STEPS}, n = 0 .. {SHARE_STEPS}. Each\n')
+          '# Treatment share methods: pm_pmr_x_<b>_<option>_<n> carries the treatment\'s modifiers\n'
+          + (f'# x n / {SHARE_STEPS}, n = 0, 10 .. 100; pm_pmr_xu_<b>_<option>_<u> its units, u = 0..9. Each\n'
+             if SHARE_DIGITS else f'# x n / {SHARE_STEPS}, n = 0 .. {SHARE_STEPS}. Each but 0\n')
           + '# unlocks only while it runs itself; the tick sets them with activate_production_method.\n\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
@@ -2062,6 +2060,8 @@ def main():
                    + ('on_monthly_pulse_state = { on_actions = { pmr_obs_monthly_state } }\n' if OBS_PAD else ''))
           .replace('BUILD_ON_ACTION\n', 'on_monthly_pulse_country = { on_actions = { pmr_build_monthly_country } }\n' if BUILD else '')
           .replace('BUILD_STAMP', '\t\tpmr_build_stamp = yes\n' if BUILD else '')
+          .replace('PMC_ON', '' if RELEASE else '\t\t\tstate = { set_variable = { name = pmr_pmc days = 1 } }   # pmr_count_undo\n')
+          .replace('PMC_OFF', '' if RELEASE else '\t\t\tstate = { remove_variable = pmr_pmc }\n')
           .replace('START_STAFF', '' if RELEASE else START_STAFF)
           .replace('START_LEFT', '' if RELEASE else START_LEFT)
           + ('' if RELEASE else OBS_ON_ACTIONS.replace(OBS_PAD_HOOK[0], OBS_PAD_HOOK[1]) + OBS_PAD_ON_ACTIONS if OBS_PAD else
@@ -2300,7 +2300,8 @@ def main():
     if not args.release:
         write('GENERATION_REPORT.json', json.dumps(report, indent=1) + '\n', bom=False)
     print(f"treated {len(report['treated'])} buildings, skipped {len(report['skipped'])}, "
-          f"{len(report['blended'])} recipes blended by share ({len(blend_pms)} methods), "
+          f"{len(report['blended'])} blend members, {len(frame_body_of) + len(frame_pms)} frames, "
+          f"{len(blend_pms)} treatment share methods, "
           f"{len(report['company_types'])} company types may own retooling")
     lacking = {lang: len(v) for lang, v in report['untranslated'].items() if v}
     print('every language translated' if not lacking else
@@ -2437,7 +2438,8 @@ def trace_pm_effects(game, out, since):
     for path in sorted(glob.glob(os.path.join(out, 'common', 'buildings', '*.txt'))):
         for n in pdx.parse(pdx.strip_bom(open(path, encoding='utf-8-sig').read())):
             g = n.key and n.is_block and pdx.get(n.value, 'production_method_groups')
-            if g and any(x.startswith('pmg_pmr_') for x in pdx.items(g)):
+            # a PMR type: a group of it holds a union frame (the method-count rework)
+            if g and any(p.startswith('pm_pmr_union_') for x in pdx.items(g) for p in groups.get(x, [])):
                 types[n.key] = pdx.items(g)
     logs, guards = [], []
     for i, (bk, gs) in enumerate(sorted(types.items())):
@@ -2767,6 +2769,7 @@ def market_read(good, spare):
             + '\t\t}\n\t}\n}\n\n')
 
 
+FRAMES = {}            # building type -> its frames.Building (the method-count rework), set by main()
 OPTION_TYPES = set()   # building types with trade-off options (option_effects), the only ones with pmr_xok_<b>
 
 
@@ -3094,16 +3097,14 @@ def option_effects(bk, b, conv, goods_cost, recipes):
         return by(list(range(0, SHARE_STEPS + 1, step)))
     # each option's tens (pmr_xqt, 0..10) and units (pmr_xqu, 0..9) of its share in % (pmr_x)
     halves = (('pmr_xqt', 'pmr_xat', 'x', 10, lambda d: 10 * d), ('pmr_xqu', 'pmr_xau', 'xu', 9, lambda d: d))
+    # Method-count rework: only treatment runs share methods; a trade-off's shares are its frames (pmr_frame_<b>)
+    topts = [x for x in opts if x.mode == 'treat']
     o.append(f'pmr_xapply_{b} = {{\n')
-    # a none with effects of its own (Simple Ranch's wool) runs under every share: its marker stays on
-    for g, gi, mode, none, os_, std in conv:
-        if (bk, none) in kept_none:
-            o.append(f'\tif = {{ limit = {{ NOT = {{ {is_on(none)} }} }} {act(none)} }}\n')
     if not SHARE_DIGITS:   # one method per share
         # Review 8, R8-1: after a full read (pmr_xok_<b>) pmr_xa_<j> holds the share that runs, and only this effect
         # changes it (the methods self-lock), so a monthly tick reads and activates only an option whose share moved.
         # pmr_mix_<b> and a building still on its start method (pmr_blend_<b>) remove pmr_xok_<b>.
-        for x in opts:
+        for x in topts:
             sm = lambda n, x=x: f'pm_pmr_x_{b}_{x.j}_{n}'   # noqa: E731
             o.append(f'\tif = {{\n\t\tlimit = {{ NOT = {{ AND = {{ has_variable = pmr_month has_variable = pmr_xok_{b} '
                      f'var:{xv("pmr_xa", x.j)} = var:{xv("pmr_x", x.j)} }} }} }}\n'
@@ -3114,7 +3115,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                      + bisect_x(x, lambda n, sm=sm: act(sm(n)), '\t\t')
                      + f'\t\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = var:{xv("pmr_x", x.j)} }}\n\t}}\n\t}}\n')
         o.append(f'\tset_variable = pmr_xok_{b}\n')
-    for x in (opts if SHARE_DIGITS else ()):
+    for x in (topts if SHARE_DIGITS else ()):
         o.append(f'\tset_variable = {{ name = {xv("pmr_xqt", x.j)} value = var:{xv("pmr_x", x.j)} }}\n'
                  f'\tchange_variable = {{ name = {xv("pmr_xqt", x.j)} subtract = 4.5 }}\n'
                  f'\tchange_variable = {{ name = {xv("pmr_xqt", x.j)} multiply = 0.1 }}\n'
@@ -3128,12 +3129,12 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                               f'set_variable = {{ name = {xv(av, x.j)} value = {d} }} }}', '\t', hi=hi))
     if SHARE_DIGITS:
         o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
-    for x in (opts if SHARE_DIGITS else ()):
+    for x in (topts if SHARE_DIGITS else ()):
         for qv, av, sh, hi, val in halves:
             o.append(f'\tif = {{\n\t\tlimit = {{ var:{xv(av, x.j)} = -1 }}\n'
                      + bisect(xv(qv, x.j), lambda d, x=x, sh=sh, val=val: act(f'pm_pmr_{sh}_{b}_{x.j}_{val(d)}'), '\t\t', hi=hi)
                      + f'\t\tset_variable = {{ name = {xv(av, x.j)} value = var:{xv(qv, x.j)} }}\n\t}}\n')
-    for x in (opts if SHARE_DIGITS else ()):
+    for x in (topts if SHARE_DIGITS else ()):
         # the share in % both digits run (the OPT log line's running=), -1 while either is off
         o.append(f'\tset_variable = {{ name = {xv("pmr_xa", x.j)} value = -1 }}\n'
                  f'\tif = {{ limit = {{ var:{xv("pmr_xat", x.j)} >= 0 var:{xv("pmr_xau", x.j)} >= 0 }} '
@@ -3141,7 +3142,15 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     o.append('}\n\n')
 
     # The entry point, and what the panel's trade-off bars read: each group's none share.
-    o.append(f'pmr_opts_{b} = {{\n\tpmr_xavail_{b} = yes\n'
+    # method-count rework: the frame pick runs again only if a share moved (pmr_fok_<b>, pmr_frame_<b>)
+    keep = ''.join(f'\tset_variable = {{ name = {xv("pmr_xo", x.j)} value = -1 }}\n'
+                   f'\tif = {{ limit = {{ has_variable = {xv("pmr_x", x.j)} }} '
+                   f'set_variable = {{ name = {xv("pmr_xo", x.j)} value = var:{xv("pmr_x", x.j)} }} }}\n' for x in opts)
+    moved_x = (f'\tif = {{ limit = {{ has_variable = pmr_fok_{b} OR = {{ '
+               + ' '.join(f'NOT = {{ var:{xv("pmr_xo", x.j)} = var:{xv("pmr_x", x.j)} }}' for x in opts)
+               + f' }} }} remove_variable = pmr_fok_{b} }}\n'
+               + ''.join(f'\tremove_variable = {xv("pmr_xo", x.j)}\n' for x in opts))
+    o.append(f'pmr_opts_{b} = {{\n{keep}\tpmr_xavail_{b} = yes\n'
              + (f'\tif = {{ limit = {{ OR = {{ NOT = {{ has_variable = {bv("pmr_xinit")} }} has_variable = pmr_month }} }} pmr_xvalue_{b} = yes }}\n'
                 if market else '')
              + f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {bv("pmr_xinit")} }} }}\n'
@@ -3157,11 +3166,12 @@ def option_effects(bk, b, conv, goods_cost, recipes):
              f'\tpmr_xapply_{b} = yes\n')
     for g, gi, mode, none, os_, std in conv:
         o.append(none_share(gi, os_))
+    o.append(moved_x)
     f = lambda name, d=0: f"[THIS.Var('{name}').GetValue|{d}]"   # noqa: E731
     line = (f'PMR;rec=OPT;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk}'
             + ';x=' + '/'.join(f(xv('pmr_x', x.j)) for x in opts)
-            + ';running=' + '/'.join(f(xv('pmr_xa', x.j)) for x in opts)
+            + ';running=' + '/'.join(f(xv('pmr_xa', x.j)) if x.mode == 'treat' else '-' for x in opts)
             + ';can=' + '/'.join(f(xv('pmr_xav', x.j)) for x in opts))
     demand = [x for x in opts if x.group in DEMAND_GROUPS]
     if demand:   # the market's price signal at the last demand-led step: 1 over DEMAND_BAND, -1 under, 0 between
@@ -3506,7 +3516,7 @@ def lookup(var, ns, body, ind='\t'):
 
 
 def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=(), goods_cost=None, auto_tiers=(),
-                pair=None):
+                pair=None, short_check=''):
     """Every effect for one building type. All run in STATE scope.
 
     The state keeps how many of the building's levels run each recipe (pmr_lv_<i>_<b>, i = the
@@ -3515,7 +3525,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     level moves one level, oldest recipe first, onto the target. A newer recipe arriving mid-retool
     only changes the target: levels already moved keep their recipe until retooled again.
     Each recipe's share of the levels picks the method active in that recipe's share group, so the
-    building's goods are the level-weighted mix of its recipes in its own production figures."""
+    building's goods are the level-weighted mix of its recipes in its own production figures.
+
+    Method-count rework (Pat 2026-11-10): the shares no longer pick share methods; pmr_frame_<b> (frames.py) turns them
+    into a frame and "less" modifiers. The target lives in pmr_to_<b> alone: the recipe group's method is the frame."""
     k = len(recipes)
     fold_techs = fold_techs or {}
     slots = list(enumerate(priv_slots(b), 1))
@@ -3543,7 +3556,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
          '# State scope throughout; the building is b:' + bk + '.\n\n']
 
     def active(r):
-        return f'is_production_method_active = {{ building_type = {bk} production_method = {r.key} }}'
+        # the building runs r: its pure frame, or r is the target (a blended building runs a union frame)
+        return (f'OR = {{ is_production_method_active = {{ building_type = {bk} production_method = {r.key} }} '
+                f'var:{v("pmr_to")} ?= {recipes.index(r) + 1} }}')
 
     def on_index(var, body, ind='\t'):
         """body(i) for the recipe whose index is held in var (a binary search from LOOKUP_FROM recipes on)."""
@@ -3555,10 +3570,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     def chg(name, op, value):
         return f'change_variable = {{ name = {v(name)} {op} = {value} }}'
 
-    # the recipe the building runs now, 0 if none of the group's is active
+    # the target whose pure frame the building runs now (history's, a new building's), 0 if none
     o.append(f'pmr_running_{b} = {{\n\t{setv("pmr_run", 0)}\n')
     for i, r in enumerate(recipes, 1):
-        o.append(f'\t{"if" if i == 1 else "else_if"} = {{ limit = {{ {active(r)} }} {setv("pmr_run", i)} }}\n')
+        o.append(f'\t{"if" if i == 1 else "else_if"} = {{ limit = {{ is_production_method_active = {{ building_type = {bk} '
+                 f'production_method = {r.key} }} }} {setv("pmr_run", i)} }}\n')
     o.append('}\n\n')
 
     # all levels on one recipe (the one in pmr_to)
@@ -3571,61 +3587,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\tif = {{ limit = {{ has_variable = pmr_fp_{b} }} remove_variable = pmr_fp_{b} }}\n'
              + '}\n\n')
 
-    # The blend: each recipe's share of the levels, in steps of 1 / SHARE_STEPS, picks the active
-    # method of that recipe's share group. Recipes other than the target are rounded to the nearest
-    # step, oldest first and never past the whole; the target takes what is left, so the shares
-    # always add up to exactly SHARE_STEPS steps. Step n runs as two digits, tens and units, each
-    # unlocked only while it runs. The digits that differ move by activate_production_method, which
-    # checks no unlock; the new digit then unlocks itself, so the game never has to replace one.
-    # Only a digit that is not running is activated (pmr_read_blend_<b> finds out first): activating
-    # a running method again counted its goods twice (see pmr_tick_<b>). Each digit is found by
-    # bisection, about four comparisons a digit.
-    def pm(kind, i, n):
-        return f'pm_pmr_{kind}_{b}_{i}_{n}'
-
-    def pm_active(kind, i, n):
-        return f'is_production_method_active = {{ building_type = {bk} production_method = {pm(kind, i, n)} }}'
-
-    def act(kind, i, n):
-        return f'activate_production_method = {{ building_type = {bk} production_method = {pm(kind, i, n)} }}'
-
-    def bisect(var, leaf, ind, lo=0, hi=SHARE_STEPS):
-        """leaf(n) for the step n held in var, found in log2(SHARE_STEPS) comparisons. Not indented by
-        depth: with 1% steps these ladders are most of the file."""
-        if lo == hi:
-            return f'{ind}{leaf(lo)}\n'
-        mid = (lo + hi) // 2
-        return (f'{ind}if = {{ limit = {{ var:{var} <= {mid} }}\n' + bisect(var, leaf, ind, lo, mid)
-                + f'{ind}}}\n{ind}else = {{\n' + bisect(var, leaf, ind, mid + 1, hi) + f'{ind}}}\n')
-
-    # pmr_a_<i>: the step the tick wants (pmr_n_<i>) if both its methods run (tens pmr_at_<i>, units pmr_au_<i>,
-    # each the half that runs or -1), else -1. Read before the blend to see what must change, and after it for the log.
-    def tens_units(i):
-        return (f'\t{setv(f"pmr_nt_{i}", "var:" + v(f"pmr_n_{i}"))}\n'
-                f'\t{chg(f"pmr_nt_{i}", "subtract", 4.5)}\n'
-                f'\t{chg(f"pmr_nt_{i}", "multiply", 0.1)}\n'
-                f'\tround_variable = {{ name = {v(f"pmr_nt_{i}")} nearest = 1 }}\n'
-                f'\t{setv(f"pmr_nu_{i}", "var:" + v(f"pmr_nt_{i}"))}\n'
-                f'\t{chg(f"pmr_nu_{i}", "multiply", -10)}\n'
-                f'\t{chg(f"pmr_nu_{i}", "add", "var:" + v(f"pmr_n_{i}"))}\n')
-    halves = (('pmr_nt', 'pmr_at', 'share', 10, lambda d: 10 * d), ('pmr_nu', 'pmr_au', 'shu', 9, lambda d: d))
-    o.append(f'pmr_read_blend_{b} = {{\n')
-    for i in range(1, nb + 1):
-        if not SHARE_DIGITS:   # the one method of step pmr_n_<i>
-            o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
-                     + bisect(v(f'pmr_n_{i}'), lambda n, i=i: f'if = {{ limit = {{ {pm_active("share", i, n)} }} '
-                              f'{setv(f"pmr_a_{i}", n)} }}', '\t'))
-            continue
-        o.append(tens_units(i))
-        for nv, av, sh, hi, val in halves:
-            o.append(f'\t{setv(f"{av}_{i}", -1)}\n'
-                     + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, av=av, val=val:
-                              f'if = {{ limit = {{ {pm_active(sh, i, val(d))} }} {setv(f"{av}_{i}", d)} }}', '\t', hi=hi))
-        o.append(f'\t{setv(f"pmr_a_{i}", -1)}\n'
-                 f'\tif = {{ limit = {{ var:{v(f"pmr_at_{i}")} >= 0 var:{v(f"pmr_au_{i}")} >= 0 }} '
-                 f'{setv(f"pmr_a_{i}", "var:" + v(f"pmr_n_{i}"))} }}\n')
-    o.append('}\n\n')
-
+    # The blend: each member's share of the levels, in steps of 1 / SHARE_STEPS. Members other than the target's are
+    # rounded to the nearest step, oldest first and never past the whole; the target's takes what is left, so the
+    # shares always add up to exactly SHARE_STEPS steps. pmr_frame_<b> turns them into a frame and "less" modifiers.
     def step(i, cum):
         # member i's share in steps, never past what is left of the whole (SHARE_STEPS less cum)
         return (f'\t\t{setv(f"pmr_n_{i}", "var:" + v(f"{sv}_{i}"))}\n'
@@ -3659,24 +3623,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     for grp in dict.fromkeys(grp for _, _, grp in bm if grp != 'recipe'):
         o.append(f'\t# {grp}\n\t{setv("pmr_gcum", 0)}\n'
                  + ''.join(step(i, 'pmr_gcum') for i, _, g2 in bm if g2 == grp))
-    o.append(f'\tpmr_read_blend_{b} = yes\n')
-    o.append('\t# each digit not the one wanted moves (activate_production_method checks no unlock)\n')
-    for i in range(1, nb + 1):
-        if not SHARE_DIGITS:
-            o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"pmr_a_{i}")} = -1 }}\n'
-                     + bisect(v(f'pmr_n_{i}'), lambda n, i=i: act('share', i, n), '\t\t') + '\t}\n')
-            continue
-        for nv, av, sh, hi, val in halves:
-            o.append(f'\tif = {{\n\t\tlimit = {{ var:{v(f"{av}_{i}")} = -1 }}\n'
-                     + bisect(v(f'{nv}_{i}'), lambda d, i=i, sh=sh, val=val: act(sh, i, val(d)), '\t\t', hi=hi) + '\t}\n')
-    # a new building's start method unlocks every share group's default, so it goes once the shares are set (SHARE_STEPS)
-    # Review 8, R8-1: a building still on it is new, so its trade-off shares are read in full too (pmr_xok_<b>)
-    o.append(f'\tif = {{\n\t\tlimit = {{ is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_start_{b} }} }}\n'
-             f'\t\tactivate_production_method = {{ building_type = {bk} production_method = pm_pmr_run_{b} }}\n'
-             + (f'\t\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n' if opts else '')
-             + '\t}\n')
-    # R8-1: the share methods now match pmr_n_<i>. Only this blend changes them (each self-locks: available only
-    # while it runs), so until pmr_mix_<b> changes the shares a quiet monthly tick can skip the blend.
+    # R8-1: the shares now match the levels. Until pmr_mix_<b> changes them a quiet monthly tick can skip the blend.
     o.append(f'\tset_variable = pmr_bok_{b}\n')
     o.append('}\n\n')
 
@@ -3887,8 +3834,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
 
     # Shares for the bar and the blend, the levels still to retool, and p (share on the target).
     o.append(f'pmr_mix_{b} = {{\n'
-             # review 8, R8-1: the shares may change, so the next blend and trade-off read run in full
+             # review 8, R8-1: the shares may change, so the next blend, trade-off read and frame pick run in full
              f'\tif = {{ limit = {{ has_variable = pmr_bok_{b} }} remove_variable = pmr_bok_{b} }}\n'
+             f'\tif = {{ limit = {{ has_variable = pmr_fok_{b} }} remove_variable = pmr_fok_{b} }}\n'
              + (f'\tif = {{ limit = {{ has_variable = pmr_xok_{b} }} remove_variable = pmr_xok_{b} }}\n' if opts else '')
              + on_index('pmr_to', lambda i: setv("pmr_lv_to", "var:" + lv(i)))
              + f'\t{setv("pmr_need", "var:" + v("pmr_level"))}\n'
@@ -4095,17 +4043,12 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     o.append(best_effect(f"pmr_hbest_{b}", "pmr_hbest_now", False))
     o.append(profit_effect(bk, b, recipes, econ, goods_cost or {}, active, reach, setv, v, pair))
 
-    o.append(f'pmr_activate_{b} = {{\n'
-             + lookup(f'var:{v("pmr_best_now")}', list(range(1, k + 1)),
-                      lambda i: f'activate_production_method = {{ building_type = {bk} production_method = {recipes[i - 1].key} }}')
-             + '}\n\n')
 
     def f(name, d=0):
         return f"[THIS.Var('{v(name)}').GetValue|{d}]"
-    # blend: each recipe's share of the levels in steps of 1/SHARE_STEPS, as the tick set it;
-    # active: the step each recipe's share group runs as the game reports it, -1 if none
-    mix = (';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, nb + 1))
-           + ';active=' + '/'.join(f(f'pmr_a_{i}') for i in range(1, nb + 1)))
+    # blend: each member's share of the levels in steps of 1/SHARE_STEPS, as the tick set it (the frame and its sizes:
+    # the FRAME line)
+    mix = ';blend=' + '/'.join(f(f'pmr_n_{i}') for i in range(1, nb + 1))
     best = f";best={f('pmr_best_now')}" + mix
     split = mix + (f";gov_frac={f('pmr_gov_frac', 2)};gov_levels={f('pmr_gov_levels')}"
              f";share_gov={f('pmr_retool_gov')};share_priv={f('pmr_retool_priv')}"
@@ -4216,22 +4159,23 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_mix_{b} }} }}\n'
              f'\t\tset_variable = pmr_mix_{b}\n'
              f'\t\tif = {{ limit = {{ has_variable = {v("pmr_retooling")} }} remove_variable = {v("pmr_retooling")} }}\n'
+             # the frame's sizes start again: a building seen for the first time carries no "less" modifier
+             + (frames.clear_vars(FRAMES[bk], '\t\t') if bk in FRAMES else '') +
              f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
+             # the pure frame history (or the game, for a new building) started it on; none: the best it can run
              f'\t\tpmr_running_{b} = yes\n'
              f'\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
+             f'\t\tif = {{ limit = {{ var:{v("pmr_to")} = 0 }} {setv("pmr_to", "var:" + v("pmr_best_now"))} }}\n'
+             f'\t\tif = {{ limit = {{ var:{v("pmr_to")} = 0 }} {setv("pmr_to", 1)} }}\n'
              f'\t\tpmr_reset_levels_{b} = yes\n'
              f'\t\tpmr_read_retool_{b} = yes\n'
              f'\t\t{setv("pmr_seen_gov", "var:" + v("pmr_retool_built_gov"))}\n'
              f'\t\t{setv("pmr_seen_priv", "var:" + v("pmr_retool_built_priv"))}\n'
-             '\t\t# Newly constructed: built with the newest recipe the owner has, at no retooling cost.\n'
+             '\t\t# Newly constructed: built with the newest recipe the owner has, at no retooling cost (the frame follows).\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = {v("pmr_new_build")} var:{v("pmr_best_now")} > 0 '
              f'NOT = {{ var:{v("pmr_to")} = var:{v("pmr_best_now")} }} }}\n'
              f'\t\t\t{setv("pmr_to", "var:" + v("pmr_best_now"))}\n'
              f'\t\t\tpmr_reset_levels_{b} = yes\n'
-             '\t\t\t# abroad on the player\'s technology the host cannot run the marker: nothing to wait for\n'
-             f'\t\t\tif = {{\n\t\t\t\tlimit = {{ NOT = {{ var:{v("pmr_best_now")} > var:{v("pmr_hbest_now")} }} }}\n'
-             f'\t\t\t\t{setv("pmr_adopting", 0)}\n'
-             f'\t\t\t\tpmr_activate_{b} = yes\n\t\t\t}}\n'
              f'\t\t\tpmr_mix_{b} = yes\n'
              f'\t\t\t{log("ADOPT", bk, b, k)}\n\t\t}}\n'
              f'\t\tpmr_mix_{b} = yes\n'
@@ -4249,47 +4193,27 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                 f'\tif = {{\n\t\tlimit = {{ OR = {{ var:{v("pmr_best_now")} > var:{v("pmr_best")} var:{v("pmr_best_now")} > var:{v("pmr_to")} }} }}\n') +
              f'\t\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
              f'\t\t{log("RESEARCH", bk, b, k, extra=best)}\n'
-             '\t\t# Abroad, beyond what the host can run: the marker cannot follow, so the target moves\n'
-             '\t\t# here and retooling opens as after a switch.\n'
-             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_best_now")} > var:{v("pmr_hbest_now")} }}\n'
+             '\t\t# Abroad, beyond what the host can run (logged): the target moves all the same.\n'
+             f'\t\tif = {{ limit = {{ var:{v("pmr_best_now")} > var:{v("pmr_hbest_now")} }} '
+             f'{log("ABROAD", bk, b, k, extra=best + ";host_best=" + f("pmr_hbest_now"))} }}\n'
+             '\t\t# The switch (method-count rework: the target is pmr_to alone, the recipe group runs the frame). The\n'
+             '\t\t# levels keep the recipes they run; every level not on the new target is now to retool.\n'
+             f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ var:{v("pmr_to")} = var:{v("pmr_best_now")} }} }}\n'
              f'\t\t\t{setv("pmr_to", "var:" + v("pmr_best_now"))}\n'
-             f'\t\t\tset_variable = {v("pmr_switched")}\n'
-             f'\t\t\t{log("ABROAD", bk, b, k, extra=best + ";host_best=" + f("pmr_hbest_now"))}\n\t\t}}\n'
-             f'\t\telse = {{ pmr_activate_{b} = yes }}\n\t}}\n'
-             f'\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n'
-             f'\tpmr_running_{b} = yes\n')
-
-    o.append('\t# A free adoption waits for the game to apply the activation: until it shows, the running\n'
-             '\t# recipe is not a switch. Give up after one more tick and keep what runs.\n'
-             f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_adopting")} }}\n'
-             f'\t\tif = {{ limit = {{ var:{v("pmr_run")} = var:{v("pmr_to")} }} remove_variable = {v("pmr_adopting")} }}\n'
-             f'\t\telse = {{\n\t\t\t{chg("pmr_adopting", "add", 1)}\n'
-             f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{v("pmr_adopting")} > 1 }}\n'
-             f'\t\t\t\tremove_variable = {v("pmr_adopting")}\n'
-             f'\t\t\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
-             f'\t\t\t\tpmr_reset_levels_{b} = yes\n'
-             f'\t\t\t\t{log("ADOPT_FAILED", bk, b, k)}\n\t\t\t}}\n\t\t}}\n\t}}\n')
-
-    o.append('\t# A switch: the building now runs a recipe other than the target. The levels keep the\n'
-             '\t# recipes they run; every level not on the new target is now to retool.\n'
-             '\t# Abroad, the host\'s marker below the player\'s target is no switch (it cannot follow).\n'
-             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {v("pmr_adopting")} }} var:{v("pmr_run")} > 0 '
-             f'NOT = {{ var:{v("pmr_run")} = var:{v("pmr_to")} }} '
-             f'NOT = {{ AND = {{ has_variable = pmr_abroad_{b} var:{v("pmr_run")} < var:{v("pmr_to")} }} }} }}\n'
-             f'\t\t{setv("pmr_to", "var:" + v("pmr_run"))}\n'
-             f'\t\tset_variable = {v("pmr_switched")}\n\t}}\n')
+             f'\t\t\tset_variable = {v("pmr_switched")}\n\t\t}}\n\t}}\n'
+             f'\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n')
 
     o.append(recount
              # review 8, R8-1: a monthly tick whose shares are those of the last blend (pmr_bok_<b>: no pmr_mix_<b>
              # since) skips it; every event tick (built, expanded, method changed, research) and a new building still
              # on its start method run it in full
-             + f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_month }} NOT = {{ has_variable = pmr_bok_{b} }} '
-             f'is_production_method_active = {{ building_type = {bk} production_method = pm_pmr_start_{b} }} }} }}\n'
+             + f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_month }} NOT = {{ has_variable = pmr_bok_{b} }} }} }}\n'
              f'\t\tpmr_blend_{b} = yes\n\t}}\n'
-             + ('' if RELEASE else
-                '\t# read again after the blend only for the log line (active=), so only in the player\'s states\n'
-                f'\tif = {{ limit = {{ owner = {{ is_player = yes }} }} pmr_read_blend_{b} = yes }}\n')
-             + (opts_call(b, any(mode == 'market' for _, _, mode, *_ in opts)) if opts else '') +
+             + (opts_call(b, any(mode == 'market' for _, _, mode, *_ in opts)) if opts else '')
+             # the frames and their "less" sizes (frames.py): every event tick (an AI's or the game's switch is put back
+             # at once), and a monthly one whose shares moved since (pmr_mix_<b>, pmr_opts_<b> drop pmr_fok_<b>)
+             + f'\tif = {{ limit = {{ NOT = {{ AND = {{ has_variable = pmr_month has_variable = pmr_fok_{b} }} }} }} pmr_frame_{b} = yes }}\n'
+             + short_check +
              f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_need")} > 0 }}\n'
              f'\t\tset_variable = {v("pmr_retooling")}\n'
              f'\t\tpmr_read_earnings_{b} = yes\n'
@@ -4980,6 +4904,12 @@ def shared_effects(price_goods=()):
            + once + '\t\tpmr_lsup_now = yes\n\t}\n}\n\n')
     if RELEASE:
         return out
+    # Method-count rework, test builds: a frame pmr_frame_<b> puts back after a change from outside PMR's tick (the AI's,
+    # the game's: pmr_pmc, pmr_on_production_method_changed), counted for the month's UNDO line (pmr_skip_report).
+    out += ('# State scope (test builds): count a frame put back after a change from outside PMR\'s tick.\n'
+            'pmr_count_undo = {\n\tif = {\n\t\tlimit = { has_variable = pmr_pmc }\n'
+            '\t\tif = { limit = { NOT = { has_global_variable = pmr_undo } } set_global_variable = { name = pmr_undo value = 0 } }\n'
+            '\t\tchange_global_variable = { name = pmr_undo add = 1 }\n\t}\n}\n\n')
     # pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp: the state's unemployment rate in %
     # (lower bound of 1/2/5/10/20), for the log, read once a turn. The investment pool scores a building x0.25 in a
     # state short of workers, which can cost a retool site with a crew a pick.
@@ -5012,7 +4942,8 @@ def state_tick_type(bk, t='\t'):
              f'{t}\tpmr_close_retool_{b} = yes\n'
              + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
                        for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
-                                 f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ())))
+                                 f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ()))
+             + (frames.clear_vars(FRAMES[bk], t + '\t') if bk in FRAMES else ''))
     # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up;
     # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
     gone = f'has_variable = pmr_mix_{b} NOT = {{ exists = b:{bk} }}'
@@ -5120,22 +5051,14 @@ def profile_pulse_state(buildings):
             + ''.join(f'pmr_prof_{k} = {{\n\t{paused}\n\teffect = {{\n{e}\t}}\n}}\n' for k, e in steps) + '\n')
 
 
-def history_start_shares(game, start_shares):
-    """{published path: text}: vanilla's history building files, each treated building's create_building also naming its
-    start method and the shares of the recipe history named (start_shares, all levels on that recipe as PMR's setup
-    would put them, pmr_blend_<b>). Pat 2026-10-21 19:31Z, France: every port began the game short of workers. The start
-    method put a new building on recipe 1 at 100% (SHARE_STEPS), the game staffed history's buildings on that, and the
-    setup then moved them to their own recipe: a port from an anchorage's 100 jobs a level to a basic port's 1,000.
-    q73 set the shares in a history/global file, the last history to run: every basic port took its share (Great
-    Britain 13 of 13) but none was staffed for it (Pat's q73 start, 20:41Z), so the game staffs before that. Named here,
-    the shares go in as create_building makes the building, the way vanilla names a method another one unlocks
-    (pm_increased_hardwood after pm_saw_mills); the start method unlocks 0% and 100% of every recipe for this (ladder).
-    START_LEVELS raises the levels of the owner entries it lists (a number replaced, so line numbers stay vanilla's).
-    Only the files with a name or a level added are published; the rest of the text is vanilla's, byte for byte."""
+def history_start_shares(game, start_shares=None):
+    """{published path: text}: vanilla's history building files with START_LEVELS raised (a number replaced, so line
+    numbers stay vanilla's). Only the files with a level raised are published; the rest is vanilla's, byte for byte.
+    Until the method-count rework (Pat 2026-11-10) each create_building also named its start method and shares, so the
+    game staffed a building on its own recipe (Pat 2026-10-21 19:31Z, France's ports); history now names the pure frames
+    themselves, the vanilla recipes with their own goods and jobs, so nothing is added."""
     src = os.path.join(game, 'common', 'history', 'buildings')
     names = sorted(f for f in os.listdir(src) if f.endswith('.txt')) if os.path.isdir(src) else []
-    if start_shares and not names:
-        raise SystemExit(f'{src}: no history building files; the starting buildings would be staffed on recipe 1')
     out = {}
     hits = {key: 0 for key in START_LEVELS}
     for fn in names:
@@ -5146,27 +5069,7 @@ def history_start_shares(game, start_shares):
             text, n = start_levels(text, key)
             hits[key] += n
             raised = raised or n > 0
-        edits = []   # (position, text to insert)
-        for m in re.finditer(r'\bcreate_building\s*=\s*\{', text):
-            depth, k = 1, m.end()
-            while depth:
-                depth += {'{': 1, '}': -1}.get(text[k], 0)
-                k += 1
-            block = text[m.end():k - 1]
-            bm = re.search(r'\bbuilding\s*=\s*"?(\w+)"?', block)
-            pm = re.search(r'\bactivate_production_methods\s*=\s*\{([^{}]*)\}', block)
-            if not bm or not pm or bm.group(1) not in start_shares:
-                continue
-            b, start = start_shares[bm.group(1)]
-            named = {x.strip('"') for x in pm.group(1).split()}
-            # the recipe the setup reads first (pmr_running_<b>: the targets in order)
-            moves = next((mv for key, mv in start if key in named), None)
-            if moves:
-                add = ''.join(f' "{x}"' for x in [f'pm_pmr_start_{b}'] + [f'pm_pmr_share_{b}_{j}_{n}' for j, n in moves])
-                edits.append((m.end() + pm.end(1), add + ' '))
-        if edits or raised:
-            for pos, add in reversed(edits):
-                text = text[:pos] + add + text[pos:]
+        if raised:
             out[f'common/history/buildings/{fn}'] = text
     missed = [k for k, n in hits.items() if n != 1]
     if missed and names:
@@ -5232,6 +5135,13 @@ def dispatch_effects(buildings):
         kw = 'if' if i == 0 else 'else_if'
         o.append(f'\t{kw} = {{ limit = {{ is_building_type = {bk} level >= 1 }} state = {{ pmr_tick_{short(bk)} = yes }} }}\n')
     o.append('}\n\n'
+             '# Building scope (on_building_built: a new building, its first level). It carries no "less" modifier yet,\n'
+             '# whatever its state still keeps of one gone before (the method-count rework, frames.py).\n'
+             'pmr_frame_new_building = {\n'
+             + ''.join(f'\t{"if" if i == 0 else "else_if"} = {{\n\t\tlimit = {{ is_building_type = {bk} }}\n\t\tstate = {{\n'
+                       + frames.clear_vars(FRAMES[bk], '\t\t\t') + '\t\t}\n\t}\n'
+                       for i, bk in enumerate([x for x in buildings if x in FRAMES]))
+             + '}\n\n'
              '# Building scope (on_building_built). A PMR building not seen before was just constructed, so\n'
              '# it starts on the newest recipe at no cost.\n'
              'pmr_built_building = {\n')
@@ -5322,6 +5232,13 @@ def dispatch_effects(buildings):
         o.append('\n# Country scope, monthly (test builds): the player\'s PMR building ticks since the last SKIP line that\n'
                  '# skipped the level accounting (S3, pmr_recount_<b>), ran it, and ran it as a check (SKIP_MISS).\n'
                  'pmr_skip_report = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
+                 # the month's frames put back after the AI or the game changed one, all countries (pmr_count_undo)
+                 '\t\tif = { limit = { has_global_variable = pmr_undo } set_variable = { name = pmr_undo_v value = global_var:pmr_undo } '
+                 'set_global_variable = { name = pmr_undo value = 0 } }\n'
+                 '\t\telse = { set_variable = { name = pmr_undo_v value = 0 } }\n'
+                 '\t\tdebug_log = "PMR;rec=UNDO;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+                 "n=[THIS.Var('pmr_undo_v').GetValue|0]\"\n"
+                 '\t\tremove_variable = pmr_undo_v\n'
                  '\t\tdebug_log = "PMR;rec=SKIP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
                  + ';'.join(f"{n[7:]}=[THIS.Var('{n}').GetValue|0]" for n in counts) + '"\n'
                  + ''.join(f'\t\tset_variable = {{ name = {n} value = 0 }}\n' for n in counts) + '\t}\n}\n')
@@ -5634,13 +5551,14 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
             for p in groups[g]:
                 k = kind(p, g)
                 runs.setdefault(p, []).append((bk, [i for i, q in on if kind(q, g) == k]))
-    # With the split a recipe of such a building is the marker of (recipe, no automation) only: a check on it means
-    # any pair built on it.
+    # With the split a recipe of such a building is the pure frame of (recipe, no automation) only: a check on it means
+    # any pair built on it. Method-count rework: and any union frame standing for one of those (a blended building).
     alias = {}
-    for bk, sp in split_info.items():
-        for r in sp['pairs']:
-            if isinstance(r, PairRecipe):
-                alias.setdefault(r.base.key, [r.base.key]).append(r.key)
+    for bk, _bn, _s, recipes, _g0, _pg in treated:
+        for p, r in enumerate(recipes, 1):
+            base = r.base.key if isinstance(r, PairRecipe) else r.key
+            alias.setdefault(base, [base])
+            alias[base] += ([r.key] if isinstance(r, PairRecipe) else []) + [f'pm_pmr_union_{short(bk)}_{p}']
     folded_bks = set(auto_groups_of)
     pm_users = {}
     for g, lst in groups.items():
@@ -5654,19 +5572,20 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
         for n in nodes:
             if not n.is_block:
                 if n.key == 'has_active_production_method' and (n.value in runs or n.value in drop_base or n.value in alias):
-                    rep = (f'has_active_production_method = {drop_base[n.value]}' if n.value in drop_base
-                           else f'pmr_has_{n.value} = yes')
-                    used.add(n.value)
+                    p = drop_base.get(n.value, n.value)   # a dropped principle variant: the recipe it replaced
+                    rep = (f'pmr_has_{p} = yes' if p in runs or p in alias else f'has_active_production_method = {p}')
+                    used.add(p)
                     src.cuts.append((n.start, n.end))
                     src.inserts.append((n.start, rep))
                 continue
             if n.key == 'is_production_method_active':
                 kv = {c.key: c.value for c in n.value if c.key}
                 p, b = kv.get('production_method'), kv.get('building_type')
-                if p in drop_base:
-                    rep = f'is_production_method_active = {{ building_type = {b} production_method = {drop_base[p]} }}'
-                elif p in runs or p in alias:
+                p = drop_base.get(p, p)
+                if p in runs or p in alias:
                     rep = f'AND = {{ has_building = {b} b:{b} = {{ pmr_has_{p} = yes }} }}'
+                elif p != kv.get('production_method'):
+                    rep = f'is_production_method_active = {{ building_type = {b} production_method = {p} }}'
                 else:
                     continue
                 used.add(p)
@@ -5706,17 +5625,11 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
     for p in sorted(used & set(runs)):
         alts = [f'\t\thas_active_production_method = {p}\n'] if p in still else []
         for bk, idx in runs[p]:
-            if idx and bk in split_info:
-                # the split: a level on a pair whose option runs a method of p's kind (pmr_lv_<i>_<b>, the state's)
+            if idx:
+                # a level on a target (a pair with the split) that runs a method of p's kind (pmr_lv_<i>_<b>, the state's)
                 lvs = [f'pmr_lv_{i}_{short(bk)}' for i in idx]
                 alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tstate = {{ OR = {{ '
                             + ' '.join(f'AND = {{ has_variable = {x} var:{x} > 0 }}' for x in lvs) + ' } }\n\t\t}\n')
-            elif idx:
-                alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tOR = {{ '
-                            + ' '.join(f'NOT = {{ has_active_production_method = pm_pmr_share_{short(bk)}_{i}_0 }}'
-                                       + (f' NOT = {{ has_active_production_method = pm_pmr_shu_{short(bk)}_{i}_0 }}'
-                                          if SHARE_DIGITS else '')
-                                       for i in idx) + ' }\n\t\t}\n')
         trig.append(f'pmr_has_{p} = {{\n' + (f'\tOR = {{\n{"".join(alts)}\t}}\n' if alts else '\talways = no\n') + '}\n\n')
     for p in sorted(used & set(alias)):
         trig.append(f'pmr_has_{p} = {{\n\tOR = {{\n'
@@ -8127,8 +8040,8 @@ pmr_on_production_method_changed = {
 	effect = {
 		if = {
 			limit = { state = { NOT = { has_variable = pmr_in_tick } } }
-			pmr_tick_building = yes
-		}
+PMC_ON			pmr_tick_building = yes
+PMC_OFF		}
 		# AUTO_BEST: a change away from the best method is undone at once (not the ones it makes itself, nor
 		# a PMR tick's share switches on a railway)
 		if = {
@@ -8145,6 +8058,7 @@ pmr_on_building_built = {
 		# First, while the building is sure to exist: the Private tab's record of what the player's
 		# investors built (pmr_pi_effects.txt; retool buildings are not counted).
 		pmr_pi_on_done = yes
+		pmr_frame_new_building = yes   # no "less" modifier on it yet (frames.py)
 		pmr_built_building = yes
 		pmr_auto_building = yes   # AUTO_BEST: a new building starts on the best methods
 		pmr_urb_built = yes   # the state Buildings tab's own list
@@ -8221,60 +8135,44 @@ SKIP_REPORT
 '''
 
 # Test builds: how Great Britain's and Austria's buildings start a new game, before PMR's first tick (q61). half = levels
-# at 50% staffing or more; ranches, of them ranch_100 / ranch_0 with the first recipe share at 100% / 0% and
-# ranch_start on the start method (q62); ports, of them port_basic on a basic port, and of those port_share2 with its
-# share at 100% and port_half at 50% staffing or more (q74, history_start_shares).
+# at 50% staffing or more; ranches; ports, of them port_basic on a basic port, and of those port_half at 50% staffing or
+# more (q74). Since the method-count rework history names the pure frames, so a basic port is staffed as one.
 START_PORTS = ('\t\t\t\t\tif = {\n\t\t\t\t\t\tlimit = { is_building_type = building_port }\n'
                '\t\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_p add = 1 } }\n'
                '\t\t\t\t\t\tif = {\n\t\t\t\t\t\t\tlimit = { has_active_production_method = pm_basic_port }\n'
                '\t\t\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_pb add = 1 } }\n'
-               '\t\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_port_2_100 } '
-               'scope:pmr_ss_c = { change_variable = { name = pmr_ss_p2 add = 1 } } }\n'
                '\t\t\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_ph add = 1 } } }\n'
                '\t\t\t\t\t\t}\n\t\t\t\t\t}\n')
 START_STAFF = ''.join(
     f'\t\tif = {{\n\t\t\tlimit = {{ exists = c:{tag} }}\n\t\t\tc:{tag} = {{\n\t\t\t\tsave_temporary_scope_as = pmr_ss_c\n'
-    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs', 'p', 'pb', 'p2', 'ph'))
+    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('n', 'h', 'r', 'p', 'pb', 'ph'))
     + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 }\n'
     '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_n add = 1 } }\n'
     '\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_h add = 1 } } }\n'
-    '\t\t\t\t\tif = {\n\t\t\t\t\t\tlimit = { is_building_type = building_livestock_ranch }\n'
-    '\t\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_r add = 1 } }\n'
-    '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_start_livestock_ranch } '
-    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_rs add = 1 } } }\n'
-    '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_100 } '
-    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r1 add = 1 } } }\n'
-    '\t\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_share_livestock_ranch_1_0 } '
-    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r0 add = 1 } } }\n\t\t\t\t\t}\n'
+    '\t\t\t\t\tif = { limit = { is_building_type = building_livestock_ranch } '
+    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_r add = 1 } } }\n'
     + START_PORTS + '\t\t\t\t}\n'
     '\t\t\t\tdebug_log = "PMR;rec=START_STAFF;date=[TimeKeeper.GetCurrentDate.GetString];'
     'country=[THIS.GetCountry.GetNameNoFormatting];'
     + ';'.join(f"{lab}=[THIS.Var('pmr_ss_{x}').GetValue|0]" for lab, x in
-               (('buildings', 'n'), ('half', 'h'), ('ranches', 'r'), ('ranch_100', 'r1'), ('ranch_0', 'r0'),
-                ('ranch_start', 'rs'), ('ports', 'p'), ('port_basic', 'pb'), ('port_share2', 'p2'), ('port_half', 'ph')))
+               (('buildings', 'n'), ('half', 'h'), ('ranches', 'r'), ('ports', 'p'), ('port_basic', 'pb'), ('port_half', 'ph')))
     + '"\n'
-    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('n', 'h', 'r', 'r1', 'r0', 'rs', 'p', 'pb', 'p2', 'ph'))
+    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('n', 'h', 'r', 'p', 'pb', 'ph'))
     + '\t\t\t}\n\t\t}\n' for tag in ('GBR', 'AUS'))
 
-# Test builds: after the setup, the ranches still on the start method (S2, q62: none, the setup's blend moved them on),
-# and the basic ports at 50% staffing or more (q73).
+# Test builds: after the setup, the basic ports at 50% staffing or more (q73).
 START_LEFT = ''.join(
     f'\t\tif = {{\n\t\t\tlimit = {{ exists = c:{tag} }}\n\t\t\tc:{tag} = {{\n\t\t\t\tsave_temporary_scope_as = pmr_ss_c\n'
-    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('r', 'rs', 'pb', 'ph'))
-    + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 is_building_type = building_livestock_ranch }\n'
-    '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_r add = 1 } }\n'
-    '\t\t\t\t\tif = { limit = { has_active_production_method = pm_pmr_start_livestock_ranch } '
-    'scope:pmr_ss_c = { change_variable = { name = pmr_ss_rs add = 1 } } }\n\t\t\t\t}\n'
-    '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 is_building_type = building_port '
+    + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_ss_{x} value = 0 }}\n' for x in ('pb', 'ph'))
+    + '\t\t\t\tevery_scope_building = {\n\t\t\t\t\tlimit = { level > 0 is_building_type = building_port '
     'has_active_production_method = pm_basic_port }\n'
     '\t\t\t\t\tscope:pmr_ss_c = { change_variable = { name = pmr_ss_pb add = 1 } }\n'
     '\t\t\t\t\tif = { limit = { occupancy >= 0.5 } scope:pmr_ss_c = { change_variable = { name = pmr_ss_ph add = 1 } } }\n'
     '\t\t\t\t}\n'
     '\t\t\t\tdebug_log = "PMR;rec=START_LEFT;date=[TimeKeeper.GetCurrentDate.GetString];'
     'country=[THIS.GetCountry.GetNameNoFormatting];'
-    "ranches=[THIS.Var('pmr_ss_r').GetValue|0];ranch_start=[THIS.Var('pmr_ss_rs').GetValue|0];"
     "port_basic=[THIS.Var('pmr_ss_pb').GetValue|0];port_half=[THIS.Var('pmr_ss_ph').GetValue|0]\"\n"
-    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('r', 'rs', 'pb', 'ph'))
+    + ''.join(f'\t\t\t\tremove_variable = pmr_ss_{x}\n' for x in ('pb', 'ph'))
     + '\t\t\t}\n\t\t}\n' for tag in ('GBR', 'AUS'))
 
 # Test builds. The observer game's monthly lines run outside the test pause, so its script-off years (obs_ab) are timed too.
