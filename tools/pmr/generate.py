@@ -1878,12 +1878,19 @@ def main():
     # the goods and job multipliers the engine knows only by pattern: vanilla declares some, Company Culture its own
     declared = company_culture.vanilla_modifier_types(game) | set(company_culture.goods_mults(cc_plan))
     less_types = frames.type_keys(*less_all, declared)
+    if args.frame_probe:
+        # the jobs probe's own types, which the frames declare only with frames.JOB_LESS
+        less_types += [t for t in sorted({t for t, _ in frame_probe.MODS.values()})
+                       if t not in declared and t not in less_types]
     write('common/modifier_type_definitions/pmr_less_modifier_types.txt', header + frames.TYPES_DOC
           + frames.modifier_types(less_types))
-    add_names = set()
+    add_names, named = set(), set()
     for path in glob.glob(os.path.join(game, 'localization', 'english', '*.yml')):
-        add_names |= set(re.findall(r'^ (goods_\w+_add):', open(path, encoding='utf-8-sig').read(), re.M))
-    loc += frames.static_modifier_loc(*less_all) + frames.modifier_type_loc(less_types, add_names)
+        text = open(path, encoding='utf-8-sig').read()
+        add_names |= set(re.findall(r'^ (goods_\w+_add):', text, re.M))
+        # vanilla names every building_employment_<pop>_mult although it declares none
+        named |= set(re.findall(r'^ ((?:goods|building_employment)_\w+_mult):', text, re.M))
+    loc += frames.static_modifier_loc(*less_all) + frames.modifier_type_loc(less_types, add_names, named)
     if args.frame_probe:
         probe_files, probe_loc = frame_probe.files(declared | set(less_types))
         for path, text in probe_files:
@@ -2169,11 +2176,15 @@ def main():
     # AUTO_BEST types PMR does not retool: no selectors either, and nothing in their place.
     also = [bk for bk in auto if bk not in dispatch]
     TYPE_FLAGS[:] = [('pmr_t_', set(dispatch) | set(recipe_tex)), ('pmr_a_', set(also))]
-    write('gui/building_details_panel.gui', gate_type_copies(patch_building_panel(
-        recipe_tex, open(os.path.join(game, 'gui', 'building_details_panel.gui'), encoding='utf-8-sig').read(),
-        opt_ui, also, auto_ui, pick_ui)), bom=False)
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
+    write('gui/building_details_panel.gui', gate_type_copies(patch_building_panel(
+        recipe_tex, vanilla_gui('building_details_panel.gui'), opt_ui, also, auto_ui, pick_ui,
+        vanilla_gui('modifiers_panel.gui'))), bom=False)
+    # The same icon row in the building tooltip and the map list (hide_less_icons): two more vanilla files carried
+    # whole, each with one line added.
+    for name in LESS_ICON_FILES:
+        write(f'gui/{name}', hide_less_icons(vanilla_gui(name), name), bom=False)
     # The Buildings tab: the building type row's grid (the first of three) becomes the country recipe
     # bar, and the upgrade button goes left of nationalize. Expanded, each building's row is the
     # details panel's condensed_building_information, recipe row and button included.
@@ -2265,10 +2276,14 @@ def main():
     # Every other language, translated (Pat 2026-10-18 14:37Z, #3). A game set to a language shows raw keys where it
     # has no text, so a line its table lacks stays English, test builds included.
     report['untranslated'] = {}
+    # The "less" modifiers keep their English name in every language: the GUI leaves them out by it (LESS_SHOWN).
+    fixed = {line for line in loc if line.startswith(tuple(' ' + pre for pre in LESS_PREFIXES))
+             and line.endswith(f':0 "{frames.LESS_NAME}"')}
     for lang in OTHER_LANGUAGES:
         missing = collections.Counter()
         write(f'localization/{lang}/pmr_l_{lang}.yml',
-              f'l_{lang}:\n' + '\n'.join(localise.translate(loc, lang, missing)) + '\n')
+              f'l_{lang}:\n' + '\n'.join(line if line in fixed else out for line, out in
+                                         zip(loc, localise.translate(loc, lang, missing))) + '\n')
         report['untranslated'][lang] = sorted(missing)
     # Vanilla text PMR rewrites, the same in every language (private_investment.replace_loc)
     replace = private_investment.replace_loc()
@@ -5792,27 +5807,37 @@ def patch_hud_profile(text):
 # drops them. The HUD switches the log on once a session (a GUI variable guards the toggle) and writes a CSV every
 # TIMING_DUMP_S real seconds into a ring of TIMING_FILES names, clearing after each, so the files hold the last
 # TIMING_DUMP_S x TIMING_FILES seconds in TIMING_DUMP_S slices. The same widget in a mod of its own times vanilla.
-TIMING_DUMP_S = 300
-TIMING_FILES = 12
+#
+# q99's run gave nothing, for three reasons its logs show (2026-11-10):
+# - the first CSV was due after 300 s and the HUD lived 254 s, so no file was written: one a minute now;
+# - the console takes one command at a time ("You can't add new commands while the console is still running
+#   commands", error.log, the moment the HUD was made): the clear sent with the log toggle was refused, and the clear
+#   sent with each dump would have been. Every command now has a state of its own, a second apart;
+# - "Animation triggered has no valid state properties" beside it: a state with only a duration. Whether such a state
+#   still runs its next is unknown, so each state carries alpha like the script profiler's two (patch_hud_profile),
+#   which are known to loop.
+TIMING_DUMP_S = 60
+TIMING_FILES = 20
 TIMING_ON = 'pmr_tt_on'
 
 
 def timing_widget():
     """The HUD widget for --engine-timing and --timing-only."""
+    def state(name, nxt, duration, alpha, command=None, first=False):
+        return (f'\t\tstate = {{\n\t\t\tname = {name}\n' + ('\t\t\ttrigger_on_create = yes\n' if first else '')
+                + f'\t\t\tnext = {nxt}\n\t\t\tduration = {duration}\n\t\t\talpha = {alpha}\n'
+                + (f"\t\t\ton_start = \"[ExecuteConsoleCommand('{command}')]\"\n" if command else '') + '\t\t}\n')
     start = ('\t\tstate = {\n\t\t\tname = pmr_tt_start\n'
-              f"\t\t\ttrigger_when = \"[Not(GetVariableSystem.Exists('{TIMING_ON}'))]\"\n"
-              f"\t\t\ton_start = \"[GetVariableSystem.Set('{TIMING_ON}', 'yes')]\"\n"
-              "\t\t\ton_start = \"[ExecuteConsoleCommand('log_ticktask_performance')]\"\n"
-              "\t\t\ton_start = \"[ExecuteConsoleCommand('clear_ticktask_timings')]\"\n\t\t}\n")
-    states = []
+             f"\t\t\ttrigger_when = \"[Not(GetVariableSystem.Exists('{TIMING_ON}'))]\"\n\t\t\talpha = 1\n"
+             f"\t\t\ton_start = \"[GetVariableSystem.Set('{TIMING_ON}', 'yes')]\"\n"
+             "\t\t\ton_start = \"[ExecuteConsoleCommand('log_ticktask_performance')]\"\n\t\t}\n")
+    # the ring: two seconds after the toggle, drop what loading recorded; then wait, dump, clear, and on to the next file
+    states = [state('pmr_tt_first', 'pmr_tt_clear_0', 2, 0, first=True),
+              state('pmr_tt_clear_0', 'pmr_tt_wait_1', 1, 1, 'clear_ticktask_timings')]
     for n in range(1, TIMING_FILES + 1):
-        nxt = n % TIMING_FILES + 1
-        states.append(f'\t\tstate = {{\n\t\t\tname = pmr_tt_wait_{n}\n'
-                      + ('\t\t\ttrigger_on_create = yes\n' if n == 1 else '')
-                      + f'\t\t\tnext = pmr_tt_dump_{n}\n\t\t\tduration = {TIMING_DUMP_S}\n\t\t}}\n'
-                      f'\t\tstate = {{\n\t\t\tname = pmr_tt_dump_{n}\n\t\t\tnext = pmr_tt_wait_{nxt}\n\t\t\tduration = 1\n'
-                      f"\t\t\ton_start = \"[ExecuteConsoleCommand('dump_ticktask_timings pmr_tt_{n:02d}.csv')]\"\n"
-                      "\t\t\ton_start = \"[ExecuteConsoleCommand('clear_ticktask_timings')]\"\n\t\t}\n")
+        states += [state(f'pmr_tt_wait_{n}', f'pmr_tt_dump_{n}', TIMING_DUMP_S, 0),
+                   state(f'pmr_tt_dump_{n}', f'pmr_tt_clear_{n}', 1, 1, f'dump_ticktask_timings pmr_tt_{n:02d}.csv'),
+                   state(f'pmr_tt_clear_{n}', f'pmr_tt_wait_{n % TIMING_FILES + 1}', 1, 0, 'clear_ticktask_timings')]
     # Two widgets: a widget holds one state at a time, so the once-a-session switch would stop the ring
     blank = '\twidget = {\n\t\tsize = { 0 0 }\n\t\talwaystransparent = yes\n'
     return ('\t# PMR: the engine\'s tick task timings logged and written out (--engine-timing / --timing-only)\n'
@@ -7076,10 +7101,15 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extr
     return hide + text[at:end] + labour + text[end:]
 
 
-def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, pick_ui=None):
-    buildings = list(recipe_tex)
+def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, pick_ui=None, modifiers_gui=None):
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
+    buildings = list(recipe_tex)
+    # 0. The "less" modifiers out of the icon row and the Modifiers tab, and goods at 0 out of the Process lists
+    # (method-count rework, Pat's q99 screenshots).
+    text = patch_zero_rows(hide_less_icons(text, 'building_details_panel.gui'))
+    if modifiers_gui is not None:
+        text = patch_modifier_list(text, modifiers_gui)
     # 1. The production method row: no grid on a PMR building type, and nothing in its place (Pat,
     # 2026-10-13: no goods icon; the recipe row below takes the room).
     text = patch_grid_instance(text, buildings, '\t\t\t\t\t', 'building_details_panel.gui', outer=(208, 70), cell=70,
@@ -7103,6 +7133,84 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, p
     text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk]) for bk in buildings))
     text = patch_input_mults(text)
     return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {}, auto_ui or {}, pick_ui or {})
+
+
+# The "less" modifiers (frames.py) are timed modifiers on the building, and the game lists every timed modifier a
+# building has: an icon each in condensed_building_information's row (the details panel and every row of the Buildings
+# lists), in the building tooltip and in the map list, and a "Retooling / Indefinite" row each on the Modifiers tab.
+# Pat's q99 screenshots (2026-11-10 20:41Z): six to eight icons on every blended building, pushing the state's name off
+# its row, and six identical rows on the textile mill's Modifiers tab. They are the frame's arithmetic, not something
+# to read (the Modifier Entries below keep their numbers), so each list leaves them out by name: EqualTo_string
+# against a literal, as hide_pm_reset's lens option test. The name stays English in every language for that (main,
+# LESS_PREFIXES).
+LESS_SHOWN = f"Not(EqualTo_string(TimedModifier.GetName, '{frames.LESS_NAME}'))"
+LESS_PREFIXES = ('pmr_less_', 'pmr_probe_')   # static modifiers named frames.LESS_NAME: no translation
+LESS_ICON_FILES = ('custom_tooltip.gui', 'map_list_panel.gui')   # beside building_details_panel.gui
+LESS_STRIP = re.compile(r'datamodel = "\[Building\.GetTimedModifiers\]"\n(?:[ \t]*(?:spacing = \d+)?\n)*'
+                        r'[ \t]*item = \{\n([ \t]*)icon = \{\n')
+
+
+def hide_less_icons(text, name, count=1):
+    """A GUI file's icon rows of a building's timed modifiers (count of them, asserted so a game update that moves one
+    fails generation): no icon for a "less" modifier. Each row is an hbox, which leaves a hidden child out."""
+    if len(LESS_STRIP.findall(text)) != count or text.count('datamodel = "[Building.GetTimedModifiers]"') != count:
+        raise SystemExit(f'{name}: expected {count} icon row(s) of Building.GetTimedModifiers; update hide_less_icons')
+    return LESS_STRIP.sub(lambda m: m.group(0) + f'{m.group(1)}\t# PMR: no icon for a "less" modifier (frames.py)\n'
+                          f'{m.group(1)}\tvisible = "[{LESS_SHOWN}]"\n', text)
+
+
+def patch_modifier_list(text, modifiers_gui):
+    """building_details_panel.gui: the Modifiers tab without a row per "less" modifier. The tab is vanilla's
+    modifier_list (modifiers_panel.gui), which the country, character, interest group and formation panels share, so
+    the building panel gets a copy of its own, pmr_modifier_list, with those rows hidden, and vanilla's stays as it
+    is. When every timed modifier is one of them the header stands alone: the list is not empty, so vanilla's "none"
+    line stays hidden, and nothing can count the rows left."""
+    head = '\ttype modifier_list = flowcontainer {\n'
+    if modifiers_gui.count(head) != 1:
+        raise SystemExit('modifiers_panel.gui: type modifier_list moved; update patch_modifier_list')
+    start = modifiers_gui.index(head)
+    body = modifiers_gui[start:block_end(modifiers_gui, start)]
+    for at in set(re.findall(r'@\w+', body)):   # the copy reads its sizes from the building panel's own constants
+        want, have = (re.search(rf'^{at} = (\S+)', t, re.M) for t in (modifiers_gui, text))
+        if not want or not have or want.group(1) != have.group(1):
+            raise SystemExit(f'building_details_panel.gui: {at} differs from modifiers_panel.gui; update patch_modifier_list')
+    rows = ('datamodel = "[ModifiersPanel.GetTimedModifiers]"\n', 'ignoreinvisible = yes   # PMR\n')
+    item = ('item = {\n\t\t\t\t\tcontainer = {\n',
+            f'\t# PMR: no row for a "less" modifier (frames.py)\n\t\t\t\t\t\tvisible = "[{LESS_SHOWN}]"\n')
+    if body.count(rows[0]) != 1 or body.count(item[0]) != 1 or body.index(item[0]) < body.index(rows[0]):
+        raise SystemExit('modifiers_panel.gui: the timed modifier rows changed; update patch_modifier_list')
+    body = body.replace(rows[0], rows[0] + '\t\t\t\t' + rows[1]).replace(item[0], item[0] + '\t\t\t\t\t' + item[1])
+    body = body.replace(head, '\t# PMR: vanilla\'s modifier_list (modifiers_panel.gui) without the "less" modifiers\' rows\n'
+                        '\ttype pmr_modifier_list = flowcontainer {\n')
+    types = 'types building_panels\n{\n'
+    use = '\t\t\t\tmodifier_list = {\n\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'modifiers\')]"\n'
+    if text.count(types) != 1 or text.count(use) != 1:
+        raise SystemExit('building_details_panel.gui: the Modifiers tab moved; update patch_modifier_list')
+    return (text.replace(types, types + body + '\n\n')
+            .replace(use, use.replace('modifier_list = {', 'pmr_modifier_list = {')))
+
+
+# A union frame names every good any mix of its recipes uses, and a "less" modifier at 1.00 takes one to nothing: the
+# Process lists then showed it at 0 (q99: rubber on the textile mills, coal, electricity, engines and oil on a logging
+# camp mid-retool). A row is left out while its amount is 0 and the building has staff; a building with none shows
+# every row at 0, as vanilla does.
+STAFFED = "GreaterThan_CFixedPoint(Building.GetEmploymentPercentage, '(CFixedPoint)0')"
+ZERO_ROWS = (('Building.AccessConsumedGoods', 'Building.GetConsumption(Goods.Self)'),
+             ('Building.AccessProducedGoods', 'Building.GetProduction(Goods.Self)'))
+
+
+def patch_zero_rows(text):
+    """building_details_panel.gui: the Process view's inputs and outputs (the panel's own lists and
+    building_process_breakdown's) without a row for a good at 0 in a staffed building."""
+    for model, amount in ZERO_ROWS:
+        rows = re.compile(r'([ \t]*)datamodel = "\[' + re.escape(model) + r'\]"\n\n[ \t]*item = \{\n([ \t]*)widget = \{\n')
+        if len(rows.findall(text)) != 2 or text.count(f'datamodel = "[{model}]"') != 2:
+            raise SystemExit(f'building_details_panel.gui: expected two lists of {model}; update patch_zero_rows')
+        text = rows.sub(lambda m, amount=amount: (
+            m.group(0).replace('\n\n', f'\n{m.group(1)}ignoreinvisible = yes   # PMR\n\n', 1)
+            + f'{m.group(2)}\t# PMR: no row for a good a "less" modifier took to nothing (frames.py)\n'
+            f"{m.group(2)}\tvisible = \"[Or(GreaterThan_CFixedPoint({amount}, '(CFixedPoint)0'), Not({STAFFED}))]\"\n"), text)
+    return text
 
 
 def patch_input_mults(text):

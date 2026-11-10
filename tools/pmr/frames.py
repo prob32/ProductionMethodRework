@@ -14,7 +14,8 @@ Per building:
 - pmr_frame_<b> (state scope): picks the frames from the shares and sizes the "less" modifiers.
 
 Shared: pmr_less_in_<g>, pmr_less_out_<g>, pmr_less_job_<pop>, each its key at -1, applied with a multiplier 0..1, and
-the modifier type definitions they need.
+the modifier type definitions they need. The job modifiers are off (JOB_LESS): they moved no jobs in q99's run, so a
+blended building holds its union frame's jobs.
 
 Treatment (the working-conditions shares, pm_pmr_x_<b>_<j>_<n>) stays share methods for now: its goods and jobs are
 "live" amounts here, counted in both the blend (A) and the frames (B), so a "less" modifier on the same good leaves them
@@ -30,13 +31,20 @@ SECTIONS = ('building_modifiers', 'state_modifiers', 'country_modifiers')
 LOOKUP_FROM = 7      # as generate.py: a ladder this long becomes a binary search
 EPS = 1e-9
 LESS_NAME = 'Retooling'
+# q99's run (Pat, 2026-11-10): building_employment_<pop>_mult on a building's own modifier reads back and shows on the
+# Modifiers tab ("Shopkeepers Per Level -60%") but moves no jobs: the Midlands furniture manufactory kept the union's
+# 30.0K capacity with its shopkeepers cut 43%, and the probe wharf every laborer at -50%. A blend holds its union's jobs
+# either way, so until a route that moves jobs is found (frame_probe.py, q100) the job modifiers are neither made nor
+# applied: each was an icon, a Modifiers tab row and a line that did nothing, sized every time the frame ran.
+JOB_LESS = False
 OPTION_UNION_NAME = 'Trade-off'
 
 
 FRAME_DOC = """# Union frames (method-count rework, frames.py): pm_pmr_union_<b>_<p> stands for retool target p while the building's
 # levels are blended, each good and job at the most any combination of its recipes and automation uses, the rest as
 # target p's; pm_pmr_union_<b>_x<group> for a trade-off group in a blend. Each unlocks only while it runs, so only the
-# tick (pmr_frame_<b>) sets one; the "less" modifiers scale its goods and jobs down to the blend.
+# tick (pmr_frame_<b>) sets one; the "less" modifiers scale its goods down to the blend (and its jobs, were
+# frames.JOB_LESS on: without it a blended building holds the frame's jobs).
 
 """
 LESS_DOC = """# "Less" modifiers (method-count rework, frames.py): each its multiplier at -1, applied to a blended building by
@@ -247,7 +255,7 @@ def frame_goods(bld):
         for o in [None] + og.options:
             oi, oo, oj, _ = option_full(og, o)
             gin |= set(nonzero(oi)); gout |= set(nonzero(oo)); pops |= set(nonzero(oj))
-    return sorted(gin), sorted(gout), sorted(pops)
+    return sorted(gin), sorted(gout), sorted(pops) if JOB_LESS else []
 
 
 def union_key(bld, p):
@@ -344,10 +352,14 @@ def modifier_types(keys):
     return '\n'.join(out)
 
 
-def modifier_type_loc(keys, vanilla_loc=frozenset()):
-    """Names for the types modifier_types() adds: vanilla's own name of the matching _add type where it has one."""
+def modifier_type_loc(keys, vanilla_loc=frozenset(), named=frozenset()):
+    """Names for the types modifier_types() adds: vanilla's own name of the matching _add type where it has one. A type
+    vanilla already names (named) gets none: q99 named every building_employment_<pop>_mult a second time, and the game
+    logged a duplicate key for each and kept vanilla's."""
     out = []
     for key in keys:
+        if key in named:
+            continue
         add = key[:-len('_mult')] + '_add'
         if add in vanilla_loc and key.startswith('goods_'):   # a job type's _add reads "per level"
             out.append(f' {key}:0 "${add}$"')
