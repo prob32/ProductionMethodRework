@@ -360,7 +360,7 @@ TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_bui
                 # used them (#2). Pat, 2026-10-19 01:18Z: blended by price like the other trade-offs.
                 'pmg_explosives_building_coal_mine', 'pmg_explosives_building_iron_mine',
                 'pmg_explosives_building_lead_mine', 'pmg_explosives_building_sulfur_mine',
-                'pmg_explosives_building_gold_mine',
+                'pmg_explosives_building_gold_mine', 'pmg_explosives_building_copper_mine',   # copper: new in 1.15
                 # Pat 2026-10-19 21:12Z: the ranches' wool (simple, sheep farms, intensive grazing) blended like
                 # hardwood. Its none, Simple Ranch, makes wool of its own: the options carry their difference from it
                 # (Option.less) and the marker stays on it (option_effects).
