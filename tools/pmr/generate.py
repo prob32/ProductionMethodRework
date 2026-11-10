@@ -15,9 +15,12 @@ What it does, building by building (see pmr/README.md for the design):
 
 1. Frames (method-count rework, Pat 2026-11-10; frames.py): the vanilla recipe group holds every
    recipe and pair recipe as a pure frame with its full body (its own goods, workforce and automation),
-   plus one union frame per recipe, ``pm_pmr_union_<b>_<p>``, carrying each good and job at the most any
-   mix uses. Each market trade-off group gets an option union, ``pm_pmr_union_<b>_x<g>``. Unions unlock
-   only while they run, so no one else can pick them.
+   plus one union frame per recipe, ``pm_pmr_union_<b>_<p>``, carrying each good at the most any mix
+   uses. Each market trade-off group gets an option union, ``pm_pmr_union_<b>_x<g>``. Unions unlock
+   only while they run, so no one else can pick them. No modifier moves a building's jobs (q100), so
+   each union comes in job versions, ``<union>_j<n>``, and the tick runs the one nearest the mix:
+   laborers a level in steps of 250 (500 where a group would pass 250 methods), the other pop types
+   those of the target with the larger share; a trade-off's union each pop type in a few steps.
 2. A building that runs one recipe on every level runs that recipe's pure frame and nothing else. A
    mixed building runs the union of its target and takes the difference off with "less" static
    modifiers, ``pmr_less_in/out_<good>`` and ``pmr_less_job_<pop>``, each -100% of its key, applied at
@@ -791,7 +794,7 @@ def frame_gate(bk, nodes, frames_of_bk, adds):
       empty region list asks nothing: vanilla's one is on dry process coffee, which every coffee plantation starts on);
     - unlocking_production_methods: any one of them running, or a frame of bk built on one (adds, as the list itself
       gained them before the lock)."""
-    techs, owner, state = [], [], []
+    techs, owner, state, run = [], [], [], []
     for node in nodes:
         for n in node.value:
             if not n.key or not n.key.startswith(('unlocking_', 'disallowing_')):
@@ -806,14 +809,13 @@ def frame_gate(bk, nodes, frames_of_bk, adds):
             elif n.key == 'unlocking_principles' and xs and len(xs) == 1:
                 owner.append(f'power_bloc ?= {{ has_principle = principle:{xs[0]} }}')
             elif n.key == 'unlocking_production_methods' and xs:
-                run = [x for x in dict.fromkeys(xs + adds) if x in frames_of_bk]
-                if not run:
+                on = [x for x in dict.fromkeys(xs + adds) if x in frames_of_bk]
+                if not on:
                     return None
-                on = [f'is_production_method_active = {{ building_type = {bk} production_method = {x} }}' for x in run]
-                state.append(on[0] if len(on) == 1 else 'OR = { ' + ' '.join(on) + ' }')
+                run.append((bk, on, []))   # kept as a list: the unions' job versions join it (frames.widen_gates)
             else:
                 return None
-    return frames.Gate(techs, owner, state)
+    return frames.Gate(techs, owner, state, run)
 
 
 def frame_lock(treated, options, groups, pm_groups, pms, frame_adds):
@@ -859,6 +861,8 @@ def frame_lock(treated, options, groups, pm_groups, pms, frame_adds):
         if rep is not None and rep.value in DROP_RECIPES:   # a principle variant PMR drops, the line with it
             continue
         if rep is not None and (bk, rep.value) in gates:
+            if gates[(bk, rep.value)].run:   # written out here, before the unions' job versions join it (widen_gates)
+                raise SystemExit(f'{key}: its replacement {rep.value} asks for a recipe; state that gate once the frames are built')
             gate.state.append('NOT = { ' + gates[(bk, rep.value)].trigger() + ' }')
         elif rep is not None:
             out['open'][key] = f'replaced by {rep.value}, which has no gate'
@@ -1556,12 +1560,16 @@ def main():
     # Written once the AI's lock is known (frame_lock below): a locked method's list becomes the method itself, and
     # PMR's gate asks for the frames named here.
     frame_adds = {}
+    unlock_users = {}   # recipe -> [methods whose list names it]: the unions' job versions join them (the frames loop)
     for key, (n, psrc) in pms.items():
         upm = pdx.get(n.value, 'unlocking_production_methods')
         listed = pdx.items(upm) if upm else []
         add = [pk for x in listed for pk in pair_of.get(x, []) if pk not in listed]
         if add:
             frame_adds[key] = add
+        for x in listed:
+            if x in pair_of:
+                unlock_users.setdefault(x, []).append(key)
 
     # ---- second groups: trade-offs and working conditions become option shares -------------------
     # options[bk] = [(group, gi, mode, none method, [Option], standard methods)], gi counting the
@@ -1728,6 +1736,7 @@ def main():
     # ---- new script ------------------------------------------------------------------------------
     retools, costs, loc = [], [], []
     frames_of, frame_body_of, frame_pms = {}, {}, []   # the method-count rework (frames.py)
+    frame_extras = {}   # building -> {target p: the job versions of its union frame beyond the plain key}
     less_all = (set(), set(), set())                     # goods in, goods out, pop types the "less" modifiers scale
     site_types = []    # every retool site type, hidden from the state Buildings tab
     blend_pms, blend_groups = [], []
@@ -1949,6 +1958,28 @@ def main():
                 r.frame_body(body)
         frame_pms.extend(frames.union_methods(fb, lambda key: tex_of[key]).values())
         loc += frames.frame_loc(fb)
+        # The unions' job versions (frames.union_versions, option_versions; no modifier moves a building's jobs, so the
+        # frames carry them): listed wherever the plain union is, after it: the recipe group, the lists of the methods
+        # that name the target's recipe (a method the AI's lock locked asks through its gate instead: widen_gates),
+        # each trade-off group, and vanilla_compat's aliases (frame_extras).
+        xr, xo = frames.extra_union_keys(fb)
+        frame_extras[bk] = xr
+        frames.widen_gates(fb)
+        gsrc, gpm = group_src[g0]
+        if any(xr.values()):
+            gsrc.inserts.append((gpm.end - 1, ''.join(f'\t{k}  # PMR: union frame of {r.key}, a job version\n\t'
+                                                      for p, r in enumerate(recipes, 1) for k in xr[p])))
+        for p, r in enumerate(recipes, 1):
+            base = r.base.key if isinstance(r, PairRecipe) else r.key
+            for key in unlock_users.get(base, []) if xr[p] else []:
+                if key not in lock_report['locked']:
+                    upm = pdx.get(pms[key][0].value, 'unlocking_production_methods')
+                    pms[key][1].inserts.append((upm.end - 1, ''.join(f'\t{k}  # PMR: a frame of a recipe it names\n\t'
+                                                                     for k in xr[p])))
+        for g, ks in xo.items():
+            if ks:
+                gsrc, gpm = group_src[g]
+                gsrc.inserts.append((gpm.end - 1, ''.join(f'\t{k}  # PMR: union frame, a job version\n\t' for k in ks)))
         for side, names in zip(less_all, frames.frame_goods(fb)):
             side.update(names)
 
@@ -1990,6 +2021,10 @@ def main():
               + '# Recipe + automation pairs (PairRecipe, SPLIT_AUTOMATION): pure frames of their retool targets.\n\n'
               + '\n'.join(r.method(frame_body_of[r.key]) for r in pair_pms))
     write('common/production_methods/pmr_frame_production_methods.txt', header + frames.FRAME_DOC + '\n'.join(frame_pms))
+    if not RELEASE:
+        # the JOBS line: a blended building's jobs as the game reads them back, against its frame's
+        for path, text in frames.jobs_check_files(frames_of.values()):
+            write(path, header + text)
     write('common/static_modifiers/pmr_less_modifiers.txt', header + frames.LESS_DOC + frames.static_modifiers(*less_all))
     # the goods and job multipliers the engine knows only by pattern: vanilla declares some, Company Culture its own
     declared = company_culture.vanilla_modifier_types(game) | set(company_culture.goods_mults(cc_plan))
@@ -2013,7 +2048,8 @@ def main():
             write(path, header + text)
         loc += probe_loc
     report['frames'] = {'less_in': sorted(less_all[0]), 'less_out': sorted(less_all[1]), 'less_jobs': sorted(less_all[2]),
-                        'types_added': less_types, 'unions': len(frame_pms)}
+                        'types_added': less_types, 'unions': len(frame_pms),
+                        'job_versions': sum(len(ks) for xr in frame_extras.values() for ks in xr.values())}
 
     # ---- companies: a company that owns a building type may own its private retooling ----------
     # When the investment pool builds a building type a company lists in building_types, the company
@@ -2221,7 +2257,7 @@ def main():
     write('common/static_modifiers/pmr_principle_modifiers.txt', header + pb_mods)
     loc += pb_loc
     compat_trig, compat_files, compat_lines = vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users,
-                                                             drop_base, split_info)
+                                                             drop_base, split_info, frame_extras)
     write(COMPAT_TRIGGERS, header + compat_trig)
     for rel, text in compat_files.items():
         write(rel, text)
@@ -5744,9 +5780,12 @@ COMPAT_SKIP = ('common/history/', 'common/buildings/', 'common/production_method
 COMPAT_TRIGGERS = 'common/scripted_triggers/00_00_pmr_vanilla_compat_triggers.txt'   # sorts before 00_scripted_triggers
 
 
-def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop_base, split_info=None):
-    """Returns (scripted triggers, {published path: shadowed vanilla file}, [report lines])."""
+def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop_base, split_info=None,
+                   frame_extras=None):
+    """Returns (scripted triggers, {published path: shadowed vanilla file}, [report lines]). frame_extras: building ->
+    {target p: the job versions of its union frame} (frames.extra_union_keys)."""
     split_info = split_info or {}
+    frame_extras = frame_extras or {}
 
     def kind(p, g):
         if p == groups[g][0]:
@@ -5771,13 +5810,15 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
                 k = kind(p, g)
                 runs.setdefault(p, []).append((bk, [i for i, q in on if kind(q, g) == k]))
     # With the split a recipe of such a building is the pure frame of (recipe, no automation) only: a check on it means
-    # any pair built on it. Method-count rework: and any union frame standing for one of those (a blended building).
+    # any pair built on it. Method-count rework: and any union frame standing for one of those (a blended building), in
+    # any of its job versions.
     alias = {}
     for bk, _bn, _s, recipes, _g0, _pg in treated:
         for p, r in enumerate(recipes, 1):
             base = r.base.key if isinstance(r, PairRecipe) else r.key
             alias.setdefault(base, [base])
-            alias[base] += ([r.key] if isinstance(r, PairRecipe) else []) + [f'pm_pmr_union_{short(bk)}_{p}']
+            alias[base] += (([r.key] if isinstance(r, PairRecipe) else []) + [f'pm_pmr_union_{short(bk)}_{p}']
+                            + frame_extras.get(bk, {}).get(p, []))
     folded_bks = set(auto_groups_of)
     pm_users = {}
     for g, lst in groups.items():

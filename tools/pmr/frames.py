@@ -14,8 +14,14 @@ Per building:
 - pmr_frame_<b> (state scope): picks the frames from the shares and sizes the "less" modifiers.
 
 Shared: pmr_less_in_<g>, pmr_less_out_<g>, pmr_less_job_<pop>, each its key at -1, applied with a multiplier 0..1, and
-the modifier type definitions they need. The job modifiers are off (JOB_LESS): they moved no jobs in q99's run, so a
-blended building holds its union frame's jobs.
+the modifier type definitions they need. The job modifiers are off (JOB_LESS): they moved no jobs in q99's run.
+
+Jobs (q100's probe; Pat 2026-11-10 22:01Z, "Switch at halfway"): a method's own job lines are all that moves a
+building's jobs, so a union frame comes in versions (union_versions, option_versions) and pmr_frame_<b> runs the one
+nearest the blend: a recipe union's laborers a level in steps of JOB_STEP from its target's own, its other pop types
+those of its target (they move in one go when the larger share changes hands); an option union's pop types each in a
+few steps between the least and the most its options give. Test builds log a JOBS line a month for each of a player's
+blended buildings (jobs_check_files).
 
 Treatment (the working-conditions shares, pm_pmr_x_<b>_<j>_<n>) stays share methods for now: its goods and jobs are
 "live" amounts here, counted in both the blend (A) and the frames (B), so a "less" modifier on the same good leaves them
@@ -26,6 +32,7 @@ so the AI finds nothing to switch a building to, and PMR asks what the frame nee
 """
 
 import collections
+import math
 
 SHARE_STEPS = 100
 GENERIC_ICON = 'gfx/interface/icons/generic_icons/mixed_icon_base.dds'
@@ -39,8 +46,35 @@ LESS_NAME = 'Retooling'
 # 30.0K capacity with its shopkeepers cut 43%, and the probe wharf every laborer at -50%. A blend holds its union's jobs
 # either way, so until a route that moves jobs is found (frame_probe.py, q100) the job modifiers are neither made nor
 # applied: each was an icon, a Modifiers tab row and a line that did nothing, sized every time the frame ran.
+# q100 (frame_probe.py, Pat's year 2026-11-10): the same on a second wharf with its method switched away and back, a
+# negative building_employment_<pop>_add sized by level, +50%, and building_group_<g>_employee_mult on the building all
+# read back and moved no jobs. Only that group multiplier on the STATE did (12,000 laborers to 6,000 in a month), one
+# figure for every pop type of every building of the group there, so it cannot trade laborers for machinists. The
+# frames carry their jobs themselves instead (JOB_STEP below); JOB_LESS stays off, its sizes would be measured against
+# jobs the union frames no longer hold.
 JOB_LESS = False
 OPTION_UNION_NAME = 'Trade-off'
+# Job versions of the union frames (Pat 2026-11-10 22:01Z, "Switch at halfway": laborers in steps, the other pop types
+# in one go at the halfway point, over those in three stages too or a jobs group of their own). A recipe union of
+# target p: JOB_POP a level in steps of JOB_STEP (JOB_STEP_SMALL on a type whose targets all hold under JOB_SMALL_BELOW
+# of them: port, railway, power plant) from the target's own figure, down to halfway to the target with the fewest and
+# up to halfway to the one with the most; past halfway the blend's larger share is another target's and its union
+# runs. An option union: each of its job axes (option_job_axes) in steps of about OPT_JOB_STEP, OPT_JOB_POINTS points
+# at most and OPT_JOB_FEW on a short one, OPT_JOB_MAX versions a group at most.
+JOB_POP = 'laborers'
+JOB_STEP = 250
+JOB_STEP_SMALL = 50
+JOB_SMALL_BELOW = 2000
+# No build has run a production method group of more than 72 methods (q100's livestock ranch), and nothing says how many
+# the game takes. A count kept in one byte would end at 255, so a recipe group stays under that: where the versions at
+# JOB_STEP would take it over JOB_GROUP_MAX, the building's step is doubled (job_step). The JOBS line names the place of
+# the frame a building runs, so a run shows whether a method far down a long group behaves.
+JOB_GROUP_MAX = 250
+OPT_JOB_STEP = 250
+OPT_JOB_POINTS = 5
+OPT_JOB_FEW = 3
+OPT_JOB_MAX = 27
+OCC_BANDS = (1.5, 1.2, 1.05, 1.0, 0.98, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.4, 0.3, 0.2, 0.1)
 # Pat 2026-11-10 21:31Z ("implement this", on the q99 review's "locking the AI out of method swaps"): in q99 and q100 the
 # AI switched a building to another pure frame 194 to 276 times a month all year (the UNDO line), and each switch was
 # two method changes and a whole pmr_tick_<b> to put it back. With LOCK_PURE every pure frame but the first of its
@@ -60,18 +94,34 @@ GATES = {}   # {(building key, method key): Gate} of the locked frames; generate
 class Gate:
     """What vanilla's unlock keys ask of one locked frame, as a trigger of PMR's own (state scope).
     techs: every technology the owner needs; owner: other triggers on the owner (laws, its power bloc); state: triggers
-    on the state (its region, a method the building must run)."""
-    def __init__(self, techs=(), owner=(), state=()):
-        self.techs, self.owner, self.state = list(techs), list(owner), list(state)
+    on the state (its region); run: [(building key, [methods], [job versions])], of each entry one method must be
+    running (a recipe an option needs, in any frame built on it). Kept as lists until the trigger is asked for, because
+    a union frame's job versions (union_versions) are known only once the building's frames are (widen); those are
+    asked only of a building on a union frame (pmr_fu_<b>, which pmr_frame_<b> sets with the frame), so a building on
+    a pure frame is asked no more than before there were versions."""
+    def __init__(self, techs=(), owner=(), state=(), run=()):
+        self.techs, self.owner, self.state, self.run = list(techs), list(owner), list(state), list(run)
 
     def trigger(self, also=()):
         """one trigger; also: more technologies to ask of the owner in the same block"""
         techs = list(dict.fromkeys(list(also) + self.techs))
         own = [f'has_technology_researched = {t}' for t in techs] + self.owner
         parts = ([f'owner = {{ {" ".join(own)} }}'] if own else []) + self.state
+        for bk, keys, more in self.run:
+            on = [f'is_production_method_active = {{ building_type = {bk} production_method = {x} }}' for x in keys]
+            if more:
+                vs = [f'is_production_method_active = {{ building_type = {bk} production_method = {x} }}' for x in more]
+                on.append(f'AND = {{ has_variable = pmr_fu_{short(bk)} '
+                          + (vs[0] if len(vs) == 1 else 'OR = { ' + ' '.join(vs) + ' }') + ' }')
+            parts.append(on[0] if len(on) == 1 else 'OR = { ' + ' '.join(on) + ' }')
         if not parts:
             return 'always = yes'
         return parts[0] if len(parts) == 1 else 'AND = { ' + ' '.join(parts) + ' }'
+
+    def widen(self, versions):
+        """versions: {a union frame's plain key: its other job versions}. An entry that names the plain key is met by
+        any of its versions too."""
+        self.run = [(bk, keys, [k for x in keys for k in versions.get(x, [])]) for bk, keys, _ in self.run]
 
 
 def can_activate(bk, key, also=()):
@@ -94,10 +144,13 @@ def may_run(bk, key):
 
 
 FRAME_DOC = """# Union frames (method-count rework, frames.py): pm_pmr_union_<b>_<p> stands for retool target p while the building's
-# levels are blended, each good and job at the most any combination of its recipes and automation uses, the rest as
-# target p's; pm_pmr_union_<b>_x<group> for a trade-off group in a blend. Each unlocks only while it runs, so only the
-# tick (pmr_frame_<b>) sets one; the "less" modifiers scale its goods down to the blend (and its jobs, were
-# frames.JOB_LESS on: without it a blended building holds the frame's jobs).
+# levels are blended, each good at the most any combination of its recipes and automation uses, the rest as target p's;
+# pm_pmr_union_<b>_x<group> for a trade-off group in a blend. Each unlocks only while it runs, so only the tick
+# (pmr_frame_<b>) sets one; the "less" modifiers scale its goods down to the blend.
+# Jobs: no modifier moves a building's jobs (q100), so each union comes in versions, <key>_j<n>, that differ in jobs
+# alone, and the tick runs the one nearest the blend. A recipe union: laborers a level in steps from target p's own
+# (<key>_j<laborers a level>), its other pop types those of target p. An option union: each pop type its options
+# move, in a few steps (<key>_j<index>).
 
 """
 LESS_DOC = """# "Less" modifiers (method-count rework, frames.py): each its multiplier at -1, applied to a blended building by
@@ -133,6 +186,26 @@ def lookup(var, ns, body, ind='\t'):
         return (f'{ind}if = {{\n{ind}\tlimit = {{ {var} > {ns[mid]} }}\n' + find(mid + 1, hi, ind + '\t')
                 + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid, ind + '\t') + f'{ind}}}\n')
     return find(0, len(ns) - 1, ind)
+
+
+def lookup_lines(var, ns, body, ind='\t'):
+    """lookup for a body of whole lines: body(x, ind) are the lines, at ind, for the x of ns that var holds"""
+    def one(x, ind, kw='if'):
+        return f'{ind}{kw} = {{\n{ind}\tlimit = {{ {var} = {x} }}\n' + body(x, ind + '\t') + f'{ind}}}\n'
+    if len(ns) < LOOKUP_FROM:
+        return ''.join(one(x, ind, 'if' if j == 0 else 'else_if') for j, x in enumerate(ns))
+
+    def find(lo, hi, ind):
+        if lo == hi:
+            return one(ns[lo], ind)
+        mid = (lo + hi) // 2
+        return (f'{ind}if = {{\n{ind}\tlimit = {{ {var} > {ns[mid]} }}\n' + find(mid + 1, hi, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid, ind + '\t') + f'{ind}}}\n')
+    return find(0, len(ns) - 1, ind)
+
+
+def half_up(x):
+    return int(math.floor(x + 0.5 + EPS))
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -331,6 +404,134 @@ def unions_of(bld):
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# Job versions of the union frames
+
+def pair_jobs(bld, p):
+    """JOB_POP a level on target p, as its members add up (below 0 where automation takes more than the recipe has)"""
+    return pair_amounts(bld, p)[2].get(JOB_POP, 0)
+
+
+def _job_steps(bld, p, step):
+    """(steps down, steps up) from target p's own JOB_POP a level that its union's versions run to: halfway to the
+    target with the fewest, and to the one with the most"""
+    labs = [pair_jobs(bld, q) for q in range(1, len(bld.pair_keys) + 1)]
+    own = max(0, labs[p - 1])
+    lo, hi = (max(0, (labs[p - 1] + x) / 2) for x in (min(labs), max(labs)))
+    return half_up((own - lo) / step), half_up((hi - own) / step)
+
+
+def job_step(bld):
+    """JOB_POP a level between two versions of the building's recipe unions: JOB_STEP (JOB_STEP_SMALL on a small
+    type), doubled, tripled... until the recipe group holds JOB_GROUP_MAX methods at most (its pure frames, a union
+    each and the versions)."""
+    if getattr(bld, '_job_step', None) is None:
+        pairs = range(1, len(bld.pair_keys) + 1)
+        base = JOB_STEP if max(pair_jobs(bld, p) for p in pairs) >= JOB_SMALL_BELOW else JOB_STEP_SMALL
+        k = 1
+        while 2 * len(bld.pair_keys) + sum(sum(_job_steps(bld, p, base * k)) for p in pairs) > JOB_GROUP_MAX:
+            k += 1
+        bld._job_step = base * k
+    return bld._job_step
+
+
+def union_versions(bld, p):
+    """[(n, key, JOB_POP a level)] the versions of target p's union frame, fewest first: the target's own figure plus
+    n x job_step(bld) (never below 0), n from halfway to the target with the fewest to halfway to the one with the
+    most. The target's own (n = 0) keeps the plain key (union_key), the others are <key>_j<JOB_POP a level>."""
+    step = job_step(bld)
+    down, up = _job_steps(bld, p, step)
+    own, uk = max(0, pair_jobs(bld, p)), union_key(bld, p)
+    return [(n, uk if n == 0 else f'{uk}_j{fmt(max(0, own + n * step))}', max(0, own + n * step))
+            for n in range(-down, up + 1)]
+
+
+def union_places(bld):
+    """{union key: about its place in the recipe group's list}: the pure frames, then a plain union a target, then the
+    versions by target and size, as generate.py lists them (about: the group can list a method or two that is no
+    target). For the JOBS line: no build before q102 ran a group of more than 72 methods."""
+    P = len(bld.pair_keys)
+    out = {union_key(bld, p): P + p for p in range(1, P + 1)}
+    at = 2 * P
+    for p in range(1, P + 1):
+        for _, k, _ in union_versions(bld, p):
+            if k not in out:
+                at += 1
+                out[k] = at
+    return out
+
+
+def option_job_axes(og):
+    """The option group's jobs as axes: [{'lead': pop, 'tied': {pop: ratio to the lead}, 'none': the lead's amount on
+    the none, 'vec': its change per option (og.options order), 'lo', 'hi': its least and most over the none and the
+    options, 'n': points}]. Pop types whose changes are in one proportion over every option share an axis (rayon's
+    laborers go as its machinists come; a distillery's shopkeepers with its machinists), so no version is made that no
+    blend reaches."""
+    full = [option_full(og, o)[2] for o in [None] + og.options]
+    pops = sorted({k for f in full for k in f})
+    vec = {k: [f.get(k, 0) - full[0].get(k, 0) for f in full[1:]] for k in pops}
+    span = {k: max([0] + vec[k]) - min([0] + vec[k]) for k in pops}
+    axes = []
+    # the widest first, one that rises before one that falls: it leads its axis, and point 0 is its least
+    for k in sorted((k for k in pops if span[k] > EPS), key=lambda k: (-span[k], max(vec[k]) <= EPS, k)):
+        for ax in axes:
+            lead = vec[ax['lead']]
+            i = next(i for i, x in enumerate(lead) if abs(x) > EPS)
+            c = vec[k][i] / lead[i]
+            if all(abs(x - c * y) < EPS for x, y in zip(vec[k], lead)):
+                ax['tied'][k] = c
+                break
+        else:
+            none = full[0].get(k, 0)
+            lo, hi = none + min([0] + vec[k]), none + max([0] + vec[k])
+            n = OPT_JOB_FEW if hi - lo < 2 * OPT_JOB_STEP else min(OPT_JOB_POINTS, 1 + half_up((hi - lo) / OPT_JOB_STEP))
+            axes.append({'lead': k, 'tied': {k: 1}, 'none': none, 'vec': vec[k], 'lo': lo, 'hi': hi, 'n': n})
+    while axes and math.prod(ax['n'] for ax in axes) > OPT_JOB_MAX:
+        ax = max(axes, key=lambda ax: ax['n'])
+        if ax['n'] <= 2:
+            raise SystemExit(f'{og.key}: {len(axes)} job axes, over {OPT_JOB_MAX} versions at two points each')
+        ax['n'] -= 1
+    return axes
+
+
+def option_versions(bld, og):
+    """[(index, key, {pop: jobs a level})] the versions of the group's union frame: every combination of its axes'
+    points, the first axis counting fastest. Index 0 (each axis at its least) keeps the plain key (option_union_key),
+    the others are <key>_j<index>. A pop type the options leave alone keeps the none's."""
+    axes = option_job_axes(og)
+    none = option_full(og, None)[2]
+    uk = option_union_key(bld, og)
+    out = []
+    for idx in range(math.prod(ax['n'] for ax in axes)):
+        jobs, rest = dict(none), idx
+        for ax in axes:
+            i, rest = rest % ax['n'], rest // ax['n']
+            lead = ax['lo'] + i * (ax['hi'] - ax['lo']) / (ax['n'] - 1)
+            for pop, c in ax['tied'].items():
+                jobs[pop] = none.get(pop, 0) + c * (lead - ax['none'])
+        out.append((idx, uk if idx == 0 else f'{uk}_j{idx}', jobs))
+    return out
+
+
+def widen_gates(bld):
+    """The AI's lock: a gate that asks for a recipe in any frame built on it names the plain union keys (generate.py
+    builds the gates before the frames); the job versions of those unions meet it too. Call once bld is built and
+    before any of its effects are."""
+    versions = {union_key(bld, p): ks for p, ks in extra_union_keys(bld)[0].items()}
+    for (bk, _key), gate in GATES.items():
+        if bk == bld.bk:
+            gate.widen(versions)
+
+
+def extra_union_keys(bld):
+    """({target p: [keys]}, {option group key: [keys]}): the versions beyond the plain union keys, which generate.py
+    lists wherever it lists a plain one (the groups, the methods a recipe unlocks, vanilla's checks on a recipe)"""
+    return ({p: [k for _, k, _ in union_versions(bld, p) if k != union_key(bld, p)]
+             for p in range(1, len(bld.pair_keys) + 1)},
+            {og.key: [k for _, k, _ in option_versions(bld, og) if k != option_union_key(bld, og)]
+             for og in bld.option_groups})
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # Methods
 
 def sections(mods, ind='\t'):
@@ -349,28 +550,30 @@ def sections(mods, ind='\t'):
 
 
 def union_methods(bld, texture):
-    """{union key: definition}: the recipe unions, then each option group's. texture(key): a frame's icon. Each union
-    unlocks only while it runs, so neither the AI nor the player can pick one; the tick sets it."""
+    """{union key: definition}: the recipe unions, then each option group's, every job version of each. texture(key):
+    a frame's icon. Each union unlocks only while it runs, so neither the AI nor the player can pick one; the tick sets
+    it. Goods are the union's in every version (the "less" modifiers take them down to the blend); jobs are the
+    version's own, an option union's below 0 where an option's are (rayon's laborers), as vanilla writes them."""
     out = collections.OrderedDict()
-    ui, uo, uj = recipe_union(bld)
+    ui, uo, _ = recipe_union(bld)
     for p, key in enumerate(bld.pair_keys, 1):
-        _, _, _, rest = pair_amounts(bld, p)
-        uk = union_key(bld, p)
-        out[uk] = (f'{uk} = {{\n\ttexture = "{texture(key)}"\n\tunlocking_production_methods = {{ {uk} }}\n'
-                   + sections(join(ui, uo, uj, rest)) + '}\n')
+        _, _, pj, rest = pair_amounts(bld, p)
+        for _, uk, lab in union_versions(bld, p):
+            out[uk] = (f'{uk} = {{\n\ttexture = "{texture(key)}"\n\tunlocking_production_methods = {{ {uk} }}\n'
+                       + sections(join(ui, uo, nonneg({**pj, JOB_POP: lab}), rest)) + '}\n')
     for og in bld.option_groups:
-        ui2, uo2, uj2 = option_union(og)
+        ui2, uo2, _ = option_union(og)
         _, _, _, nrest = option_full(og, None)
-        uk = option_union_key(bld, og)
-        out[uk] = (f'{uk} = {{\n\ttexture = "{texture(og.none)}"\n\tunlocking_production_methods = {{ {uk} }}\n'
-                   + sections(join(ui2, uo2, nonneg(uj2), nrest)) + '}\n')
+        for _, uk, jobs in option_versions(bld, og):
+            out[uk] = (f'{uk} = {{\n\ttexture = "{texture(og.none)}"\n\tunlocking_production_methods = {{ {uk} }}\n'
+                       + sections(join(ui2, uo2, nonzero(jobs), nrest)) + '}\n')
     return out
 
 
 def frame_loc(bld):
-    """English names of the new methods: a union frame reads as the target it stands for"""
-    return ([f' {union_key(bld, p)}:0 "${k}$"' for p, k in enumerate(bld.pair_keys, 1)]
-            + [f' {option_union_key(bld, og)}:0 "{OPTION_UNION_NAME}"' for og in bld.option_groups])
+    """English names of the new methods: a union frame reads as the target it stands for, in every job version"""
+    return ([f' {uk}:0 "${k}$"' for p, k in enumerate(bld.pair_keys, 1) for _, uk, _ in union_versions(bld, p)]
+            + [f' {uk}:0 "{OPTION_UNION_NAME}"' for og in bld.option_groups for _, uk, _ in option_versions(bld, og)])
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -435,10 +638,12 @@ def modifier_type_loc(keys, vanilla_loc=frozenset(), named=frozenset()):
 
 def state_vars(bld):
     """the per-building state variables pmr_frame_<b> keeps: the sizes applied, which must go with the building (a new
-    one has no modifiers), and its flags"""
+    one has no modifiers), its flags, the flag of a building on a union frame (pmr_fu_<b>; the AI's lock asks it too,
+    Gate), and for the JOBS line the JOB_POP a level its recipe frame holds and its place (pmr_fq_<b>, pmr_fpl_<b>)"""
     gin, gout, pops = frame_goods(bld)
     return ([f'pmr_lxi_{g}_{bld.b}' for g in gin] + [f'pmr_lxo_{g}_{bld.b}' for g in gout]
-            + [f'pmr_lj_{p}_{bld.b}' for p in pops] + [f'pmr_fz_{bld.b}', f'pmr_fok_{bld.b}'])
+            + [f'pmr_lj_{p}_{bld.b}' for p in pops]
+            + [f'pmr_fz_{bld.b}', f'pmr_fok_{bld.b}', f'pmr_fu_{bld.b}', f'pmr_fq_{bld.b}', f'pmr_fpl_{bld.b}'])
 
 
 def clear_vars(bld, ind='\t'):
@@ -500,21 +705,68 @@ def frame_effect(bld, log=True, count=False):
     # 3. the recipe frame: pure only where the building may run it (technology, laws: may_run), else its union; each
     # frame activated only if it isn't running (activate_production_method checks no unlock, and a frame the game
     # can't run would be switched away again, through on_production_method_changed back into this tick)
+    # The union comes in job versions (union_versions): the one whose JOB_POP a level is nearest the blend's, among
+    # those of the target with the larger share. Test builds, for the JOBS line: pmr_fq_<b>, the JOB_POP a level of
+    # the frame set, pure or union, and pmr_fpl_<b>, about its place in the group's list (union_places).
     pairs = list(range(1, P + 1))
+    step = job_step(bld)
+    vers = {p: union_versions(bld, p) for p in pairs}
+    fq, place = v('pmr_fq'), union_places(bld)
+    fqset = lambda lab, at: f' {setv(fq, fmt(lab))} {setv(v("pmr_fpl"), at)}' if log else ''   # noqa: E731
+    jm = [(m.j, split(m.mods)[2].get(JOB_POP, 0)) for m in bld.members]
+
+    def union_pick(p, ind):
+        leaf = {q: act(uk, bld.first) + fqset(lab, place[uk]) for q, uk, lab in vers[p]}
+        if len(leaf) == 1:
+            return f'{ind}{next(iter(leaf.values()))}\n'
+        # steps from the target's own figure, within its versions
+        return (f'{ind}set_variable = {{ name = pmr_fm_qp value = {{ value = var:pmr_fm_q '
+                f'subtract = {fmt(max(0, pair_jobs(bld, p)) / step)} min = {min(leaf)} max = {max(leaf)} }} }}\n'
+                f'{ind}round_variable = {{ name = pmr_fm_qp nearest = 1 }}\n'
+                + lookup('var:pmr_fm_qp', sorted(leaf), lambda q: leaf[q], ind))
+
     o.append('\tif = {\n\t\tlimit = { var:pmr_fm_pr = 1 }\n'
              + lookup('var:pmr_fm_pair', pairs,
                       lambda p: f'if = {{ limit = {{ NOT = {{ {may(bld.pair_keys[p - 1])} }} }} {setv("pmr_fm_pr", 0)} }}', '\t\t')
              + '\t}\n'
              '\tif = {\n\t\tlimit = { var:pmr_fm_pr = 1 }\n'
-             + lookup('var:pmr_fm_pair', pairs, lambda p: act(bld.pair_keys[p - 1], bld.first), '\t\t')
+             + lookup('var:pmr_fm_pair', pairs,
+                      lambda p: act(bld.pair_keys[p - 1], bld.first) + fqset(max(0, pair_jobs(bld, p)), p), '\t\t')
              + '\t}\n\telse = {\n'
-             + lookup('var:pmr_fm_pair', pairs, lambda p: act(union_key(bld, p), bld.first), '\t\t') + '\t}\n')
+             + (f'\t\t# the blend\'s {JOB_POP} a level, counted in steps of {fmt(step)}\n'
+                '\t\tset_variable = { name = pmr_fm_q value = { value = 0'
+                + ''.join(f' add = {{ value = {n(j)} multiply = {fmt(a / (SHARE_STEPS * step))} }}' for j, a in jm if abs(a) > EPS)
+                + ' } }\n'
+                if any(len(x) > 1 for x in vers.values()) else '')
+             + lookup_lines('var:pmr_fm_pair', pairs, union_pick, '\t\t') + '\t}\n')
 
-    # 4. each trade-off group: the none or option with the largest share; pure where it is at 100% and may run
+    # 4. each trade-off group: the none or option with the largest share; pure where it is at 100% and may run, else
+    # its union, in the job version nearest the blend (option_versions): a point on each job axis, pmr_fm_oj<gi> their
+    # index (-1 on a pure frame, and where the group's options move no jobs)
+    def option_union_pick(og):
+        gi, overs = og.gi, option_versions(bld, og)
+        if len(overs) == 1:
+            return f'\telse = {{ {act(overs[0][1], og.none)} }}\n'
+        s, radix = f'\telse = {{\n\t\t{setv(f"pmr_fm_oj{gi}", 0)}\n', 1
+        for ax in option_job_axes(og):
+            k = (ax['n'] - 1) / (ax['hi'] - ax['lo'])
+            s += (f'\t\t# {", ".join(ax["tied"])}: {ax["n"]} points, {fmt(ax["lo"])} to {fmt(ax["hi"])} {ax["lead"]}\n'
+                  f'\t\tset_variable = {{ name = pmr_fm_ot value = {{ value = {fmt((ax["none"] - ax["lo"]) * k)}'
+                  + ''.join(f' add = {{ value = {xs(x.j)} multiply = {fmt(d * k / SHARE_STEPS)} }}'
+                            for x, d in zip(og.options, ax['vec']) if abs(d) > EPS)
+                  + f' min = 0 max = {ax["n"] - 1} }} }}\n'
+                  '\t\tround_variable = { name = pmr_fm_ot nearest = 1 }\n'
+                  f'\t\tset_variable = {{ name = pmr_fm_oj{gi} value = {{ value = var:pmr_fm_oj{gi} '
+                  f'add = {{ value = var:pmr_fm_ot multiply = {radix} }} }} }}\n')
+            radix *= ax['n']
+        return (s + lookup(f'var:pmr_fm_oj{gi}', [i for i, _, _ in overs], lambda i: act(overs[i][1], og.none), '\t\t')
+                + '\t}\n')
+
     for og in bld.option_groups:
         gi = og.gi
         keys = {0: og.none, **{x.j: x.key for x in og.options}}
         o.append(f'\t# {og.key}\n\t{setv(f"pmr_fm_o{gi}", 0)}\n\t{setv(f"pmr_fm_os{gi}", "var:" + v(f"pmr_xn_{gi}"))}\n'
+                 f'\t{setv(f"pmr_fm_oj{gi}", -1)}\n'
                  + ''.join(f'\tif = {{ limit = {{ {xs(x.j)} > var:pmr_fm_os{gi} }} {setv(f"pmr_fm_o{gi}", x.j)} '
                            f'{setv(f"pmr_fm_os{gi}", xs(x.j))} }}\n' for x in og.options)
                  + f'\t{setv(f"pmr_fm_po{gi}", 0)}\n'
@@ -524,10 +776,12 @@ def frame_effect(bld, log=True, count=False):
                  + '\t}\n'
                  f'\tif = {{\n\t\tlimit = {{ var:pmr_fm_po{gi} = 1 }}\n'
                  + lookup(f'var:pmr_fm_o{gi}', sorted(keys), lambda j, keys=keys, og=og: act(keys[j], og.none), '\t\t')
-                 + f'\t}}\n\telse = {{ {act(option_union_key(bld, og), og.none)} }}\n')
+                 + '\t}\n' + option_union_pick(og))
     o.append(f'\t{setv("pmr_fm_pure", 0)}\n'
              '\tif = { limit = { var:pmr_fm_pr = 1 ' + ''.join(f'var:pmr_fm_po{og.gi} = 1 ' for og in bld.option_groups)
-             + f'}} {setv("pmr_fm_pure", 1)} }}\n')
+             + f'}} {setv("pmr_fm_pure", 1)} }}\n'
+             f'\tif = {{ limit = {{ var:pmr_fm_pure = 0 }} set_variable = {v("pmr_fu")} }}\n'
+             f'\telse_if = {{ limit = {{ has_variable = {v("pmr_fu")} }} remove_variable = {v("pmr_fu")} }}\n')
 
     # 5. sizes: x = 1 - A / B, A the blended amount, B what the running frames carry, in steps of 0.01. A and B are
     # both kept x SHARE_STEPS (share points x amount), so no multiplier is smaller than an amount.
@@ -606,7 +860,8 @@ def frame_effect(bld, log=True, count=False):
                 f'state=[THIS.GetState.GetNameNoFormatting];building={bk};pair={f("pmr_fm_pair")};pure={f("pmr_fm_pr")}'
                 + (';opt=' + '/'.join(f'{f(f"pmr_fm_o{og.gi}")}:{f(f"pmr_fm_po{og.gi}")}' for og in bld.option_groups)
                    if bld.option_groups else '')
-                + f';x={sizes}')
+                + f';x={sizes};lab={f(fq)}'
+                + (';oj=' + '/'.join(f(f'pmr_fm_oj{og.gi}') for og in bld.option_groups) if bld.option_groups else ''))
         o.append(f'\tif = {{ limit = {{ var:pmr_fm_ch = 1 owner = {{ is_player = yes }} }} debug_log = "{line}" }}\n')
     o.append(f'\tset_variable = {v("pmr_fok")}\n}}\n')
     return ''.join(o)
@@ -622,3 +877,66 @@ def short_check(bld):
     return (f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month has_variable = pmr_fz_{b} owner = {{ is_player = yes }} }}\n'
             f'\t\tif = {{ limit = {{ b:{bk} = {{ building_has_goods_shortage = yes }} }} debug_log = "{head};short=1" }}\n'
             f'\t\telse = {{ debug_log = "{head};short=0" }}\n\t}}\n')
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The JOBS line (test builds)
+
+JOBS_DOC = ('# Jobs check (frames.py, test builds): once a month, each of a player\'s buildings on a union frame logs\n'
+            '# PMR;rec=JOBS: its level, about the place of its recipe frame in the group\'s list (place), the ' + JOB_POP + '\n'
+            '# a level that frame holds (frame) and that x level (want),\n'
+            '# the building\'s ' + JOB_POP + ' jobs as the game reads them back (cap; every group\'s, so above want where a\n'
+            '# trade-off or Treatment adds its own, and twice want if a method were ever counted twice), those employed,\n'
+            '# its occupancy band, and each other pop type\'s jobs (cap_<pop>). -99 is a read the engine refused.\n'
+            '# On its own on_action and in files of its own, so nothing here can take the tick with it.\n\n')
+
+
+def jobs_pops(bld):
+    """the pop types the building's frames name, JOB_POP first"""
+    pops = set()
+    for p in range(1, len(bld.pair_keys) + 1):
+        pops |= set(nonzero(pair_amounts(bld, p)[2]))
+    for og in bld.option_groups:
+        for x in [None] + og.options:
+            pops |= set(nonzero(option_full(og, x)[2]))
+    return [JOB_POP] + sorted(pops - {JOB_POP})
+
+
+def jobs_check_files(blds):
+    """[(path, text)] of the JOBS line for the buildings blds (frames.Building): a script value, the effects and the
+    on_action, the caller's header to go before each."""
+    values, effects, monthly = [], [], []
+    for bld in blds:
+        bk, b = bld.bk, bld.b
+        pops = jobs_pops(bld)
+        values.append(f'# State scope: the state\'s {JOB_POP} employed in its {bk}, by workforce.\n'
+                      f'pmr_jobs_{b} = {{\n\tvalue = 0\n\tevery_scope_pop = {{\n'
+                      f'\t\tlimit = {{ pop_employment_building = {bk} is_pop_type = {JOB_POP} }}\n\t\tadd = workforce\n\t}}\n}}\n\n')
+        occ = ''.join(f'\t{"if" if i == 0 else "else_if"} = {{ limit = {{ b:{bk} = {{ occupancy >= {x} }} }} '
+                      f'set_variable = {{ name = pmr_fj_occ value = {x} }} }}\n' for i, x in enumerate(OCC_BANDS))
+        reads = ''.join(f'\tset_variable = {{ name = pmr_fj_c{i} value = -99 }}\n'
+                        f'\tset_variable = {{ name = pmr_fj_c{i} value = b:{bk}.modifier:building_employment_{pop}_add }}\n'
+                        for i, pop in enumerate(pops))
+        f = lambda name, d=0: f"[THIS.Var('{name}').GetValue|{d}]"   # noqa: E731
+        line = ('PMR;rec=JOBS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+                f'state=[THIS.GetState.GetNameNoFormatting];building={bk};level={f("pmr_fj_lvl")};'
+                f'place={f(f"pmr_fpl_{b}")};frame={f(f"pmr_fq_{b}")};'
+                f'want={f("pmr_fj_want")};cap={f("pmr_fj_c0")};{JOB_POP}={f("pmr_fj_emp")};occ={f("pmr_fj_occ", 2)}'
+                + ''.join(f';cap_{pop}={f(f"pmr_fj_c{i}")}' for i, pop in enumerate(pops) if i))
+        effects.append(f'# State scope, a state with a {bk} on a union frame.\n'
+                       f'pmr_jobs_log_{b} = {{\n'
+                       f'\tset_variable = {{ name = pmr_fj_lvl value = b:{bk}.level }}\n'
+                       f'\tset_variable = {{ name = pmr_fj_want value = {{ value = var:pmr_fq_{b} multiply = var:pmr_fj_lvl }} }}\n'
+                       f'\tset_variable = {{ name = pmr_fj_emp value = pmr_jobs_{b} }}\n'
+                       '\tset_variable = { name = pmr_fj_occ value = 0 }\n' + occ + reads
+                       + f'\tdebug_log = "{line}"\n}}\n\n')
+        monthly.append(f'\t\tif = {{ limit = {{ has_variable = pmr_fu_{b} has_variable = pmr_fq_{b} has_building = {bk} }} '
+                       f'pmr_jobs_log_{b} = yes }}\n')
+    return [('common/script_values/pmr_jobs_values.txt', JOBS_DOC + ''.join(values)),
+            ('common/scripted_effects/pmr_jobs_effects.txt', JOBS_DOC + ''.join(effects)
+             + '# Country scope, a player, monthly.\npmr_jobs_monthly = {\n\tevery_scope_state = {\n' + ''.join(monthly)
+             + '\t}\n}\n'),
+            ('common/on_actions/pmr_jobs_on_actions.txt', JOBS_DOC
+             + 'on_monthly_pulse_country = { on_actions = { pmr_jobs_on_monthly_country } }\n\n'
+             '# Root = country.\npmr_jobs_on_monthly_country = {\n\ttrigger = { is_player = yes }\n'
+             '\teffect = { pmr_jobs_monthly = yes }\n}\n')]
