@@ -5938,20 +5938,12 @@ def urban_list_script(order):
            '\t\t\tscope:pmr_urb_st = { add_to_variable_list = { name = pmr_urb target = scope:pmr_urb_b } }\n\t\t}\n'
            '\t\tadd_to_variable_list = { name = pmr_urb target = this }\n\t}\n'
            '\telse_if = { limit = { has_variable = pmr_urb_on } remove_variable = pmr_urb_on }\n}\n\n'
-           # Pat 2026-11-10 18:29Z (the check map's savings): only the tab reads the list, so it is kept only in states a
-           # player owns (is_player: every human in multiplayer) or where the player owns levels abroad (pmr_abroad_any);
-           # a state that has a list and no player clears it once, and its tab shows vanilla's grid.
-           '# State scope: refresh it where a site stands or stood (monthly, and after PMR places one), in a state a player\n'
-           '# owns or holds levels in; elsewhere drop a list left from before.\n'
-           'pmr_urb_check = {\n\tif = {\n\t\tlimit = {\n\t\t\tOR = { owner = { is_player = yes } has_variable = pmr_abroad_any }\n'
-           '\t\t\tOR = { has_variable = pmr_urb_on any_scope_building = { pmr_urb_site = yes } }\n\t\t}\n'
-           '\t\tpmr_urb_refresh = yes\n\t}\n'
-           '\telse_if = {\n\t\tlimit = { has_variable = pmr_urb_on NOR = { owner = { is_player = yes } has_variable = pmr_abroad_any } }\n'
-           '\t\tif = { limit = { has_variable_list = pmr_urb } clear_variable_list = pmr_urb }\n'
-           '\t\tremove_variable = pmr_urb_on\n\t}\n}\n\n'
-           '# Building scope (a level built or started): check its state\'s list if it is a site or the list is in use.\n'
+           '# State scope: refresh it where a site stands or stood (monthly, and after PMR places one).\n'
+           'pmr_urb_check = {\n\tif = {\n\t\tlimit = { OR = { has_variable = pmr_urb_on any_scope_building = { pmr_urb_site = yes } } }\n'
+           '\t\tpmr_urb_refresh = yes\n\t}\n}\n\n'
+           '# Building scope (a level built or started): refresh its state\'s list if it is a site or the list is in use.\n'
            'pmr_urb_built = {\n\tif = {\n\t\tlimit = { OR = { pmr_urb_site = yes state ?= { has_variable = pmr_urb_on } } }\n'
-           '\t\tstate ?= { pmr_urb_check = yes }\n\t}\n}\n')
+           '\t\tstate ?= { pmr_urb_refresh = yes }\n\t}\n}\n')
     return trig, value, eff
 
 

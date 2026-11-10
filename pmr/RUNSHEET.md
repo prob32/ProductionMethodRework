@@ -18,6 +18,9 @@ retool site leaves) is now kept only in states a player owns or holds levels in;
 its tab shows vanilla's grid. The profit pick finds its pick's figure, the vetoes and the automation pair by binary
 search instead of walking every recipe, with the same results. q97's H1-H4 still apply. Start a new game.
 
+Withdrawn in the code (your 18:43Z message, "we need to keep this"): the next build keeps the list in every
+state again. The installed q98 still drops it in AI states, so skip K1 and K2.
+
 1. Use the PMR Test playset. Start a new game as Great Britain and play at least a year.
 2. Open the state Buildings tab of one of your states that is retooling, and of an AI state that is.
 3. Close the game and tell the build thread.
