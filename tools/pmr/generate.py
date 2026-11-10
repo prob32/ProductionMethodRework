@@ -306,6 +306,13 @@ ELECTRICITY = 'electricity'
 # railway (pmr_rail), even one the building already runs. Pat 17:49Z: a port's transportation doesn't count (West
 # Bengal's opium, q47: rail=1 from its port, no railway, retooling onto Rail Transport).
 TRANSPORTATION = 'transportation'
+# Pat, 2026-11-10 12:44Z: "eliminate the state checks for electricity and rail and still have the system work!" Until q95
+# every tick read the state's electricity (sg:electricity state_goods_production) and railway (has_building) itself.
+# Since q96 the state's turn sets both flags from the very has_building test it already makes to tick each building
+# type: SUPPLY's types tick first, each setting its flag to 1 (pmr_tick_body_<b>) or, gone, to 0, so every later type
+# that turn sees them, and so does any tick between turns (a new building, research, a method change) and AUTO_BEST.
+# Only power plants make electricity in vanilla (pm_*_power_plant), and only a railway counts for transportation.
+SUPPLY = (('building_power_plant', 'pmr_elec'), ('building_railway', 'pmr_rail'))
 
 
 def rails(goods):
@@ -339,7 +346,7 @@ SKIP_CHECK = 12
 # have them operate in larger chunks of 5%?" A good's price is no longer read per state through a state_goods_pricier
 # ladder (about five comparisons a good, a state and a day) but once a month per market from its order book
 # (market_values): vanilla's price from buy and sell orders, base x (1 + PRICE_RANGE x (buy - sell) / the smaller of
-# the two, within -1..1; BUY_SELL_DIFF_AT_MAX_FACTOR 2). A local good (LOCAL_GOODS) counts at base. Shares move
+# the two, within -1..1; BUY_SELL_DIFF_AT_MAX_FACTOR 2). A local good (LOCAL_GOODS) counts at its market's (q96). Shares move
 # OPT_STEP points a month and hold multiples of it, with share methods only at those (21 an option, not 101).
 # Before q94 (Pat 2026-10-13) the move was the gap in % of the output value, 2 to 20 points a month.
 TRADE_GROUPS = ('pmg_hardwood', 'pmg_canning', 'pmg_distillery', 'pmg_luxury_building_textile_mill',
@@ -2020,7 +2027,7 @@ def main():
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     # q95: every good the profit pick or a trade-off prices, a traded one from its market's order book (market_read)
     price_goods = sorted(profit_goods | set(option_goods(options)))
-    traded = sorted({g for g in price_goods if g not in LOCAL_GOODS} | set(demand_goods(options)))
+    traded = sorted(set(price_goods) | set(demand_goods(options)))   # q96: local goods from their market's orders too
     spare = set(budget_goods(options))
     check_price_defines(game)
     write('common/script_values/pmr_market_values.txt', header + market_values(traded, sorted(spare)))
@@ -2503,34 +2510,17 @@ PRICE_LADDER = list(range(-75, 76, PRICE_STEP))   # % off the base price; the ga
 
 
 def price_effect(good):
-    """State scope: pmr_px_<good>, the price as a multiple of the base price. Since q95 (Pat 2026-11-10 05:40Z: "we
-    should read those by market and be as cheap as possible there as well") a traded good's is its market's, from the
-    order book read once a month per market (market_read); scope:pmr_xmo is left on the market's owner. A local good
-    (LOCAL_GOODS: its state is its only market) keeps the state's price, read through state_goods_pricier / _cheaper
-    (in fractions: the PRICE probe read hardwood at +20% through them and nothing through percent), bisected to the
-    PRICE_STEP nearest the price in about five comparisons."""
-    if good not in LOCAL_GOODS:
-        return (f'pmr_price_{good} = {{\n'
-                '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
-                f'\tset_variable = {{ name = pmr_px_{good} value = 1 }}\n'
-                f'\tif = {{\n\t\tlimit = {{ exists = scope:pmr_xmo }}\n\t\tpmr_xmkt_{good} = yes\n'
-                f'\t\tset_variable = {{ name = pmr_px_{good} value = scope:pmr_xmo.var:pmr_mpx_{good} }}\n\t}}\n}}\n\n')
-    half = PRICE_STEP / 200
-
-    def above(k):   # the price is at least k % off base, give or take half a step
-        if k > 0:
-            return f'sg:{good} = {{ state_goods_pricier > {fmt(k / 100 - half)} }}'
-        return f'NOT = {{ sg:{good} = {{ state_goods_cheaper > {fmt(-k / 100 + half)} }} }}'
-
-    def find(lo, hi, ind):   # above(PRICE_LADDER[lo]) holds
-        if lo == hi:
-            return f'{ind}set_variable = {{ name = pmr_px_{good} value = {fmt(1 + PRICE_LADDER[lo] / 100)} }}\n'
-        mid = (lo + hi + 1) // 2
-        return (f'{ind}if = {{ limit = {{ {above(PRICE_LADDER[mid])} }}\n' + find(mid, hi, ind + '\t')
-                + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid - 1, ind + '\t') + f'{ind}}}\n')
-    return (f'pmr_price_{good} = {{\n\tif = {{\n\t\tlimit = {{ exists = sg:{good} }}\n'
-            + find(0, len(PRICE_LADDER) - 1, '\t\t')
-            + f'\t}}\n\telse = {{ set_variable = {{ name = pmr_px_{good} value = 1 }} }}\n}}\n\n')
+    """State scope: pmr_px_<good>, the price as a multiple of the base price: its market's, from the order book read
+    once a month per market (market_read); scope:pmr_xmo is left on the market's owner. Since q95 (Pat 2026-11-10
+    05:40Z: "we should read those by market and be as cheap as possible there as well") for a traded good, and since
+    q96 (Pat 12:44Z, SUPPLY) for a local good too (LOCAL_GOODS): a local good's market orders are its states' summed,
+    as vanilla's Five Year Plan reads electricity and transportation (ip5_je_values.txt), so a state's own surplus or
+    shortage no longer moves its price; whether the state has any at all is SUPPLY's flag."""
+    return (f'pmr_price_{good} = {{\n'
+            '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
+            f'\tset_variable = {{ name = pmr_px_{good} value = 1 }}\n'
+            f'\tif = {{\n\t\tlimit = {{ exists = scope:pmr_xmo }}\n\t\tpmr_xmkt_{good} = yes\n'
+            f'\t\tset_variable = {{ name = pmr_px_{good} value = scope:pmr_xmo.var:pmr_mpx_{good} }}\n\t}}\n}}\n\n')
 
 
 # Pat, 2026-10-19 02:32Z: "why are the pm options negative but the buildings profitable?" The profit calculation paid
@@ -2853,8 +2843,8 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     market = [x for x in opts if x.mode == 'market' and x.group not in DEMAND_GROUPS]
     if market:
         goods = sorted({g for x in market for g in x.goods})
-        # q95: a good's price is pmr_price_<good>'s (the market's, from its order book once a month; a local good's in
-        # its state), copied once a day per state (pmr_pxd_<good>): grain, sugar and fruit each feed several farm types
+        # q95: a good's price is pmr_price_<good>'s (the market's, from its order book once a month; a local good's
+        # too since q96), copied once a day per state (pmr_pxd_<good>): grain, sugar and fruit each feed several farm types
         o.append(f'pmr_xvalue_{b} = {{\n' + ''.join(
             f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
             f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods))
@@ -4024,7 +4014,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              '}\n\n')
 
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first. A recipe
-    # that needs electricity counts only while the state produces it (pmr_elec, read by the tick).
+    # that needs electricity counts only while the state has a power plant (pmr_elec, SUPPLY's flag).
     # Abroad (Pat, 2026-10-13 14:33Z): where the player's government or investors own levels in a
     # state another country owns (pmr_abroad_<b>, set by the tick), a recipe also counts once the
     # player has its technologies, as the levels the player owns there run on the player's know-how.
@@ -4182,8 +4172,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                 f'\tif = {{ limit = {{ has_variable = pmr_new_build_{b} NOT = {{ has_variable = pmr_xinit_{b} }} }} '
                 f'set_variable = pmr_xnew_{b} }}\n' if opts else '')
              + f'\t{setv("pmr_level", f"b:{bk}.level")}\n'
-             '\tif = { limit = { NOT = { has_variable = pmr_elec_read } } pmr_read_elec = yes }\n'
-             '\t# Abroad: the player (global_var:pmr_player) owns levels here, in a state another country owns.\n'
+             '\tpmr_supply_once = yes\n'
+             + ''.join(f'\tif = {{ limit = {{ var:{v("pmr_level")} >= 1 }} set_variable = {{ name = {flag} value = 1 }} pmr_lsup_now = yes }}'
+                       '  # SUPPLY: this building is the state\'s\n' for sbk, flag in SUPPLY if sbk == bk)
+             + '\t# Abroad: the player (global_var:pmr_player) owns levels here, in a state another country owns.\n'
              f'\tif = {{\n\t\tlimit = {{ has_global_variable = pmr_player NOT = {{ owner = global_var:pmr_player }} '
              f'b:{bk} = {{ levels_owned_by_country = {{ target = global_var:pmr_player value >= 1 }} }} }}\n'
              f'\t\tset_variable = {{ name = pmr_abroad_{b} value = 1 }}  # a value, so the Owners list can read it\n'
@@ -4936,50 +4928,73 @@ def moved(b):
     return f'var:pmr_best_now_{b} > var:pmr_best_{b}'
 
 
+def supply_test(bk):
+    """State scope: the state has a level of bk, as pmr_state_tick asks it before ticking the type."""
+    return f'has_building = {bk} b:{bk} = {{ level >= 1 }}'
+
+
 def shared_effects(price_goods=()):
-    return ''.join(price_effect(g) for g in price_goods) + (books_effect() if PROFIT_TARGET else '') + '''# State scope. pmr_elec: 1 while the state produces electricity (a local good, so only the state's
-# own power plants count). pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp:
-# the state's unemployment rate in % (lower bound of 1/2/5/10/20), for the log. The investment pool
-# scores a building x0.25 in a state short of workers, which can cost a retool site with a crew a pick.
-pmr_read_elec = {
-	if = {
-		limit = { exists = sg:electricity sg:electricity = { state_goods_production > 0 } }
-		set_variable = { name = pmr_elec value = 1 }
-	}
-	else = { set_variable = { name = pmr_elec value = 0 } }
-	# pmr_rail: 1 while the state has a railway (TRANSPORTATION); pmr_lsup: both, for pmr_newest's re-scan
-	if = {
-		limit = { has_building = building_railway b:building_railway = { level >= 1 } }
-		set_variable = { name = pmr_rail value = 1 }
-	}
-	else = { set_variable = { name = pmr_rail value = 0 } }
-	set_variable = { name = pmr_lsup value = var:pmr_rail }
-	change_variable = { name = pmr_lsup multiply = 2 }
-	change_variable = { name = pmr_lsup add = var:pmr_elec }
-''' + ('}\n\n' if RELEASE else '''	# pool and unemployment are read only for the log, so only in the player's states (not in a release build)
-	if = {
-		limit = { owner = { is_player = yes } }
-		set_variable = { name = pmr_pool value = 0 }
-''' + ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ owner = {{ investment_pool >= {x} }} }} set_variable = {{ name = pmr_pool value = {x} }} }}\n'
-              for j, x in enumerate((100000, 10000, 1000, 100))) +
-        '\t\tset_variable = { name = pmr_unemp value = 0 }\n' +
-        ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ state_unemployment_rate > {fmt(x / 100)} }} set_variable = {{ name = pmr_unemp value = {x} }} }}\n'
-                for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n')
+    once = ''.join(f'\t\tif = {{ limit = {{ {supply_test(bk)} }} set_variable = {{ name = {var} value = 1 }} }}\n'
+                   f'\t\telse = {{ set_variable = {{ name = {var} value = 0 }} }}\n' for bk, var in SUPPLY)
+    out = (''.join(price_effect(g) for g in price_goods) + (books_effect() if PROFIT_TARGET else '')
+           + '# State scope. pmr_elec: 1 while the state has a power plant, pmr_rail: 1 while it has a railway (SUPPLY;\n'
+           '# electricity and transportation are local goods, so only the state\'s own count). The state\'s turn sets\n'
+           '# them from the test it makes anyway to tick each building type (pmr_state_tick, power plants and railways\n'
+           '# first); pmr_lsup holds both, for pmr_newest\'s re-scan.\n'
+           'pmr_lsup_now = {\n'
+           '\tset_variable = { name = pmr_lsup value = var:pmr_rail }\n'
+           '\tchange_variable = { name = pmr_lsup multiply = 2 }\n'
+           '\tchange_variable = { name = pmr_lsup add = var:pmr_elec }\n'
+           '}\n\n'
+           '# State scope: the flags of a state no turn has set yet (a state created since its country\'s last turn).\n'
+           'pmr_supply_once = {\n'
+           '\tif = {\n\t\tlimit = { OR = { NOT = { has_variable = pmr_elec } NOT = { has_variable = pmr_rail } } }\n'
+           + once + '\t\tpmr_lsup_now = yes\n\t}\n}\n\n')
+    if RELEASE:
+        return out
+    # pmr_pool: the owner's investment pool by order of magnitude, and pmr_unemp: the state's unemployment rate in %
+    # (lower bound of 1/2/5/10/20), for the log, read once a turn. The investment pool scores a building x0.25 in a
+    # state short of workers, which can cost a retool site with a crew a pick.
+    return (out + '# State scope, the state\'s turn: pool and unemployment for the log, only in the player\'s states\n'
+            '# (not in a release build).\n'
+            'pmr_read_log = {\n\tif = {\n\t\tlimit = { owner = { is_player = yes } }\n'
+            '\t\tset_variable = { name = pmr_pool value = 0 }\n'
+            + ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ owner = {{ investment_pool >= {x} }} }} set_variable = {{ name = pmr_pool value = {x} }} }}\n'
+                      for j, x in enumerate((100000, 10000, 1000, 100)))
+            + '\t\tset_variable = { name = pmr_unemp value = 0 }\n'
+            + ''.join(f'\t\t{"if" if j == 0 else "else_if"} = {{ limit = {{ state_unemployment_rate > {fmt(x / 100)} }} set_variable = {{ name = pmr_unemp value = {x} }} }}\n'
+                      for j, x in enumerate((20, 10, 5, 2, 1))) + '\t}\n}\n\n')
+
+
+def tick_order(buildings):
+    """The order a state's turn ticks its building types: SUPPLY's first, so every later type sees their flags."""
+    missing = [bk for bk, _ in SUPPLY if bk not in buildings]
+    if missing:
+        raise SystemExit(f'SUPPLY types {missing} are not PMR buildings: their flags would never be set')
+    first = [bk for bk, _ in SUPPLY]
+    return first + [bk for bk in buildings if bk not in first]
 
 
 def state_tick_type(bk, t='\t'):
-    """pmr_state_tick's step for one building type, indented by t: its tick, or the clean-up once it is gone."""
+    """pmr_state_tick's step for one building type, indented by t: its tick, or the clean-up once it is gone. A SUPPLY
+    type also sets its flag, 1 or 0, and the last of them pmr_lsup."""
     b = short(bk)
-    return (f'{t}if = {{ limit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }} pmr_tick_{b} = yes }}\n'
-            # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up
-            f'{t}else_if = {{\n{t}\tlimit = {{ has_variable = pmr_mix_{b} NOT = {{ exists = b:{bk} }} }}\n'
-            # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
-            f'{t}\tif = {{ limit = {{ has_variable = pmr_pending_{b} }} set_variable = {{ name = pmr_pending_{b} value = 0 }} }}\n'
-            f'{t}\tpmr_close_retool_{b} = yes\n'
-            + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
-                      for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
-                                f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ()))
-            + f'{t}}}\n')
+    flag = dict(SUPPLY).get(bk)
+    clean = (f'{t}\tif = {{ limit = {{ has_variable = pmr_pending_{b} }} set_variable = {{ name = pmr_pending_{b} value = 0 }} }}\n'
+             f'{t}\tpmr_close_retool_{b} = yes\n'
+             + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
+                       for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
+                                 f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ())))
+    # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up;
+    # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
+    gone = f'has_variable = pmr_mix_{b} NOT = {{ exists = b:{bk} }}'
+    if not flag:
+        return (f'{t}if = {{ limit = {{ {supply_test(bk)} }} pmr_tick_{b} = yes }}\n'
+                f'{t}else_if = {{\n{t}\tlimit = {{ {gone} }}\n' + clean + f'{t}}}\n')
+    return (f'{t}if = {{ limit = {{ {supply_test(bk)} }} set_variable = {{ name = {flag} value = 1 }} pmr_tick_{b} = yes }}\n'
+            f'{t}else = {{\n{t}\tset_variable = {{ name = {flag} value = 0 }}\n'
+            f'{t}\tif = {{\n{t}\t\tlimit = {{ {gone} }}\n' + clean.replace(f'{t}\t', f'{t}\t\t') + f'{t}\t}}\n{t}}}\n'
+            + (f'{t}pmr_lsup_now = yes\n' if bk == SUPPLY[-1][0] else ''))
 
 
 # --script-profile: the text profiler keys its totals by top-level block, so the monthly state pulse runs as one
@@ -5064,10 +5079,10 @@ def profile_pulse_state(buildings):
     # this state's turn (state_turn) sets pmr_month for the steps between open and close
     turn = (state_turn().replace("\t\t\tpmr_state_tick = yes   # this state's turn\n", '').replace('\t\t\tremove_variable = pmr_month\n', '')
             .replace(XTURN_DONE, ''))
-    steps = [('open', turn + '\t\tset_variable = pmr_bulk\n\t\tpmr_read_elec = yes\n\t\tset_variable = pmr_elec_read\n')]
+    steps = [('open', turn + '\t\tset_variable = pmr_bulk\n' + ('' if RELEASE else '\t\tpmr_read_log = yes\n'))]
     steps += [(f't_{short(bk)}', '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_month }\n' + state_tick_type(bk, '\t\t\t') + '\t\t}\n')
-              for bk in buildings]
-    steps += [('close', '\t\tremove_variable = pmr_elec_read\n\t\tremove_variable = pmr_bulk\n'
+              for bk in tick_order(buildings)]
+    steps += [('close', '\t\tremove_variable = pmr_bulk\n'
                         '\t\tif = { limit = { has_variable = pmr_month } remove_variable = pmr_month }\n'
                         + XTURN_DONE.replace('\t\t\t', '\t\t', 1))]
     steps += [(k, f'\t\t{e} = yes\n') for k, e in (('auto_best', 'pmr_auto_best'), ('principle', 'pmr_principle_bonus'),
@@ -5225,18 +5240,18 @@ def dispatch_effects(buildings):
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'
              '# research, at game start), so the country totals wait for pmr_c_sum_all once the states are done.\n'
              'pmr_state_tick = {\n\tset_variable = pmr_bulk\n'
-             '\t# electricity once for every building of the state (pmr_tick_body_<b> skips its own read)\n'
-             '\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n')
+             + ('' if RELEASE else '\tpmr_read_log = yes\n')
+             + '\t# power plants and railways first: they set pmr_elec and pmr_rail (SUPPLY) for the rest\n')
     # bug review q48, P2-2: a building gone mid-retool (downsized to nothing) leaves no open retool, no stale recipe mix
     # (a rebuild starts on the newest recipe, as a new one), no abroad flag, no books and no step-down mark. It runs once,
     # as it removes pmr_mix_<b>.
-    for bk in buildings:
+    for bk in tick_order(buildings):
         o.append(state_tick_type(bk))
-    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n}\n\n'
+    o.append('\tremove_variable = pmr_bulk\n}\n\n'
              '# State scope (on_acquired_technology): tick only the buildings whose best recipe the research\n'
              '# changed, and any not seen yet. The rest wait for the month; until then a newly unlocked\n'
              '# trade-off shows as unavailable on the panel, whose shares move only monthly anyway.\n'
-             'pmr_state_research = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n\tset_variable = pmr_research\n')
+             'pmr_state_research = {\n\tset_variable = pmr_bulk\n\tset_variable = pmr_research\n')
     for bk in buildings:
         b = short(bk)
         o.append(f'\tif = {{\n\t\tlimit = {{ {live(bk)} }}\n'
@@ -5244,17 +5259,17 @@ def dispatch_effects(buildings):
                  f'\t\telse = {{\n\t\t\tpmr_best_{b} = yes\n'
                  f'\t\t\tif = {{ limit = {{ {moved(b)} }} pmr_tick_{b} = yes }}\n'
                  '\t\t}\n\t}\n')
-    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n\tremove_variable = pmr_research\n}\n\n'
+    o.append('\tremove_variable = pmr_bulk\n\tremove_variable = pmr_research\n}\n\n'
              '# State scope, another country\'s state where the player owns levels (pmr_abroad_any), when the\n'
              '# player researches: the same, for the buildings the player owns levels in.\n'
-             'pmr_state_research_abroad = {\n\tset_variable = pmr_bulk\n\tpmr_read_elec = yes\n\tset_variable = pmr_elec_read\n\tset_variable = pmr_research\n')
+             'pmr_state_research_abroad = {\n\tset_variable = pmr_bulk\n\tset_variable = pmr_research\n')
     for bk in buildings:
         b = short(bk)
         o.append(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} has_variable = pmr_mix_{b} {live(bk)} }}\n'
                  f'\t\tpmr_best_{b} = yes\n'
                  f'\t\tif = {{ limit = {{ {moved(b)} }} pmr_tick_{b} = yes }}\n'
                  '\t}\n')
-    o.append('\tremove_variable = pmr_elec_read\n\tremove_variable = pmr_bulk\n\tremove_variable = pmr_research\n}\n\n'
+    o.append('\tremove_variable = pmr_bulk\n\tremove_variable = pmr_research\n}\n\n'
              '# Country scope: the country\'s totals for every PMR building type (Buildings tab rows).\n'
              'pmr_c_sum_every = {\n\tset_variable = pmr_c_abroad\n')
     for bk in buildings:
@@ -5285,8 +5300,8 @@ def dispatch_effects(buildings):
     return ''.join(o)
 
 
-# State scope: the state produces electricity (as pmr_read_elec reads it, without the variable).
-ELEC_MADE = 'exists = sg:electricity sg:electricity = { state_goods_production > 0 }'
+# State scope: the state has electricity (SUPPLY's flag, set by its turn; pmr_auto_best makes sure it is set).
+ELEC_MADE = 'var:pmr_elec = 1'
 AUTO_TRIP = 3   # AUTO_BEST switches one building may make from method changes in a day before it waits for the next
 
 
@@ -5324,7 +5339,7 @@ def auto_best_effects(auto):
                          '\t\t}\n\t}\n')
         o.append('}\n\n')
     o.append('# State scope (monthly, on research, at game start): every such building of the state.\n'
-             'pmr_auto_best = {\n\tset_variable = pmr_auto_busy\n')
+             'pmr_auto_best = {\n\tpmr_supply_once = yes\n\tset_variable = pmr_auto_busy\n')
     for bk in auto:
         o.append(f'\tif = {{ limit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }} pmr_auto_{short(bk)} = yes }}\n')
     o.append('\tremove_variable = pmr_auto_busy\n}\n\n'
