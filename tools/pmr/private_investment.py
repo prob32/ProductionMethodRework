@@ -6,7 +6,7 @@ queue and loses the investment pool. The Private tab, top to bottom:
   1. the budget panel's Investment Pool line (Pat 13:05Z), and the next private construction
   2. the weekly re-investment as a trend line in vanilla's graph frame (Pat 04:13Z: the weekly inflow, not the pool
      amount; the game keeps no history of it, so PMR samples investment_pool_income weekly into country variables),
-     with a column under the line split by the tree chart's shares; beside it the budget's own pool graph (14:28Z)
+     with a column under the line, in one colour since the gui review (C3); beside it the budget's own pool graph (14:28Z)
   3. what feeds the pool, as a tree chart by priority group (Pat 13:05Z). The game gives its per-building amounts
      only as text (1.14.5 exe: no datamodel, no script value), so the chart shows the privately owned building levels
      of each group, and the game's own list in money is its tooltip
@@ -214,7 +214,7 @@ LAW_ROWS = {'law_laissez_faire': (), 'law_agrarianism': ('agriculture', 'resourc
 # straight lines between. It is fixed when the policy is adopted and used while the policy is held, as vanilla
 # charges authority for patronage (an add_modifier of country_authority_cost_add x the cost, 00_ep2_04_modifiers.txt).
 POLICY_COST_LOW, POLICY_COST_MID, POLICY_COST_HIGH = 200, 100, 50
-# Pat 20:06Z: a policy is kept for 5 years once adopted; then it can be swapped, or cancelled with the card's X (20:08Z).
+# Pat 20:06Z: a policy is kept for 5 years once adopted; then it can be swapped, or cancelled from the card (20:08Z).
 # pmr_policy_lock_m counts the months left, down on each monthly pulse.
 POLICY_LOCK_MONTHS = 60
 AI_SKIP = ('steer',)       # the AI never picks Steer the Economy: it only raises the cap of the player's priorities
@@ -626,7 +626,8 @@ def sguis():
                 f'\teffect = {{\n\t\tpmr_policy_adopt_{k} = yes\n\t}}\n}}\n\n')
     drop_all = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_modifier = pmr_policy_{k} }}\n\t\t\tremove_modifier = pmr_policy_{k}\n\t\t}}\n'
                        for k, *_r in POLICIES)
-    out += ('# The X on the held policy\'s card (Pat 20:08Z), once its 5 years are up: ends the policy and its authority cost.\n'
+    out += ('# Cancel Policy on the held policy\'s card (Pat 20:08Z; a labelled button that asks first since the gui review, B2),\n'
+            '# once its 5 years are up: ends the policy and its authority cost.\n'
             'pmr_policy_cancel_sgui = {\n\tscope = country\n\tis_shown = { has_variable = pmr_policy }\n'
             '\tis_valid = { NOT = { has_variable = pmr_policy_lock_m } }\n\teffect = {\n' + drop_all +
             '\t\tpmr_policy_drop = yes\n\t\tpmr_policy_upkeep = yes\n'
@@ -1528,8 +1529,9 @@ def header(key, ind):
 
 def priority_row(g, ind):
     """One priority group, on the budget page's own five-coin selector (Pat 04:50Z): vanilla's tax_exp_frame_coin
-    with its coins, sounds and selected frame, each coin one of STEPS. The value reads +0%, or +25% in green and so
-    on (Pat 13:05Z): two textboxes in the selector's divider block, its own money text hidden. The coins show the
+    with its coins, sounds and selected frame, each coin one of STEPS. The value reads +0%, +25% and so on (Pat
+    13:05Z; white since the gui review, T6: a priority is a neutral choice, not green): two textboxes in the
+    selector's divider block, its own money text hidden. The coins show the
     priority as it counts now and are disabled while the law locks the row or it is cooling down (Pat 19:34Z); each
     coin's tooltip then says why."""
     v = VAR.format(g)
@@ -1561,7 +1563,7 @@ def priority_row(g, ind):
            f'{ind}\tblockoverride "text_money" {{\n{ind}\t\tvisible = no\n{ind}\t\traw_text = ""\n{ind}\t}}\n'
            f'{ind}\tblockoverride "divider" {{\n{ind}\t\tdivider_clean = {{}}\n'
            + value(f'Not({up})', '#v +0%#!')
-           + value(up, f"#P +[{pct}|0%]#!")
+           + value(up, f"#v +[{pct}|0%]#!")
            + f'{ind}\t}}\n')
     for k, s in enumerate(STEPS):
         n = k + 1
@@ -1583,11 +1585,16 @@ def bar(ind, x, y, w, h, value, maximum, color, direction='horizontal', visible=
             f'{ind}\tcolor = {{ {r:.2f} {g:.2f} {b:.2f} 1 }}\n{ind}\talwaystransparent = yes\n{ind}}}\n')
 
 
+RW_COLOR = (0.9, 0.9, 0.9)   # the weekly column: vanilla's one-series graph colour (v3_plotline_gdp), as the pool's line
+
+
 def reinvest_chart(ind):
-    """The weekly re-investment in vanilla's graph frame (v3_plotline, as the GDP graph; Pat 04:50Z, weekly since
+    """The weekly reinvestment in vanilla's graph frame (v3_plotline, as the GDP graph; Pat 04:50Z, weekly since
     14:28Z). GUI plot lines only take the engine's own trends, so each week (pmr_rw_<i>, 0 = newest, rightmost) is a
-    column from zero, split by the tree chart's shares (pmr_rc_<g>_<i>, reinvest_effect) in the groups' colours.
-    Pat 15:33Z: no line over the columns, and "No historical data" until the first week is recorded."""
+    column from zero, pmr_rw_h_<i> rows tall (reinvest_effect), in one colour (gui review C3, Pat 2026-11-11: its
+    tooltip gives the week's total, and the split by group is the tree chart's; the five-colour split, pmr_rc_<g>_<i>,
+    is still recorded). Pat 15:33Z: no line over the columns, and "No historical data" until the first week is
+    recorded."""
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     fp = lambda x: f"'(CFixedPoint){x}'"
     w, h = RI_WEEKS * RI_COL_W, RI_ROWS * RI_ROW_H
@@ -1595,9 +1602,8 @@ def reinvest_chart(ind):
     columns, hover = '', ''
     for c in range(RI_WEEKS):
         i = RI_WEEKS - 1 - c
-        for gi in range(len(GROUPS) - 1, -1, -1):
-            columns += bar(i2, c * RI_COL_W, 0, RI_COL_W - 1, h, f"FixedPointToFloat({var(f'pmr_rc_{gi}_{i}')})",
-                           RI_ROWS, GROUPS[gi][3], 'vertical', f"GreaterThan_CFixedPoint({var(f'pmr_rc_{gi}_{i}')}, {fp(0)})")
+        columns += bar(i2, c * RI_COL_W, 0, RI_COL_W - 1, h, f"FixedPointToFloat({var(f'pmr_rw_h_{i}')})",
+                       RI_ROWS, RW_COLOR, 'vertical', f"GreaterThan_CFixedPoint({var(f'pmr_rw_h_{i}')}, {fp(0)})")
         hover += (f'{i2}widget = {{\n{i3}visible = "[GreaterThan_CFixedPoint({var(f"pmr_rw_b_{i}")}, {fp(0)})]"\n'
                   f'{i3}position = {{ {c * RI_COL_W} 0 }}\n{i3}size = {{ {RI_COL_W} {h} }}\n'
                   f'{i3}tooltip = "PMR_RW_COLUMN_{i}"\n{i3}using = tooltip_above\n{i2}}}\n')
@@ -1736,17 +1742,7 @@ def compact_tree(ind, title, items, tooltip, legend_w):
     for c in range(cols):
         legend += f'{i3}flowcontainer = {{\n{i4}direction = vertical\n'
         for k, pop, _pts, share, tt in items[c * LEGEND_ROWS:(c + 1) * LEGEND_ROWS]:
-            r, g, b = pop_rgb(pop)
-            legend += (f'{i4}widget = {{\n{i5}size = {{ {legend_w} {LEGEND_ROW_H} }}\n{i5}tooltip = "{tt}"\n'
-                       f'{i5}using = tooltip_above\n'
-                       f'{i5}icon = {{\n{i6}parentanchor = vcenter\n{i6}position = {{ 4 0 }}\n{i6}size = {{ 18 18 }}\n'
-                       f'{i6}texture = "gfx/interface/piechart/piechart_legend.dds"\n{i6}color = {{ {r} {g} {b} 1 }}\n{i5}}}\n'
-                       f'{i5}textbox = {{\n{i6}parentanchor = vcenter\n{i6}position = {{ 26 0 }}\n'
-                       f'{i6}size = {{ {legend_w - 26 - 30} {LEGEND_ROW_H} }}\n{i6}align = left|nobaseline\n{i6}elide = right\n'
-                       f'{i6}using = fontsize_small\n{i6}text = "{k}"\n{i5}}}\n'
-                       f'{i5}textbox = {{\n{i6}parentanchor = right|vcenter\n{i6}position = {{ -3 0 }}\n{i6}autoresize = yes\n'
-                       f'{i6}align = right|nobaseline\n{i6}using = fontsize_small\n'
-                       f'{i6}raw_text = "#v [{COUNTRY}.MakeScope.Var(\'{share}\').GetValue|0%]#!"\n{i5}}}\n{i4}}}\n')
+            legend += legend_row(k, pop, share, tt, legend_w, i4)
         legend += f'{i3}}}\n'
     return (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}spacing = 5\n'
             f'{i1}margin_left = 10\n{i1}margin_right = 5\n{i1}margin_top = 5\n{i1}margin_bottom = 10\n'
@@ -1767,10 +1763,76 @@ def compact_tree(ind, title, items, tooltip, legend_w):
             + legend + f'{i2}}}\n{i1}}}\n{ind}}}\n')
 
 
+SPLIT_BAR_H = 22   # a split's stacked bar, as tall as the Production Method option bars (generate.py OPTION_BAR_H)
+
+
+def legend_row(k, pop, share, tt, legend_w, ind):
+    """One legend row of a chart: swatch, name and share, with its own tooltip."""
+    i1, i2 = ind + '\t', ind + '\t\t'
+    r, g, b = pop_rgb(pop)
+    return (f'{ind}widget = {{\n{i1}size = {{ {legend_w} {LEGEND_ROW_H} }}\n{i1}tooltip = "{tt}"\n'
+            f'{i1}using = tooltip_above\n'
+            f'{i1}icon = {{\n{i2}parentanchor = vcenter\n{i2}position = {{ 4 0 }}\n{i2}size = {{ 18 18 }}\n'
+            f'{i2}texture = "gfx/interface/piechart/piechart_legend.dds"\n{i2}color = {{ {r} {g} {b} 1 }}\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}parentanchor = vcenter\n{i2}position = {{ 26 0 }}\n'
+            f'{i2}size = {{ {legend_w - 26 - 30} {LEGEND_ROW_H} }}\n{i2}align = left|nobaseline\n{i2}elide = right\n'
+            f'{i2}using = fontsize_small\n{i2}text = "{k}"\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}parentanchor = right|vcenter\n{i2}position = {{ -3 0 }}\n{i2}autoresize = yes\n'
+            f'{i2}align = right|nobaseline\n{i2}using = fontsize_small\n'
+            f'{i2}raw_text = "#v [{COUNTRY}.MakeScope.Var(\'{share}\').GetValue|0%]#!"\n{i1}}}\n{ind}}}\n')
+
+
+def split_bar(ind, items, tooltip, w):
+    """A part of a whole as one stacked bar (gui review C4, Pat 2026-11-11), built as PMR's recipe bar is (generate.py
+    slice_bar, after vanilla's Owners bar, building_ownership_stacked_barchart): a slice per item, left to right in
+    items' order, as wide as its share (layoutstretchfactor_horizontal) in its pop type's colour, the legend's. The
+    whole bar is the hover area, with the chart's tooltip, which lists every part's figures."""
+    i1, i2, i3, i4 = (ind + '\t' * k for k in range(1, 5))
+    var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"   # noqa: E731
+    slices = ''
+    for k, pop, _pts, share, _tt in items:
+        r, g, b = pop_rgb(pop)
+        slices += (f'{i2}# {k}\n{i2}hbox = {{\n'
+                   f'{i3}visible = "[GreaterThan_CFixedPoint({var(share)}, \'(CFixedPoint)0\')]"\n'
+                   f'{i3}layoutpolicy_horizontal = expanding\n{i3}layoutpolicy_vertical = expanding\n'
+                   f'{i3}layoutstretchfactor_horizontal = "[FixedPointToInt(Multiply_CFixedPoint({var(share)}, '
+                   f'\'(CFixedPoint)100\'))]"\n'
+                   f'{i3}alwaystransparent = yes\n'
+                   f'{i3}background = {{\n{i4}texture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
+                   f'{i4}color = {{ {r} {g} {b} 1 }}\n{i4}spriteborder = {{ 3 3 }}\n'
+                   f'{i4}using = simple_frame_mask\n{i4}using = progressbar_texture_properties\n{i3}}}\n{i2}}}\n')
+    return (f'{ind}widget = {{\n{i1}size = {{ {w} {SPLIT_BAR_H} }}\n'
+            f'{i1}background = {{\n{i2}texture = "gfx/interface/progressbar/progressbar_empty.dds"\n'
+            f'{i2}spriteType = Corneredtiled\n{i2}spriteborder = {{ 4 4 }}\n{i2}texture_density = 2\n'
+            f'{i2}using = progressbar_texture_properties\n{i1}}}\n'
+            f'{i1}hbox = {{\n{i2}layoutpolicy_horizontal = expanding\n{i2}layoutpolicy_vertical = expanding\n'
+            f'{i2}margin = {{ 1 1 }}\n' + slices + f'{i1}}}\n'
+            f'{i1}widget = {{\n{i2}size = {{ 100% 100% }}\n{i2}tooltip = "{tooltip}"\n{i2}using = tooltip_above\n{i1}}}\n'
+            f'{ind}}}\n')
+
+
+def compact_bar(ind, title, items, tooltip, w, h):
+    """compact_tree's frame, heading and legend rows (one column) around a stacked bar instead of a tree map (gui
+    review C4: a split of two or four parts is a bar, not a tree chart). w and h: the frame's size, so two side by
+    side are level. items as compact_tree's."""
+    i1, i2 = ind + '\t', ind + '\t\t'
+    inner = w - 15   # the frame's margins, as compact_tree's
+    return (f'{ind}flowcontainer = {{\n{i1}direction = vertical\n{i1}spacing = 5\n{i1}minimumsize = {{ {w} {h} }}\n'
+            f'{i1}margin_left = 10\n{i1}margin_right = 5\n{i1}margin_top = 5\n{i1}margin_bottom = 10\n'
+            f'{i1}background = {{\n{i2}using = entry_bg\n{i1}}}\n'
+            f'{i1}textbox = {{\n{i2}size = {{ {inner} 23 }}\n{i2}align = hcenter|nobaseline\n{i2}default_format = "#title"\n'
+            f'{i2}elide = right\n{i2}text = "{title}"\n{i2}tooltip = "{tooltip}"\n{i2}using = tooltip_above\n{i1}}}\n'
+            + split_bar(i1, items, tooltip, inner)
+            + f'{i1}flowcontainer = {{\n{i2}direction = vertical\n'
+            + ''.join(legend_row(k, pop, share, tt, inner, i2) for k, pop, _pts, share, tt in items)
+            + f'{i1}}}\n{ind}}}\n')
+
+
 def invest_charts(ind):
     """Top of Recent Investments: what was built since this version, by construction points (invest_effects), as
     the market panel's Exports and Imports charts (Pat 16:12Z, replacing the three bars of 15:33Z): domestic or
-    foreign and who built it side by side, the priority groups under them."""
+    foreign and who built it side by side, the priority groups under them. Since the gui review (C4, Pat
+    2026-11-11) the first two are a stacked bar each, with the same legend rows; the priority groups keep the tree."""
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     has = f"GreaterThan_CFixedPoint({var('pmr_iv_tot')}, '(CFixedPoint)0')"
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
@@ -1780,11 +1842,11 @@ def invest_charts(ind):
            for i, (k, _n, pop) in enumerate(WHO)]
     groups = [(f'PMR_IPW_GROUP_{g}', pop, f'pmr_iv_pts_{i}', f'pmr_iv_gs_{i}', f'PMR_IV_GROUP_{g}_TT')
               for i, (g, _n, pop, _c, _b) in enumerate(GROUPS)]
-    # the first row shares the panel's width: the domestic chart's legend is narrow, who built takes the rest
-    place_legend = 112
-    who_legend = PANEL_W - 10 - 2 * (10 + TREE + 10 + 5) - place_legend
-    row = (compact_tree(i3, 'PMR_IV_PLACE_TITLE', place, 'PMR_IV_PLACE_TT', place_legend)
-           + compact_tree(i3, 'PMR_IV_WHO_TITLE', who, 'PMR_IV_WHOS_TT', who_legend))
+    # the first row shares the panel's width, half each, both as tall as the one with more legend rows
+    half = (PANEL_W - 10) // 2
+    tall = 5 + 23 + 5 + SPLIT_BAR_H + 5 + max(len(place), len(who)) * LEGEND_ROW_H + 10
+    row = (compact_bar(i3, 'PMR_IV_PLACE_TITLE', place, 'PMR_IV_PLACE_TT', half, tall)
+           + compact_bar(i3, 'PMR_IV_WHO_TITLE', who, 'PMR_IV_WHOS_TT', half, tall))
     return (f'{ind}flowcontainer = {{\n{i1}parentanchor = hcenter\n{i1}direction = vertical\n{i1}spacing = 10\n'
             f'{i1}margin = {{ 0 8 }}\n'
             f'{i1}textbox = {{\n{i2}visible = "[Not({has})]"\n{i2}autoresize = yes\n{i2}multiline = yes\n'
@@ -1875,10 +1937,15 @@ def open_window(ind):
     return f'{ind}onclick = "[GetVariableSystem.Set(\'{PICK}\', \'yes\')]"\n'
 
 
+CANCEL = 'cancel'   # PICK's value while the Cancel Policy confirmation is open (policy_cancel_ask)
+CARD_BUTTON_W = 124   # Change Policy and Cancel Policy side by side on the policy card
+
+
 def policy_card(ind):
     """The policy card on the tab: a plus in the middle like vanilla's Add Principle slot (Pat 04:50Z) that opens
     the policy window (Pat 13:05Z); a held policy shows its name and benefits and a Change Policy button that opens
-    the same window, and once its 5 years are up an X that cancels it (Pat 20:08Z)."""
+    the same window, and once its 5 years are up (Pat 20:08Z) a Cancel Policy button beside it (gui review B2, Pat
+    2026-11-11: it was the card's close X, which in vanilla only closes) that asks first (policy_cancel_ask)."""
     avail = f"GetScriptedGui('pmr_policy_available_sgui').IsShown(GuiScope.SetRoot({COUNTRY}.MakeScope).End)"
     held_any = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint)0')"
     held = lambda i: f"EqualTo_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint){i}')"
@@ -1887,17 +1954,20 @@ def policy_card(ind):
     for i, (k, _n, icon, *_r) in enumerate(POLICIES, 1):
         inner += card_column(i1, policy_tt(k, i2) + card_title(icon, f'PMR_POLICY_{k}', i2)
                              + card_text(f'PMR_POLICY_{k}_BENEFITS', i2), held(i))
-    inner += (f'{i1}button = {{\n{i2}visible = "[{held_any}]"\n{i2}using = default_button\n'
-              f'{i2}size = {{ 160 32 }}\n{i2}parentanchor = bottom|hcenter\n{i2}position = {{ 0 -12 }}\n'
-              f'{i2}text = "PMR_POLICY_CHANGE"\n{i2}enabled = "[{avail}]"\n' + open_window(i2) +
-              f'{i2}tooltip = "PMR_POLICY_CHANGE_SEL_TT"\n{i2}using = tooltip_above\n{i1}}}\n')
-    # Pat 20:08Z: once its 5 years are up, an X at the card's top right cancels the policy (vanilla's close button)
-    cancel = f"GetScriptedGui('pmr_policy_cancel_sgui')"
-    inner += (f'{i1}close_button = {{\n{i2}visible = "[{sv_on("pmr_policy_cancellable")}]"\n{i2}size = {{ 30 30 }}\n'
-              f'{i2}parentanchor = top|right\n{i2}position = {{ -6 6 }}\n'
-              f'{i2}enabled = "[{cancel}.IsValid(GuiScope.SetRoot({COUNTRY}.MakeScope).End)]"\n'
-              f'{i2}onclick = "[{cancel}.Execute(GuiScope.SetRoot({COUNTRY}.MakeScope).End)]"\n'
-              f'{i2}blockoverride "tooltip" {{\n{i3}tooltip = "PMR_POLICY_CANCEL_TT"\n{i2}}}\n{i1}}}\n')
+    cancel = "GetScriptedGui('pmr_policy_cancel_sgui')"
+    # the Change Policy tooltip is the lock line while the policy is locked, and none otherwise (vanilla's
+    # lens_toolbar.gui tooltips select '' the same way)
+    inner += (f'{i1}flowcontainer = {{\n{i2}visible = "[{held_any}]"\n{i2}parentanchor = bottom|hcenter\n'
+              f'{i2}position = {{ 0 -12 }}\n{i2}spacing = 8\n{i2}ignoreinvisible = yes\n'
+              f'{i2}button = {{\n{i3}using = default_button\n{i3}size = {{ {CARD_BUTTON_W} 32 }}\n'
+              f'{i3}text = "PMR_POLICY_CHANGE"\n{i3}enabled = "[{avail}]"\n' + open_window(i3) +
+              f'{i3}tooltip = "[SelectLocalization({sv_on("pmr_policy_locked")}, \'PMR_POLICY_CHANGE_LOCK_TT\', \'\')]"\n'
+              f'{i3}using = tooltip_above\n{i2}}}\n'
+              f'{i2}button = {{\n{i3}visible = "[{sv_on("pmr_policy_cancellable")}]"\n{i3}using = default_button\n'
+              f'{i3}size = {{ {CARD_BUTTON_W} 32 }}\n{i3}text = "PMR_POLICY_CANCEL"\n'
+              f'{i3}enabled = "[{cancel}.IsValid(GuiScope.SetRoot({COUNTRY}.MakeScope).End)]"\n'
+              f'{i3}onclick = "[GetVariableSystem.Set(\'{PICK}\', \'{CANCEL}\')]"\n'
+              f'{i3}tooltip = "PMR_POLICY_CANCEL_TT"\n{i3}using = tooltip_above\n{i2}}}\n{i1}}}\n')
     inner += (f'{i1}flowcontainer = {{\n{i2}visible = "[Not({held_any})]"\n{i2}parentanchor = center\n'
               f'{i2}direction = vertical\n{i2}spacing = 8\n'
               f'{i2}new_principle_slot = {{\n{i3}parentanchor = hcenter\n'
@@ -1999,8 +2069,10 @@ def policy_window(law, items):
         rows += f'{i2}}}\n'
     w = PER_ROW * PCARD_W + (PER_ROW - 1) * 10 + 40
     h = 84 + body + 10    # the rows and their spacing, then a margin; no intro text (Pat 20:06Z)
+    # PICK set to CANCEL is the Cancel Policy confirmation, not this window (policy_cancel_ask)
+    pick = f"And(GetVariableSystem.Exists('{PICK}'), Not(GetVariableSystem.HasValue('{PICK}', '{CANCEL}')))"
     return (f'\ttype pmr_policy_window_{law} = widget {{\n'
-            f'{i1}visible = "[And(GetVariableSystem.Exists(\'{PICK}\'), {shown})]"\n'
+            f'{i1}visible = "[And({pick}, {shown})]"\n'
             f'{i1}parentanchor = hcenter\n{i1}size = {{ {w} {h} }}\n{i1}using = clickthrough_blocker\n'
             f'{i1}background = {{\n{i2}texture = "gfx/interface/backgrounds/popup_bg.dds"\n{i2}spriteType = Corneredstretched\n'
             f'{i2}spriteborder = {{ 90 90 }}\n{i2}texture_density = 2\n'
@@ -2021,6 +2093,33 @@ def policy_window(law, items):
 def sv_on(name):
     """GUI: the player's country script value name is above 0."""
     return f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.ScriptValue('{name}'), '(CFixedPoint)0')"
+
+
+def policy_cancel_ask(ind):
+    """Gui review B2 (Pat 2026-11-11): Cancel Policy asks first, since the Authority paid is not refunded, in the style
+    of generate.py's Retool Government Levels confirmation (patch_hud_gov_all: vanilla's default_confirmation_window
+    look, No then Yes). It pops out where the policy window does (pmr_policy_popout), open while PICK holds CANCEL,
+    so whatever closes the policy window (the tabs, the panel closing, Change Policy) closes this too."""
+    scope = f'GuiScope.SetRoot({COUNTRY}.MakeScope).End'
+    sg = "GetScriptedGui('pmr_policy_cancel_sgui')"
+    close = f"onclick = \"[GetVariableSystem.Clear('{PICK}')]\""
+    i1, i2, i3, i4 = (ind + '\t' * k for k in range(1, 5))
+    return (f'{ind}container = {{\n{i1}visible = "[GetVariableSystem.HasValue(\'{PICK}\', \'{CANCEL}\')]"\n'
+            f'{i1}using = clickthrough_blocker\n'
+            f'{i1}background = {{\n{i2}using = default_background\n{i1}}}\n'
+            f'{i1}background = {{\n{i2}using = frame_small\n{i1}}}\n'
+            f'{i1}flowcontainer = {{\n{i2}direction = vertical\n{i2}margin = {{ 30 20 }}\n{i2}spacing = 20\n'
+            f'{i2}textbox = {{\n{i3}minimumsize = {{ 300 -1 }}\n{i3}maximumsize = {{ 300 800 }}\n'
+            f'{i3}multiline = yes\n{i3}autoresize = yes\n{i3}align = hcenter|nobaseline\n'
+            f'{i3}text = "PMR_POLICY_CANCEL_ASK"\n{i2}}}\n'
+            f'{i2}flowcontainer = {{\n{i3}direction = horizontal\n{i3}using = default_list_position\n{i3}spacing = 20\n'
+            f'{i3}button = {{\n{i4}using = default_button\n{i4}using = close_button_sound\n'
+            f'{i4}size = {{ 140 40 }}\n{i4}text = "CONFIRM_NO"\n{i4}{close}\n{i3}}}\n'
+            f'{i3}button = {{\n{i4}using = default_button_primary_action\n{i4}using = confirm_button_sound\n'
+            f'{i4}size = {{ 140 40 }}\n{i4}text = "CONFIRM_YES"\n'
+            f'{i4}enabled = "[{sg}.IsValid({scope})]"\n'
+            f'{i4}onclick = "[{sg}.Execute({scope})]"\n'
+            f'{i4}{close}\n{i3}}}\n{i2}}}\n{i1}}}\n{ind}}}\n')
 
 
 def policy_block():
@@ -2054,6 +2153,7 @@ def policy_block():
         # side panel (generate.py patch_browser_tabs puts this in the panel's root), not down the scrolled list
         '\ttype pmr_policy_popout = container {\n'
         + ''.join(f'{i1}pmr_policy_window_{lw} = {{}}\n' for lw in policy_laws())
+        + policy_cancel_ask(i1)
         + '\t}\n\n')
 
 
@@ -2431,10 +2531,17 @@ def patch_ai_value(text, owners, invest):
 
 # ---------------------------------------------------------------------------------------------------------------
 
+def times(x):
+    """A multiplier as the gui review's one format (PRINCIPLES 3): ×0.33, ×0.5, ×1, ×1.5, ×3."""
+    return f'×{x:.2f}'.rstrip('0').rstrip('.')
+
+
 def localization(types, chart_types=None):
     law = "[GetLawType('law_interventionism').GetName]"
     lf = "[GetLawType('law_laissez_faire').GetName]"
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
+    # construction points and their share (gui review A4: the icon says what the number is)
+    pts = lambda name, share: f'@construction! #v [{var(name)}|0]#! (#v [{var(share)}|0%]#!)'   # noqa: E731
     loc = [
         ' PMR_TAB_GOVERNMENT:0 "Government"',
         ' PMR_TAB_PRIVATE:0 "Private"',
@@ -2444,91 +2551,91 @@ def localization(types, chart_types=None):
         'Expansion"',
         f' PMR_PI_RESEARCH_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_rweek\').GetValue)|D+=]#! '
         'Research grants"',
-        ' PMR_RW_CHART_HEADER:0 "Weekly Re-investment"',
-        ' PMR_RW_EMPTY:0 "No historical data"',
+        ' PMR_RW_CHART_HEADER:0 "Weekly Reinvestment"',
+        ' PMR_RW_EMPTY:0 "$GRAPH_NOT_INITIALIZED$"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
         ' PMR_PI_SOURCES_HEADER:0 "Buildings Adding to the Pool"',
-        ' PMR_PC_CAPTION:0 "Private levels"',
-        ' PMR_PC_EMPTY:0 "No data yet"',
+        ' PMR_PC_CAPTION:0 "Private Levels"',
+        ' PMR_PC_EMPTY:0 "$GRAPH_NOT_INITIALIZED$"',
         ' PMR_PC_TT:0 "[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
         ' PMR_PI_QUEUE_HEADER:0 "Private Construction"',
         ' PMR_PI_QUEUE_COUNT:0 ""',
-        ' PMR_PI_QUEUE_EMPTY:0 "No private construction is queued"',
+        ' PMR_PI_QUEUE_EMPTY:0 "No Private Construction queued"',
         ' PMR_PI_RECENT_HEADER:0 "Recent Investments and Privatizations"',
-        ' PMR_IV_EMPTY:0 "No data yet"',
+        ' PMR_IV_EMPTY:0 "$GRAPH_NOT_INITIALIZED$"',
         ' PMR_IV_HOME:0 "Domestic"',
         ' PMR_IV_ABROAD:0 "Foreign"',
-        f' PMR_IV_HOME_TT:0 "#header Domestic#!\\n#v [{var("pmr_iv_dom")}|0]#! points (#v [{var("pmr_iv_dsh")}|0%]#!)"',
-        f' PMR_IV_ABROAD_TT:0 "#header Foreign#!\\n#v [{var("pmr_iv_for")}|0]#! points (#v [{var("pmr_iv_fsh")}|0%]#!)"',
+        f' PMR_IV_HOME_TT:0 "#header Domestic#!\\n{pts("pmr_iv_dom", "pmr_iv_dsh")}"',
+        f' PMR_IV_ABROAD_TT:0 "#header Foreign#!\\n{pts("pmr_iv_for", "pmr_iv_fsh")}"',
         ' PMR_IV_NONE:0 ""',
         ' PMR_POLICY_ADD:0 "Add Policy"',
         f' PMR_POLICY_LOCKED:0 "Requires {law}, {lf} or [GetLawType(\'law_agrarianism\').GetName]"',
         ' PMR_POLICY_CHANGE:0 "Change Policy"',
-        f' PMR_POLICY_CHANGE_SEL_TT:0 "[SelectLocalization({sv_on("pmr_policy_locked")}, \'PMR_POLICY_CHANGE_LOCK_TT\', '
-        '\'PMR_POLICY_CHANGE_TT\')]"',
-        ' PMR_POLICY_CHANGE_TT:0 "Swap for another policy."',
-        f' PMR_POLICY_CHANGE_LOCK_TT:0 "#N Locked for [{var("pmr_policy_lock_m")}|0] months#!"',
-        f' PMR_POLICY_LOCKED_FOR:0 "#N Locked, [{var("pmr_policy_lock_m")}|0] months#!"',
-        ' PMR_POLICY_CANCEL_TT:0 "Cancel policy"',
+        f' PMR_POLICY_CHANGE_LOCK_TT:0 "@lock! #N Locked for [{var("pmr_policy_lock_m")}|0] months#!"',
+        f' PMR_POLICY_LOCKED_FOR:0 "@lock! #N Locked for [{var("pmr_policy_lock_m")}|0] months#!"',
+        # gui review B2 (Pat 2026-11-11): a labelled button and a Yes/No confirmation in place of the card's X
+        ' PMR_POLICY_CANCEL:0 "Cancel Policy"',
+        ' PMR_POLICY_CANCEL_TT:0 "#header Cancel Policy#!"',
+        ' PMR_POLICY_CANCEL_ASK:0 "#header Cancel Policy#!\\n'
+        + ''.join(f"[SelectLocalization(EqualTo_CFixedPoint({var('pmr_policy')}, '(CFixedPoint){i}'), "
+                  f"'PMR_POLICY_{k}', 'PMR_EMPTY')]" for i, (k, *_r) in enumerate(POLICIES, 1)) + '"',
         ' PMR_POLICY_WINDOW_TITLE:0 "Economic Policies"',
         f' PMR_POLICY_COST:0 "@aut! #v [{COUNTRY}.MakeScope.ScriptValue(\'pmr_policy_cost\')|0]#! Authority"',
         f' PMR_POLICY_PAID:0 "@aut! #v [{var("pmr_policy_paid")}|0]#! Authority"',
         ' pmr_policy_authority:0 "Economic Policy"',
         ' PMR_POLICY_CURRENT:0 "#v Current Policy#!"',
         ' PMR_IPW_HEADER:0 "Investment Priorities"',
-        ' PMR_PO_CAPTION:0 "By owner"',
+        ' PMR_PO_CAPTION:0 "By Owner"',
         ' PMR_PO_TT:0 "[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
         ' PMR_FD_TITLE:0 "Foreign or Domestic Investment"',
         ' PMR_FD_FOREIGN:0 "Foreign"',
         ' PMR_FD_DOMESTIC:0 "Domestic"',
-        ' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\nYour states weigh a third (Foreign) to '
-        f'{FD_MULT[FD_NOTCHES]:g} times (Domestic)\\nLike a tariff: {GRACE_DAYS} days to change, then 3 months"',
-        f' PMR_FD_COOLDOWN:0 "#N Locked: #v [{var("pmr_fd_wk")}|0]#! weeks left#!"',
+        # gui review A4 (Pat 2026-11-11): one multiplier format, the lock as an icon line
+        ' PMR_FD_TT:0 "#header Foreign or Domestic Investment#!\\n$TOOLTIP_DELIMITER$\\n'
+        f'Your states\' weight #v {times(FD_MULT[1])}#! to #v {times(FD_MULT[FD_NOTCHES])}#!\\n'
+        f'@lock! Locks for #v {round((COOLDOWN_DAYS - GRACE_DAYS) / 30.4)}#! months after #v {GRACE_DAYS}#! days"',
+        f' PMR_FD_COOLDOWN:0 "@lock! #N Locked for [{var("pmr_fd_wk")}|0] weeks#!"',
     ]
-    mid = (FD_NOTCHES + 1) // 2
     names = {1: 'Strongly Foreign', 2: 'Foreign', 3: 'Leaning Foreign', 4: 'No Preference', 5: 'Leaning Domestic',
              6: 'Domestic', 7: 'Strongly Domestic'}
-    times = {1: 'a third', 2: 'half', 3: 'two thirds', 5: '1.5 times', 6: 'twice', 7: '3 times'}
-    assert all(abs(FD_MULT[n] - {1: 1 / 3, 2: 0.5, 3: 2 / 3, 5: 1.5, 6: 2, 7: 3}[n]) < 1e-9 for n in times)
     cooling = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.ScriptValue('pmr_fd_cooling'), '(CFixedPoint)0')"
     for n in range(1, FD_NOTCHES + 1):
-        what = '' if n == mid else f': your states {"#P" if n > mid else "#N"} {times[n]}#!'
+        # gui review T6: a neutral choice, so white, not red or green
         loc.append(f' PMR_FD_NOTCH_{n}:0 "[SelectLocalization({cooling}, \'PMR_FD_COOLDOWN\', \'PMR_FD_OPEN_{n}\')]"')
-        loc.append(f' PMR_FD_OPEN_{n}:0 "#bold {names[n]}#!{what}"')
+        loc.append(f' PMR_FD_OPEN_{n}:0 "#header {names[n]}#!\\nYour states #v {times(FD_MULT[n])}#!"')
     for i, (k, name, _p) in enumerate(OWNERS):
         loc.append(f' PMR_PO_NAME_{k}:0 "{name}"')
         # Pat 2026-10-20 03:52Z: the Companies row lists the companies by their week's profit (pmr_co_rank)
-        cos = ''.join(f"[SelectLocalization(NotZero_CFixedPoint({var(f'pmr_co_s_{n}')}), 'PMR_CO_{n}', 'PMR_EMPTY')]"
-                      for n in range(1, CO_SLOTS + 1)) if k == 'company' else ''
+        cos = ('\\n$TOOLTIP_DELIMITER$'
+               + ''.join(f"[SelectLocalization(NotZero_CFixedPoint({var(f'pmr_co_s_{n}')}), 'PMR_CO_{n}', 'PMR_EMPTY')]"
+                         for n in range(1, CO_SLOTS + 1))) if k == 'company' else ''
         loc.append(f' PMR_PO_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_po_{i}")}|0]#! levels{cos}"')
     loc += [f' PMR_CO_{n}:0 "\\n[{COUNTRY}.MakeScope.Var(\'pmr_co_{n}\').GetCompany.GetName] '
             f'#v @money![{var(f"pmr_co_v_{n}")}|D]#!"' for n in range(1, CO_SLOTS + 1)]
     for i, (k, name, _c) in enumerate(WHO):
         loc.append(f' PMR_IV_WHO_{k}:0 "{name}"')
-        loc.append(f' PMR_IV_WHO_{k}_TT:0 "#header {name}#!\\n#v [{var(f"pmr_iv_w_{i}")}|0]#! points '
-                   f'(#v [{var(f"pmr_iv_ws_{i}")}|0%]#!)"')
+        loc.append(f' PMR_IV_WHO_{k}_TT:0 "#header {name}#!\\n{pts(f"pmr_iv_w_{i}", f"pmr_iv_ws_{i}")}"')
     short = {'gov': 'Government', 'investors': 'Investors', 'local': 'Local Owners', 'foreign': 'Foreign'}
     loc += [f' PMR_IV_WHO_SHORT_{k}:0 "{short[k]}"' for k, *_r in WHO]
-    pts = lambda name, share: f'#v [{var(name)}|0]#! (#v [{var(share)}|0%]#!)'
     loc += [' PMR_IV_PLACE_TITLE:0 "Domestic and Foreign"',
             ' PMR_IV_WHO_TITLE:0 "Built By"',
             ' PMR_IV_GROUPS_TITLE:0 "Priority Groups"',
-            ' PMR_IV_PLACE_TT:0 "#header Domestic and Foreign#!\\nConstruction points:\\n'
+            ' PMR_IV_PLACE_TT:0 "#header Domestic and Foreign#!\\n$TOOLTIP_DELIMITER$\\n'
             f'Domestic, in your states: {pts("pmr_iv_dom", "pmr_iv_dsh")}\\n'
             f'Foreign, your government and investors abroad: {pts("pmr_iv_for", "pmr_iv_fsh")}"',
-            ' PMR_IV_WHOS_TT:0 "#header Built By#!\\nConstruction points:'
+            ' PMR_IV_WHOS_TT:0 "#header Built By#!\\n$TOOLTIP_DELIMITER$'
             + ''.join(f'\\n{name}: {pts(f"pmr_iv_w_{i}", f"pmr_iv_ws_{i}")}' for i, (k, name, _p) in enumerate(WHO))
             + '"',
-            ' PMR_IV_GROUPS_TT:0 "#header Priority Groups#!\\nConstruction points:'
+            ' PMR_IV_GROUPS_TT:0 "#header Priority Groups#!\\n$TOOLTIP_DELIMITER$'
             + ''.join(f'\\n{name}: {pts(f"pmr_iv_pts_{i}", f"pmr_iv_gs_{i}")}' for i, (g, name, *_r) in enumerate(GROUPS))
             + '"']
     for gi, (g, name, *_r) in enumerate(GROUPS):
         lines = ''.join(f"[SelectLocalization(GreaterThan_CFixedPoint({var(f'pmr_iv_bt_{t}')}, '(CFixedPoint)0'), "
                         f"'PMR_IV_BT_{t}', 'PMR_IV_NONE')]" for t, tg, _c in types if tg == gi)
-        loc.append(f' PMR_IV_GROUP_{g}_TT:0 "#header {name}#!\\nConstruction points completed: '
-                   f'#v [{var(f"pmr_iv_pts_{gi}")}|0]#! (#v [{var(f"pmr_iv_gs_{gi}")}|0%]#!), by building:{lines}"')
+        loc.append(f' PMR_IV_GROUP_{g}_TT:0 "#header {name}#!\\n{pts(f"pmr_iv_pts_{gi}", f"pmr_iv_gs_{gi}")}'
+                   f'\\n$TOOLTIP_DELIMITER${lines}"')
     for t, _g, _c in types:
-        loc.append(f' PMR_IV_BT_{t}:0 "\\n$building_{t}$: #v [{var(f"pmr_iv_bt_{t}")}|0]#! points, '
+        loc.append(f' PMR_IV_BT_{t}:0 "\\n$building_{t}$: @construction! #v [{var(f"pmr_iv_bt_{t}")}|0]#!, '
                    f'#v [{var(f"pmr_iv_bl_{t}")}|0]#! levels"')
     for k, name, _i, mods, core, tt in POLICIES:
         loc += [f' pmr_policy_{k}:0 "{name}"', f' PMR_POLICY_{k}:0 "{name}"',
@@ -2540,23 +2647,24 @@ def localization(types, chart_types=None):
     for inst in TITANS_INSTITUTIONS:
         loc.append(f' pmr_titans_{inst}:0 "Market Titans: ${inst}$"')
     sv = lambda name: f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.ScriptValue('{name}'), '(CFixedPoint)0')"  # noqa: E731
-    loc += [f' PMR_IPW_LOCK_LF:0 "#N Locked under {lf}#!"',
-            ' PMR_IPW_LOCK_AGR:0 "#N Locked under [GetLawType(\'law_agrarianism\').GetName]#!"']
+    loc += [f' PMR_IPW_LOCK_LF:0 "@lock! #N Locked under {lf}#!"',
+            ' PMR_IPW_LOCK_AGR:0 "@lock! #N Locked under [GetLawType(\'law_agrarianism\').GetName]#!"']
     for g, *_r in GROUPS:
         loc += [f' PMR_IPW_LOCK_{g}:0 "[SelectLocalization({sv("pmr_ipw_lf")}, \'PMR_IPW_LOCK_LF\', \'PMR_IPW_LOCK_AGR\')]"',
-                f' PMR_IPW_COOLDOWN_{g}:0 "#N Locked: #v [{var(f"pmr_ipw_wk_{g}")}|0]#! weeks left#!"']
+                f' PMR_IPW_COOLDOWN_{g}:0 "@lock! #N Locked for [{var(f"pmr_ipw_wk_{g}")}|0] weeks#!"']
         for st in STEPS:
             loc += [f' PMR_IPW_COIN_{g}_{st}:0 "[SelectLocalization({sv(f"pmr_ipw_locked_{g}")}, '
                     f'\'PMR_IPW_LOCK_{g}\', \'PMR_IPW_OPEN_{g}_{st}\')]"',
                     f' PMR_IPW_OPEN_{g}_{st}:0 "[SelectLocalization({sv(f"pmr_ipw_cooling_{g}")}, '
                     f'\'PMR_IPW_COOLDOWN_{g}\', \'PMR_IPW_NOTCH_{st}\')]"']
     for s in STEPS:
-        loc.append(f' PMR_IPW_NOTCH_{s}:0 "' + ('No priority' if s == 0 else
-                   f'{s}% of the cap: #P +[FixedPointToInt(Multiply_CFixedPoint({COUNTRY}.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint){s}\'))]%#!')
+        # gui review A4, T6: a priority level is a neutral choice, so white, not green
+        loc.append(f' PMR_IPW_NOTCH_{s}:0 "' + ('#v +0%#! weight' if s == 0 else
+                   f'#v +[FixedPointToInt(Multiply_CFixedPoint({COUNTRY}.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint){s}\'))]%#! weight')
                    + '"')
     for i in range(RI_WEEKS):
-        when = 'This week' if i == 0 else ('1 week ago' if i == 1 else f'{i} weeks ago')
-        loc.append(f' PMR_RW_COLUMN_{i}:0 "{when}: #v @money![{var(f"pmr_rw_{i}")}|D]#! re-invested"')
+        when = 'This Week' if i == 0 else ('1 Week Ago' if i == 1 else f'{i} Weeks Ago')
+        loc.append(f' PMR_RW_COLUMN_{i}:0 "#header {when}#!\\n#v @money![{var(f"pmr_rw_{i}")}|D]#! reinvested"')
     for i, (g, name, _d, _c, bgs) in enumerate(GROUPS):
         v = VAR.format(g)
         covers = ', '.join(f'${bg}$' for bg in bgs)
@@ -2568,7 +2676,7 @@ def localization(types, chart_types=None):
         ts = (chart_types or [[]] * len(GROUPS))[i]
         lines = ''.join(f"[SelectLocalization(GreaterThan_CFixedPoint({var(f'pmr_pt_{bk[9:]}')}, '(CFixedPoint)0'), "
                         f"'PMR_PT_{bk[9:]}', 'PMR_EMPTY')]" for bk in ts)
-        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels{lines}"')
+        loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels\\n$TOOLTIP_DELIMITER${lines}"')
         loc += [f' PMR_PT_{bk[9:]}:0 "\\n[GetBuildingType(\'{bk}\').GetName] #v [{var(f"pmr_pt_{bk[9:]}")}|0]#!"' for bk in ts]
     return loc
 
