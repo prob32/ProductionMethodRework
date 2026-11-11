@@ -10,9 +10,10 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-Timed runs: nothing is copied off the PC while the game runs (no log pulls, no file staging). If a pull happens
-anyway, its time goes in the run's README and the speed rows compare only the stretch before it (q103's April 1840
-step began within seconds of a mid-run pull, 19:40Z on 2026-11-11).
+Timed runs: from switching to no country until the timed stretch ends, the game window stays in front and nothing is
+typed or clicked on that PC (messages from a phone are fine). Speed rows compare only such a stretch. Both q103's
+and q104's slow stretches began within half a minute of messages sent from that PC, with the engine's tick tasks
+flat (`/mnt/project-files/pmr/perf/review-13/q104-pace.md`).
 
 ## Latest: the interface fixes from your q104 screenshots (q105, test mod)
 
@@ -26,10 +27,13 @@ Investment Pool Transfer graph, and the weekly record behind them goes. Start a 
 2. Any day after the first, take one screenshot for each H row below.
 3. Play a year as Britain and queue a government retool, so that a building is mid-retool when you take q104's G1 and
    G7 screenshots. G2 (a lit button), G3, G4 and G6 can be taken any time.
-4. Switch to no country and run as long as you like.
-5. Close the game and tell the build thread. Nothing is pulled from the PC while it runs.
+4. Switch to no country. From here the game window stays in front and nothing is typed or clicked on that PC until
+   January 1840 (send messages from your phone).
+5. On 1 January 1840 click another window so the game is behind it, without minimising (F1). On 1 January 1841 click
+   back on the game, and run to 1 January 1842.
+6. Close the game and tell the build thread.
 
-Read `logs\error.log` first (X2, X3).
+Read `logs\error.log` first (X2, X3). The speed rows read the months with no country.
 
 | # | Do | Pass | A null means |
 | --- | --- | --- | --- |
@@ -43,6 +47,8 @@ Read `logs\error.log` first (X2, X3).
 | H8 | A building's trade-off option tooltip, and a Policies card's profit chip | Money in the game's short form ("£1.35K / week") | A long figure ("£1351"): send back |
 | H9 | Private tab, any day after a private building has started | Left of the pool graph, a line graph headed "Investment Pool Transfer" in the same frame; no weekly columns (this replaces q104 P1's columns) | "No historical data" there while the pool graph beside it draws its line: the trend does not read, send back with error.log's line naming `GetInvestmentIncomeTrend`. Both graphs "No historical data": no week of history yet, look again a month in. A flat line at 0: nothing private is being built, not a result |
 | X3 | debug.log and error.log | No `PMR;rec=REINVEST` line; no error.log line naming `pmr_rw_` | A REINVEST line: the old record is still installed, send back |
+| V5 | Speed, February 1837 to February 1839 with no country and the game in front (the build thread times it) | No slower than q103's 7.43 s a game month by more than 0.1 | Slower with the window rule kept: plain reads or q105's changes cost time; the tick dumps say which. The rule broken (a message from that PC in the window): not a result, read only the stretch before it |
+| F1 | Step 5: the game behind another window for 1840, in front again from 1841 | The pace rises by about 1.5 s a game month within weeks of January 1840 and falls back within weeks of January 1841: the window is the cause, and timed runs need the game in front | No change at either date: the window is not it, and the next run sends its messages from a phone. A rise with no fall: something stays on after one switch, send back with the log clocks |
 | X2 | error.log | No line naming `pmr_rmk_`, and no "missing required quote-escaping" line naming a `PMR_` key | A `pmr_rmk_` line: the map marks a type it no longer tests, send back. A quote-escaping line: harmless, send back |
 
 Still unseen from q104: G1, G2 (lit), G3, G4, G6, G7's tiers mid-retool, K1's locked node, and P2 (only once a
@@ -51,15 +57,16 @@ a change from q104 is a result.
 
 ## Earlier: the interface review and the books read plainly (q104, test mod, ran 2026-11-11)
 
-Ran 2026-11-11 on game 1.15.1 to April 1842: Britain at intervals to April 1841, no country otherwise, with your
-interface screenshots (`pmr/gui-review/q104-shots/`). From the screenshots, G5, G8 and P1 pass, G2's greyed form and K1
+Ran 2026-11-11 on game 1.15.1 to April 1842: Britain to January 1837 and September 1840 to April 1841, no country
+otherwise, with your interface screenshots (`pmr/gui-review/q104-shots/`). From the screenshots, G5, G8 and P1 pass, G2's greyed form and K1
 pass, and G7 passes for the colours on screen; the review's fixes are q105's H rows. From the logs: V3 passes (no
 `scope:pmr_bk` line), V4 passes (RETOOL_LEVEL 257 against q103's 264, SWITCH 9 against 5), S1 passes (`held` 74 to 81%
 from the third month), P1 (`off=0` in all 82 months), Q1 and R1 (passes in 57 of 82 months) pass, and the only
 error.log lines are load-time notes (X1's two `pmr_rmk_` keys, and concept links missing vanilla's quote escape, both
 fixed in q105). W2 passes on the West Country textile mill (shopkeepers 500, 750 and 1,000 a level as its share
-moved); W3 had three target changes, none moving a machinist or engineer figure, so nothing to judge. V5 is the
-performance thread's read; you were in the panels for much of the run. P2 could not be tried inside the lock.
+moved); W3 had three target changes, none moving a machinist or engineer figure, so nothing to judge. V5 is unread,
+not failed: all but its first three months ran at the slow pace that follows using the PC during the run, so
+`--value-reads 2` stays and V5 runs again in q105 (`perf/review-13/q104-pace.md`). P2 could not be tried inside the lock.
 
 
 From the build thread, after q103's run and your 19:30Z approval of the interface review (`pmr/gui-review/SPEC.md`).
