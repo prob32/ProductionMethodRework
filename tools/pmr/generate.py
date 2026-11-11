@@ -297,6 +297,47 @@ SWITCH_QUICK = False
 # pmr_price_<good> copies) with the bounds, without the state's copy and its day guard; pmr_profit_<b> and the
 # trade-offs read their own copies as before. The same prices.
 WATCH_DIRECT = False
+# Performance review 12 (2026-11-11; Pat 17:29Z: "a full review of where else we can save on performance ... through
+# restructuring and otherwise clever scripting and better engine leverage for outcomes"). Each switch is off by default
+# (= the q102 output) and stands alone.
+# RESEARCH_MAP: a research pass scans only the building types whose newest-recipe rules (pmr_newest_<b>, pmr_hbest_<b>)
+# name a technology the country holds since its last look (pmr_tk_<technology> on the country; 123 of 1.15's 178
+# technologies are named by none, and one that is touches 3.2 types of 48 on average). The scan has no other input a
+# technology can change, so the types left out would have read the same newest recipe. Its other inputs keep their own
+# wake: electricity and rail (pmr_lsup), a law the rules name (pmr_lw_<law>, asked at the country's monthly pulse, where
+# q102 waited for the next technology), and a state that changed hands, whose next update scans every type (pmr_own).
+# AUTO_BEST's pass runs only for a technology its ladders name; its monthly run stays.
+RESEARCH_MAP = False
+RESEARCH_TECHS = {}   # building short name -> the technologies its newest-recipe scans ask about (tick_effect fills it)
+RESEARCH_LAWS = {}    # building short name -> the laws they ask about
+RESEARCH_OTHER = {}   # building short name -> unlock keys of its recipes that are neither (scanned at every technology)
+# PF_SUMS: the AI countries' investment term (pmr_pterm_<b>, the pick's vanilla score averaged over the country's
+# levels) from running sums: a state adds the difference to its owner's sums when its score or level moves
+# (pmr_pf_sync_<b>, from pmr_best_<b>), where pmr_pf_all swept every state of every AI country for every type each
+# month. The same sums, so the same term (private_investment.pf_sums_effects). A state that changed hands moves its
+# parts (pmr_own_check, from on_state_owner_change and the state's monthly pulse); a country takes its sums afresh once
+# a year and in a month its number of states moved. A building that is gone leaves the sums, which the sweep never
+# saw (the state kept its last pmr_level_<b>). Test builds log PMR;rec=PFSUM monthly.
+PF_SUMS = False
+PF_SYNC = set()   # short names of the types whose pmr_best_<b> calls pmr_pf_sync_<b> (tick_effect fills it)
+# QUIET_TICK: an AI building's monthly update with nothing open, queued or moved since its last accounting ends after
+# the ownership read and the trade-off step: every later step of pmr_tick_body_<b> tests one of the same facts and
+# would skip its part. Test builds count them (PMR;rec=QUIET monthly).
+QUIET_TICK = False
+# VALUE_READS: the building's books as plain numbers. 1.15's own script reads weekly_profit as a value in building
+# scope (common/treaty_articles/18_acquire_monopoly_for_company.txt) and numeric triggers through a scope chain
+# everywhere (scope:target_state.gdp), so earnings, weekly_profit, occupancy and country_ownership_fraction need no
+# bisection: about 175 operations a books read and 43 an ownership read become a handful.
+#   0  off: the ladders (pmr_read_books, pmr_read_gov_<b>)
+#   1  test builds only: the ladders decide, and the monthly BOOKS line counts how often a plain read of the same
+#      figure lands outside the ladder's step (pmr_dv_n, pmr_dv_bad), so one game says whether 2 is safe
+#   2  the plain reads decide
+VALUE_READS = 0
+# LEAN_CHECKS: the monthly state checks that find nothing leave on one test: the transport principle's bonus where
+# the state can earn none and has none standing; the Buildings tab's list where the state has no list walks the
+# state's buildings for a retool site twice a year, not monthly (a site's build events refresh the list at once).
+LEAN_CHECKS = False
+URB_WALK_DAYS = 180   # LEAN_CHECKS: a state with no urban list walks its buildings for a retool site this often
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
 SWITCH_GAIN = 0.25
@@ -1340,17 +1381,33 @@ def main():
                          '2 a light refresh on a price move, 3 a light re-check too')
     ap.add_argument('--quick-switch', action='store_true', help='SWITCH_QUICK (performance review 11)')
     ap.add_argument('--direct-watch', action='store_true', help='WATCH_DIRECT (performance review 11)')
+    ap.add_argument('--research-map', action='store_true', help='RESEARCH_MAP (performance review 12)')
+    ap.add_argument('--pf-sums', action='store_true', help='PF_SUMS (performance review 12)')
+    ap.add_argument('--quiet-tick', action='store_true', help='QUIET_TICK (performance review 12)')
+    ap.add_argument('--value-reads', type=int, default=None, choices=(0, 1, 2),
+                    help='VALUE_READS (performance review 12): 1 checks plain reads of the books against the ladders '
+                         'in a test build, 2 uses them')
+    ap.add_argument('--lean-checks', action='store_true', help='LEAN_CHECKS (performance review 12)')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
     global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD, SOLO_GATE, SWITCH_QUICK, WATCH_DIRECT
+    global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS
     RELEASE = args.release
     if args.solo is not None:
         SOLO_GATE = args.solo
     SWITCH_QUICK = SWITCH_QUICK or args.quick_switch
     WATCH_DIRECT = WATCH_DIRECT or args.direct_watch
+    RESEARCH_MAP = RESEARCH_MAP or args.research_map
+    PF_SUMS = PF_SUMS or args.pf_sums
+    QUIET_TICK = QUIET_TICK or args.quiet_tick
+    if args.value_reads is not None:
+        VALUE_READS = args.value_reads
+    LEAN_CHECKS = LEAN_CHECKS or args.lean_checks
+    if VALUE_READS == 1 and RELEASE:
+        raise SystemExit('--value-reads 1 is a test-build check; a release takes 0 or 2')
     SHARE_DIGITS = args.digit_shares
     OBS_AB = args.obs_script_off
     OBS_PARTS_ON = args.obs_parts_off
@@ -2242,18 +2299,35 @@ def main():
     write('common/script_values/pmr_market_values.txt', header + market_values(traded, sorted(spare)))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(price_goods)
           + ''.join(market_read(g, g in spare) for g in traded) + '\n'.join(tick_effects)
-          + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto))
+          + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto)
+          + (research_map_effects(dispatch, auto) if RESEARCH_MAP else '') + own_effects()
+          + (QUIET_COUNT if QUIET_TICK and not RELEASE else ''))
     hist_text, hist_n = history_frames(game)
     if hist_n:
         write('common/scripted_effects/pmr_history_effects.txt', header + hist_text)
     report['frame_lock']['history'] = hist_n
     on_actions = ON_ACTIONS.replace('STATE_TURN', state_turn())
+    if RESEARCH_MAP or PF_SUMS:
+        old = 'OBS_ON_ACTION\n'
+        if on_actions.count(old) != 1:
+            raise SystemExit('on_actions: OBS_ON_ACTION not found once')
+        on_actions = on_actions.replace(old, 'on_state_owner_change = { on_actions = { pmr_on_state_owner_change } }\n' + old)
+        on_actions += ('\n# Root = state, under its new owner (vanilla\'s own effects there read owner so). RESEARCH_MAP, PF_SUMS.\n'
+                       'pmr_on_state_owner_change = {\n\teffect = {\n\t\tpmr_own_check = yes\n\t}\n}\n')
+    if RESEARCH_MAP:
+        for old, new in RESEARCH_MAP_HOOKS:
+            if on_actions.count(old) != 1:
+                raise SystemExit(f'RESEARCH_MAP: on_actions hook not found once: {old!r}')
+            on_actions = on_actions.replace(old, new)
     if args.script_profile:
         if on_actions.count(PULSE_STATE_HOOK) != 1 or on_actions.count(pulse_state_effect()) != 1:
             raise SystemExit('pmr_on_monthly_pulse_state changed; update pulse_state_effect and profile_pulse_state')
         on_actions = on_actions.replace(PULSE_STATE_HOOK, profile_pulse_state(dispatch))
     write('common/on_actions/pmr_on_actions.txt', header + on_actions.replace('TECH_CRUMB', flush_log('TECH', '-'))
-          .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n')
+          .replace('SKIP_REPORT\n', '' if RELEASE else '\t\tpmr_skip_report = yes   # S3: the month\'s SKIP line (test builds)\n'
+                   + ('\t\tpmr_dv_report = yes   # VALUE_READS 1: the month\'s DV line\n' if VALUE_READS == 1 else '')
+                   + ('\t\tpmr_qt_report = yes   # QUIET_TICK: the month\'s QUIET line\n' if QUIET_TICK else '')
+                   + ('\t\tpmr_rm_report = yes   # RESEARCH_MAP: the month\'s RMAP line\n' if RESEARCH_MAP else ''))
           .replace('OBS_ON_ACTION\n', '' if RELEASE else 'on_monthly_pulse_country = { on_actions = { pmr_obs_monthly_country } }\n'
                    + ('on_monthly_pulse_state = { on_actions = { pmr_obs_monthly_state } }\n' if OBS_PAD else ''))
           .replace('BUILD_ON_ACTION\n', 'on_monthly_pulse_country = { on_actions = { pmr_build_monthly_country } }\n' if BUILD else '')
@@ -2462,6 +2536,8 @@ def main():
     # The construction panel's Private tab (Pat, 2026-10-13). Runs last: it patches the building files and
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
+    private_investment.PF_SUMS, private_investment.PF_SYNC = PF_SUMS, set(PF_SYNC)
+    private_investment.PF_CHECK = PF_SUMS and not RELEASE
     loc += private_investment.write_all(game, write, header, args.out)
     if args.trace_from:
         write('common/scripted_effects/pmr_trace_effects.txt', header + trace_pm_effects(game, args.out, args.trace_from))
@@ -2799,6 +2875,38 @@ def books_effect():
                 f'\telse = {{\n{neg}\t}}\n')
     occ = highest(geo_ladder(BOOKS_OCC, 1), lambda x: f'scope:pmr_bk = {{ occupancy >= {fmt(x)} }}',
                   lambda x: f'set_variable = {{ name = pmr_bk_o value = {fmt(min(1.0, float(f"{x * mid:.4g}"))) if x else 0} }}')
+    if VALUE_READS:
+        # VALUE_READS: the same three figures as plain numbers. Under a ladder's first step it read 0 (no earnings yet,
+        # too thinly staffed), which the wage calculation tests, so the plain read keeps that.
+        def plain(name, trig, lo, both=True):
+            return (f'\tset_variable = {{ name = {name} value = scope:pmr_bk.{trig} }}\n'
+                    f'\tif = {{ limit = {{ var:{name} < {fmt(lo)}' + (f' var:{name} > {fmt(-lo)}' if both else '')
+                    + f' }} set_variable = {{ name = {name} value = 0 }} }}\n')
+
+        def check(name, trig, lo, hi, both=True):
+            # VALUE_READS 1: the ladder's figure stands; the plain read of the same figure is compared with it
+            return (f'\tset_variable = {{ name = pmr_dv value = scope:pmr_bk.{trig} }}\n'
+                    f'\tset_variable = {{ name = pmr_dl value = var:{name} }}\n'
+                    f'\tset_variable = {{ name = pmr_dlo value = {fmt(lo)} }}\n\tset_variable = {{ name = pmr_dhi value = {fmt(hi)} }}\n'
+                    f'\tpmr_dv_cmp = yes\n')
+        e, pr, oc = (('pmr_bk_e', 'earnings', BOOKS_EARN[0], BOOKS_EARN[1]), ('pmr_bk_p', 'weekly_profit', BOOKS_PROFIT[0], BOOKS_PROFIT[1]),
+                     ('pmr_bk_o', 'occupancy', BOOKS_OCC, 1))
+        if VALUE_READS == 2:
+            body = lambda rows: ''.join(plain(n, t, lo, n != 'pmr_bk_o') for n, t, lo, _hi in rows)   # noqa: E731
+            return ('# State scope, the building saved as scope:pmr_bk: its books as the game holds them (VALUE_READS 2,\n'
+                    '# books_effect in generate.py). pmr_bk_e, earnings per employee a year; pmr_bk_p, the week\'s profit;\n'
+                    f'# pmr_bk_o, occupancy (0 below {fmt(BOOKS_OCC)}).\n'
+                    'pmr_read_books = {\n' + body((e, pr, oc)) + '}\n\n'
+                    + ('pmr_read_books_po = {\n' + body((pr, oc)) + '}\n\n' if SOLO_GATE >= 2 else ''))
+        # the comparison runs in its window only (pmr_dv_on, value_check_effects), so the build's timing stays usable
+        chk = lambda rows: ('\tif = {\n\t\tlimit = { has_global_variable = pmr_dv_on }\n'   # noqa: E731
+                            + ''.join('\t' + ln for r in rows for ln in check(*r).splitlines(True)) + '\t}\n')
+        return ('# State scope, the building saved as scope:pmr_bk: its books (books_effect in generate.py), each figure by\n'
+                '# bisection, then compared with a plain read of it (VALUE_READS 1, pmr_dv_cmp).\n'
+                'pmr_read_books = {\n' + read('pmr_bk_e', 'earnings', BOOKS_EARN) + read('pmr_bk_p', 'weekly_profit', BOOKS_PROFIT)
+                + occ + chk((e, pr, oc)) + '}\n\n'
+                + ('pmr_read_books_po = {\n' + read('pmr_bk_p', 'weekly_profit', BOOKS_PROFIT) + occ + chk((pr, oc)) + '}\n\n'
+                   if SOLO_GATE >= 2 else '') + value_check_effects())
     return ('# State scope, the building saved as scope:pmr_bk: its books (books_effect in generate.py). pmr_bk_e, earnings\n'
             '# per employee a year (the productivity figure); pmr_bk_p, the week\'s profit; pmr_bk_o, occupancy (0 below '
             f'{fmt(BOOKS_OCC)}).\n'
@@ -2807,6 +2915,60 @@ def books_effect():
             + ('# The week\'s profit and the occupancy alone, for pmr_lite_<b> (SOLO_GATE).\n'
                'pmr_read_books_po = {\n' + read('pmr_bk_p', 'weekly_profit', BOOKS_PROFIT) + occ + '}\n\n'
                if SOLO_GATE >= 2 else ''))
+
+
+DV_LOG = 40   # VALUE_READS 1: the first plain reads off their ladder's step are logged one by one (PMR;rec=DVOFF)
+DV_WINDOW = (62, 365)   # VALUE_READS 1: the comparison runs for the first of these days in every second
+
+
+def value_check_effects():
+    """VALUE_READS 1 (test builds). State scope: pmr_dv_cmp compares a plain read (pmr_dv) with the ladder's figure for
+    it (pmr_dl), whose steps are BOOKS_RATIO apart from pmr_dlo up to pmr_dhi (0 under the first, either sign): the
+    read is off when it lies further from the ladder's figure than a step allows. Counts in pmr_dv_n and pmr_dv_bad
+    (global); pmr_dv_report (country scope, monthly) logs them once a month. The ownership share is compared the same
+    way against its step (pmr_dv_cmp_gov)."""
+    tol = BOOKS_RATIO ** 0.5 - 1 + 0.001   # half a step, and the bounds' rounding to four figures
+    where = ('date=[TimeKeeper.GetCurrentDate.GetString];state=[THIS.GetState.GetNameNoFormatting];'
+             "plain=[THIS.Var('pmr_dv').GetValue|4];ladder=[THIS.Var('pmr_dl').GetValue|4]")
+    count = ('\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_dv_n } }\n'
+             '\t\tset_global_variable = { name = pmr_dv_n value = 0 }\n\t\tset_global_variable = { name = pmr_dv_bad value = 0 }\n\t}\n'
+             '\tchange_global_variable = { name = pmr_dv_n add = 1 }\n')
+    bad = ('\t\tchange_global_variable = { name = pmr_dv_bad add = 1 }\n'
+           f'\t\tif = {{ limit = {{ global_var:pmr_dv_bad <= {DV_LOG} }} debug_log = "PMR;rec=DVOFF;{where};what=WHAT" }}\n')
+    drop = ''.join(f'\tremove_variable = {n}\n' for n in ('pmr_dv', 'pmr_dl', 'pmr_dlo', 'pmr_dhi', 'pmr_dd', 'pmr_dt'))
+    return ('# State scope (VALUE_READS 1): is the plain read pmr_dv within a ladder step of the ladder\'s figure pmr_dl\n'
+            'pmr_dv_cmp = {\n' + count
+            + '\tset_variable = { name = pmr_dd value = var:pmr_dv }\n\tchange_variable = { name = pmr_dd subtract = var:pmr_dl }\n'
+            '\tif = { limit = { var:pmr_dd < 0 } change_variable = { name = pmr_dd multiply = -1 } }\n'
+            '\tset_variable = { name = pmr_dt value = var:pmr_dl }\n'
+            '\tif = { limit = { var:pmr_dt < 0 } change_variable = { name = pmr_dt multiply = -1 } }\n'
+            '\tset_variable = { name = pmr_dhi_at value = 0 }\n'
+            '\tif = { limit = { var:pmr_dt >= var:pmr_dhi } set_variable = { name = pmr_dhi_at value = 1 } }   # the ladder\'s top: no upper bound\n'
+            f'\tchange_variable = {{ name = pmr_dt multiply = {fmt(round(tol, 5))} }}\n'
+            '\tif = { limit = { var:pmr_dl = 0 } set_variable = { name = pmr_dt value = var:pmr_dlo } }   # under the first step\n'
+            '\tif = {\n\t\tlimit = { var:pmr_dd > var:pmr_dt var:pmr_dhi_at = 0 }\n' + bad.replace('WHAT', 'books')
+            + '\t}\n\tremove_variable = pmr_dhi_at\n' + drop + '}\n\n'
+            '# State scope (VALUE_READS 1): the same for the government\'s share, read in steps of '
+            f'{fmt(GOV_FRACTION_STEP)}\n'
+            'pmr_dv_cmp_gov = {\n' + count
+            + '\tset_variable = { name = pmr_dd value = var:pmr_dv }\n\tchange_variable = { name = pmr_dd subtract = var:pmr_dl }\n'
+            '\tif = { limit = { var:pmr_dd < 0 } change_variable = { name = pmr_dd multiply = -1 } }\n'
+            f'\tif = {{\n\t\tlimit = {{ var:pmr_dd > {fmt(GOV_FRACTION_STEP / 2 + 0.0001)} }}\n' + bad.replace('WHAT', 'share')
+            + '\t}\n\tremove_variable = pmr_dv\n\tremove_variable = pmr_dl\n\tremove_variable = pmr_dd\n}\n\n'
+            '# Country scope, monthly (VALUE_READS 1): reads = plain reads compared so far, off = of those, outside their\n'
+            f'# ladder step. The comparison runs for {DV_WINDOW[0]} days in every {DV_WINDOW[1]} (pmr_dv_on): every building\'s update falls\n'
+            '# in a window, and the months between carry no check, so the build\'s timing stays usable.\n'
+            'pmr_dv_report = {\n\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_dv_m } }\n'
+            '\t\tset_global_variable = { name = pmr_dv_m value = yes days = 28 }\n'
+            '\t\tif = {\n\t\t\tlimit = { NOT = { has_global_variable = pmr_dv_w } }\n'
+            f'\t\t\tset_global_variable = {{ name = pmr_dv_w value = yes days = {DV_WINDOW[1]} }}\n'
+            f'\t\t\tset_global_variable = {{ name = pmr_dv_on value = yes days = {DV_WINDOW[0]} }}\n\t\t}}\n'
+            '\t\tif = {\n\t\t\tlimit = { has_global_variable = pmr_dv_n }\n'
+            '\t\t\tset_variable = { name = pmr_dv_n_v value = global_var:pmr_dv_n }\n'
+            '\t\t\tset_variable = { name = pmr_dv_bad_v value = global_var:pmr_dv_bad }\n'
+            '\t\t\tdebug_log = "PMR;rec=DV;date=[TimeKeeper.GetCurrentDate.GetString];'
+            "reads=[THIS.Var('pmr_dv_n_v').GetValue|0];off=[THIS.Var('pmr_dv_bad_v').GetValue|0]\"\n"
+            '\t\t\tremove_variable = pmr_dv_n_v\n\t\t\tremove_variable = pmr_dv_bad_v\n\t\t}\n\t}\n}\n\n')
 
 
 def wage_effect(bk, b, econ):
@@ -3856,10 +4018,19 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
 
     # government-owned share of the building, read through the building-scope ownership trigger
     steps = round(1 / GOV_FRACTION_STEP)
-    o.append(f'pmr_read_gov_{b} = {{\n'
-             + highest(list(range(1, steps + 1)),
-                       lambda n: f'b:{bk} = {{ country_ownership_fraction >= {fmt(n * GOV_FRACTION_STEP - GOV_FRACTION_STEP / 2)} }}',
-                       lambda n: setv("pmr_gov_frac", fmt(n * GOV_FRACTION_STEP) if n else 0)))
+    gov_ladder = highest(list(range(1, steps + 1)),
+                         lambda n: f'b:{bk} = {{ country_ownership_fraction >= {fmt(n * GOV_FRACTION_STEP - GOV_FRACTION_STEP / 2)} }}',
+                         lambda n: setv("pmr_gov_frac", fmt(n * GOV_FRACTION_STEP) if n else 0))
+    if VALUE_READS == 2:   # the share as a plain number, to the same step
+        gov_ladder = (f'\tset_variable = {{ name = {v("pmr_gov_frac")} value = b:{bk}.country_ownership_fraction }}\n'
+                      f'\t{chg("pmr_gov_frac", "multiply", steps)}\n'
+                      f'\tround_variable = {{ name = {v("pmr_gov_frac")} nearest = 1 }}\n'
+                      f'\t{chg("pmr_gov_frac", "divide", steps)}\n')
+    elif VALUE_READS == 1:
+        gov_ladder += ('\tif = {\n\t\tlimit = { has_global_variable = pmr_dv_on }\n'
+                       f'\t\tset_variable = {{ name = pmr_dv value = b:{bk}.country_ownership_fraction }}\n'
+                       f'\t\tset_variable = {{ name = pmr_dl value = var:{v("pmr_gov_frac")} }}\n\t\tpmr_dv_cmp_gov = yes\n\t}}\n')
+    o.append(f'pmr_read_gov_{b} = {{\n' + gov_ladder)
     o.append('\t# Government-owned levels, which the state owner\'s count in levels_owned_by_country includes.\n'
              f'\tset_variable = {{ name = {v("pmr_gov_levels")} value = b:{bk}.level }}\n'
              f'\t{chg("pmr_gov_levels", "multiply", "var:" + v("pmr_gov_frac"))}\n'
@@ -4253,8 +4424,28 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                        f'\t\t}} }}\n\t\t{setv(var, i)}\n\t}}\n')
         out.append('}\n\n')
         return ''.join(out)
-    o.append(best_effect(f"pmr_newest_{b}", "pmr_new_now", True))
-    o.append(best_effect(f"pmr_hbest_{b}", "pmr_hbest_now", False))
+    scans = best_effect(f"pmr_newest_{b}", "pmr_new_now", True) + best_effect(f"pmr_hbest_{b}", "pmr_hbest_now", False)
+    o.append(scans)
+    # RESEARCH_MAP: every technology and law the scans can ask about: the ones their text names, and the ones the game's
+    # own check asks for a method that stays unlocked (its unlocking_technologies)
+    def own_gates(r):
+        """the unlock keys of a recipe's own methods (its marker's, a pair's recipe and automation methods')"""
+        for m in [r, getattr(r, 'base', None)] + list(getattr(r, 'opt', [])) + list(getattr(r, 'autos', [])):
+            node = getattr(m, 'node', None)
+            for n in (node.value if node is not None else []):
+                if n.key and n.key.startswith(('unlocking_', 'disallowing_')):
+                    yield n
+    RESEARCH_TECHS[b] = sorted(set(re.findall(r'has_technology_researched = (\w+)', scans))
+                               | {t for i, r in enumerate(recipes, 1) for t in techs_of(r, i)})
+    RESEARCH_LAWS[b] = sorted(set(re.findall(r'has_law_or_variant = law_type:(\w+)', scans))
+                              | {x for r in recipes for n in own_gates(r) if n.key.endswith('_laws') and n.is_block
+                                 for x in pdx.items(n)})
+    # a gate neither a technology nor a law nor fixed for the state (a power bloc's principle): such a type is scanned
+    # at every technology, as before the map
+    RESEARCH_OTHER[b] = sorted({n.key for r in recipes for n in own_gates(r)
+                                if n.key not in ('unlocking_technologies', 'unlocking_laws', 'disallowing_laws',
+                                                 'unlocking_geographic_regions', 'unlocking_production_methods')}
+                               | ({'has_principle'} if 'has_principle' in scans else set()))
     o.append(profit_effect(bk, b, recipes, econ, goods_cost or {}, active, reach, setv, v, pair))
 
 
@@ -4361,9 +4552,14 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + '\t# Abroad: the player (global_var:pmr_player) owns levels here, in a state another country owns.\n'
              f'\tif = {{\n\t\tlimit = {{ has_global_variable = pmr_player NOT = {{ owner = global_var:pmr_player }} '
              f'b:{bk} = {{ levels_owned_by_country = {{ target = global_var:pmr_player value >= 1 }} }} }}\n'
-             f'\t\tset_variable = {{ name = pmr_abroad_{b} value = 1 }}  # a value, so the Owners list can read it\n'
+             + (f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_abroad_{b} }} has_variable = pmr_nel_{b} }} '
+                f'remove_variable = pmr_nel_{b} }}  # RESEARCH_MAP: the player\'s technologies count from here, so the scan runs\n'
+                if RESEARCH_MAP else '')
+             + f'\t\tset_variable = {{ name = pmr_abroad_{b} value = 1 }}  # a value, so the Owners list can read it\n'
              '\t\tset_variable = { name = pmr_abroad_any days = 62 }\n\t}\n'
-             f'\telse_if = {{ limit = {{ has_variable = pmr_abroad_{b} }} remove_variable = pmr_abroad_{b} }}\n'
+             f'\telse_if = {{ limit = {{ has_variable = pmr_abroad_{b} }} remove_variable = pmr_abroad_{b}'
+             + (f' if = {{ limit = {{ has_variable = pmr_nel_{b} }} remove_variable = pmr_nel_{b} }}' if RESEARCH_MAP else '')
+             + ' }\n'
              f'\tpmr_best_{b} = yes\n'
              f'\tif = {{ limit = {{ has_variable = pmr_abroad_{b} }} pmr_hbest_{b} = yes }}\n'
              f'\telse = {{ {setv("pmr_hbest_now", "var:" + v("pmr_best_now"))} }}\n'
@@ -4417,7 +4613,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t\t\tset_variable = {v("pmr_switched")}\n\t\t}}\n\t}}\n'
              f'\t{setv("pmr_best", "var:" + v("pmr_best_now"))}\n')
 
-    o.append(recount
+    tail = (recount
              # review 8, R8-1: a monthly tick whose shares are those of the last blend (pmr_bok_<b>: no pmr_mix_<b>
              # since) skips it; every event tick (built, expanded, method changed, research) and a new building still
              # on its start method run it in full
@@ -4446,7 +4642,26 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t\telse_if = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("CANCEL", bk, b, k, extra=mix)} }}\n'
              '\t}\n'
              f'\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} remove_variable = {v("pmr_switched")} }}\n'
-             '}\n\n')
+             '')
+    if QUIET_TICK:
+        # QUIET_TICK: an AI building's monthly update with nothing open, queued or moved since its last accounting.
+        # Every step after the ownership read tests one of these and would skip its part; the trade-off step keeps
+        # its own turn. The player's buildings always take the steps one by one (their counts and logs sit there).
+        rg = f'\tpmr_read_gov_{b} = yes\n'
+        if not tail.startswith(rg):
+            raise SystemExit('QUIET_TICK: pmr_tick_body tail does not start with the ownership read')
+        quiet = (f'has_variable = pmr_month NOT = {{ has_variable = pmr_retool_gate_{b} }} has_variable = pmr_rq_{b} '
+                 f'has_variable = pmr_bok_{b} has_variable = pmr_fok_{b} {same} NOT = {{ var:{v("pmr_need")} > 0 }} '
+                 f'NOT = {{ has_variable = {v("pmr_retooling")} }} NOT = {{ has_variable = {v("pmr_switched")} }} '
+                 'NOT = { owner = { is_player = yes } }')
+        oc = opts_call(b, any(mode == 'market' for _, _, mode, *_ in opts)) if opts else ''
+        # the trade-off step drops pmr_fok_<b> when a share moved: the frame then follows at once, as in the full tail
+        if oc:
+            oc += f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_fok_{b} }} }} pmr_frame_{b} = yes }}\n'
+        tail = (rg + f'\tif = {{\n\t\tlimit = {{ {quiet} }}\n' + ''.join('\t' + ln for ln in oc.splitlines(True))
+                + ('' if RELEASE else '\t\tpmr_qt_count = yes\n')
+                + '\t}\n\telse = {\n' + ''.join('\t' + ln if ln.strip() else ln for ln in tail[len(rg):].splitlines(True)) + '\t}\n')
+    o.append(tail + '}\n\n')
     # Country scope: the country's totals for the Buildings tab row (its recipe bar and upgrade
     # button). Recomputed after each single tick, and once for all building types after the ticks that
     # run state by state (pmr_bulk; see pmr_c_sum_all). The tab also lists buildings abroad that the
@@ -5020,7 +5235,12 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\t\telse_if = {{ limit = {{ has_variable = pmr_pmv owner = {{ is_player = yes }} }} debug_log = "{line};why=price" }}\n'
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              '\tif = { limit = { has_variable = pmr_pmv } remove_variable = pmr_pmv }\n'
-             + f'\tpmr_switch_{b} = yes\n}}\n\n')
+             + f'\tpmr_switch_{b} = yes\n'
+             + (f'\tif = {{ limit = {{ NOT = {{ AND = {{ has_variable = pmr_pfx_l_{b} var:pmr_pfx_l_{b} = var:{v("pmr_level")} '
+                f'var:pmr_pfx_v_{b} = var:{v("pmr_pvs")} }} }} }} pmr_pf_sync_{b} = yes }}'
+                '   # PF_SUMS: the score or the level moved\n' if PF_SUMS else '') + '}\n\n')
+    if PF_SUMS:
+        PF_SYNC.add(b)
     if SOLO_GATE >= 2:
         o.append(lite_effect(bk, b, econ, goods, goods_cost, setv, v))
     return switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + ''.join(pre) + ''.join(o)
@@ -5297,7 +5517,8 @@ def state_tick_type(bk, t='\t'):
                        for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
                                  f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ())
                        + ((f'pmr_solo_{b}',) if SOLO_GATE else ()))
-             + (frames.clear_vars(FRAMES[bk], t + '\t') if bk in FRAMES else ''))
+             + (frames.clear_vars(FRAMES[bk], t + '\t') if bk in FRAMES else '')
+             + (f'{t}\tpmr_pf_gone_{b} = yes   # PF_SUMS: its part leaves the owner\'s sums\n' if PF_SUMS and b in PF_SYNC else ''))
     # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up;
     # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
     gone = f'has_variable = pmr_mix_{b} NOT = {{ exists = b:{bk} }}'
@@ -5317,6 +5538,53 @@ def state_tick_type(bk, t='\t'):
 XTURN_DONE = '\t\t\tif = { limit = { has_variable = pmr_xturn } remove_variable = pmr_xturn }\n'
 
 
+# Test builds (RESEARCH_MAP). pmr_rm_count counts into a global; pmr_rm_report (country scope, monthly) logs the RMAP
+# line: passes = country passes that had a type marked since the last line, runs = one type's research pass in one state.
+RMAP_COUNT = ('# Test builds (RESEARCH_MAP): the month\'s count of marked passes (pmr_rm_p) and of state passes (pmr_rm_r).\n'
+              'pmr_rm_count = {\n\tif = { limit = { NOT = { has_global_variable = $N$ } } set_global_variable = { name = $N$ value = 0 } }\n'
+              '\tchange_global_variable = { name = $N$ add = 1 }\n}\n'
+              'pmr_rm_report = {\n\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_rm_m } }\n'
+              '\t\tset_global_variable = { name = pmr_rm_m value = yes days = 28 }\n'
+              '\t\tset_variable = { name = pmr_rm_pv value = 0 }\n\t\tset_variable = { name = pmr_rm_rv value = 0 }\n'
+              '\t\tif = { limit = { has_global_variable = pmr_rm_p } set_variable = { name = pmr_rm_pv value = global_var:pmr_rm_p } }\n'
+              '\t\tif = { limit = { has_global_variable = pmr_rm_r } set_variable = { name = pmr_rm_rv value = global_var:pmr_rm_r } }\n'
+              '\t\tdebug_log = "PMR;rec=RMAP;date=[TimeKeeper.GetCurrentDate.GetString];'
+              "passes=[THIS.Var('pmr_rm_pv').GetValue|0];runs=[THIS.Var('pmr_rm_rv').GetValue|0]\"\n"
+              '\t\tremove_variable = pmr_rm_pv\n\t\tremove_variable = pmr_rm_rv\n'
+              '\t\tset_global_variable = { name = pmr_rm_p value = 0 }\n\t\tset_global_variable = { name = pmr_rm_r value = 0 }\n\t}\n}\n\n')
+
+QUIET_COUNT = ('\n# Test builds (QUIET_TICK). State scope: one more quiet update. Country scope, monthly: the QUIET line, the\n'
+               '# quiet updates since the last one.\n'
+               'pmr_qt_count = {\n\tif = { limit = { NOT = { has_global_variable = pmr_qt_n } } set_global_variable = { name = pmr_qt_n value = 0 } }\n'
+               '\tchange_global_variable = { name = pmr_qt_n add = 1 }\n}\n'
+               'pmr_qt_report = {\n\tif = {\n\t\tlimit = { has_global_variable = pmr_qt_n NOT = { has_global_variable = pmr_qt_m } }\n'
+               '\t\tset_global_variable = { name = pmr_qt_m value = yes days = 28 }\n'
+               '\t\tset_variable = { name = pmr_qt_v value = global_var:pmr_qt_n }\n'
+               '\t\tdebug_log = "PMR;rec=QUIET;date=[TimeKeeper.GetCurrentDate.GetString];'
+               "updates=[THIS.Var('pmr_qt_v').GetValue|0]\"\n"
+               '\t\tremove_variable = pmr_qt_v\n\t\tset_global_variable = { name = pmr_qt_n value = 0 }\n\t}\n}\n')
+
+
+def own_effects():
+    """State scope: pmr_own_check, a state that changed hands since its last accounting (pmr_own, the owner then). From
+    on_state_owner_change (vanilla runs its own effects there, root the state under its new owner), from the state's
+    monthly pulse in case a transfer did not fire it, and before a state's part of the investment sums moves.
+    RESEARCH_MAP: the state's next update scans every type's newest recipe (pmr_ownchg), as the new owner's
+    technologies and laws are other ones. PF_SUMS: its parts of the investment sums move to the new owner."""
+    if not (RESEARCH_MAP or PF_SUMS):
+        return ''
+    return ('\n# State scope: has the state changed hands since its last accounting (RESEARCH_MAP, PF_SUMS)\n'
+            'pmr_own_check = {\n'
+            '\tif = { limit = { NOT = { has_variable = pmr_own } } set_variable = { name = pmr_own value = owner }'
+            + (' pmr_pf_own_g = yes' if PF_SUMS else '') + ' }\n'
+            '\telse_if = {\n\t\tlimit = { NOT = { owner = var:pmr_own } }\n'
+            + ("\t\tpmr_pf_moved = yes   # PF_SUMS: its parts off the last owner's sums and onto the new owner's\n" if PF_SUMS else '')
+            + '\t\tset_variable = { name = pmr_own value = owner }\n'
+            + ('\t\tpmr_pf_own_g = yes\n' if PF_SUMS else '')
+            + ('\t\tset_variable = pmr_ownchg   # RESEARCH_MAP: its next update scans every type\n' if RESEARCH_MAP else '')
+            + '\t}\n}\n')
+
+
 def state_turn():
     """pmr_on_monthly_pulse_state's building update, every TICK_EVERY-th pulse of the state (Pat 2026-10-21 12:37Z):
     pmr_ph 1 runs it, then 2 waits a pulse. A state seen the first time (a new game, or a save from before) takes the
@@ -5333,9 +5601,13 @@ def state_turn():
             f'\t\t\t\tif = {{ limit = {{ var:pmr_xc >= {OPTS_CYCLE} }} set_variable = {{ name = pmr_xc value = 0 }} }}\n\t\t\t}}\n'
             f'\t\t\tif = {{ limit = {{ var:pmr_xc < {OPTS_CYCLE - 1} }} set_variable = pmr_xturn }}\n')
     tick = ('\t\t\tset_variable = pmr_month\n' + turn
+            + ('\t\t\tif = { limit = { has_variable = pmr_ownchg } remove_variable = pmr_ownchg set_variable = pmr_research }'
+               '   # RESEARCH_MAP: a new owner\n' if RESEARCH_MAP else '')
             + "\t\t\tpmr_state_tick = yes   # this state's turn\n"
-            '\t\t\tremove_variable = pmr_month\n' + XTURN_DONE)
-    out = ('\t\tif = {\n\t\t\tlimit = { NOT = { has_variable = pmr_ph } }\n'
+            + ('\t\t\tif = { limit = { has_variable = pmr_research } remove_variable = pmr_research }\n' if RESEARCH_MAP else '')
+            + '\t\t\tremove_variable = pmr_month\n' + XTURN_DONE)
+    out = (('\t\tpmr_own_check = yes   # RESEARCH_MAP, PF_SUMS: a state that changed hands\n' if RESEARCH_MAP or PF_SUMS else '')
+           + '\t\tif = {\n\t\t\tlimit = { NOT = { has_variable = pmr_ph } }\n'
            '\t\t\tif = { limit = { has_global_variable = pmr_ph_g } remove_global_variable = pmr_ph_g '
            'set_variable = { name = pmr_ph value = 2 } }\n'
            '\t\t\telse = { set_global_variable = pmr_ph_g set_variable = { name = pmr_ph value = 1 } }\n\t\t}\n')
@@ -5741,6 +6013,93 @@ def auto_best_effects(auto):
     return ''.join(o)
 
 
+RESEARCH_LOOK_DAYS = 365   # RESEARCH_MAP: a country's own yearly look at its technologies (the hook's safety net)
+
+# RESEARCH_MAP's hooks in ON_ACTIONS: (text, its replacement), each found once.
+RESEARCH_MAP_HOOKS = [
+    # a technology: only the types it touches
+    ('\t\t\tevery_scope_state = {\n\t\t\t\tpmr_state_research = yes\n\t\t\t\tpmr_auto_best = yes\n\t\t\t}\n',
+     '\t\t\tpmr_research_look = yes   # RESEARCH_MAP: the building types this technology can move\n'
+     '\t\t\tpmr_research_marked = yes\n'),
+    # the laws the rules name, monthly; once a year the technologies too, in case one arrived without the hook above
+    # (a save from before the map takes its one full pass here)
+    ('\teffect = {\n\t\tpmr_c_sum_all = yes\nSKIP_REPORT',
+     '\teffect = {\n\t\t# RESEARCH_MAP: a law the newest-recipe rules name, passed or dropped; yearly, the technologies as well\n'
+     f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_rml }} }} set_variable = {{ name = pmr_rml days = {RESEARCH_LOOK_DAYS} }} pmr_research_look = yes }}\n'
+     '\t\telse = { pmr_research_laws = yes }\n'
+     '\t\tpmr_research_marked = yes\n\t\tpmr_c_sum_all = yes\nSKIP_REPORT'),
+    # game start: what each country holds is seen (every state is ticked there anyway)
+    ('\t\t\t# A day later the players exist: their totals, buildings abroad included (pmr.1).\n',
+     '\t\t\tpmr_research_seen = yes   # RESEARCH_MAP\n'
+     '\t\t\t# A day later the players exist: their totals, buildings abroad included (pmr.1).\n')]
+
+
+def research_map_effects(buildings, auto):
+    """RESEARCH_MAP. Country scope:
+      pmr_research_look    marks the building types (pmr_rmk_<b>) a technology the country holds, or a law it has or
+                           has dropped, since the last look can move the newest recipe of; pmr_rmk_auto where an
+                           AUTO_BEST ladder names the technology; pmr_rmk_any with any of them. pmr_tk_<technology>
+                           and pmr_lw_<law> on the country keep what was seen.
+      pmr_research_laws    the laws alone (the country's monthly pulse)
+      pmr_research_marked  the research pass of the marked types, state by state where one stands, then the marks go
+      pmr_research_seen    game start: what the country holds is seen and nothing marked (every state is ticked there)
+    State scope: pmr_research_<b>, one type's part of pmr_state_research."""
+    by_tech, by_law = collections.defaultdict(list), collections.defaultdict(list)
+    always = [short(bk) for bk in buildings if RESEARCH_OTHER.get(short(bk))]
+    for bk in buildings:
+        b = short(bk)
+        for t in RESEARCH_TECHS.get(b, []):
+            by_tech[t].append(b)
+        for x in RESEARCH_LAWS.get(b, []):
+            by_law[x].append(b)
+    auto_techs = {x for gl in auto.values() for _g, order, _by_law, techs, _elec in gl for p in order for x in techs[p]}
+
+    def mark(bs, also=''):
+        return ' '.join(['set_variable = pmr_rmk_any'] + [f'set_variable = pmr_rmk_{b}' for b in bs]) + also
+    o = ['\n# ===== research by technology (RESEARCH_MAP, performance review 12)\n\n'
+         '# Country scope: mark the building types a newly held technology or a changed law can move the newest recipe of.\n'
+         'pmr_research_look = {\n']
+    if always:   # a gate the map does not follow: these are scanned at every look, as before
+        o.append(f'\t{mark(always)}\n')
+    for t in sorted(set(by_tech) | auto_techs):
+        o.append(f'\tif = {{ limit = {{ has_technology_researched = {t} NOT = {{ has_variable = pmr_tk_{t} }} }} '
+                 f'set_variable = pmr_tk_{t} {mark(by_tech.get(t, []), " set_variable = pmr_rmk_auto" if t in auto_techs else "")} }}\n')
+    o.append('\tpmr_research_laws = yes\n}\n\n'
+             '# Country scope: the same for the laws the rules name, either way.\n'
+             'pmr_research_laws = {\n')
+    for x in sorted(by_law):
+        o.append(f'\tif = {{ limit = {{ has_law_or_variant = law_type:{x} NOT = {{ has_variable = pmr_lw_{x} }} }} '
+                 f'set_variable = pmr_lw_{x} {mark(by_law[x])} }}\n'
+                 f'\telse_if = {{ limit = {{ has_variable = pmr_lw_{x} NOT = {{ has_law_or_variant = law_type:{x} }} }} '
+                 f'remove_variable = pmr_lw_{x} {mark(by_law[x])} }}\n')
+    o.append('}\n\n'
+             '# Country scope: the marked types\' research pass, in the states that have one.\n'
+             'pmr_research_marked = {\n\tif = {\n\t\tlimit = { has_variable = pmr_rmk_any }\n\t\tremove_variable = pmr_rmk_any\n'
+             + ('' if RELEASE else '\t\tpmr_rm_count = { N = pmr_rm_p }\n'))
+    for bk in buildings:
+        b = short(bk)
+        o.append(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_rmk_{b} }}\n\t\t\tremove_variable = pmr_rmk_{b}\n'
+                 f'\t\t\tevery_scope_state = {{ limit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }} pmr_research_{b} = yes }}\n\t\t}}\n')
+    o.append('\t\tif = {\n\t\t\tlimit = { has_variable = pmr_rmk_auto }\n\t\t\tremove_variable = pmr_rmk_auto\n'
+             '\t\t\tevery_scope_state = { pmr_auto_best = yes }\n\t\t}\n\t}\n}\n\n'
+             '# Country scope, game start: every technology and law it holds is seen, nothing is marked.\n'
+             'pmr_research_seen = {\n\tpmr_research_look = yes\n'
+             + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_rmk_{x} }} remove_variable = pmr_rmk_{x} }}\n'
+                       for x in ['any', 'auto'] + [short(bk) for bk in buildings]) + '}\n\n')
+    for bk in buildings:
+        b = short(bk)
+        o.append(f'# State scope: the research pass of {bk} (pmr_state_research\'s part for it).\n'
+                 f'pmr_research_{b} = {{\n\tset_variable = pmr_bulk\n\tset_variable = pmr_research\n'
+                 + ('' if RELEASE else '\tpmr_rm_count = { N = pmr_rm_r }\n') +
+                 f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_mix_{b} }} }} pmr_tick_{b} = yes }}\n'
+                 f'\telse = {{\n\t\tpmr_best_{b} = yes\n'
+                 f'\t\tif = {{ limit = {{ {moved(b)} }} pmr_tick_{b} = yes }}\n\t}}\n'
+                 '\tremove_variable = pmr_bulk\n\tremove_variable = pmr_research\n}\n\n')
+    if not RELEASE:
+        o.append(RMAP_COUNT)
+    return ''.join(o)
+
+
 # ---------------------------------------------------------------------------------------------
 # Log-only probes (PROBE_TREAT, PROBE_PRICE). State scope, from the monthly state pulse.
 
@@ -5933,6 +6292,13 @@ def principle_bonus(treated, drop_base, pms):
                     f'\t\tset_variable = {{ name = {m}_v value = var:{var} }}\n\t}}\n'
                     for m, var in ((thr, 'pmr_pb_thr'), (inf, 'pmr_pb_inf')))
                 + '\tremove_variable = pmr_pb_thr\n\tremove_variable = pmr_pb_inf\n')
+            if LEAN_CHECKS:
+                # LEAN_CHECKS: a state that can earn no bonus (no such building, or its owner's bloc without the
+                # principle) and has none standing leaves on this test; the steps above would have changed nothing
+                eff[-1] = ('\tif = {\n\t\tlimit = { OR = {\n'
+                           f'\t\t\tAND = {{ has_building = {bk} owner = {{ power_bloc ?= {{ has_principle = principle:{principle} }} }} }}\n'
+                           + ''.join(f'\t\t\tAND = {{ has_variable = {m}_v var:{m}_v > 0 }}\n' for m in (thr, inf))
+                           + '\t\t} }\n' + ''.join('\t' + ln for ln in eff[-1].splitlines(True)) + '\t}\n')
     return ('# State scope, monthly: the bonus of a power bloc principle whose recipe variants PMR drops (PRINCIPLE_THROUGHPUT).\n'
             'pmr_principle_bonus = {\n' + ''.join(eff) + '}\n'), ''.join(mods), loc
 
@@ -6379,8 +6745,16 @@ def urban_list_script(order):
            '\t\tadd_to_variable_list = { name = pmr_urb target = this }\n\t}\n'
            '\telse_if = { limit = { has_variable = pmr_urb_on } remove_variable = pmr_urb_on }\n}\n\n'
            '# State scope: refresh it where a site stands or stood (monthly, and after PMR places one).\n'
-           'pmr_urb_check = {\n\tif = {\n\t\tlimit = { OR = { has_variable = pmr_urb_on any_scope_building = { pmr_urb_site = yes } } }\n'
-           '\t\tpmr_urb_refresh = yes\n\t}\n}\n\n'
+           + ('pmr_urb_check = {\n\tif = {\n\t\tlimit = { OR = { has_variable = pmr_urb_on any_scope_building = { pmr_urb_site = yes } } }\n'
+              '\t\tpmr_urb_refresh = yes\n\t}\n}\n\n' if not LEAN_CHECKS else
+              # LEAN_CHECKS: a state with no list asks every building of the state whether it is a site only twice a
+              # year. A site's first level and every level started already refresh the list at once (pmr_urb_built), so
+              # the monthly walk only ever found a site no build event had announced.
+              'pmr_urb_check = {\n\tif = { limit = { has_variable = pmr_urb_on } pmr_urb_refresh = yes }\n'
+              '\telse_if = {\n\t\tlimit = { NOT = { has_variable = pmr_urb_chk } }\n'
+              f'\t\tset_variable = {{ name = pmr_urb_chk value = yes days = {URB_WALK_DAYS} }}\n'
+              '\t\tif = { limit = { any_scope_building = { pmr_urb_site = yes } } pmr_urb_refresh = yes }\n\t}\n}\n\n')
+           +
            '# Building scope (a level built or started): refresh its state\'s list if it is a site or the list is in use.\n'
            'pmr_urb_built = {\n\tif = {\n\t\tlimit = { OR = { pmr_urb_site = yes state ?= { has_variable = pmr_urb_on } } }\n'
            '\t\tstate ?= { pmr_urb_refresh = yes }\n\t}\n}\n')

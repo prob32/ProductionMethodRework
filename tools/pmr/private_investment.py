@@ -912,9 +912,178 @@ def pf_effects(shorts):
                  f'\t\telse_if = {{\n\t\t\tlimit = {{ has_variable = pmr_pterm_{b} }}\n\t\t\tremove_variable = pmr_pterm_{b}\n\t\t}}\n'
                  f'\t\tremove_variable = pmr_pf_t_{b}\n\t\tremove_variable = pmr_pf_l_{b}\n\t}}\n'
                  f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_pterm_{b} }}\n\t\tremove_variable = pmr_pterm_{b}\n\t}}\n}}\n\n')
+    if PF_SUMS:
+        if set(shorts) != set(PF_SYNC):
+            fail('pmr_pf_effects.txt', f'PF_SUMS: the types pmr_best_<b> syncs differ from the investment types: '
+                                       f'{sorted(set(shorts) ^ set(PF_SYNC))}')
+        o.append('pmr_pf_all = {\n' + ("\tpmr_pfs_report = yes   # test builds: the month's PFSUM line\n" if PF_CHECK else '')
+                 + '\tif = {\n\t\tlimit = { is_player = yes }\n'
+                 + ''.join(f'\t\tpmr_pf_{b} = yes\n' for b in shorts) + '\t}\n'
+                 "\t# PF_SUMS: an AI country's terms follow its states' updates (pmr_pf_sync_<b>). The sums are taken afresh\n"
+                 '\t# the first time, once a year, and in a month the country has another number of states than at its last\n'
+                 '\t# look (a state that went with its variables leaves no other trace).\n'
+                 '\telse = {\n\t\tset_variable = { name = pmr_pfq value = pmr_pf_states }\n'
+                 '\t\tif = {\n\t\t\tlimit = { OR = { NOT = { has_variable = pmr_pfn } NOT = { var:pmr_pfn = var:pmr_pfq } } }\n'
+                 '\t\t\tset_variable = { name = pmr_pfn value = var:pmr_pfq }\n'
+                 f'\t\t\tset_variable = {{ name = pmr_pfy value = yes days = {PF_RESCAN_DAYS} }}\n'
+                 '\t\t\tpmr_pf_rescan = yes\n\t\t}\n'
+                 '\t\telse_if = {\n\t\t\tlimit = { NOT = { has_variable = pmr_pfy } }\n'
+                 f'\t\t\tset_variable = {{ name = pmr_pfy value = yes days = {PF_RESCAN_DAYS} }}\n'
+                 + ('\t\t\tset_variable = pmr_pfk   # test builds: a yearly look compares what the sums kept with what it finds\n'
+                    if PF_CHECK else '')
+                 + '\t\t\tpmr_pf_rescan = yes\n'
+                 + ('\t\t\tremove_variable = pmr_pfk\n' if PF_CHECK else '')
+                 + '\t\t}\n\t\tremove_variable = pmr_pfq\n\t}\n}\n\n' + pf_sums_effects(shorts))
+        return ''.join(o)
     o.append('pmr_pf_all = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
              + ''.join(f'\t\tpmr_pf_{b} = yes\n' for b in shorts) + '\t}\n\telse = {\n'
              + ''.join(f'\t\tpmr_pfa_{b} = yes\n' for b in shorts) + '\t}\n}\n')
+    return ''.join(o)
+
+
+PF_SUMS_VALUES = ('# Country scope: how many states it has (PF_SUMS: pmr_pf_all takes the sums afresh when it moves).\n'
+                  'pmr_pf_states = {\n\tvalue = 0\n\tevery_scope_state = { add = 1 }\n}\n')
+
+
+def pf_sums_effects(shorts):
+    """PF_SUMS (performance review 12). A country keeps, per type b, the sums pmr_pfa_<b> took by sweeping its states:
+    pmr_pfs_t_<b> (score x levels) and pmr_pfs_l_<b> (levels); pmr_pterm_<b> is their quotient, as before. A state
+    keeps what it has added (pmr_pfx_t_<b> and pmr_pfx_l_<b>; pmr_pfx_v_<b> the score then), so a change of its score
+    or level moves the sums by the difference. Sums of the same products, so the same term; a state's change shows at its own
+    update where the sweep waited for the country's pulse.
+      pmr_pf_sync_<b>   state, from pmr_best_<b> where the score or the level is not the one added: the difference
+                        onto the owner's sums, and the owner's term
+      pmr_pf_gone_<b>   state, the building is gone (pmr_state_tick's clean-up): its level reads 0 and its part leaves.
+                        The sweep never dropped it: the state's pmr_level_<b> stayed.
+      pmr_pf_term_<b>   country: the term from the sums; none without levels
+      pmr_pf_moved      state that changed hands (pmr_own_check): every type's part from the last owner to the new
+      pmr_pfr_<b>       country: the sums afresh, as pmr_pfa_<b> took them, each state's part written
+      pmr_pf_rescan     country (pmr_pf_all): every type's pmr_pfr_<b>"""
+    o = ['# ===== the investment term from running sums (PF_SUMS, performance review 12)\n\n']
+
+    def qual(b):
+        return (f'has_variable = pmr_prm_{b} has_variable = pmr_pvs_{b} has_variable = pmr_level_{b} '
+                f'var:pmr_level_{b} > 0')
+
+    def owner_add(b, t, term=True):
+        return (f'{t}owner = {{\n{t}\tif = {{\n{t}\t\tlimit = {{ NOT = {{ has_variable = pmr_pfs_l_{b} }} }}\n'
+                f'{t}\t\tset_variable = {{ name = pmr_pfs_t_{b} value = 0 }}\n'
+                f'{t}\t\tset_variable = {{ name = pmr_pfs_l_{b} value = 0 }}\n{t}\t}}\n'
+                f'{t}\tchange_variable = {{ name = pmr_pfs_t_{b} add = scope:pmr_st.var:pmr_pfu }}\n'
+                f'{t}\tchange_variable = {{ name = pmr_pfs_l_{b} add = scope:pmr_st.var:pmr_pfw }}\n'
+                + (f'{t}\tpmr_pf_term_{b} = yes\n' if term else '') + f'{t}}}\n')
+    for b in shorts:
+        o.append(
+            # the new part on, the old part off, in one visit to the owner
+            f'pmr_pf_sync_{b} = {{\n\tpmr_own_check = yes\n'
+            '\tsave_temporary_scope_as = pmr_st\n'
+            f'\tif = {{\n\t\tlimit = {{ {qual(b)} }}\n'
+            f'\t\tset_variable = {{ name = pmr_pfu value = var:pmr_pvs_{b} }}\n'
+            f'\t\tchange_variable = {{ name = pmr_pfu multiply = var:pmr_level_{b} }}\n'
+            f'\t\towner = {{\n\t\t\tif = {{\n\t\t\t\tlimit = {{ NOT = {{ has_variable = pmr_pfs_l_{b} }} }}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_pfs_t_{b} value = 0 }}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_pfs_l_{b} value = 0 }}\n\t\t\t}}\n'
+            f'\t\t\tchange_variable = {{ name = pmr_pfs_t_{b} add = scope:pmr_st.var:pmr_pfu }}\n'
+            f'\t\t\tchange_variable = {{ name = pmr_pfs_l_{b} add = scope:pmr_st.var:pmr_level_{b} }}\n'
+            f'\t\t\tif = {{\n\t\t\t\tlimit = {{ scope:pmr_st = {{ has_variable = pmr_pfx_l_{b} }} }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_pfs_t_{b} subtract = scope:pmr_st.var:pmr_pfx_t_{b} }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_pfs_l_{b} subtract = scope:pmr_st.var:pmr_pfx_l_{b} }}\n\t\t\t}}\n'
+            f'\t\t\tpmr_pf_term_{b} = yes\n\t\t}}\n'
+            f'\t\tset_variable = {{ name = pmr_pfx_t_{b} value = var:pmr_pfu }}\n'
+            f'\t\tset_variable = {{ name = pmr_pfx_l_{b} value = var:pmr_level_{b} }}\n'
+            f'\t\tset_variable = {{ name = pmr_pfx_v_{b} value = var:pmr_pvs_{b} }}\n'
+            '\t\tremove_variable = pmr_pfu\n\t}\n'
+            f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_pfx_l_{b} }}\n'
+            f'\t\towner = {{\n\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_pfs_l_{b} }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_pfs_t_{b} subtract = scope:pmr_st.var:pmr_pfx_t_{b} }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_pfs_l_{b} subtract = scope:pmr_st.var:pmr_pfx_l_{b} }}\n'
+            f'\t\t\t\tpmr_pf_term_{b} = yes\n\t\t\t}}\n\t\t}}\n'
+            f'\t\tremove_variable = pmr_pfx_t_{b}\n\t\tremove_variable = pmr_pfx_l_{b}\n\t\tremove_variable = pmr_pfx_v_{b}\n\t}}\n}}\n'
+            f'pmr_pf_gone_{b} = {{\n\tif = {{ limit = {{ has_variable = pmr_level_{b} }} set_variable = {{ name = pmr_level_{b} value = 0 }} }}\n'
+            f'\tif = {{ limit = {{ has_variable = pmr_pfx_l_{b} }} pmr_pf_sync_{b} = yes }}\n}}\n'
+            f'pmr_pf_term_{b} = {{\n\tif = {{\n\t\tlimit = {{ has_variable = pmr_pfs_l_{b} var:pmr_pfs_l_{b} > 0 }}\n'
+            f'\t\tset_variable = {{ name = pmr_pterm_{b} value = var:pmr_pfs_t_{b} }}\n'
+            f'\t\tchange_variable = {{ name = pmr_pterm_{b} divide = var:pmr_pfs_l_{b} }}\n\t}}\n'
+            f'\telse = {{\n\t\tif = {{ limit = {{ has_variable = pmr_pterm_{b} }} remove_variable = pmr_pterm_{b} }}\n'
+            f'\t\tif = {{ limit = {{ has_variable = pmr_pfs_l_{b} }} remove_variable = pmr_pfs_l_{b} remove_variable = pmr_pfs_t_{b} }}\n'
+            '\t}\n}\n'
+            # the sweep, which also writes each state's part; a type the country has neither a level nor a sum of is skipped
+            f'pmr_pfr_{b} = {{\n\tif = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_pfs_l_{b} '
+            f'country_has_building_type_levels = {{ target = bt:building_{b} value > 0 }} }} }}\n'
+            + (f'\t\tset_variable = {{ name = pmr_pfo_t value = 0 }}\n\t\tset_variable = {{ name = pmr_pfo_l value = 0 }}\n'
+               f'\t\tif = {{ limit = {{ has_variable = pmr_pfs_l_{b} }} set_variable = {{ name = pmr_pfo_t value = var:pmr_pfs_t_{b} }} '
+               f'set_variable = {{ name = pmr_pfo_l value = var:pmr_pfs_l_{b} }} }}\n' if PF_CHECK else '')
+            + f'\t\tset_variable = {{ name = pmr_pfs_t_{b} value = 0 }}\n\t\tset_variable = {{ name = pmr_pfs_l_{b} value = 0 }}\n'
+            f'\t\tevery_scope_state = {{\n\t\t\tlimit = {{ OR = {{ has_variable = pmr_pfx_l_{b} has_variable = pmr_pvs_{b} }} }}\n'
+            f'\t\t\tif = {{\n\t\t\t\tlimit = {{ {qual(b)} }}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_pfx_l_{b} value = var:pmr_level_{b} }}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_pfx_v_{b} value = var:pmr_pvs_{b} }}\n'
+            f'\t\t\t\tset_variable = {{ name = pmr_pfx_t_{b} value = var:pmr_pvs_{b} }}\n'
+            f'\t\t\t\tchange_variable = {{ name = pmr_pfx_t_{b} multiply = var:pmr_level_{b} }}\n'
+            '\t\t\t\tsave_temporary_scope_as = pmr_st\n'
+            f'\t\t\t\towner = {{\n\t\t\t\t\tchange_variable = {{ name = pmr_pfs_t_{b} add = scope:pmr_st.var:pmr_pfx_t_{b} }}\n'
+            f'\t\t\t\t\tchange_variable = {{ name = pmr_pfs_l_{b} add = scope:pmr_st.var:pmr_level_{b} }}\n\t\t\t\t}}\n'
+            '\t\t\t}\n'
+            f'\t\t\telse_if = {{ limit = {{ has_variable = pmr_pfx_l_{b} }} remove_variable = pmr_pfx_t_{b} '
+            f'remove_variable = pmr_pfx_l_{b} remove_variable = pmr_pfx_v_{b} }}\n'
+            '\t\t}\n'
+            + ('\t\tif = {\n\t\t\tlimit = { has_variable = pmr_pfk }\n'
+               '\t\t\tchange_global_variable = { name = pmr_pfs_n add = 1 }\n'
+               f'\t\t\tif = {{\n\t\t\t\tlimit = {{ OR = {{ NOT = {{ var:pmr_pfo_t = var:pmr_pfs_t_{b} }} '
+               f'NOT = {{ var:pmr_pfo_l = var:pmr_pfs_l_{b} }} }} }}\n'
+               '\t\t\t\tchange_global_variable = { name = pmr_pfs_bad add = 1 }\n'
+               '\t\t\t\tdebug_log = "PMR;rec=PFSUM_OFF;date=[TimeKeeper.GetCurrentDate.GetString];'
+               f'country=[THIS.GetCountry.GetNameNoFormatting];building=building_{b};'
+               "kept_t=[THIS.Var('pmr_pfo_t').GetValue|2];kept_l=[THIS.Var('pmr_pfo_l').GetValue|0];"
+               f"fresh_t=[THIS.Var('pmr_pfs_t_{b}').GetValue|2];fresh_l=[THIS.Var('pmr_pfs_l_{b}').GetValue|0]\"\n"
+               '\t\t\t}\n\t\t}\n'
+               '\t\tremove_variable = pmr_pfo_t\n\t\tremove_variable = pmr_pfo_l\n' if PF_CHECK else '')
+            + f'\t\tpmr_pf_term_{b} = yes\n\t}}\n}}\n\n')
+    o.append("# Country scope: every type's sums afresh. pmr_pfg counts the country's rescans; a state's pmr_own_g is the count\n"
+             '# its parts were last written under, so a state that left before a rescan is not taken off the sums twice.\n'
+             'pmr_pf_rescan = {\n'
+             '\tif = { limit = { NOT = { has_variable = pmr_pfg } } set_variable = { name = pmr_pfg value = 0 } }\n'
+             '\tchange_variable = { name = pmr_pfg add = 1 }\n'
+             '\t# a state that changed hands moves its parts first, off its last owner\n'
+             '\tevery_scope_state = { pmr_own_check = yes set_variable = { name = pmr_own_g value = owner.var:pmr_pfg } }\n'
+             + ('\tchange_global_variable = { name = pmr_pfs_re add = 1 }\n' if PF_CHECK else '')
+             + ''.join(f'\tpmr_pfr_{b} = yes\n' for b in shorts) + '}\n\n'
+             '# State scope, from pmr_own_check as it takes a new owner: the count its parts are written under.\n'
+             'pmr_pf_own_g = {\n\tset_variable = { name = pmr_own_g value = 0 }\n'
+             '\tif = { limit = { owner = { has_variable = pmr_pfg } } set_variable = { name = pmr_own_g value = owner.var:pmr_pfg } }\n}\n\n'
+             '# State scope, its owner another country than at its last accounting (var:pmr_own, pmr_own_check): its parts\n'
+             "# leave the last owner's sums, unless that country has taken its sums afresh without this state since, and\n"
+             "# join the new owner's.\n"
+             'pmr_pf_moved = {\n\tsave_temporary_scope_as = pmr_st\n'
+             '\tif = {\n\t\tlimit = { has_variable = pmr_own_g var:pmr_own ?= { has_variable = pmr_pfg var:pmr_pfg = scope:pmr_st.var:pmr_own_g } }\n'
+             '\t\tset_variable = pmr_pfm\n\t}\n')
+    for b in shorts:
+        o.append(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_pfx_l_{b} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pfu value = var:pmr_pfx_t_{b} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_pfw value = var:pmr_pfx_l_{b} }}\n'
+                 f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_pfm }}\n'
+                 f'\t\t\tvar:pmr_own = {{\n\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ has_variable = pmr_pfs_l_{b} }}\n'
+                 f'\t\t\t\t\tchange_variable = {{ name = pmr_pfs_t_{b} subtract = scope:pmr_st.var:pmr_pfu }}\n'
+                 f'\t\t\t\t\tchange_variable = {{ name = pmr_pfs_l_{b} subtract = scope:pmr_st.var:pmr_pfw }}\n'
+                 f'\t\t\t\t\tpmr_pf_term_{b} = yes\n\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n' + owner_add(b, '\t\t')
+                 + '\t\tremove_variable = pmr_pfu\n\t\tremove_variable = pmr_pfw\n\t}\n')
+    o.append('\tif = { limit = { has_variable = pmr_pfm } remove_variable = pmr_pfm }\n')
+    o.append('}\n')
+    if PF_CHECK:
+        cs = ('pmr_pfs_n', 'pmr_pfs_bad', 'pmr_pfs_re')
+        o.append('\n# Country scope, test builds: once a month, how the running sums held. checked = sums a rescan compared with\n'
+                 '# a fresh sweep at a yearly look so far, off = of those, the ones that differed (each also logs PFSUM_OFF),\n'
+                 '# rescans = countries whose sums were taken afresh this month (yearly, or another number of states).\n'
+                 'pmr_pfs_report = {\n\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_pfs_n } }\n'
+                 + ''.join(f'\t\tset_global_variable = {{ name = {c} value = 0 }}\n' for c in cs) + '\t}\n'
+                 '\tif = {\n\t\tlimit = { NOT = { has_global_variable = pmr_pfs_m } }\n'
+                 '\t\tset_global_variable = { name = pmr_pfs_m value = yes days = 28 }\n'
+                 + ''.join(f'\t\tset_variable = {{ name = {c}_v value = global_var:{c} }}\n' for c in cs)
+                 + '\t\tdebug_log = "PMR;rec=PFSUM;date=[TimeKeeper.GetCurrentDate.GetString];'
+                 "checked=[THIS.Var('pmr_pfs_n_v').GetValue|0];off=[THIS.Var('pmr_pfs_bad_v').GetValue|0];"
+                 "rescans=[THIS.Var('pmr_pfs_re_v').GetValue|0]\"\n"
+                 + ''.join(f'\t\tremove_variable = {c}_v\n' for c in cs)
+                 + '\t\tset_global_variable = { name = pmr_pfs_re value = 0 }\n\t}\n}\n')
     return ''.join(o)
 
 
@@ -2080,6 +2249,13 @@ GRANT_LINE = False
 # (generate.py vanilla_score; pf_effects, monthly), never letting the ai_value fall below AI_FLOOR. The game then
 # adds the same terms for the state it scores, so profit counts twice: locally and as the country's average.
 PROFIT_TYPES = set()
+# Performance review 12 (generate.py sets them). PF_SUMS: an AI country's pmr_pterm_<b> from running sums its states
+# keep (pf_sums_effects) instead of pmr_pfa_<b>'s monthly sweep; PF_SYNC: the types whose pmr_best_<b> calls
+# pmr_pf_sync_<b>; PF_CHECK (test builds): each yearly rescan counts the sums it finds off (PMR;rec=PFSUM).
+PF_SUMS = False
+PF_SYNC = set()
+PF_CHECK = False
+PF_RESCAN_DAYS = 365
 AI_FLOOR = 100
 
 
@@ -2499,7 +2675,7 @@ def write_all(game, write, header_text, out=None):
         print(f'private investment: {n} private retool buildings take Re-invest; {len(names)} building types take '
               f'the company card or the investment focus, in {", ".join(patched)}')
     write(SOURCE_FILE, buildings)
-    write('common/script_values/pmr_ipw_values.txt', header_text + values)
+    write('common/script_values/pmr_ipw_values.txt', header_text + values + ('\n' + PF_SUMS_VALUES if PF_SUMS else ''))
     write('common/scripted_effects/pmr_pf_effects.txt', header_text + pf_effects(pf_types))
     return localization(types, chart_types)
 
