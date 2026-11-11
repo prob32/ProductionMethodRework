@@ -577,6 +577,32 @@ DROP_RECIPES = ('pm_steam_trains_principle_transport_3', 'pm_electric_trains_pri
 # (vanilla's variants: 20 to 29% more transport for 20 to 33% more engines and fuel) and the variant's extra
 # infrastructure per level, scaled by the building's employment as the recipe's own infrastructure is.
 PRINCIPLE_THROUGHPUT = 0.25
+# Pat 2026-11-11 22:12Z ("Follow supply"): in a game granted every technology in 1836, PMR's newest-method rule put the
+# Midlands administration on Switchboards with no telephones anywhere in its market, and its bureaucracy fell with the
+# shortage. SUPPLY_BLEND names, per AUTO_BEST group, the ladder methods reached through a blend: when one is the newest the
+# owner has, the group runs a blend of it and the method before it, in BLEND_STEPS steps. On the state's building update
+# (every other month) the blend moves a step toward the newest while every good that method adds sells at least
+# BLEND_UP of its buy orders in the state's market (price at most +25% over base), and a step back while one sells at
+# most BLEND_DOWN of them (price at vanilla's +75% cap); in between it holds. Every other ladder method is still taken
+# at once, as before. The blends are methods of their own (pm_pmr_blend_<b>_<i>_<k>: k tenths of ladder method i over
+# method i-1), self-locked and hidden so only PMR sets them; so is a blended method no history file starts, so the AI
+# can't jump to it past the blend. No construction: vanilla switches these for free.
+SUPPLY_BLEND = {'building_government_administration': ('pmg_base_building_government_administration', ['pm_switch_boards'])}
+BLEND_STEPS = 10
+BLEND_UP = 0.75
+BLEND_DOWN = 0.5
+BLEND_INFO = {}   # {(building key, group): {'ladder', 'techs', 'adds', 'keys'}}; filled by supply_blends before any effect
+
+
+def blend_fill_values():
+    """SUPPLY_BLEND's script values: pmr_blend_fill (market goods scope), sell orders over buy orders, any sell order
+    plenty with no buy orders; pmr_sv_bfill_<good> (state scope), the same for the good in the state's market (the
+    BLEND line's)."""
+    goods = sorted({gd for i in BLEND_INFO.values() for gl in i['adds'].values() for gd in gl})
+    return ('pmr_blend_fill = {\n\tvalue = market_goods_sell_orders\n\tdivide = {\n\t\tvalue = market_goods_buy_orders\n'
+            '\t\tmin = 0.001\n\t}\n}\n\n'
+            + ''.join(f'pmr_sv_bfill_{gd} = {{\n\tvalue = 0\n\tmarket ?= {{ mg:{gd} ?= {{ add = pmr_blend_fill }} }}\n}}\n\n'
+                      for gd in goods))
 # Pat, 2026-10-13 17:00Z: these groups always run their best method, with no retooling and no selectors.
 # Best is the newest method the state can activate (vanilla lists them oldest first), a principle variant
 # before the method it replaces; PMR switches to it monthly, on research, when the building is built
@@ -1786,6 +1812,10 @@ def main():
             auto.setdefault(bk, []).append((g, order, by_law, techs, elec))
     report['auto_best'] = [{'building': bk, 'group': g, 'best_first': order, 'by_law': by_law}
                            for bk, gl in auto.items() for g, order, by_law, *_t in gl]
+    # SUPPLY_BLEND (Pat 2026-11-11 22:12Z "Follow supply"): those ladders step through blends of their two newest methods
+    supply_pms, supply_loc = supply_blends(game, auto, pms, group_src)
+    report['supply_blend'] = [{'building': bk, 'group': g, 'ladder': i['ladder'], 'adds': {str(k): v for k, v in i['adds'].items()}}
+                              for (bk, g), i in BLEND_INFO.items()]
     # low_pop_method (vanilla's AI picks it in thinly peopled states) would fight the recipe the tick keeps
     # and the method AUTO_BEST keeps: pm_anchorage, the limited trade quantity.
     for p in dict.fromkeys([r.key for t in treated for r in t[3] if r.key in pms]
@@ -1835,7 +1865,7 @@ def main():
               f'# N = {N} retool levels per level, retool share = {RETOOL_SHARE}.\n\n')
 
     # ---- new script ------------------------------------------------------------------------------
-    retools, costs, loc = [], [], []
+    retools, costs, loc = [], [], list(supply_loc)
     frames_of, frame_body_of, frame_pms = {}, {}, []   # the method-count rework (frames.py)
     frame_extras = {}   # building -> {target p: the job versions of its union frame beyond the plain key}
     less_all = (set(), set(), set())                     # goods in, goods out, pop types the "less" modifiers scale
@@ -2125,6 +2155,11 @@ def main():
               + '# Recipe + automation pairs (PairRecipe, SPLIT_AUTOMATION): pure frames of their retool targets.\n\n'
               + '\n'.join(r.method(frame_body_of[r.key]) for r in pair_pms))
     write('common/production_methods/pmr_frame_production_methods.txt', header + frames.FRAME_DOC + '\n'.join(frame_pms))
+    if supply_pms:
+        write('common/production_methods/pmr_supply_blend_production_methods.txt', header
+              + '# SUPPLY_BLEND (tools/pmr/generate.py): pm_pmr_blend_<b>_<i>_<k> is k tenths of ladder method i over method\n'
+              + '# i-1, every modifier weighted so. Each unlocks only while it runs itself; pmr_blend_<b> sets them.\n\n'
+              + supply_pms)
     if not RELEASE:
         # the JOBS line: a blended building's jobs as the game reads them back, against its frame's
         for path, text in frames.jobs_check_files(frames_of.values()):
@@ -2317,7 +2352,8 @@ def main():
     traded = sorted(set(price_goods) | set(demand_goods(options)))   # q96: local goods from their market's orders too
     spare = set(budget_goods(options))
     check_price_defines(game)
-    write('common/script_values/pmr_market_values.txt', header + market_values(traded, sorted(spare)))
+    write('common/script_values/pmr_market_values.txt', header + market_values(traded, sorted(spare))
+          + (blend_fill_values() if BLEND_INFO else ''))
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(price_goods)
           + ''.join(market_read(g, g in spare) for g in traded) + '\n'.join(tick_effects)
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto)
@@ -5995,6 +6031,156 @@ ELEC_MADE = 'var:pmr_elec = 1'
 AUTO_TRIP = 3   # AUTO_BEST switches one building may make from method changes in a day before it waits for the next
 
 
+def supply_blends(game, auto, pms, group_src):
+    """SUPPLY_BLEND: the blend methods (text), their names (loc lines), and BLEND_INFO for auto_best_effects. Each blend
+    is the two ladder methods' modifiers weighted k/BLEND_STEPS, so its goods, jobs and bureaucracy sit between them."""
+    hist = ''
+    src = os.path.join(game, 'common', 'history', 'buildings')
+    if os.path.isdir(src):
+        hist = ''.join(open(os.path.join(src, f), encoding='utf-8-sig').read() for f in sorted(os.listdir(src)) if f.endswith('.txt'))
+
+    def mods(node):
+        """{(section, scaling, key): value} of a method's numeric modifiers"""
+        out = {}
+        for sec in node.value:
+            if not sec.is_block or not sec.key.endswith('_modifiers'):
+                continue
+            for sc in sec.value:
+                if not sc.is_block:
+                    continue
+                for m in sc.value:
+                    if not m.is_block and m.key:
+                        try:
+                            out[(sec.key, sc.key, m.key)] = float(m.value)
+                        except ValueError:
+                            pass
+        return out
+
+    def num(x):
+        return f'{x:.3f}'.rstrip('0').rstrip('.') if x != int(x) else str(int(x))
+
+    text, loc = [], []
+    for bk, (g, targets) in SUPPLY_BLEND.items():
+        entry = [e for e in auto.get(bk, []) if e[0] == g]
+        if len(entry) != 1 or entry[0][2]:
+            raise SystemExit(f'SUPPLY_BLEND: {bk} {g} is not a technology ladder of AUTO_BEST; update SUPPLY_BLEND')
+        _g, order, _by_law, techs, elec = entry[0]
+        ladder = list(reversed(order))   # oldest first
+        if elec:
+            raise SystemExit(f'SUPPLY_BLEND: {g} has an electric method; the blend asks no electricity')
+        if not set(targets) <= set(ladder[1:]):
+            raise SystemExit(f'SUPPLY_BLEND: {sorted(set(targets) - set(ladder[1:]))} not past the first method of {g}')
+        m = [mods(pms[p][0]) for p in ladder]
+        adds, keys = {}, {}
+        for i in [ladder.index(t) for t in targets]:
+            a, b = m[i - 1], m[i]
+            adds[i] = sorted({k[2][len('goods_input_'):-len('_add')] for k in b
+                              if k[2].startswith('goods_input_') and k[2].endswith('_add') and b[k] > a.get(k, 0)})
+            tex = pdx.get(pms[ladder[i]][0].value, 'texture')
+            for k in range(1, BLEND_STEPS):
+                key = f'pm_pmr_blend_{short(bk)}_{i}_{k}'
+                keys[(i, k)] = key
+                t = k / BLEND_STEPS
+                body = {}
+                for mk in sorted(set(a) | set(b), key=lambda x: (x[0], x[1], x[2])):
+                    v = a.get(mk, 0) * (1 - t) + b.get(mk, 0) * t
+                    if abs(v) > 1e-9:
+                        body.setdefault(mk[0], {}).setdefault(mk[1], []).append(f'\t\t\t{mk[2]} = {num(v)}\n')
+                text.append(f'{key} = {{\n'
+                            + (f'\ttexture = "{tex.value}"\n' if tex is not None else '')
+                            + (f'\tunlocking_technologies = {{ {" ".join(techs[ladder[i]])} }}\n' if techs[ladder[i]] else '')
+                            + f'\tunlocking_production_methods = {{ {key} }}  # PMR: only PMR sets it (SUPPLY_BLEND)\n'
+                            + '\tis_hidden_when_unavailable = yes\n'
+                            + ''.join(f'\t{sec} = {{\n' + ''.join(f'\t\t{sc} = {{\n' + ''.join(lines) + '\t\t}\n'
+                                                                   for sc, lines in scs.items()) + '\t}\n'
+                                      for sec, scs in body.items())
+                            + '}\n')
+                loc.append(f' {key}:0 "${ladder[i]}$ {k * 100 // BLEND_STEPS}%"')
+        gsrc, gpm = group_src[g]
+        gsrc.inserts.append((gpm.end - 1, ''.join(f'\t{keys[(i, k)]}  # PMR: blend toward {ladder[i]} (SUPPLY_BLEND)\n\t'
+                                                  for i in sorted(adds) for k in range(1, BLEND_STEPS))))
+        # a blended method no history file starts: self-locked too, so the AI can't skip the blend to it
+        for p in targets:
+            if not re.search(r'["\s{]' + re.escape(p) + r'["\s}]', hist):
+                n, psrc = pms[p]
+                psrc.inserts.append((n.end - 1, f'\tunlocking_production_methods = {{ {p} }}  # PMR: only PMR sets it (SUPPLY_BLEND)\n'))
+        BLEND_INFO[(bk, g)] = {'ladder': ladder, 'techs': techs, 'adds': adds, 'keys': keys}
+    return '\n'.join(text), loc
+
+
+def blend_effect(bk, g):
+    """State scope: SUPPLY_BLEND's group g of bk on its place (pmr_bp_<b>: BLEND_STEPS x a ladder index, or a blend
+    between). The newest ladder method the owner has is its place, or, for a blended one, the range from the method
+    before it, where the place steps once in the state's update month (pmr_ph 2, guarded by pmr_bs_<b>)."""
+    info, b, n = BLEND_INFO[(bk, g)], short(bk), BLEND_STEPS
+    ladder, techs, adds, keys = info['ladder'], info['techs'], info['adds'], info['keys']
+    top = len(ladder) - 1
+    pos = f'var:pmr_bp_{b}'
+    spec = lambda key: f'building_type = {bk} production_method = {key}'   # noqa: E731
+    method = {i * n: ladder[i] for i in range(len(ladder))}
+    method.update({(i - 1) * n + k: keys[(i, k)] for (i, k) in keys})
+
+    def has(i):
+        return ' '.join(f'has_technology_researched = {t}' for t in techs[ladder[i]]) or 'always = yes'
+
+    def supplied(i):
+        return ' '.join(f'market ?= {{ mg:{gd} ?= {{ market_goods_sell_orders > 0 pmr_blend_fill >= {BLEND_UP} }} }}'
+                        for gd in adds[i]) or 'always = yes'
+
+    def short_of(i):
+        return ('OR = { ' + ' '.join(f'market ?= {{ mg:{gd} ?= {{ pmr_blend_fill <= {BLEND_DOWN} }} }}' for gd in adds[i])
+                + ' }') if adds[i] else 'always = no'
+    o = [f'# State scope: {g} of {bk} on its blend (SUPPLY_BLEND).\npmr_blend_{b} = {{\n'
+         '\t# the newest ladder method the owner has the technologies for\n'
+         '\tset_variable = { name = pmr_bn value = 0 }\n']
+    for j, i in enumerate(range(top, 0, -1)):
+        o.append(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ owner = {{ {has(i)} }} }} set_variable = {{ name = pmr_bn value = {i} }} }}\n')
+    o.append('\t# where it stands, read from what runs the first time\n'
+             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = pmr_bp_{b} }} }}\n\t\tset_variable = {{ name = pmr_bp_{b} value = 0 }}\n')
+    for v, key in sorted(method.items()):
+        if v:
+            o.append(f'\t\tif = {{ limit = {{ is_production_method_active = {{ {spec(key)} }} }} '
+                     f'set_variable = {{ name = pmr_bp_{b} value = {v} }} }}\n')
+    o.append('\t}\n'
+             '\t# its range: the newest method, or for a blended one from the method before it; outside it, to its nearer end\n')
+    for j, i in enumerate(range(top, -1, -1)):
+        lo = (i - 1) * n if i in adds else i * n
+        o.append(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ var:pmr_bn = {i} }} '
+                 f'set_variable = {{ name = pmr_bp_lo value = {lo} }} set_variable = {{ name = pmr_bp_hi value = {i * n} }} }}\n')
+    o.append(f'\tif = {{ limit = {{ {pos} < var:pmr_bp_lo }} set_variable = {{ name = pmr_bp_{b} value = var:pmr_bp_lo }} }}\n'
+             f'\tif = {{ limit = {{ {pos} > var:pmr_bp_hi }} set_variable = {{ name = pmr_bp_{b} value = var:pmr_bp_hi }} }}\n'
+             '\t# the state\'s update (pmr_ph 2 after state_turn), once: a step toward the newest while the goods it adds are\n'
+             '\t# in supply, back while one is short\n'
+             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_ph var:pmr_ph = 2 NOT = {{ has_variable = pmr_bs_{b} }} }}\n'
+             f'\t\tset_variable = {{ name = pmr_bs_{b} days = {30 * TICK_EVERY - 15} }}\n'
+             '\t\tset_variable = { name = pmr_bd value = 0 }\n')
+    for j, i in enumerate(sorted(adds, reverse=True)):
+        o.append(f'\t\t{"if" if j == 0 else "else_if"} = {{\n\t\t\tlimit = {{ var:pmr_bn = {i} }}\n'
+                 f'\t\t\tif = {{ limit = {{ {pos} < var:pmr_bp_hi {supplied(i)} }} set_variable = {{ name = pmr_bd value = 1 }} }}\n'
+                 f'\t\t\telse_if = {{ limit = {{ {pos} > var:pmr_bp_lo {short_of(i)} }} set_variable = {{ name = pmr_bd value = -1 }} }}\n'
+                 '\t\t}\n')
+    fills = sorted({gd for gl in adds.values() for gd in gl})
+    o.append(f'\t\tchange_variable = {{ name = pmr_bp_{b} add = var:pmr_bd }}\n'
+             + ('' if RELEASE else
+                '\t\t# the BLEND line: every move, and each update of the capital in a blended range (a hold: step=0)\n'
+                '\t\tif = {\n\t\t\tlimit = { var:pmr_bp_hi > var:pmr_bp_lo OR = { NOT = { var:pmr_bd = 0 } is_capital = yes } }\n'
+                + ''.join(f'\t\t\tset_variable = {{ name = pmr_bf_{gd} value = pmr_sv_bfill_{gd} }}\n' for gd in fills)
+                + f'\t\t\tdebug_log = "PMR;rec=BLEND;date=[TimeKeeper.GetCurrentDate.GetString];'
+                f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];building={bk};'
+                f"pos=[THIS.Var('pmr_bp_{b}').GetValue|0];step=[THIS.Var('pmr_bd').GetValue|0];newest=[THIS.Var('pmr_bn').GetValue|0]"
+                + ''.join(f";fill_{gd}=[THIS.Var('pmr_bf_{gd}').GetValue|2]" for gd in fills) + '"\n'
+                + ''.join(f'\t\t\tremove_variable = pmr_bf_{gd}\n' for gd in fills) + '\t\t}\n')
+             + '\t\tremove_variable = pmr_bd\n\t}\n'
+             '\t# the method of that place, unless it runs\n')
+    for j, (v, key) in enumerate(sorted(method.items())):
+        o.append(f'\t{"if" if j == 0 else "else_if"} = {{ limit = {{ {pos} = {v} }} '
+                 f'if = {{ limit = {{ NOT = {{ is_production_method_active = {{ {spec(key)} }} }} }} '
+                 f'activate_production_method = {{ {spec(key)} }} '
+                 f'if = {{ limit = {{ owner = {{ is_player = yes }} }} {flush_log("AUTO", bk, ";method=" + key)} }} }} }}\n')
+    o.append('\tremove_variable = pmr_bn\n\tremove_variable = pmr_bp_lo\n\tremove_variable = pmr_bp_hi\n}\n\n')
+    return ''.join(o)
+
+
 def auto_best_effects(auto):
     """AUTO_BEST: per building type, pmr_auto_<b> (state scope) activates each listed group's best method
     the state can activate, unless it already runs. activate_production_method runs on_production_method_changed
@@ -6009,6 +6195,9 @@ def auto_best_effects(auto):
     for bk, gl in auto.items():
         o.append(f'# State scope: {bk} on its best methods, newest first.\npmr_auto_{short(bk)} = {{\n')
         for g, order, by_law, techs, elec in gl:
+            if (bk, g) in BLEND_INFO:
+                o.append(f'\t# {g}, following supply (SUPPLY_BLEND)\n\tpmr_blend_{short(bk)} = yes\n')
+                continue
             o.append(f'\t# {g}' + (', set by laws' if by_law else '') + '\n')
             for j, p in enumerate(order):
                 spec = f'building_type = {bk} production_method = {p}'
@@ -6028,6 +6217,7 @@ def auto_best_effects(auto):
                          f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} {flush_log("AUTO", bk, ";method=" + p)} }}\n'
                          '\t\t}\n\t}\n')
         o.append('}\n\n')
+    o += [blend_effect(bk, g) for bk, g in BLEND_INFO]
     o.append('# State scope (monthly, on research, at game start): every such building of the state.\n'
              'pmr_auto_best = {\n\tpmr_supply_once = yes\n\tset_variable = pmr_auto_busy\n')
     for bk in auto:
