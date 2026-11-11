@@ -561,7 +561,7 @@ def bylaw_card(g, i, kind, n=3):
                     + icon + _law_text(tx, tw, g, c) + right + '}\n')
         cancel = "GetScriptedGui('pmr_bl_cancel_sgui')"
         end = f'{SG_SCOPE}.End'
-        bar = (f'widget = {{\nposition = {{ {tx} 74 }}\nsize = {{ {tw} {BAR_H} }}\ntooltip = "PMR_BL_BAR_TT"\n'
+        bar = (f'widget = {{\nposition = {{ {tx} 74 }}\nsize = {{ {tw} {BAR_H} }}\ntooltip = "PMR_BL_BAR_TT_{c}"\n'
                'green_progressbar_horizontal = {\nsize = { 100% 100% }\nblockoverride "values" {\n'
                f'min = 0\nmax = 100\nvalue = "[FixedPointToFloat({V("pmr_bl_pp")})]"\n}}\n}}\n}}\n')
         right = (f'button_icon_cancel = {{\n{_vis(LOCAL)}position = {{ {BOARD_W - 46} {(ROW_H - 30) // 2} }}\n'

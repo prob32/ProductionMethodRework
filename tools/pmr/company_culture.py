@@ -1144,11 +1144,31 @@ def money(name):
     return f"[Character.MakeScope.Var('{name}').GetValue|D]"
 
 
+# A list line's bullet (vanilla's, as its effect lists use it)
+BULLET = '$EFFECT_LIST_BULLET$'
+
+
+def pay_line(pay, weeks):
+    """A grant's or subsidiary's weekly payment, while it is next (PMR_RG_PAY, subsidiaries' PMR_SB_PAY_<n>)."""
+    return f'@money!#v {pay}#! a week for #v {weeks}#! weeks'
+
+
+def funding_line(pay, week, weeks):
+    """A grant or subsidiary being paid for: its weekly payment and the week it is in (PMR_RG_FUNDING,
+    PMR_SB_FUNDING)."""
+    return f'@money!#v {pay}#! a week, week #v {week}#! of #v {weeks}#!'
+
+
+def pool_line(pay):
+    """Why a grant or subsidiary cannot start: the investment pool is short of its weekly payment."""
+    return f'@red_cross! #N Investment Pool needs @money!{pay}#!'
+
+
 def fx_lines(k, t):
     """The bullets a node shows (one per benefit, the value green; one per good, written good, value, then output).
     A branch's first node shows its subsidiary's industries instead (cc_tree.sub_body)."""
-    pct = lambda x: f'{round(x * 100):+d}%'.replace('-', '−')   # noqa: E731
-    G = lambda label, val: f'• {label} #P {val}#!'               # noqa: E731
+    pct = lambda x: f'{round(x * 100):+d}%'   # noqa: E731
+    G = lambda label, val: f'{BULLET}{label} #P {val}#!'   # noqa: E731
     good = f"[Character.GetCustom('pmr_cc_good_eg1')]"
     out = {
         ('xr', 1): [G('Input goods', pct(-ROOT_INPUT))],
@@ -1158,40 +1178,40 @@ def fx_lines(k, t):
         ('hx', 2): [G('Economy of scale', f'+{EOS_LEVELS} levels')],
         ('hx', 3): [G('Throughput', pct(THROUGHPUT))],
         ('en', 1): [G('Throughput', pct(THROUGHPUT))],
-        ('en', 2): [f'• {good} #P {pct(OUTPUT[0])}#! output', "[Character.GetCustom('pmr_cc_fx_eg2_2')]"],
-        ('en', 3): [f'• {good} #P {pct(OUTPUT[1] - OUTPUT[0])}#! output', "[Character.GetCustom('pmr_cc_fx_eg2_3')]",
+        ('en', 2): [f'{BULLET}{good} #P {pct(OUTPUT[0])}#! output', "[Character.GetCustom('pmr_cc_fx_eg2_2')]"],
+        ('en', 3): [f'{BULLET}{good} #P {pct(OUTPUT[1] - OUTPUT[0])}#! output', "[Character.GetCustom('pmr_cc_fx_eg2_3')]",
                     "[Character.GetCustom('pmr_cc_fx_pg')]"],
     }
     return out.get((k, t), [])
 
 
 def localization(p):
-    pct = lambda x: f'{round(x * 100):+d}%'.replace('-', '−')   # noqa: E731
+    pct = lambda x: f'{round(x * 100):+d}%'   # noqa: E731
     good2 = "[Character.GetCustom('pmr_cc_good_eg2')]"
     loc = [
         ' PMR_CC_TAB:0 "Company Culture"',
         f' PMR_CC_LEVEL:0 "Culture Level #v {V("pmr_cc_level")}#!"',
         f' PMR_CC_POINTS:0 "#v {V("pmr_cc_pts")}#! points"',
         f' PMR_CC_BAR:0 "#v {V("pmr_cc_funds")}#! / {V("pmr_cc_cost")}"',
-        f' PMR_CC_BAR_TT:0 "#header Next point#!\\nProsperity #v {V("pmr_cc_prosp")}#! × size #v ×[Character.MakeScope.Var(\'pmr_cc_size\').GetValue|1]#! = #v +{V("pmr_cc_rate")}#! a month"',
+        f' PMR_CC_BAR_TT:0 "#header Next Point#!\\nProsperity #v {V("pmr_cc_prosp")}#! × size #v ×[Character.MakeScope.Var(\'pmr_cc_size\').GetValue|1]#! = #v +{V("pmr_cc_rate")}#! a month"',
         ' PMR_CC_SHOW:0 "Show Company Culture"',
         ' PMR_CC_OPEN:0 "Open Company Culture"',
         ' PMR_CC_FULL_TITLE:0 "Company Culture: [Company.GetNameNoFormatting]"',
         ' PMR_CC_BOARD:0 "Board"',
         ' PMR_CC_WHY_BUY:0 "#P Ready#!"',
         ' PMR_CC_WHY_DONE:0 "#P Bought#!"',
-        ' PMR_CC_WHY_POINTS:0 "#N Not enough points#!"',
-        ' PMR_CC_WHY_NA:0 "#N Nothing to found#!"',
-        ' PMR_CC_WHY_LOCKED:0 "#N Locked#!"',
+        ' PMR_CC_WHY_POINTS:0 "@red_cross! #N Not enough points#!"',
+        ' PMR_CC_WHY_NA:0 "@red_cross! #N Nothing to found#!"',
+        ' PMR_CC_WHY_LOCKED:0 "@red_cross! #N Locked#!"',
         ' PMR_CC_PG_REQ:0 "Hallmark Goods"',
-        f" PMR_CC_FX_EG2_2:0 \"• {good2} #P {pct(OUTPUT[0])}#! output\"",
-        f" PMR_CC_FX_EG2_3:0 \"• {good2} #P {pct(OUTPUT[1] - OUTPUT[0])}#! output\"",
-        ' PMR_CC_FX_PG:0 "• Prestige goods"',
-        f' PMR_RG_PAY:0 "@money!{money("pmr_rg_next")} × {GRANT_WEEKS}"',
-        f' PMR_RG_POOL:0 "#N Investment pool needs @money!{money("pmr_rg_next")}#!"',
-        f' PMR_RG_FUNDING:0 "@money!{money("pmr_rg_pay")}, {V("pmr_rg_w")} / {GRANT_WEEKS}"',
+        f" PMR_CC_FX_EG2_2:0 \"{BULLET}{good2} #P {pct(OUTPUT[0])}#! output\"",
+        f" PMR_CC_FX_EG2_3:0 \"{BULLET}{good2} #P {pct(OUTPUT[1] - OUTPUT[0])}#! output\"",
+        f' PMR_CC_FX_PG:0 "{BULLET}Prestige goods"',
+        f' PMR_RG_PAY:0 "{pay_line(money("pmr_rg_next"), GRANT_WEEKS)}"',
+        f' PMR_RG_POOL:0 "{pool_line(money("pmr_rg_next"))}"',
+        f' PMR_RG_FUNDING:0 "{funding_line(money("pmr_rg_pay"), V("pmr_rg_w"), GRANT_WEEKS)}"',
         ' PMR_CC_COST_TT:0 "Culture points"',
-        ' PMR_CC_METHODS_HEADER:0 "Methods"',
+        ' PMR_CC_METHODS_HEADER:0 "Production Methods"',
     ] + ([
         f' pmr_cc_test_points_decision:0 "PMR test: {TEST_POINTS} Culture points for each of your companies"',
         f' pmr_cc_test_points_decision_desc:0 "Each of your companies gets {TEST_POINTS} Culture points."',
@@ -1205,15 +1225,15 @@ def localization(p):
         for t in range(1, ln.tiers + 1):
             loc.append(f' PMR_CC_NAME_{ln.key}_{t}:0 "{name(ln.key, t)}"')
             if t > 1:
-                loc.append(f' PMR_CC_WHY_PREV_{ln.key}_{t}:0 "#N Needs {name(ln.key, t - 1)}#!"')
+                loc.append(f' PMR_CC_WHY_PREV_{ln.key}_{t}:0 "@red_cross! #N Needs {name(ln.key, t - 1)}#!"')
             fx = fx_lines(ln.key, t)
             if fx:
                 loc.append(f' PMR_CC_FX_{ln.key}_{t}:0 "' + '\\n'.join(fx) + '"')
             loc.append(f" PMR_CC_TT_{ln.key}_{t}:0 \"[Character.GetCustom('pmr_cc_why_{ln.key}_{t}')]\"")
     for k in RIVAL:
-        loc.append(f' PMR_CC_WHY_RULED_{k}:0 "#N Ruled out by {BY_KEY[k].names[0]}#!"')
+        loc.append(f' PMR_CC_WHY_RULED_{k}:0 "@red_cross! #N Ruled out by {BY_KEY[k].names[0]}#!"')
     for tr, k in ROOT_OF.items():
-        loc.append(f' PMR_CC_WHY_ROOT_{tr}:0 "#N Needs {BY_KEY[k].names[0]}#!"')
+        loc.append(f' PMR_CC_WHY_ROOT_{tr}:0 "@red_cross! #N Needs {BY_KEY[k].names[0]}#!"')
     for (k, t) in TRAITS:
         loc += [f' {trait_key(k, t)}:0 "{BY_KEY[k].names[t - 1]}"', f' {trait_key(k, t)}_desc:0 "Company Culture"']
     for n in SUB_TRAITS:

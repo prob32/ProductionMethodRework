@@ -413,9 +413,9 @@ def localization(p):
             if s:
                 loc.append(f' {type_key(c, n)}:0 "${c}$ {NAME[n]}"')
     for n in NUMS:
-        loc += [f' PMR_SB_PAY_{n}:0 "@money!{money(f"pmr_sb_pay{n}")} × {SB_WEEKS}"',
-                f' PMR_SB_POOL_{n}:0 "#N Investment pool needs @money!{money(f"pmr_sb_pay{n}")}#!"']
-    loc += [f' PMR_SB_FUNDING:0 "@money!{money("pmr_sb_pay")}, {cc.V("pmr_sb_w")} / {SB_WEEKS}"',
+        loc += [f' PMR_SB_PAY_{n}:0 "{cc.pay_line(money(f"pmr_sb_pay{n}"), SB_WEEKS)}"',
+                f' PMR_SB_POOL_{n}:0 "{cc.pool_line(money(f"pmr_sb_pay{n}"))}"']
+    loc += [f' PMR_SB_FUNDING:0 "{cc.funding_line(money("pmr_sb_pay"), cc.V("pmr_sb_w"), SB_WEEKS)}"',
             f' {SLOT_MODIFIER}:0 "Subsidiaries"',
             f' {SLOT_MODIFIER}_desc:0 ""']
     if not cc.TEST:

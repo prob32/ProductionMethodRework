@@ -695,18 +695,20 @@ LABEL = {WAGE: 'Wage target', ATTR: 'Job attractiveness', DIV: 'Workforce divide
 # -1 where it is bad (vanilla's colour where it has one: throughput and job attractiveness good, dangerous conditions
 # bad; wages and workforce dividends, neutral in vanilla, cost the company).
 GOOD = {THR: 1, ATTR: 1, COND: -1, WAGE: -1, DIV: -1}
+BULLET = '$EFFECT_LIST_BULLET$'   # vanilla's list bullet
 
 
 def fx(c):
     """A bylaw's effect bullets, values only."""
-    pct = lambda x: f'{round(x * 100):+d}%'.replace('-', '−')   # noqa: E731
+    pct = lambda x: f'{round(x * 100):+d}%'   # noqa: E731
     col = lambda good: 'P' if good else 'N'   # noqa: E731
     if c in TRAITS:
-        return [f'• {LABEL[m]} #{col(v * GOOD[m] > 0)} {pct(v)}#!' for m, v in TRAITS[c]]
+        return [f'{BULLET}{LABEL[m]} #{col(v * GOOD[m] > 0)} {pct(v)}#!' for m, v in TRAITS[c]]
     i = c % 10
     if c // 10 == FOCUS and i in FOCUS_AI:
         own, sub = FOCUS_AI[i]
-        return [f'• Own industries #{col(own > 1)} ×{fmt(own)}#!', f'• Subsidiary industries #{col(sub > 1)} ×{fmt(sub)}#!']
+        return [f'{BULLET}Own industries #{col(own > 1)} ×{fmt(own)}#!',
+                f'{BULLET}Subsidiary industries #{col(sub > 1)} ×{fmt(sub)}#!']
     return []
 
 
@@ -721,7 +723,7 @@ def _gv(n):
 
 def _views(views):
     """A view row's bullets (Pat 17:44Z: "i need to see the opinions ... on the company bylaws"), values only."""
-    return '\\n'.join(f'• {NAME[c]} #{"P" if views[c] > 0 else "N"} {views[c]:+d}#!'.replace('-', '−')
+    return '\\n'.join(f'{BULLET}{NAME[c]} #{"P" if views[c] > 0 else "N"} {views[c]:+d}#!'
                        for c in VOTED if views.get(c))
 
 
@@ -740,22 +742,24 @@ def custom_loc():
 
 def localization():
     loc = [' PMR_BL_HEADER:0 "Bylaws"', ' PMR_BL_SHAREHOLDERS:0 "Shareholders"', ' PMR_BL_COUNCIL:0 "Workers Council"',
-           f' {TU_MODIFIER}:0 "Harsh Company Bylaws"', f' {TU_MODIFIER}_desc:0 ""', 
-           ' PMR_BL_BAR_TT:0 "#v [Character.MakeScope.Var(\'pmr_bl_pp\').GetValue|0]#! / 100\\n'
-           'Support [Character.MakeScope.Var(\'pmr_bl_sup\').GetValue|+=0]\\n'
-           '[Character.MakeScope.Var(\'pmr_bl_rt\').GetValue|+=0] a month"']
+           f' {TU_MODIFIER}:0 "Harsh Company Bylaws"', f' {TU_MODIFIER}_desc:0 ""']
     for g, name, _o in GROUPS:
         loc.append(f' PMR_BL_GROUP_{g}:0 "{name}"')
     # a seat's votes, what they come from (Pat 19:23Z): a chairman's base and its company's profit steps, the
     # shareholders' share of the economy, the council's clout; popularity's multiplier
     cv = lambda n: f"Character.MakeScope.Var('{n}').GetValue"   # noqa: E731
     sv = lambda n: f"Company.MakeScope.Var('{n}').GetValue"   # noqa: E731
-    pf = lambda w, p: f'\\nProfit @money![{w}|K] +[{p}|0]'   # noqa: E731
-    pm = lambda v: f'\\nPopularity ×[{v}|1]'   # noqa: E731
-    loc += [f' PMR_BL_VOTES_X:0 "Chairman {CHAIR_BASE}{pf(cv("pmr_bl_wl_x"), cv("pmr_bl_pr_x"))}{pm(cv("pmr_bl_pm_x"))}"',
-            f' PMR_BL_VOTES_B:0 "Chairman {SUB_BASE}{pf(sv("pmr_bl_wl"), sv("pmr_bl_pr"))}{pm(sv("pmr_bl_pm"))}"',
-            f' PMR_BL_VOTES_H:0 "Manor Houses and Financial Districts [{cv("pmr_bl_prv")}|%0]{pm(cv("pmr_bl_pm_h"))}"',
-            f' PMR_BL_VOTES_W:0 "Trade Unions\' clout [{cv("pmr_bl_tc")}|%0]{pm(cv("pmr_bl_pm_w"))}"']
+    head = '#header Votes#!\\n$TOOLTIP_DELIMITER$'
+    pf = lambda w, p: f'\\n#v +[{p}|0]#! from Profit (@money![{w}|K])'   # noqa: E731
+    pm = lambda v: f'\\n#v ×[{v}|1]#! from Popularity'   # noqa: E731
+    loc += [f' PMR_BL_VOTES_X:0 "{head}\\n#v +{CHAIR_BASE}#! from Chairman'
+            f'{pf(cv("pmr_bl_wl_x"), cv("pmr_bl_pr_x"))}{pm(cv("pmr_bl_pm_x"))}"',
+            f' PMR_BL_VOTES_B:0 "{head}\\n#v +{SUB_BASE}#! from Chairman'
+            f'{pf(sv("pmr_bl_wl"), sv("pmr_bl_pr"))}{pm(sv("pmr_bl_pm"))}"',
+            f' PMR_BL_VOTES_H:0 "{head}\\n#v [{cv("pmr_bl_prv")}|%0]#! from Manor Houses and Financial Districts'
+            f'{pm(cv("pmr_bl_pm_h"))}"',
+            f' PMR_BL_VOTES_W:0 "{head}\\n#v [{cv("pmr_bl_tc")}|%0]#! from Trade Unions\' clout'
+            f'{pm(cv("pmr_bl_pm_w"))}"']
     # a seat's share of the votes (Pat 20:34Z): its votes, all votes, its target
     tot = cv('pmr_bl_tot')
     sh = lambda w, g: f'#v [{w}|1]#! of [{tot}|1] votes\\nTarget [{g}|1]'   # noqa: E731
@@ -773,22 +777,25 @@ def localization():
     gt = lambda n: f"GreaterThan_CFixedPoint({_gv(n)}, '(CFixedPoint)0')"   # noqa: E731
     eq1 = lambda n: f"EqualTo_CFixedPoint({_gv(n)}, '(CFixedPoint)1')"   # noqa: E731
     for c in CODES:
-        sup = f"Support [Character.MakeScope.Var('pmr_bl_s_{c}').GetValue|+=0]"
+        sup = f"#header {NAME[c]}#!\\nSupport [Character.MakeScope.Var('pmr_bl_s_{c}').GetValue|+=0]"
         if c in VOTED:
             # Pat 17:43Z: who supports and opposes it, seat by seat
             vote = lambda k: f'[{_gv(f"pmr_bl_{k}_{c}")}|+=0]'   # noqa: E731
-            sup += (f'\\n[{WHO["EX"]}.GetFullNameNoFormatting] {vote("x")}'
+            sup += (f'\\n$TOOLTIP_DELIMITER$\\n{vote("x")} from [{WHO["EX"]}.GetFullNameNoFormatting]'
                     f"[SelectLocalization({gt('pmr_bl_ns')}, 'PMR_BL_TT_B_{c}', 'PMR_EMPTY')]"
                     f"[SelectLocalization({eq1('pmr_bl_shx')}, 'PMR_BL_TT_HL_{c}', 'PMR_BL_TT_H_{c}')]"
                     f"[SelectLocalization(And({gt('pmr_bl_wc')}, {eq1('pmr_bl_wcx')}), 'PMR_BL_TT_WL_{c}', 'PMR_EMPTY')]"
                     f"[SelectLocalization(And({gt('pmr_bl_wc')}, Not({eq1('pmr_bl_wcx')})), 'PMR_BL_TT_W_{c}', 'PMR_EMPTY')]")
-            loc += [f' PMR_BL_TT_B_{c}:0 "\\nSubsidiaries {vote("b")}"',
-                    f' PMR_BL_TT_HL_{c}:0 "\\n[{WHO["SH"]}.GetFullNameNoFormatting] {vote("h")}"',
-                    f' PMR_BL_TT_H_{c}:0 "\\nShareholders {vote("h")}"',
-                    f' PMR_BL_TT_WL_{c}:0 "\\n[{WHO["WC"]}.GetFullNameNoFormatting] {vote("w")}"',
-                    f' PMR_BL_TT_W_{c}:0 "\\nWorkers Council {vote("w")}"']
+            loc += [f' PMR_BL_TT_B_{c}:0 "\\n{vote("b")} from Subsidiaries"',
+                    f' PMR_BL_TT_HL_{c}:0 "\\n{vote("h")} from [{WHO["SH"]}.GetFullNameNoFormatting]"',
+                    f' PMR_BL_TT_H_{c}:0 "\\n{vote("h")} from Shareholders"',
+                    f' PMR_BL_TT_WL_{c}:0 "\\n{vote("w")} from [{WHO["WC"]}.GetFullNameNoFormatting]"',
+                    f' PMR_BL_TT_W_{c}:0 "\\n{vote("w")} from Workers Council"']
         loc += [f' PMR_BL_NAME_{c}:0 "{NAME[c]}"', f' PMR_BL_ROW_{c}:0 "#bold {NAME[c]}#!"', f' PMR_BL_TT_{c}:0 "{sup}"',
-                f' PMR_BL_SUP_{c}:0 "[Character.MakeScope.Var(\'pmr_bl_s_{c}\').GetValue|+=0]"']
+                f' PMR_BL_SUP_{c}:0 "[Character.MakeScope.Var(\'pmr_bl_s_{c}\').GetValue|+=0]"',
+                # the bar of a change under way (cc_tree.bylaw_card), under the bylaw's name
+                f' PMR_BL_BAR_TT_{c}:0 "#header {NAME[c]}#!\\n#v [{_gv("pmr_bl_pp")}|0]#! / #v 100#!  '
+                f'([{_gv("pmr_bl_rt")}|+=0] a month)\\n$TOOLTIP_DELIMITER$\\nSupport [{_gv("pmr_bl_sup")}|+=0]"']
         if fx(c):
             loc.append(f' PMR_BL_FX_{c}:0 "' + '\\n'.join(fx(c)) + '"')
     for c in TRAITS:
