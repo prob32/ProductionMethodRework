@@ -1903,14 +1903,14 @@ def main():
         costs.append(retool_values(b))
 
         for rbx in priv_slots(b):
-            loc += [f' {rbx}:0 "Retooling: ${bk}$"',
+            loc += [f' {rbx}:0 "Retool: ${bk}$"',
                     f' {rbx}_desc:0 "Switches one level of ${bk}$ to its newest [concept_production_method]."']
         for r in recipes:
             if isinstance(r, (ElectricRecipe, PairRecipe)):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
-        loc += [f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
+        loc += [f' building_pmr_retool_gov_{b}:0 "Retool: ${bk}$"',
                 f' building_pmr_retool_gov_{b}_desc:0 "Switches the government\'s levels of ${bk}$ to the new [concept_production_method]."',
-                f' building_pmr_retool_gova_{b}:0 "Retooling (Government): ${bk}$"',
+                f' building_pmr_retool_gova_{b}:0 "Retool: ${bk}$"',
                 f' building_pmr_retool_gova_{b}_desc:0 "Switches your government\'s levels of ${bk}$ here to the new [concept_production_method]."']
 
         # Blended recipe: per recipe i, a tens and a units group whose two running digits carry recipe i's
@@ -6073,6 +6073,9 @@ def research_map_effects(buildings, auto):
         for x in RESEARCH_LAWS.get(b, []):
             by_law[x].append(b)
     auto_techs = {x for gl in auto.values() for _g, order, _by_law, techs, _elec in gl for p in order for x in techs[p]}
+    # Only a type that a technology, a law or RESEARCH_OTHER marks can carry pmr_rmk_<b>; the others are not tested
+    # (q103 X1: two load-time "used but never set" notes, and a test a month for nothing).
+    marked = set(always) | {b for bs in by_tech.values() for b in bs} | {b for bs in by_law.values() for b in bs}
 
     def mark(bs, also=''):
         return ' '.join(['set_variable = pmr_rmk_any'] + [f'set_variable = pmr_rmk_{b}' for b in bs]) + also
@@ -6098,6 +6101,8 @@ def research_map_effects(buildings, auto):
              + ('' if RELEASE else '\t\tpmr_rm_count = { N = pmr_rm_p }\n'))
     for bk in buildings:
         b = short(bk)
+        if b not in marked:
+            continue
         o.append(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_rmk_{b} }}\n\t\t\tremove_variable = pmr_rmk_{b}\n'
                  f'\t\t\tevery_scope_state = {{ limit = {{ has_building = {bk} b:{bk} = {{ level >= 1 }} }} pmr_research_{b} = yes }}\n\t\t}}\n')
     o.append('\t\tif = {\n\t\t\tlimit = { has_variable = pmr_rmk_auto }\n\t\t\tremove_variable = pmr_rmk_auto\n'
@@ -6105,7 +6110,7 @@ def research_map_effects(buildings, auto):
              '# Country scope, game start: every technology and law it holds is seen, nothing is marked.\n'
              'pmr_research_seen = {\n\tpmr_research_look = yes\n'
              + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_rmk_{x} }} remove_variable = pmr_rmk_{x} }}\n'
-                       for x in ['any', 'auto'] + [short(bk) for bk in buildings]) + '}\n\n')
+                       for x in ['any', 'auto'] + [short(bk) for bk in buildings if short(bk) in marked]) + '}\n\n')
     for bk in buildings:
         b = short(bk)
         o.append(f'# State scope: the research pass of {bk} (pmr_state_research\'s part for it).\n'
@@ -6586,9 +6591,9 @@ GALL_N = "#v [GetPlayer.MakeScope.Var('{v}').GetValue|0]#!"
 # interface review (SPEC.md B3, P1): the confirmation names the action and its cost; the buttons' tooltip, and the reason
 GOV_ALL_LOC = [f' PMR_GALL_ASK:0 "#header $PMR_GOV_RETOOL_ALL$#!\\n{GALL_N.format(v="pmr_gall_l")} levels in '
                f'{GALL_N.format(v="pmr_gall_b")} buildings\\n@construction! {GALL_N.format(v="pmr_gall_c")}"',
-               ' PMR_GOV_RETOOL_ALL_TT:0 "#header [Concept(\'concept_pmr_retooling\',\'$PMR_GOV_RETOOL_ALL$\')]#!'
+               ' PMR_GOV_RETOOL_ALL_TT:0 "#header [Concept(\'concept_pmr_retooling\',\'$PMR_GOV_RETOOL_ALL|q$\')]#!'
                '\\n$TOOLTIP_DELIMITER$\\n#instruction Click to queue every level#!"',
-               ' PMR_GOV_RETOOL_ALL_NONE:0 "#header [Concept(\'concept_pmr_retooling\',\'$PMR_GOV_RETOOL_ALL$\')]#!'
+               ' PMR_GOV_RETOOL_ALL_NONE:0 "#header [Concept(\'concept_pmr_retooling\',\'$PMR_GOV_RETOOL_ALL|q$\')]#!'
                '\\n$TOOLTIP_DELIMITER$\\n@red_cross! #N Nothing to retool#!"']
 
 
@@ -7485,7 +7490,7 @@ def pair_options(bk, pair):
 # 23:22Z: every card in the same columns: one icon column, then a grid box of the same width on every card (the widest
 # type's recipe count, MV_COLS), recipe columns at the same x, the AI weight at the same x.
 CARD_W, CARD_PAD, ICON_W, ICON_GAP = 540, 8, 60, 8
-AI_W = 100   # the AI weight column's text
+AI_W = 116   # the AI weight column: two owner cells of AI_W // 2, each an icon and "100%" (Q104-FEEDBACK F3)
 BUY_ICON = 20  # an owner's icon in the AI column's who-buys cells
 CO_SIZE = 26   # the company's round icon, a badge on the top-right corner of a card's building icon (Pat 02:32Z)
 AI_H = 82      # the AI column's height: label, weight and two rows of who-buys cells
@@ -7523,8 +7528,6 @@ def ai_column(bk, h, x, ind):
             f'{ind}flowcontainer = {{\n{i1}position = {{ {x} 0 }}\n{i1}parentanchor = vcenter\n{i1}direction = vertical\n'
             f'{i1}flowcontainer = {{\n{i2}direction = vertical\n'
             f'{i2}tooltip = "PMR_MV_AI_TT_{b}"\n{i2}using = tooltip_above\n'
-            f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n{i3}using = fontsize_small\n'
-            f'{i3}text = "PMR_MV_AI_LABEL"\n{i2}}}\n'
             f'{i2}textbox = {{\n{i3}autoresize = yes\n{i3}align = left|nobaseline\n{i3}using = fontsize_large\n'
             f'{i3}text = "PMR_MV_AI_{b}"\n{i2}}}\n{i1}}}\n'
             + cells + f'{ind}}}\n')
@@ -7727,6 +7730,7 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
            ' PMR_PAIR_NOTE_BEST:0 "  #P Most profitable#!"',
            ' PMR_MV_AI_LABEL:0 "Investment Chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_BASE:0 "Base"',
+           ' PMR_MV_BUY_ZERO:0 "#grey 0%#!"',
            ' PMR_MV_COMPANIES:0 "Companies"', ' PMR_MV_PROD:0 "Productivity"', ' PMR_MV_LOSS:0 "Losses"', ' PMR_MV_PRF:0 "Profit"',
            ' PMR_MV_OUT:0 "Output"', ' PMR_MV_PROFIT_LV:0 "Profit per level a week"',
            ' PMR_MV_EMP_LV:0 "Employees per level"', ' PMR_MV_GOODS_LV:0 "Goods per level a week at base prices"']
@@ -7753,7 +7757,11 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
         pola = mv_read(f'pmr_mv_pola_{b}')
         # Pat 21:53Z: less text, on the card and in the tooltip; 23:22Z: the card shows the share of all weights
         loc.append(f' PMR_MV_AI_{b}:0 "#bold [{mv_read(f"pmr_mv_sh_{b}")}|%1]#!"')
-        loc += [f' PMR_MV_BUY_{key}_{b}:0 "[{mv_read(f"pmr_mv_b{key}_{b}")}|%0]"' for key, *_r in private_investment.BUYERS]
+        # Q104-FEEDBACK F3: a 0% share in vanilla's grey (#grey, as COASTAL_BUILDING_MARKER_THROUGHPUT_UNAFFECTED)
+        loc += [f' PMR_MV_BUY_{key}_{b}:0 "[SelectLocalization(GreaterThan_CFixedPoint({mv_read(f"pmr_mv_b{key}_{b}")}, '
+                f'\'(CFixedPoint)0.005\'), \'PMR_MV_BUY_ON_{key}_{b}\', \'PMR_MV_BUY_ZERO\')]"'
+                for key, *_r in private_investment.BUYERS]
+        loc += [f' PMR_MV_BUY_ON_{key}_{b}:0 "[{mv_read(f"pmr_mv_b{key}_{b}")}|%0]"' for key, *_r in private_investment.BUYERS]
         # interface review (SPEC.md A3, T10): the owner's name, and what the figure is a share of
         loc += [f' PMR_MV_BUY_TT_{key}_{b}:0 "#header ${name}$#!\\n#v [{mv_read(f"pmr_mv_b{key}_{b}")}|%0]#! of new private levels"'
                 for key, _icon, name in private_investment.BUYERS]
@@ -8568,7 +8576,7 @@ def patch_building_grids(text, buildings, name, expected, also=()):
 
 
 TT_DELIM = '\\n$TOOLTIP_DELIMITER$'   # vanilla's divider under a tooltip's header (SPEC.md A1)
-RETOOL_LINK = "[Concept('concept_pmr_retooling','$PMR_GOV_RETOOL_ALL$')]"   # the retool buttons' header (SPEC.md P2)
+RETOOL_LINK = "[Concept('concept_pmr_retooling','$PMR_GOV_RETOOL_ALL|q$')]"   # the retool buttons' header (SPEC.md P2)
 
 
 def add_fp(a, b):
@@ -8593,7 +8601,7 @@ def panel_loc(recipe_keys):
         ' PMR_OWNERS_PM_HEADER:0 "Production Method"',
         f' PMR_BAR_FULL_TOOLTIP:0 "#v 100%#! on {new}"',
         ' PMR_TO_RETOOL:0 "To retool"',
-        ' PMR_BAR_HEADER:0 "#header [Concept(\'concept_production_method\',\'$concept_production_methods$\')]#!"',
+        ' PMR_BAR_HEADER:0 "#header [Concept(\'concept_production_method\',\'$concept_production_methods|q$\')]#!"',
         f' PMR_GOV_RETOOL_NONE:0 "#header {RETOOL_LINK}#!{TT_DELIM}\\n@red_cross! #N No government levels to retool#!"',
     ]
     gtz = methods_row.gt
@@ -8614,7 +8622,7 @@ def panel_loc(recipe_keys):
                  gtz(add_fp(ex(pend), ex(room)), 0.5))
             for w, label, pend, room in (('G', 'Government', 'pmr_pending_gov', 'pmr_room_gov'),
                                          ('P', 'Private', 'pmr_pending_priv', 'pmr_room_priv')))
-        loc.append(f' PMR_BAR_RT_{b}:0 "\\n#title [Concept(\'concept_pmr_retooling\',\'$PMR_TO_RETOOL$\')]:#! '
+        loc.append(f' PMR_BAR_RT_{b}:0 "\\n#title [Concept(\'concept_pmr_retooling\',\'$PMR_TO_RETOOL|q$\')]:#! '
                    f'#v {var("pmr_need", "0")}#! levels{owners}"')
         cost = RETOOL_COST.get(b)
         price = f"  @construction! #v [Multiply_CFixedPoint({ex('pmr_room_gov')}, '(CFixedPoint){fmt(cost)}')|0]#!" if cost else ''
@@ -8642,7 +8650,7 @@ def panel_loc(recipe_keys):
             return f"[{cex(name)}|{f}]"
         ctiers = ''.join(zrow(loc, f'PMR_CBAR_R_{b}_{i}', f'${key}$ #v {cvar(c_name(f"{sh}_{i}"), "%0")}#!',
                               gtz(cex(c_name(f'{sh}_{i}')), 0.005)) for i, key in enumerate(keys, 1))
-        loc.append(f' PMR_CBAR_RT_{b}:0 "\\n#title [Concept(\'concept_pmr_retooling\',\'$PMR_TO_RETOOL$\')]:#! '
+        loc.append(f' PMR_CBAR_RT_{b}:0 "\\n#title [Concept(\'concept_pmr_retooling\',\'$PMR_TO_RETOOL|q$\')]:#! '
                    f'#v {cvar("pmr_c_need", "0")}#! of #v {cvar("pmr_c_level", "0")}#! levels"')
         cprice = (f"  @construction! #v [Multiply_CFixedPoint({cex('pmr_c_room_gov')}, '(CFixedPoint){fmt(cost)}')|0]#!"
                   if cost else '')
@@ -8674,7 +8682,7 @@ def option_loc(opt_ui):
             for o in os_:
                 note = f"[Building.GetState.GetCustom('pmr_xlk_{b}_{o.j}')]"
                 market = mode == 'market' and o.group not in DEMAND_GROUPS
-                worth = f'  @money!#v {var(f"pmr_xw_{o.j}")}#! / week' if market else ''
+                worth = f'  @money!#v {var(f"pmr_xw_{o.j}", "D")}#! / week' if market else ''   # vanilla's money format (Q104-FEEDBACK L2)
                 shown = f"Or({gtz(ex(f'pmr_x_{o.j}'), 0.5)}, {eqz(ex(f'pmr_xav_{o.j}'), 0)})"
                 if market:
                     shown = f"Or({shown}, {eqz(ex(f'pmr_xsh_{o.j}'), 1)})"

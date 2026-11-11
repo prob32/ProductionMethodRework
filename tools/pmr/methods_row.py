@@ -75,7 +75,7 @@ def _cell(col, y, tip, best, alive, value, ind, shown=None):
             f'{i1}textbox = {{\n' + (f'{i2}visible = "[{shown}]"\n' if shown else '')
             + f'{i2}size = {{ {PAIR_COL} {PAIR_ROW} }}\n{i2}align = hcenter|vcenter|nobaseline\n'
             f'{i2}using = fontsize_small\n{i2}alpha = "[TransparentIfFalse({alive})]"\n'
-            f'{i2}raw_text = "@money![{value}|0]"\n{i2}alwaystransparent = yes\n{i1}}}\n{ind}}}\n')
+            f'{i2}raw_text = "@money![{value}|D]"\n{i2}alwaystransparent = yes\n{i1}}}\n{ind}}}\n')   # Q104-FEEDBACK L2
 
 
 def recipes_grid(bk, recipes, read, tip, ind, cols=None, visible=None):

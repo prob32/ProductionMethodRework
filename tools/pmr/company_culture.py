@@ -1191,9 +1191,11 @@ def localization(p):
     loc = [
         ' PMR_CC_TAB:0 "Company Culture"',
         f' PMR_CC_LEVEL:0 "Culture Level #v {V("pmr_cc_level")}#!"',
-        f' PMR_CC_POINTS:0 "#v {V("pmr_cc_pts")}#! points"',
+        f' PMR_CC_POINTS:0 "Points #v {V("pmr_cc_pts")}#!"',   # Q104-FEEDBACK F8: no "1 points"
         f' PMR_CC_BAR:0 "#v {V("pmr_cc_funds")}#! / {V("pmr_cc_cost")}"',
-        f' PMR_CC_BAR_TT:0 "#header Next Point#!\\nProsperity #v {V("pmr_cc_prosp")}#! × size #v ×[Character.MakeScope.Var(\'pmr_cc_size\').GetValue|1]#! = #v +{V("pmr_cc_rate")}#! a month"',
+        # Q104-FEEDBACK F9: the anatomy (header, total, divider, its parts) instead of a formula
+        f' PMR_CC_BAR_TT:0 "#header Next Point#!\\n#v +{V("pmr_cc_rate")}#! a month\\n$TOOLTIP_DELIMITER$\\n'
+        f'#v {V("pmr_cc_prosp")}#! Prosperity\\n#v ×[Character.MakeScope.Var(\'pmr_cc_size\').GetValue|1]#! from size"',
         ' PMR_CC_SHOW:0 "Show Company Culture"',
         ' PMR_CC_OPEN:0 "Open Company Culture"',
         ' PMR_CC_FULL_TITLE:0 "Company Culture: [Company.GetNameNoFormatting]"',

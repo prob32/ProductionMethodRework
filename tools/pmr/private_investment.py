@@ -92,6 +92,9 @@ POP_HSV = {
 
 
 def pop_rgb(pop):
+    """A pop type's colour; a colour given as (r, g, b) is its own (the stacked bars' own values, Q104-FEEDBACK)."""
+    if isinstance(pop, tuple):
+        return pop
     return tuple(round(x, 2) for x in colorsys.hsv_to_rgb(*POP_HSV[pop]))
 
 
@@ -116,12 +119,19 @@ OWNERS = [
 ]
 # Pat 15:33Z: a third chart, who built. Key, name, pop type for the colour (a tree map slice takes its colour from
 # the GUI, so pop types' colours: tan for your own investors and domestic, plum for foreign).
+# Q104-FEEDBACK F7 (Pat 2026-11-11 20:26Z): the aristocrats' navy and academics' maroon nearly vanished on the panel,
+# so Built By (a stacked bar, not a tree map, since gui review C4) takes its own lighter values for those two.
 WHO = [
-    ('gov', 'Government', 'aristocrats'),
+    ('gov', 'Government', (0.29, 0.46, 0.66)),
     ('investors', 'Your Investors', 'engineers'),
-    ('local', 'Local Owners', 'academics'),
+    ('local', 'Local Owners', (0.84, 0.80, 0.69)),
     ('foreign', 'Foreign Investors', 'soldiers'),
 ]
+# Q104-FEEDBACK F6 (Pat 20:26Z): Priority Groups in Recent Investments is a stacked bar too, where Light and Heavy
+# Industries sit side by side; the pop colours were too close there, so the bar's own values, same hues. The Private
+# Levels tree keeps the pop types' colours (a tree map slice reads GetPopType's).
+GROUP_BAR_RGB = {'light': (0.27, 0.48, 0.51), 'heavy': (0.72, 0.60, 0.73), 'agriculture': (0.37, 0.48, 0.27),
+                 'resources': (0.79, 0.54, 0.35), 'infrastructure': (0.84, 0.80, 0.69)}
 HOME_POP, ABROAD_POP = 'engineers', 'soldiers'
 GROUP_OF = {bg: k for k, _n, _d, _c, bgs in GROUPS for bg in bgs}
 NO_GROUP = 'none'          # a scored building group outside the five (Manufacturing itself): an untouched slider
@@ -1562,7 +1572,7 @@ def priority_row(g, ind):
            f'{ind}\tblockoverride "second_line" {{}}\n'
            f'{ind}\tblockoverride "text_money" {{\n{ind}\t\tvisible = no\n{ind}\t\traw_text = ""\n{ind}\t}}\n'
            f'{ind}\tblockoverride "divider" {{\n{ind}\t\tdivider_clean = {{}}\n'
-           + value(f'Not({up})', '#v +0%#!')
+           + value(f'Not({up})', '#grey 0%#!')   # Q104-FEEDBACK L6: no sign on a zero
            + value(up, f"#v +[{pct}|0%]#!")
            + f'{ind}\t}}\n')
     for k, s in enumerate(STEPS):
@@ -1585,7 +1595,8 @@ def bar(ind, x, y, w, h, value, maximum, color, direction='horizontal', visible=
             f'{ind}\tcolor = {{ {r:.2f} {g:.2f} {b:.2f} 1 }}\n{ind}\talwaystransparent = yes\n{ind}}}\n')
 
 
-RW_COLOR = (0.9, 0.9, 0.9)   # the weekly column: vanilla's one-series graph colour (v3_plotline_gdp), as the pool's line
+RW_COLOR = (0.74, 0.74, 0.72)   # the weekly column: off-white, a solid column at the pool line's 0.9 read brighter than the
+                                # line beside it (Q104-FEEDBACK L5)
 
 
 def reinvest_chart(ind):
@@ -1832,7 +1843,8 @@ def invest_charts(ind):
     """Top of Recent Investments: what was built since this version, by construction points (invest_effects), as
     the market panel's Exports and Imports charts (Pat 16:12Z, replacing the three bars of 15:33Z): domestic or
     foreign and who built it side by side, the priority groups under them. Since the gui review (C4, Pat
-    2026-11-11) the first two are a stacked bar each, with the same legend rows; the priority groups keep the tree."""
+    2026-11-11) the first two are a stacked bar each, with the same legend rows, and since Q104-FEEDBACK F6 (Pat
+    20:26Z) the priority groups too, under them at the row's full width."""
     var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
     has = f"GreaterThan_CFixedPoint({var('pmr_iv_tot')}, '(CFixedPoint)0')"
     i1, i2, i3 = ind + '\t', ind + '\t\t', ind + '\t\t\t'
@@ -1840,8 +1852,8 @@ def invest_charts(ind):
              ('PMR_IV_ABROAD', ABROAD_POP, 'pmr_iv_for', 'pmr_iv_fsh', 'PMR_IV_ABROAD_TT')]
     who = [(f'PMR_IV_WHO_SHORT_{k}', pop, f'pmr_iv_w_{i}', f'pmr_iv_ws_{i}', f'PMR_IV_WHO_{k}_TT')
            for i, (k, _n, pop) in enumerate(WHO)]
-    groups = [(f'PMR_IPW_GROUP_{g}', pop, f'pmr_iv_pts_{i}', f'pmr_iv_gs_{i}', f'PMR_IV_GROUP_{g}_TT')
-              for i, (g, _n, pop, _c, _b) in enumerate(GROUPS)]
+    groups = [(f'PMR_IPW_GROUP_{g}', GROUP_BAR_RGB[g], f'pmr_iv_pts_{i}', f'pmr_iv_gs_{i}', f'PMR_IV_GROUP_{g}_TT')
+              for i, (g, _n, _pop, _c, _b) in enumerate(GROUPS)]
     # the first row shares the panel's width, half each, both as tall as the one with more legend rows
     half = (PANEL_W - 10) // 2
     tall = 5 + 23 + 5 + SPLIT_BAR_H + 5 + max(len(place), len(who)) * LEGEND_ROW_H + 10
@@ -1854,8 +1866,8 @@ def invest_charts(ind):
             f'{i1}flowcontainer = {{\n{i2}visible = "[{has}]"\n{i2}parentanchor = hcenter\n{i2}direction = vertical\n'
             f'{i2}spacing = 10\n'
             f'{i2}flowcontainer = {{\n{i3[:-1]}\tparentanchor = hcenter\n{i3}spacing = 10\n' + row + f'{i2}}}\n'
-            + compact_tree(i2, 'PMR_IV_GROUPS_TITLE', groups, 'PMR_IV_GROUPS_TT', 140).replace(
-                f'{i2}flowcontainer = {{\n', f'{i2}flowcontainer = {{\n{i3}parentanchor = hcenter\n', 1)
+            + compact_bar(i2, 'PMR_IV_GROUPS_TITLE', groups, 'PMR_IV_GROUPS_TT', 2 * half + 10,
+                          5 + 23 + 5 + SPLIT_BAR_H + 5 + len(groups) * LEGEND_ROW_H + 10)   # Q104-FEEDBACK F6
             + f'{i1}}}\n{ind}}}\n')
 
 
@@ -2019,23 +2031,28 @@ def policy_choice(k, i, icon, ind, h):
     sg = f"GetScriptedGui('pmr_policy_{k}_sgui')"
     held = f"EqualTo_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_policy').GetValue, '(CFixedPoint){i}')"
     i1, i2 = ind + '\t', ind + '\t\t'
-    # In the 5 years after an adoption every other card says how long is left (Pat 20:06Z); otherwise a card that
-    # needs a technology says so while the country lacks it (its law is held, or the row is hidden).
-    foots = [(sv_on('pmr_policy_locked'), 'PMR_POLICY_LOCKED_FOR')]
+    # In the 5 years after an adoption the lock is said once, on the held card beside "Current Policy", and the other
+    # cards are dimmed (Q104-FEEDBACK F4, Pat 2026-11-11 20:26Z, replacing Pat 20:06Z's line on every other card);
+    # otherwise a card that needs a technology says so while the country lacks it (its law is held, or the row is
+    # hidden).
+    locked = sv_on('pmr_policy_locked')
+    foots = []
     if k in POLICY_TECH:
-        foots.append((f"And(Not({sv_on('pmr_policy_locked')}), {sv_on(f'pmr_policy_no_tech_{k}')})", f'PMR_POLICY_{k}_REQ'))
+        foots.append((f"And(Not({locked}), {sv_on(f'pmr_policy_no_tech_{k}')})", f'PMR_POLICY_{k}_REQ'))
     return (f'{ind}widget = {{\n{i1}size = {{ {PCARD_W} {h} }}\n'
             f'{i1}button = {{\n{i2}visible = "[Not({held})]"\n{i2}using = default_button\n'
             f'{i2}size = {{ {PCARD_W} {h} }}\n'
             f'{i2}enabled = "[{sg}.IsValid({scope})]"\n'
             f'{i2}onclick = "[{sg}.Execute({scope})]"\n'
             f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n'
+            f'{i2}alpha = "[TransparentIfFalse(Not({locked}))]"\n'
             + policy_tt(k, i2)
             + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_COST', foots) + f'{i1}}}\n'
             f'{i1}widget = {{\n{i2}visible = "[{held}]"\n{i2}size = {{ 100% 100% }}\n' + policy_tt(k, i2) +
             f'{i2}background = {{\n{i2}\tusing = entry_bg\n{i2}}}\n'
             f'{i2}background = {{\n{i2}\tusing = highlighted_selected_square_selection\n{i2}}}\n'
-            + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_PAID', [(None, 'PMR_POLICY_CURRENT')]) +
+            + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_PAID',
+                             [(locked, 'PMR_POLICY_CURRENT_LOCKED'), (f'Not({locked})', 'PMR_POLICY_CURRENT')]) +
             f'{i1}}}\n{ind}}}\n')
 
 
@@ -2584,6 +2601,7 @@ def localization(types, chart_types=None):
         f' PMR_POLICY_PAID:0 "@aut! #v [{var("pmr_policy_paid")}|0]#! Authority"',
         ' pmr_policy_authority:0 "Economic Policy"',
         ' PMR_POLICY_CURRENT:0 "#v Current Policy#!"',
+        f' PMR_POLICY_CURRENT_LOCKED:0 "@lock! #N [{var("pmr_policy_lock_m")}|0] months#!  #v Current Policy#!"',
         ' PMR_IPW_HEADER:0 "Investment Priorities"',
         ' PMR_PO_CAPTION:0 "By Owner"',
         ' PMR_PO_TT:0 "[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
@@ -2659,18 +2677,24 @@ def localization(types, chart_types=None):
                     f'\'PMR_IPW_COOLDOWN_{g}\', \'PMR_IPW_NOTCH_{st}\')]"']
     for s in STEPS:
         # gui review A4, T6: a priority level is a neutral choice, so white, not green
-        loc.append(f' PMR_IPW_NOTCH_{s}:0 "' + ('#v +0%#! weight' if s == 0 else
+        loc.append(f' PMR_IPW_NOTCH_{s}:0 "' + ('#grey 0%#! weight' if s == 0 else
                    f'#v +[FixedPointToInt(Multiply_CFixedPoint({COUNTRY}.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint){s}\'))]%#! weight')
                    + '"')
     for i in range(RI_WEEKS):
         when = 'This Week' if i == 0 else ('1 Week Ago' if i == 1 else f'{i} Weeks Ago')
         loc.append(f' PMR_RW_COLUMN_{i}:0 "#header {when}#!\\n#v @money![{var(f"pmr_rw_{i}")}|D]#! reinvested"')
+    loc.append(' PMR_IPW_W0:0 "#grey 0%#! weight"')
     for i, (g, name, _d, _c, bgs) in enumerate(GROUPS):
         v = VAR.format(g)
         covers = ', '.join(f'${bg}$' for bg in bgs)
         loc.append(f' PMR_IPW_GROUP_{g}:0 "{name}"')
-        loc.append(f' PMR_IPW_ROW_{g}:0 "#header {name}#!\\n{covers}\\n'
-                   f'Weight #v ×[{COUNTRY}.MakeScope.ScriptValue(\'{v}\')|2]#!"')
+        # Q104-FEEDBACK F5: the tooltip's figure is the row's (the group's weight over a group at 0), not the
+        # weight relative to the highest group (pmr_ipw_<g>), which read x1.00 beside +37%
+        pct = f"{COUNTRY}.MakeScope.ScriptValue('{v}_pct')"
+        loc.append(f' PMR_IPW_ROW_{g}:0 "#header {name}#!\\n'
+                   f'[SelectLocalization(GreaterThan_CFixedPoint({pct}, \'(CFixedPoint)0\'), \'PMR_IPW_W_{g}\', \'PMR_IPW_W0\')]'
+                   f'\\n$TOOLTIP_DELIMITER$\\n{covers}"')
+        loc.append(f' PMR_IPW_W_{g}:0 "#v +[{pct}|0%]#! weight"')
         # Pat 2026-10-20 03:51Z: the building types in it, each with its privately owned levels (pmr_pt_record); each
         # name is the game's own link (GetName, not $key$), whose nested tooltip goes to the type (Pat 14:50Z)
         ts = (chart_types or [[]] * len(GROUPS))[i]

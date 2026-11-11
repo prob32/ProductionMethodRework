@@ -47,7 +47,7 @@ TXW = NODE_W - TX0 - 12
 BODY_Y = 50
 CHARTER_Y = NODE_H - 50
 GRANT_Y = NODE_H - 30                   # an Engineering tier's grant row (grant_row)
-SB_ICON = 30
+SB_ICON = min(30, (TXW + 3) // subsidiaries.SB_SIZE - 3)   # all SB_SIZE icons inside the text column (Q104-FEEDBACK F10)
 
 # The canvas: 1146 x 744, top-centred left of the board; with the board it fits the window at 1920 x 1080 and interface
 # scale 1 (1825 x 810 below its header)
