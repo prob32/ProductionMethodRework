@@ -40,7 +40,7 @@ def recipe_tip_lines(bk, i, key, read, note):
     """The first lines of recipe i's tooltip: its name, and its profit with the caller's note (a [GetCustom(...)]
     fragment naming the pick, a recipe that can't run, or one skipped at the price cap)."""
     b = bk[len('building_'):]
-    return [f'#header ${key}$#!', f"@money!#v [{read(f'pmr_rm_{i}_{b}')}|0]#! per level a week{note}"]
+    return [f'#header ${key}$#!', f"@money!#v [{read(f'pmr_rm_{i}_{b}')}|D]#! per level a week{note}"]
 
 
 PAIR_COL, PAIR_ROW, PAIR_HEAD, PAIR_LEFT = 58, 24, 50, 40

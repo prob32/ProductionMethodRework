@@ -1227,7 +1227,7 @@ def localization(p):
         for t in range(1, ln.tiers + 1):
             loc.append(f' PMR_CC_NAME_{ln.key}_{t}:0 "{name(ln.key, t)}"')
             if t > 1:
-                loc.append(f' PMR_CC_WHY_PREV_{ln.key}_{t}:0 "@red_cross! #N Needs {name(ln.key, t - 1)}#!"')
+                loc.append(f' PMR_CC_WHY_PREV_{ln.key}_{t}:0 "@red_cross! #N Requires {name(ln.key, t - 1)}#!"')
             fx = fx_lines(ln.key, t)
             if fx:
                 loc.append(f' PMR_CC_FX_{ln.key}_{t}:0 "' + '\\n'.join(fx) + '"')
@@ -1235,7 +1235,7 @@ def localization(p):
     for k in RIVAL:
         loc.append(f' PMR_CC_WHY_RULED_{k}:0 "@red_cross! #N Ruled out by {BY_KEY[k].names[0]}#!"')
     for tr, k in ROOT_OF.items():
-        loc.append(f' PMR_CC_WHY_ROOT_{tr}:0 "@red_cross! #N Needs {BY_KEY[k].names[0]}#!"')
+        loc.append(f' PMR_CC_WHY_ROOT_{tr}:0 "@red_cross! #N Requires {BY_KEY[k].names[0]}#!"')
     for (k, t) in TRAITS:
         loc += [f' {trait_key(k, t)}:0 "{BY_KEY[k].names[t - 1]}"', f' {trait_key(k, t)}_desc:0 "Company Culture"']
     for n in SUB_TRAITS:

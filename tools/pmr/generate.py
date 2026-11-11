@@ -364,6 +364,7 @@ PROFIT_RULE = 107    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule mak
 # type's ai_value. The market terms (price bands, wanted goods, shortages) stay the game's own, per state.
 VANILLA_PROFIT_W, VANILLA_DEFICIT_W, VANILLA_OUTPUT_W = 5000 * 1.5, 10000, 0.25 * 1.25
 TARGET_EMPLOYEES = {}   # building type -> employees per level of each retool target (the order of econ)
+TARGET_OUTPUTS = {}     # building type -> the goods each retool target makes (the order of econ), for Output's tooltip
 # Pat, 2026-10-13: a recipe that needs electricity (its own goods, its folded automation, or vanilla's
 # required_input_goods) can't become a building's target unless its state produces electricity, and
 # retooling towards it pauses while the state has none. One rule for government and private retooling.
@@ -1951,6 +1952,7 @@ def main():
         # costs and needs.
         tiers_of = []     # per retool target: (recipe, the automation run with it)
         TARGET_EMPLOYEES[bk] = []
+        TARGET_OUTPUTS[bk] = []
         # vanilla divides profit by the building's whole workforce, so the other groups' first methods (ownership)
         # count too; the art academy's are all there (q29: its term came out at 4 million with 1 for its workforce)
         other_emp = sum(sum(Recipe(groups[g][0], *pms[groups[g][0]]).employment.values())
@@ -1971,6 +1973,7 @@ def main():
             fold_techs[i] = [] if sp else list(dict.fromkeys(t for a in autos for t in a.unlock_techs))
             econ.append(recipe_econ(blend, emp, weight))
             TARGET_EMPLOYEES[bk].append(sum(emp.values()) + other_emp)
+            TARGET_OUTPUTS[bk].append([g for g, q in econ[-1][0].items() if q > 0 and goods_cost.get(g)])
             profit_goods.update(g for g in econ[-1][0] if goods_cost.get(g))
             if elec:
                 elec_tiers.append(i)
@@ -2259,12 +2262,21 @@ def main():
           f'\t\t\tgoods_output_{RETOOL_CREW_GOOD}_add = {RETOOL_CREW_OUTPUT}\n'
           '\t\t}\n\t\tlevel_scaled = {\n'
           f'\t\t\tbuilding_employment_{RETOOL_CREW_POP}_add = {RETOOL_CREW}\n'
-          '\t\t}\n\t}\n}\n')
+          '\t\t}\n\t}\n}\n\n'
+          'pm_pmr_retool = {\n'
+          f'\ttexture = "{RETOOL_CREW_ICON}"\n'
+          '\tis_default = yes\n}\n')
     write('common/production_method_groups/pmr_retool_groups.txt', header +
           'pmg_pmr_retool_crew = {\n'
           f'\ttexture = "{RETOOL_CREW_ICON}"\n'
-          '\tproduction_methods = {\n\t\tpm_pmr_retool_crew\n\t}\n}\n')
-    loc += [' pmg_pmr_retool_crew:0 "Crew"', ' pm_pmr_retool_crew:0 "Retooling Crew"']
+          '\tproduction_methods = {\n\t\tpm_pmr_retool_crew\n\t}\n}\n\n'
+          '# A retool site with no crew (the government\'s): one method with no effects, named, where vanilla\'s\n'
+          '# pmg_dummy showed "Should never be shown in UI" and a placeholder icon in the building panel (q105).\n'
+          'pmg_pmr_retool = {\n'
+          f'\ttexture = "{RETOOL_CREW_ICON}"\n'
+          '\tproduction_methods = {\n\t\tpm_pmr_retool\n\t}\n}\n')
+    loc += [' pmg_pmr_retool_crew:0 "Crew"', ' pm_pmr_retool_crew:0 "Retooling Crew"',
+            ' pmg_pmr_retool:0 "Retooling"', ' pm_pmr_retool:0 "Retooling"']
     write('common/building_groups/pmr_building_groups.txt', header +
           '# No lens, not in the outliner. 1.14.5 put privately funded retool levels in the government queue\n'
           '# with this group standing alone, even marked is_government_funded = no and its buildings\n'
@@ -3643,14 +3655,14 @@ def retool_buildings(b, bk, icon):
                    + (f'\t\tpmr_retool_investor{"_abroad" if j == ABROAD_SLOT else ""}_{b} = yes\n\t}}\n' if ABROAD_SLOT else
                       f'\t\ttrigger_if = {{\n\t\t\tlimit = {{ has_variable = pmr_abroad_{b} }}\n\t\t\tpmr_retool_investor_abroad_{b} = yes\n\t\t}}\n'
                       f'\t\ttrigger_else = {{ pmr_retool_investor_{b} = yes }}\n\t}}\n'))
-            pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_dummy'
+            pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_pmr_retool'
         elif side == 'gov':
             flag = f'pmr_retool_open_gov_{b}'
             who = ('\t# The government only, for the government-owned share, where the player owns no levels abroad\n'
                    '\t# (there building_pmr_retool_gova_<b>, for the player\'s government only).\n'
                    f'\tcan_build_government = {{ pmr_retool_room_gov_{b} = yes }}\n'
                    '\tcan_build_private = { always = no }\n')
-            pmgs = 'pmg_dummy'
+            pmgs = 'pmg_pmr_retool'   # vanilla's pmg_dummy showed its placeholder name and icon (q105 screenshot)
             ai_limit = f'has_variable = {flag} NOT = {{ has_variable = pmr_abroad_{b} }}'
         else:
             flag = f'pmr_retool_open_gov_{b}'
@@ -3658,7 +3670,7 @@ def retool_buildings(b, bk, icon):
                    '\t# expands the site the tick keeps standing there (Building.QueueConstruction), never an AI.\n'
                    f'\tcan_build_government = {{ pmr_retool_room_gova_{b} = yes }}\n'
                    '\tcan_build_private = { always = no }\n')
-            pmgs = 'pmg_dummy'
+            pmgs = 'pmg_pmr_retool'   # vanilla's pmg_dummy showed its placeholder name and icon (q105 screenshot)
         out.append(
             f'{rb} = {{\n'
             f'\tbuilding_group = {group}\n'
@@ -7143,6 +7155,9 @@ def recipe_bar(bk, b, textures):
     as tall as the cash reserves bar looks (RECIPE_BAR_H). The same row shows in the Buildings tab
     when a building type is expanded (vanilla's condensed_building_information is both)."""
     retooling = f'NotZero_CFixedPoint({state_var(b, "pmr_ui_retooling")})'
+    # Q105-FEEDBACK N5: "0% on Bronze Cannons" sat over a bar all of the method the building runs; the plain title
+    # stays until a level has moved, and the retooling tooltip shows from the start
+    moved = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_p')}, '(CFixedPoint)0.005')"
     ind = '\t\t\t\t\t'
     return f"""
 				# PMR: recipe bar and government upgrade button for {bk}
@@ -7162,7 +7177,16 @@ def recipe_bar(bk, b, textures):
 						using = tooltip_above
 					}}
 					textbox = {{
-						visible = "[{retooling}]"
+						visible = "[And({retooling}, Not({moved}))]"
+						size = {{ {ROW_W - 34} 26 }}
+						align = left|nobaseline
+						elide = right
+						text = "PMR_RECIPE_BAR_TITLE"
+						tooltip = "PMR_BAR_TOOLTIP_{b}"
+						using = tooltip_above
+					}}
+					textbox = {{
+						visible = "[And({retooling}, {moved})]"
 						size = {{ {ROW_W - 34} 26 }}
 						align = left|nobaseline
 						elide = right
@@ -7730,6 +7754,35 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
     return ''.join(out)
 
 
+def producing(loc, bk, b, k):
+    """The goods Output's tooltip names after "Producing" (Q105-FEEDBACK A3, vanilla's PRODUCING_GOODS), each with its
+    icon, comma separated, the first three and "and N more". Output is the level-weighted average of every state's
+    pick, so where the retool targets make different goods, a good shows while a target making it holds a share of
+    the levels (pmr_mv_ps_<i>_<b>, methods_view_effects); where they all make the same goods the list is fixed."""
+    outs = TARGET_OUTPUTS.get(bk, [])[:k]
+    goods = list(dict.fromkeys(g for o in outs for g in o))
+    name = lambda g: f'@{g}! ${g}$'   # noqa: E731
+    if not goods:
+        return ''
+    if all(set(o) == set(goods) for o in outs) or len(goods) == 1:
+        return ', '.join(name(g) for g in goods[:3]) + (f' and {len(goods) - 3} more' if len(goods) > 3 else '')
+
+    def any_of(conds):
+        return conds[0] if len(conds) == 1 else f'Or({conds[0]}, {any_of(conds[1:])})'
+    held = [any_of([f"GreaterThan_CFixedPoint({mv_read(f'pmr_mv_ps_{i}_{b}')}, '(CFixedPoint)0')"
+                    for i, o in enumerate(outs, 1) if g in o]) for g in goods]
+    out = ''
+    for j, g in enumerate(goods):
+        loc.append(f' PMR_MVG_{b}_{j}:0 "{name(g)}"')
+        if j == 0:
+            out += f"[SelectLocalization({held[0]}, 'PMR_MVG_{b}_0', 'PMR_EMPTY')]"
+            continue
+        loc.append(f' PMR_MVG_C_{b}_{j}:0 ", {name(g)}"')
+        out += (f"[SelectLocalization({held[j]}, SelectLocalization({any_of(held[:j])}, 'PMR_MVG_C_{b}_{j}', "
+                f"'PMR_MVG_{b}_{j}'), 'PMR_EMPTY')]")
+    return out
+
+
 def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None, auto_ui=None):
     loc = [' PMR_MV_HEADER:0 "Production Methods"',   # Pat 21:53Z, with no explainer text under it
            ' PMR_BB_TAB_INVEST:0 "Policies"',   # Pat 2026-10-19 01:07Z
@@ -7739,7 +7792,8 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
            ' PMR_MV_BUY_ZERO:0 "#grey 0%#!"',
            ' PMR_MV_COMPANIES:0 "Companies"', ' PMR_MV_PROD:0 "Productivity"', ' PMR_MV_LOSS:0 "Losses"', ' PMR_MV_PRF:0 "Profit"',
            ' PMR_MV_OUT:0 "Output"', ' PMR_MV_PROFIT_LV:0 "Profit per level a week"',
-           ' PMR_MV_EMP_LV:0 "Employees per level"', ' PMR_MV_GOODS_LV:0 "Goods per level a week at base prices"']
+           ' PMR_MV_EMP_LV:0 "Employees per level"',
+           ' PMR_MV_PER_EMPLOYEE:0 "#title Weekly profit per employee of a new level:#!"']
     for bk, keys in recipe_keys.items():
         b = short(bk)
         if (pair_ui or {}).get(bk, {}).get('split'):
@@ -7789,12 +7843,18 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
         # Pat 2026-10-19 12:56Z: Productivity and Output open a nested tooltip with what they value: the profit and
         # employees per level and vanilla's weight; the goods per level at base prices and its weight
         pprod, pout = mv_read(f'pmr_mv_pprod_{b}'), mv_read(f'pmr_mv_pout_{b}')
-        # interface review (SPEC.md A3): the formula's weights are constants, not something to act on, so not shown
-        loc.append(f' PMR_MV_PROD_TT_{b}:0 "#header $PMR_MV_PROD$#!\\n[{pprod}|=+0]{TT_DELIM}\\n'
-                   f'$PMR_MV_PROFIT_LV$ @money!#v [{mv_read(f"pmr_mv_pp_{b}")}|0]#!\\n'
-                   f'$PMR_MV_EMP_LV$ #v [{mv_read(f"pmr_mv_pe_{b}")}|0]#!"')
+        # interface review (SPEC.md A3): the formula's weights are constants, not something to act on, so not shown.
+        # Pat 2026-11-11 21:00Z: Productivity says what it is and Output names the goods (Q105-FEEDBACK A2, A3). Not
+        # the game's concept_productivity, which is yearly and before wages: the figure is the weekly profit after
+        # wages per employee of a new level (vanilla_score), said as the grey sub-heading over the two figures (the
+        # quotient itself reads as nothing: £214 over 5,000 employees is £0.04)
+        loc.append(f' PMR_MV_PROD_TT_{b}:0 "#header $PMR_MV_PROD$#!\\n[{pprod}|=+0]{TT_DELIM}\\n$PMR_MV_PER_EMPLOYEE$\\n'
+                   f'$PMR_MV_PROFIT_LV$ @money!#v [{mv_read(f"pmr_mv_pp_{b}")}|D]#!\\n'
+                   f'$PMR_MV_EMP_LV$ #v [{mv_read(f"pmr_mv_pe_{b}")}|D]#!"')
+        made = producing(loc, bk, b, len(recipe_keys[bk]))
         loc.append(f' PMR_MV_OUT_TT_{b}:0 "#header $PMR_MV_OUT$#!\\n[{pout}|=+0]{TT_DELIM}\\n'
-                   f'$PMR_MV_GOODS_LV$ @money!#v [{mv_read(f"pmr_mv_pv_{b}")}|0]#!"')
+                   + (f'#title Producing {made}:#!\\n' if made else '') +
+                   f'@money!#v [{mv_read(f"pmr_mv_pv_{b}")}|D]#! per level a week at base prices"')
         nest = {'PROD': f'PMR_MV_PROD_TT_{b}', 'OUT': f'PMR_MV_OUT_TT_{b}'}
         rest = ([line(f'PMR_MV_CO_{b}', '$PMR_MV_COMPANIES$', mv_read(f'pmr_mv_pworks_{b}'))] if tail else []) + [
             line(f'PMR_MV_{x.upper()}_{b}',
@@ -7817,7 +7877,7 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
             more = (f"{TT_DELIM}\\nTarget of #v [{mv_read(f'pmr_mv_ps_{pr['index'][(i, a)]}_{b}')}|%0]#! of levels"
                     f"\\nRunning on #v [{mv_read(f'pmr_c_sh_{pr['index'][(i, a)]}_{b}')}|%0]#! of levels"
                     if pr.get('split') else '')
-            loc.append(f' PMR_MVP_PL_{b}_{i}_{a}:0 "\\n@money!#v [{mv_read(f"pmr_cp_{i}_{a}_{b}")}|0]#! per level a week'
+            loc.append(f' PMR_MVP_PL_{b}_{i}_{a}:0 "\\n@money!#v [{mv_read(f"pmr_cp_{i}_{a}_{b}")}|D]#! per level a week'
                        f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]\"")
             loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#header ${names[i - 1]}$ + $PMR_MVA_{b}_{a}$#!'
                        f"[SelectLocalization(Not({methods_row.eq(mv_read(f'pmr_cav_{i}_{a}_{b}'), 0)}), "
@@ -8640,7 +8700,8 @@ def panel_loc(recipe_keys):
             f' PMR_GOV_RETOOL_TOOLTIP_{b}:0 "{head}\\n#instruction Click to queue#!"',
             f' PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}:0 "{head}\\n#instruction Click to queue up to {GOV_ABROAD_CLICKS}#!"',
             f' PMR_GOV_RETOOL_QUEUED_{b}:0 "#header {RETOOL_LINK}#!{TT_DELIM}'
-            f'\\n@red_cross! #N All #v {var("pmr_pending_gov", "0")}#! levels queued#!"',
+            # Pat 2026-11-11 21:05Z (card, Q105-FEEDBACK N8): every level queued is good news, so a green check, not red
+            f'\\n@green_checkmark! #v {var("pmr_pending_gov", "0")}#! of #v {var("pmr_pending_gov", "0")}#! levels queued"',
             f' PMR_OWNERS_GOV_TOOLTIP_{b}:0 "#header Government Levels#!{TT_DELIM}'
             + ''.join(zrow(loc, f'PMR_OWN_G_{b}_{i}', f'${key}$ #v {var(f"{lvg}_{i}", "0")}#!', gtz(ex(f'{lvg}_{i}'), 0.5))
                       for i, key in enumerate(keys, 1)) + '"',

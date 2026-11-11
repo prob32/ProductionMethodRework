@@ -1357,8 +1357,24 @@ def invest_effects(types, retools):
     tot = ''.join(f'\t\t\tadd = var:pmr_iv_pts_{g}\n' for g in range(ng))
 
     def share(name, var):
+        # to the whole percent the charts print, so whole_parts can make each chart's parts add to 100
         return (f'\t\tset_variable = {{\n\t\t\tname = {name}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:{var}\n'
-                '\t\t\t\tdivide = var:pmr_iv_tot\n\t\t\t}\n\t\t}\n')
+                '\t\t\t\tmultiply = 100\n\t\t\t\tdivide = var:pmr_iv_tot\n\t\t\t\tround = yes\n'
+                '\t\t\t\tdivide = 100\n\t\t\t}\n\t\t}\n')
+
+    def whole_parts(parts):
+        """Q105-FEEDBACK N3 (was Q104 L4): the rounded shares of one chart added to 99; the part with the most
+        points takes 100% less the others. parts: (share, points) variable names."""
+        o = (f'\t\tset_variable = {{ name = pmr_iv_mx value = var:{parts[0][1]} }}\n'
+             '\t\tset_variable = { name = pmr_iv_mi value = 0 }\n')
+        for k, (_sh, pts) in enumerate(parts[1:], 1):
+            o += (f'\t\tif = {{ limit = {{ var:{pts} > var:pmr_iv_mx }} set_variable = {{ name = pmr_iv_mx value = var:{pts} }} '
+                  f'set_variable = {{ name = pmr_iv_mi value = {k} }} }}\n')
+        o += ('\t\tset_variable = {\n\t\t\tname = pmr_iv_rest\n\t\t\tvalue = {\n\t\t\t\tvalue = 1\n'
+              + ''.join(f'\t\t\t\tsubtract = var:{sh}\n' for sh, _p in parts) + '\t\t\t}\n\t\t}\n')
+        o += ''.join(f'\t\tif = {{ limit = {{ var:pmr_iv_mi = {k} }} change_variable = {{ name = {sh} add = var:pmr_iv_rest }} }}\n'
+                     for k, (sh, _p) in enumerate(parts))
+        return o
     shares_fx = ('# Country scope (the player). Each group\'s share of the construction points counted (pmr_iv_gs_<g>), the\n'
                  '# domestic and foreign shares, and each builder\'s (pmr_iv_ws_<w>, WHO order).\n'
                  'pmr_pi_shares = {\n'
@@ -1367,6 +1383,10 @@ def invest_effects(types, retools):
                  + ''.join(share(f'pmr_iv_gs_{g}', f'pmr_iv_pts_{g}') for g in range(ng))
                  + share('pmr_iv_dsh', 'pmr_iv_dom') + share('pmr_iv_fsh', 'pmr_iv_for')
                  + ''.join(share(f'pmr_iv_ws_{w}', f'pmr_iv_w_{w}') for w in range(len(WHO)))
+                 + whole_parts([(f'pmr_iv_gs_{g}', f'pmr_iv_pts_{g}') for g in range(ng)])
+                 + whole_parts([('pmr_iv_dsh', 'pmr_iv_dom'), ('pmr_iv_fsh', 'pmr_iv_for')])
+                 + whole_parts([(f'pmr_iv_ws_{w}', f'pmr_iv_w_{w}') for w in range(len(WHO))])
+                 + '\t\tremove_variable = pmr_iv_mx\n\t\tremove_variable = pmr_iv_mi\n\t\tremove_variable = pmr_iv_rest\n'
                  + '\t}\n}\n\n')
     hooks = ('# Building scope (on_start_expanding_building, every country\'s): note the levels of a counted type that\n'
              '# has levels already (a new building\'s first level needs no note).\n'
@@ -1547,13 +1567,27 @@ def priority_row(g, ind):
     return out + f'{ind}}}\n'
 
 
-def trend_chart(ind, trend, header, w):
+def trend_chart(ind, trend, header, w, peak=False, tooltip=None):
     """One of the budget's own graphs as its graph tooltip draws it (vanilla graph_tooltips.gui): the engine's weekly
     trend <trend> of the country on v3_plotline, w wide, narrowed so two share the row. The engine keeps the trend,
-    so no script records anything for it."""
+    so no script records anything for it. peak: the line at the latest value and its "-X below peak" tag, as vanilla's
+    Population and GDP graphs draw them (v3_plotline_population, politics_panel_types.gui). tooltip: the line's, in
+    vanilla's latest-and-peak form (trend_tooltip_loc)."""
     t = f'{COUNTRY}.{trend}'
     left, right = PLOT_MARGINS
     bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
+    vals = (f'{ind}\t\t\tmin = "[GetMinPadded({t})]"\n{ind}\t\t\tmax = "[GetMaxPadded({t})]"\n'
+            f'{ind}\t\t\tvalue = "[GetTrendValue({t})]"\n')
+    marks = (bo('underlay_plotlines', f'{ind}\t\tv3_plotline_current_value_marker = {{\n'
+                f'{ind}\t\t\tblockoverride "marker_values" {{\n{vals.replace(ind, ind + chr(9))}{ind}\t\t\t}}\n{ind}\t\t}}\n')
+             + bo('extra_plotlines', f'{ind}\t\tv3_plotline_current_value_readout = {{\n'
+                  f'{ind}\t\t\tblockoverride "marker_values" {{\n{vals.replace(ind, ind + chr(9))}{ind}\t\t\t}}\n'
+                  f'{ind}\t\t\tblockoverride "marker_peak_visibility" {{\n'
+                  f'{ind}\t\t\t\tvisible = "[GreaterThan_CFixedPoint(Subtract_CFixedPoint(GetMax({t}), GetTrendValue({t})), '
+                  f"Multiply_CFixedPoint(GetMax({t}), '(CFixedPoint)0.001'))]\"\n{ind}\t\t\t}}\n"
+                  f'{ind}\t\t\tblockoverride "marker_peak_text" {{\n'
+                  f'{ind}\t\t\t\traw_text = "-[Subtract_CFixedPoint(GetMax({t}), GetTrendValue({t}))|D]"\n{ind}\t\t\t}}\n'
+                  f'{ind}\t\t}}\n')) if peak else ''
     return (f'{ind}v3_plotline = {{\n'
             + bo('margins', f'{ind}\t\tmargin_bottom = 40\n{ind}\t\tmargin_left = {left}\n{ind}\t\tmargin_right = {right}\n')
             + bo('text_max_width', f'{ind}\t\tmax_width = {w + left + right - 10}\n')
@@ -1567,6 +1601,8 @@ def trend_chart(ind, trend, header, w):
             + bo('startdate', f'{ind}\t\ttext = "[GetOldestDate({t})]"\n')
             + bo('enddate', f'{ind}\t\ttext = "[GetLatestDate({t})]"\n')
             + bo('multiitem', '')
+            + (bo('tooltip', f'{ind}\t\ttooltip = "{tooltip}"\n') if tooltip else '')
+            + marks
             + bo('empty_state_visibility', f'{ind}\t\tvisible = "[IsEmpty({t})]"\n')
             + bo('everything_that_is_not_empty_state_visibility', f'{ind}\t\tvisible = "[Not(IsEmpty({t}))]"\n')
             + bo('empty_state_text', f'{ind}\t\ttext = "GRAPH_NOT_INITIALIZED"\n')
@@ -1578,13 +1614,35 @@ def transfer_chart(ind):
     GraphTooltip_InvestmentIncome (Pat 2026-11-11 20:31Z, in place of the weekly reinvestment columns). The game
     keeps no trend of the money entering the pool, so the columns were 52 bars and 52 hover areas over a weekly
     script record (pmr_rw_record); both are gone, and this is one plot line of a trend the engine keeps."""
-    return trend_chart(ind, 'GetInvestmentIncomeTrend', '[concept_budget_investment_income]', TRANSFER_GRAPH_W)
+    # Pat 2026-11-11 21:02Z: the line at the latest value and the "below peak" tag, as the Population graph
+    return trend_chart(ind, 'GetInvestmentIncomeTrend', '[concept_budget_investment_income]', TRANSFER_GRAPH_W,
+                       peak=True, tooltip='PMR_TREND_TT_TRANSFER')
 
 
 def pool_chart(ind):
     """The budget's own investment pool graph (Pat 14:28Z): vanilla's GraphTooltip_InvestmentPool plot, the engine's
     weekly trend of the pool."""
-    return trend_chart(ind, 'GetInvestmentFundTrend', '[concept_investment_pool]', POOL_GRAPH_W)
+    # Q105-FEEDBACK A1: the peak line and tag on both graphs of the pair, so the two frames stay alike
+    return trend_chart(ind, 'GetInvestmentFundTrend', '[concept_investment_pool]', POOL_GRAPH_W,
+                       peak=True, tooltip='PMR_TREND_TT_POOL')
+
+
+TRENDS = (('TRANSFER', 'GetInvestmentIncomeTrend', 'concept_budget_investment_income'),
+          ('POOL', 'GetInvestmentFundTrend', 'concept_investment_pool'))
+
+
+def trend_tooltip_loc():
+    """The graphs' line tooltips in vanilla's form (COMPANY_TREND_PROFIT_TOOLTIP, Q105-FEEDBACK A1): the latest
+    value, and how far below the peak while it is more than 0.1% under it."""
+    loc = []
+    for key, trend, concept in TRENDS:
+        t = f'{COUNTRY}.{trend}'
+        gap = f'Subtract_CFixedPoint(GetMax({t}), GetTrendValue({t}))'
+        below = f"GreaterThan_CFixedPoint({gap}, Multiply_CFixedPoint(GetMax({t}), '(CFixedPoint)0.001'))"
+        loc += [f' PMR_TREND_BELOW_{key}:0 "\\n#n @money!-[{gap}|D]#! below peak"',
+                f' PMR_TREND_TT_{key}:0 "#header [{concept}]#!\\n@money!#v [GetTrendValue({t})|D]#! currently'
+                f"[SelectLocalization({below}, 'PMR_TREND_BELOW_{key}', 'PMR_EMPTY')]\""]
+    return loc
 
 
 def charts_row(ind):
@@ -1601,7 +1659,6 @@ def tree_chart(ind, items, prefix, tooltip, caption, empty):
     its pop type's colour (Pat 15:33Z: the game's palette). items: (name loc key, pop type, colour, row tooltip)."""
     n = len(items)
     idx = 'PdxGuiWidget.GetIndexInDataModel'
-    pidx = 'PdxGuiWidget.AccessParent.GetIndexInDataModel'
 
     def chain(fn, at, vals):
         out = vals[-1]
@@ -1609,7 +1666,6 @@ def tree_chart(ind, items, prefix, tooltip, caption, empty):
             out = f"{fn}(EqualTo_int32({at}, '(int32){i}'), {vals[i]}, {out})"
         return out
     color = chain('Select_CVector4f', idx, [f"GetPopType('{pop}').GetColor" for _k, pop, _c, _t in items])
-    label = chain('Select_CString', pidx, [f"Localize('{k}')" for k, *_r in items])
     value = f"FixedPointToFloat({COUNTRY}.MakeScope.Var(Concatenate('{prefix}_', ToString_int32({idx}))).GetValue)"
     has = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('{prefix}_total').GetValue, '(CFixedPoint)0')"
     i1, i2, i3, i4, i5 = (ind + '\t' * k for k in range(1, 6))
@@ -1620,8 +1676,7 @@ def tree_chart(ind, items, prefix, tooltip, caption, empty):
                  f'{i4}texture = "gfx/interface/piechart/piechart_legend.dds"\n{i4}color = {{ {r} {gg} {b} 1 }}\n{i3}}}\n'
                  f'{i3}textbox = {{\n{i4}parentanchor = vcenter\n{i4}position = {{ 26 0 }}\n{i4}size = {{ 180 24 }}\n'
                  f'{i4}align = left|nobaseline\n{i4}elide = right\n{i4}text = "{k}"\n{i3}}}\n'
-                 f'{i3}textbox = {{\n{i4}parentanchor = right|vcenter\n{i4}autoresize = yes\n{i4}align = right|nobaseline\n'
-                 f'{i4}raw_text = "#v [{COUNTRY}.MakeScope.Var(\'{prefix}_share_{i}\').GetValue|0%]#!"\n{i3}}}\n{i2}}}\n')
+                 + share_text(f"{COUNTRY}.MakeScope.Var('{prefix}_share_{i}').GetValue", i3) + f'{i2}}}\n')
     return (f'{ind}widget = {{\n{i1}parentanchor = hcenter\n{i1}size = {{ 540 204 }}\n'
             f'{i1}tooltip = "{tooltip}"\n{i1}using = tooltip_above\n'
             f'{i1}textbox = {{\n{i2}visible = "[Not({has})]"\n{i2}parentanchor = center\n{i2}autoresize = yes\n'
@@ -1633,9 +1688,7 @@ def tree_chart(ind, items, prefix, tooltip, caption, empty):
             f'{i5}texture = "gfx/interface/treemapchart/treemapchart.dds"\n'
             f'{i5}value = "[{value}]"\n{i5}color = "[{color}]"\n'
             f'{i5}tooltip = "{tooltip}"\n'
-            f'{i5}textbox = {{\n{i5}\tsize = {{ 100% 100% }}\n{i5}\talign = center|nobaseline\n{i5}\tmargin = {{ 4 4 }}\n'
-            f'{i5}\tusing = fontsize_small\n{i5}\tmultiline = yes\n{i5}\telide = right\n{i5}\talwaystransparent = yes\n'
-            f'{i5}\traw_text = "#bold [{label}]#!"\n{i5}}}\n'
+            # Q105-FEEDBACK N1: no tile text; it broke mid-word on thin slices, and the legend names every slice
             f'{i4}}}\n{i3}}}\n{i2}}}\n'
             f'{i2}icon = {{\n{i3}texture = "gfx/interface/treemapchart/treemapchart_frame.dds"\n{i3}parentanchor = center\n'
             f'{i3}size = {{ 124% 110% }}\n{i2}}}\n{i1}}}\n'
@@ -1711,9 +1764,21 @@ def legend_row(k, pop, share, tt, legend_w, ind):
             f'{i1}textbox = {{\n{i2}parentanchor = vcenter\n{i2}position = {{ 26 0 }}\n'
             f'{i2}size = {{ {legend_w - 26 - 30} {LEGEND_ROW_H} }}\n{i2}align = left|nobaseline\n{i2}elide = right\n'
             f'{i2}using = fontsize_small\n{i2}text = "{k}"\n{i1}}}\n'
-            f'{i1}textbox = {{\n{i2}parentanchor = right|vcenter\n{i2}position = {{ -3 0 }}\n{i2}autoresize = yes\n'
-            f'{i2}align = right|nobaseline\n{i2}using = fontsize_small\n'
-            f'{i2}raw_text = "#v [{COUNTRY}.MakeScope.Var(\'{share}\').GetValue|0%]#!"\n{i1}}}\n{ind}}}\n')
+            + share_text(f"{COUNTRY}.MakeScope.Var('{share}').GetValue", i1, '\tposition = { -3 0 }\n\tusing = fontsize_small\n')
+            + f'{ind}}}\n')
+
+
+def share_text(val, ind, extra=''):
+    """A legend row's share, right-aligned: #v while above 0, #grey at 0 (Q105-FEEDBACK N4, as the cards' zero
+    shares, Q104-FEEDBACK F3)."""
+    i1 = ind + '\t'
+    more = ''.join(f'{i1}{x.strip()}\n' for x in extra.split('\n') if x.strip())
+    out = ''
+    for fmt, cond in (('#v', f"GreaterThan_CFixedPoint({val}, '(CFixedPoint)0')"),
+                      ('#grey', f"Not(GreaterThan_CFixedPoint({val}, '(CFixedPoint)0'))")):
+        out += (f'{ind}textbox = {{\n{i1}visible = "[{cond}]"\n{i1}parentanchor = right|vcenter\n{more}'
+                f'{i1}autoresize = yes\n{i1}align = right|nobaseline\n{i1}raw_text = "{fmt} [{val}|0%]#!"\n{ind}}}\n')
+    return out
 
 
 def split_bar(ind, items, tooltip, w):
@@ -1968,7 +2033,8 @@ def policy_choice(k, i, icon, ind, h):
             f'{i2}enabled = "[{sg}.IsValid({scope})]"\n'
             f'{i2}onclick = "[{sg}.Execute({scope})]"\n'
             f'{i2}onclick = "[GetVariableSystem.Clear(\'{PICK}\')]"\n'
-            f'{i2}alpha = "[TransparentIfFalse(Not({locked}))]"\n'
+            # Q105-FEEDBACK N11: dimmed to 0.6, lighter than TransparentIfFalse, so the locked cards still read
+            f'{i2}alpha = "[Select_float({locked}, \'(float)0.6\', \'(float)1.0\')]"\n'
             + policy_tt(k, i2)
             + policy_content(k, icon, i2, PCARD_W, 'PMR_POLICY_COST', foots) + f'{i1}}}\n'
             f'{i1}widget = {{\n{i2}visible = "[{held}]"\n{i2}size = {{ 100% 100% }}\n' + policy_tt(k, i2) +
@@ -2628,7 +2694,7 @@ def localization(types, chart_types=None):
                         f"'PMR_PT_{bk[9:]}', 'PMR_EMPTY')]" for bk in ts)
         loc.append(f' PMR_PC_ROW_{i}:0 "#header {name}#!\\n#v [{var(f"pmr_pc_{i}")}|0]#! levels\\n$TOOLTIP_DELIMITER${lines}"')
         loc += [f' PMR_PT_{bk[9:]}:0 "\\n[GetBuildingType(\'{bk}\').GetName] #v [{var(f"pmr_pt_{bk[9:]}")}|0]#!"' for bk in ts]
-    return loc
+    return loc + trend_tooltip_loc()
 
 
 IDEOLOGY_SOURCE = 'common/ideologies/01_character_ideologies.txt'
