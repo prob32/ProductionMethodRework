@@ -737,11 +737,30 @@ def chart_effect():
     sets = ''.join(f'\tset_variable = {{ name = pmr_pc_{i} value = pmr_pc_{g} }}\n' for i, (g, *_r) in enumerate(GROUPS))
 
     def total_and_shares(prefix, n):
+        # q106 shots (Pat 2026-11-11 22:02Z): the legend printed truncated shares, 36+3+30+15+13 = 97%. Each share is
+        # rounded to the whole percent the legend prints, and the largest part takes 100% less the others, as the
+        # Recent Investments charts (Q105-FEEDBACK N3).
         tot = ''.join(f'\t\t\tadd = var:{prefix}_{i}\n' for i in range(n))
-        return (f'\tset_variable = {{\n\t\tname = {prefix}_total\n\t\tvalue = {{\n\t\t\tvalue = 0\n{tot}\t\t}}\n\t}}\n'
-                + ''.join(f'\tset_variable = {{\n\t\tname = {prefix}_share_{i}\n\t\tvalue = {{\n\t\t\tvalue = 0\n'
-                          f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{prefix}_total > 0 }}\n\t\t\t\tvalue = var:{prefix}_{i}\n'
-                          f'\t\t\t\tdivide = var:{prefix}_total\n\t\t\t}}\n\t\t}}\n\t}}\n' for i in range(n)))
+        out = (f'\tset_variable = {{\n\t\tname = {prefix}_total\n\t\tvalue = {{\n\t\t\tvalue = 0\n{tot}\t\t}}\n\t}}\n'
+               + ''.join(f'\tset_variable = {{\n\t\tname = {prefix}_share_{i}\n\t\tvalue = {{\n\t\t\tvalue = 0\n'
+                         f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{prefix}_total > 0 }}\n\t\t\t\tvalue = var:{prefix}_{i}\n'
+                         '\t\t\t\tmultiply = 100\n'
+                         f'\t\t\t\tdivide = var:{prefix}_total\n\t\t\t\tround = yes\n\t\t\t\tdivide = 100\n'
+                         '\t\t\t}\n\t\t}\n\t}\n' for i in range(n)))
+        out += (f'\tif = {{\n\t\tlimit = {{ var:{prefix}_total > 0 }}\n'
+                f'\t\tset_variable = {{ name = {prefix}_mx value = var:{prefix}_0 }}\n'
+                f'\t\tset_variable = {{ name = {prefix}_mi value = 0 }}\n'
+                + ''.join(f'\t\tif = {{ limit = {{ var:{prefix}_{i} > var:{prefix}_mx }} '
+                          f'set_variable = {{ name = {prefix}_mx value = var:{prefix}_{i} }} '
+                          f'set_variable = {{ name = {prefix}_mi value = {i} }} }}\n' for i in range(1, n))
+                + f'\t\tset_variable = {{\n\t\t\tname = {prefix}_rest\n\t\t\tvalue = {{\n\t\t\t\tvalue = 1\n'
+                + ''.join(f'\t\t\t\tsubtract = var:{prefix}_share_{i}\n' for i in range(n))
+                + '\t\t\t}\n\t\t}\n'
+                + ''.join(f'\t\tif = {{ limit = {{ var:{prefix}_mi = {i} }} '
+                          f'change_variable = {{ name = {prefix}_share_{i} add = var:{prefix}_rest }} }}\n' for i in range(n))
+                + f'\t\tremove_variable = {prefix}_mx\n\t\tremove_variable = {prefix}_mi\n\t\tremove_variable = {prefix}_rest\n'
+                + '\t}\n')
+        return out
     steps = (512, 256, 128, 64, 32, 16, 8, 4, 2, 1)
     company = ('\tset_variable = { name = pmr_po_2 value = 0 }\n\tevery_company = {\n'
                '\t\troot = { set_variable = { name = pmr_po_x value = 0 } }\n'
