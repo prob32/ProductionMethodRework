@@ -186,7 +186,8 @@ def files(declared_types):
                   '# No root.\npmr_probe_on_game_started = {\n\teffect = { pmr_probe_frame_setup = yes }\n}\n\n'
                   '# Root = country; Great Britain only.\npmr_probe_on_monthly_country = {\n'
                   '\ttrigger = { exists = c:GBR this = c:GBR }\n\teffect = { pmr_probe_frame_monthly = yes }\n}\n')
-    loc = [f' {name}:0 "Retooling"' for name in MODS]
+    import frames   # the GUI hides timed modifiers by this name (generate.py LESS_SHOWN)
+    loc = [f' {name}:0 "{frames.LESS_NAME}"' for name in MODS]
     return [('common/static_modifiers/pmr_probe_modifiers.txt', mods),
             ('common/script_values/pmr_probe_frame_values.txt', values),
             ('common/scripted_effects/pmr_probe_frame_effects.txt', effects),

@@ -2447,7 +2447,7 @@ def main():
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
     write('gui/building_details_panel.gui', gate_type_copies(patch_building_panel(
         recipe_tex, vanilla_gui('building_details_panel.gui'), opt_ui, also, auto_ui, pick_ui,
-        vanilla_gui('modifiers_panel.gui'))), bom=False)
+        vanilla_gui('modifiers_panel.gui'), less_all[:2])), bom=False)
     # The same icon row in the building tooltip and the map list (hide_less_icons): two more vanilla files carried
     # whole, each with one line added.
     for name in LESS_ICON_FILES:
@@ -7900,7 +7900,8 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extr
     return hide + text[at:end] + labour + text[end:]
 
 
-def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, pick_ui=None, modifiers_gui=None):
+def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, pick_ui=None, modifiers_gui=None,
+                         cut_goods=(set(), set())):
     """Vanilla building_details_panel.gui with two changes, asserted so a game update that moves
     either anchor fails generation instead of shipping a panel that silently lost them."""
     buildings = list(recipe_tex)
@@ -7908,7 +7909,7 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, p
     # (method-count rework, Pat's q99 screenshots).
     text = patch_zero_rows(hide_less_icons(text, 'building_details_panel.gui'))
     if modifiers_gui is not None:
-        text = patch_modifier_list(text, modifiers_gui)
+        text = patch_modifier_list(text, modifiers_gui, cut_goods)
     # 1. The production method row: no grid on a PMR building type, and nothing in its place (Pat,
     # 2026-10-13: no goods icon; the recipe row below takes the room).
     text = patch_grid_instance(text, buildings, '\t\t\t\t\t', 'building_details_panel.gui', outer=(208, 70), cell=70,
@@ -7958,12 +7959,26 @@ def hide_less_icons(text, name, count=1):
                           f'{m.group(1)}\tvisible = "[{LESS_SHOWN}]"\n', text)
 
 
-def patch_modifier_list(text, modifiers_gui):
+def entry_unused(cut_goods):
+    """ModifierEntry context inside a building: the entry is a union frame's goods_input/output_<good>_add for a good
+    a "less" modifier took to nothing (q102, Pat's 15:47Z screenshot: "Rubber input +275" on a textile mill using no
+    rubber). Matched by its name against the modifier's own localisation, so in every language; a staffed building
+    only, as the Process rows (ZERO_ROWS)."""
+    gin, gout = cut_goods
+    terms = ([f"And(EqualTo_string(ModifierEntry.GetName, Localize('goods_input_{g}_add')), "
+              f"Not(GreaterThan_CFixedPoint(Building.GetConsumption(GetGoods('{g}')), '(CFixedPoint)0')))" for g in sorted(gin)]
+             + [f"And(EqualTo_string(ModifierEntry.GetName, Localize('goods_output_{g}_add')), "
+                f"Not(GreaterThan_CFixedPoint(Building.GetProduction(GetGoods('{g}')), '(CFixedPoint)0')))" for g in sorted(gout)])
+    return f'And({STAFFED}, {any_of(terms)})' if terms else ''
+
+
+def patch_modifier_list(text, modifiers_gui, cut_goods=(set(), set())):
     """building_details_panel.gui: the Modifiers tab without a row per "less" modifier. The tab is vanilla's
     modifier_list (modifiers_panel.gui), which the country, character, interest group and formation panels share, so
     the building panel gets a copy of its own, pmr_modifier_list, with those rows hidden, and vanilla's stays as it
     is. When every timed modifier is one of them the header stands alone: the list is not empty, so vanilla's "none"
-    line stays hidden, and nothing can count the rows left."""
+    line stays hidden, and nothing can count the rows left. Its Modifier Entries (modifier_list_content) get a copy
+    too, pmr_modifier_list_content, without the rows of goods a cut took to nothing (entry_unused)."""
     head = '\ttype modifier_list = flowcontainer {\n'
     if modifiers_gui.count(head) != 1:
         raise SystemExit('modifiers_panel.gui: type modifier_list moved; update patch_modifier_list')
@@ -7981,6 +7996,24 @@ def patch_modifier_list(text, modifiers_gui):
     body = body.replace(rows[0], rows[0] + '\t\t\t\t' + rows[1]).replace(item[0], item[0] + '\t\t\t\t\t' + item[1])
     body = body.replace(head, '\t# PMR: vanilla\'s modifier_list (modifiers_panel.gui) without the "less" modifiers\' rows\n'
                         '\ttype pmr_modifier_list = flowcontainer {\n')
+    unused = entry_unused(cut_goods)
+    if unused:
+        chead = '\ttype modifier_list_content = flowcontainer {\n'
+        cuse = '\t\tmodifier_list_content = {\n\t\t\tdatacontext = "[ModifiersPanel.GetModifier]"\n'
+        if modifiers_gui.count(chead) != 1 or body.count(cuse) != 1:
+            raise SystemExit('modifiers_panel.gui: type modifier_list_content moved; update patch_modifier_list')
+        cstart = modifiers_gui.index(chead)
+        cbody = modifiers_gui[cstart:block_end(modifiers_gui, cstart)]
+        erows = 'datamodel = "[Modifier.GetEntries]"\n'
+        eitem = 'item = {\n\t\t\t\twidget = {\n'
+        if cbody.count(erows) != 1 or cbody.count(eitem) != 1 or cbody.index(eitem) < cbody.index(erows):
+            raise SystemExit('modifiers_panel.gui: the modifier entry rows changed; update patch_modifier_list')
+        cbody = (cbody.replace(erows, erows + '\t\t\tignoreinvisible = yes   # PMR\n')
+                 .replace(eitem, eitem + '\t\t\t\t\t# PMR: no row for a good a "less" modifier took to nothing (frames.py)\n'
+                          f'\t\t\t\t\tvisible = "[Not({unused})]"\n')
+                 .replace(chead, '\t# PMR: vanilla\'s modifier_list_content (modifiers_panel.gui) without unused goods\' rows\n'
+                          '\ttype pmr_modifier_list_content = flowcontainer {\n'))
+        body = cbody + '\n\n' + body.replace(cuse, cuse.replace('modifier_list_content = {', 'pmr_modifier_list_content = {'))
     types = 'types building_panels\n{\n'
     use = '\t\t\t\tmodifier_list = {\n\t\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'modifiers\')]"\n'
     if text.count(types) != 1 or text.count(use) != 1:

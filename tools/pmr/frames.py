@@ -40,7 +40,9 @@ LESS_ICON = GENERIC_ICON
 SECTIONS = ('building_modifiers', 'state_modifiers', 'country_modifiers')
 LOOKUP_FROM = 7      # as generate.py: a ladder this long becomes a binary search
 EPS = 1e-9
-LESS_NAME = 'Retooling'
+# The cut lines' name, which the GUI also hides them by (generate.py LESS_SHOWN). q102: a pure mill's trade-off cuts
+# read "Retooling" in the Modifier Entries tooltips (Pat's screenshot 2026-11-11 15:50Z); "Method mix" from q103.
+LESS_NAME = 'Method mix'
 # q99's run (Pat, 2026-11-10): building_employment_<pop>_mult on a building's own modifier reads back and shows on the
 # Modifiers tab ("Shopkeepers Per Level -60%") but moves no jobs: the Midlands furniture manufactory kept the union's
 # 30.0K capacity with its shopkeepers cut 43%, and the probe wharf every laborer at -50%. A blend holds its union's jobs
