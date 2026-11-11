@@ -10,6 +10,37 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
+## Next: less script a month (q103, test mod, not built yet: waits on your go)
+
+From the build thread, with performance reviews 11 and 12 (`/mnt/project-files/pmr/perf/review-11/` and `review-12/`).
+An AI building that has nothing to choose stops being priced until its books move (the solo gate), a technology
+updates only the building types it unlocks something for, AI countries keep their investment figures as running sums,
+and the monthly state checks and quiet building updates stop early. In the replay that is about 35% less script than
+q102, with the same picks. Every part can be dropped on its own. The build also renames the trade-off cut lines to
+"Method mix" and hides the unused Rubber line. Start a new game.
+
+1. Use the PMR Test playset and launch with -debug_mode. Start a new game as Great Britain.
+2. Play a year as Britain, then carry on with no country to February 1839 if you can, as in q102.
+3. Close the game and tell the build thread.
+
+Read `logs\error.log` first (S4, V2, X1). The speed row reads February 1837 to February 1839 with no country.
+
+| # | Read | Pass | A null means |
+| --- | --- | --- | --- |
+| S1 | The monthly `PMR;rec=SOLO` line: `held, end, lite, full, watch` | From the third month `held` is over half of `held + end + watch`, `full` well under q102's share | No SOLO line: not a q103 build or the monthly report did not run (check `rec=BUILD` says q103); not a result. `held=0`: the flag never sets, a bug to send back, do not time it |
+| S2 | Speed, February 1837 to February 1839 with no country (the build thread times it) | At least 0.3 s a game month under q102's 8.1 | Within 0.1 s either way with S1 passing: the operations were saved but are not where the seconds are; the next step is T2, not more script cuts |
+| S3 | `runs.py compare` DEFAULT and SWITCH_START counts for Britain, q103 against q102 | The same order (within a fifth) | Zero lines in both: nothing compared, not a pass |
+| S4 | error.log | No line naming `pmr_solo`, `pmr_lite`, `pmr_read_books_po`, `pmr_sgc`, `scope:pmr_xmo` or `pmr_nrv` | An error on `scope:pmr_xmo`: drop `--direct-watch`. On `pmr_lite` or `pmr_read_books_po`: fall back to `--solo 1` |
+| V1 | The monthly `PMR;rec=DV` lines past February 1837 | `reads` in the thousands after the first two months and again each January and February, `off=0`: the next build takes `--value-reads 2` | No DV line: the check did not run, not a result. `off` near `reads`: the plain reads return 0 here, keep the ladders (they decided throughout). `off` small but not 0: the `DVOFF` lines (`what=books` or `share`) say which figure |
+| V2 | error.log | No line naming `scope:pmr_bk.earnings`, `.occupancy`, `.weekly_profit` or `.country_ownership_fraction` | A line: that figure does not read as a value; V1's `off` shows it too |
+| R1 | The monthly `PMR;rec=RMAP` line | Most months `passes` over 0 and `runs` in the tens or low hundreds | No RMAP line: the switch is not in the build. `passes=0` month after month: technologies do not reach the map, drop `--research-map`. `runs` in the thousands every month: the map marks everything, no saving but no harm |
+| R2 | Britain's `RESEARCH` lines | A line in the month an unlocking technology lands, as in q102 | None where Britain researched one: send back. No such technology researched: nothing tested |
+| P1 | The monthly `PMR;rec=PFSUM` line from January 1837 | `checked` over 0 at each January, `off=0` | No PFSUM line: the switch is not in the build. `checked=0` after a January: the yearly rebuild did not run, not a pass. `off` over 0: read the `PFSUM_OFF` lines; a few in a month with wars are transfers healing, the same country and type month after month is a bug, drop `--pf-sums` |
+| Q1 | The monthly `PMR;rec=QUIET` line | `updates` near the SOLO line's total updates | No line or 0: the quiet test never passes; no harm (the full update ran) and no saving, send back |
+| X1 | error.log | No line naming `pmr_urb_chk`, `pmr_principle`, `pmr_own`, `pmr_pfx`, `pmr_pfs`, `pmr_tk_`, `pmr_rmk_` or `pmr_rml` | A line: drop the switch it belongs to (review 12's Result table names them) |
+
+q102's W2, W3, W7, W8 and C1 were not seen and carry over: read them in the year you play Britain.
+
 ## Latest: jobs that follow the retool, with the AI locked out (q102, test mod)
 
 From the build thread, as one build after your 22:14Z message ("wait till everything is ready we'll put it in one build
