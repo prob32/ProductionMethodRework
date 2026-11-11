@@ -271,6 +271,32 @@ TICK_EVERY = 2
 # Builds, expansions, method changes and research still run it at once; treatment (no prices, ~0 s) runs at every update.
 OPTS_CYCLE = 3
 PROFIT_RECHECK_DAYS = 182
+# Performance review 11 (2026-11-11; Pat 16:33-16:35Z: "good heuristics ... make the existing engine do the work ...
+# review everything and come up with the best fit"). The q102 log: 688 of Britain's 705 profit runs after the first
+# priced no option but the default, because the default already was the newest recipe the owner could run, and a pick
+# with no rival cannot change with prices or wages. The solo gate (pmr_solo_<b>, set at the end of pmr_profit_<b>):
+# an AI building whose default is the newest runnable recipe (pmr_new_now_<b>), whose books are read and at 0 or more
+# (pmr_ok, pmr_bpl_<b>) and whose run priced no rival (pmr_nrv 0). While it stands, pmr_moved_<b> asks the engine's own
+# books instead of deriving the wage (is_subsidized, occupancy, weekly_profit, earnings: the conditions that open the
+# options below the default, or stop the books being read), and any of them ends it with a full run at once. A newer
+# recipe (research, electricity) ends it through pmr_new_now_<b>, as before. A player's building and one the player
+# owns levels in abroad never take it: their cards show every figure.
+#   0  off (the q102 code)
+#   1  no wage read for a solo building; a price PRICE_MOVE off still runs pmr_profit_<b>
+#   2  a price PRICE_MOVE off runs pmr_lite_<b> instead: the books' profit per level, the pick's row and the
+#      investment score (pmr_pvs_<b>), which for a building held to its books is all the full run would change
+#   3  the re-check timer does the same after scanning for a newer recipe (pmr_newest_<b>); pmr_profit_<b> runs
+#      only when the gate ends
+#   4  no price check either: the score waits for the re-check (measured, not recommended: review 11)
+SOLO_GATE = 0
+# Performance review 11: pmr_switch_<b> asks whether the pick is the default before it asks whether the default can
+# still run (one test per recipe); with the pick on the default both branches only empty the bar. The same result.
+SOLO_COUNTS = ('held', 'end', 'lite', 'full', 'watch')   # test builds: the SOLO log line (pmr_skip_report)
+SWITCH_QUICK = False
+# Performance review 11: pmr_moved_<b> compares the market's own price (scope:pmr_xmo.var:pmr_mpx_<good>, the value
+# pmr_price_<good> copies) with the bounds, without the state's copy and its day guard; pmr_profit_<b> and the
+# trade-offs read their own copies as before. The same prices.
+WATCH_DIRECT = False
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
 SWITCH_GAIN = 0.25
@@ -1309,13 +1335,22 @@ def main():
     ap.add_argument('--timing-only', action='store_true',
                     help='write only a small mod with vanilla\'s HUD and the same timing widget to --out, to time a '
                          'vanilla game (write_timing_mod)')
+    ap.add_argument('--solo', type=int, default=None, choices=(0, 1, 2, 3, 4),
+                    help='the solo gate (SOLO_GATE): 0 off, 1 no wage watch for a building with nothing to choose, '
+                         '2 a light refresh on a price move, 3 a light re-check too')
+    ap.add_argument('--quick-switch', action='store_true', help='SWITCH_QUICK (performance review 11)')
+    ap.add_argument('--direct-watch', action='store_true', help='WATCH_DIRECT (performance review 11)')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
-    global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD
+    global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD, SOLO_GATE, SWITCH_QUICK, WATCH_DIRECT
     RELEASE = args.release
+    if args.solo is not None:
+        SOLO_GATE = args.solo
+    SWITCH_QUICK = SWITCH_QUICK or args.quick_switch
+    WATCH_DIRECT = WATCH_DIRECT or args.direct_watch
     SHARE_DIGITS = args.digit_shares
     OBS_AB = args.obs_script_off
     OBS_PARTS_ON = args.obs_parts_off
@@ -2768,7 +2803,10 @@ def books_effect():
             '# per employee a year (the productivity figure); pmr_bk_p, the week\'s profit; pmr_bk_o, occupancy (0 below '
             f'{fmt(BOOKS_OCC)}).\n'
             'pmr_read_books = {\n' + read('pmr_bk_e', 'earnings', BOOKS_EARN) + read('pmr_bk_p', 'weekly_profit', BOOKS_PROFIT)
-            + occ + '}\n\n')
+            + occ + '}\n\n'
+            + ('# The week\'s profit and the occupancy alone, for pmr_lite_<b> (SOLO_GATE).\n'
+               'pmr_read_books_po = {\n' + read('pmr_bk_p', 'weekly_profit', BOOKS_PROFIT) + occ + '}\n\n'
+               if SOLO_GATE >= 2 else ''))
 
 
 def wage_effect(bk, b, econ):
@@ -4649,6 +4687,19 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     # once, and the box below prices nothing under the reference. A default a loss lowered (pmr_dn_<b>, switch_effect)
     # is left to finish its retooling.
     na, wts = axis_weights(k, pair, axes)
+    # the solo gate (SOLO_GATE): nothing to choose between. The default is the newest recipe that can run here, so no
+    # option at or above it on every axis can (the options' order follows the axes, axis_weights); the books are read
+    # and at 0 or more, so nothing below it is priced; and this run priced no rival (pmr_nrv), which covers a newest
+    # recipe not scanned since the owner changed
+    solo = f'pmr_solo_{b}'
+    solo_flag = '' if not SOLO_GATE else (
+        '\t# the solo gate (SOLO_GATE): the default is the newest recipe that can run, the books are in the black, no rival priced\n'
+        f'\tif = {{ limit = {{ has_variable = {solo} }} remove_variable = {solo} }}\n'
+        f'\tif = {{\n\t\tlimit = {{ var:pmr_ref > 0 var:pmr_pk = var:pmr_ref var:pmr_nrv = 0 var:pmr_ok = 1 '
+        f'has_variable = {now} var:{now} = var:pmr_ref has_variable = {v("pmr_new_now")} var:{v("pmr_new_now")} = var:pmr_ref '
+        f'has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 '
+        f'NOR = {{ has_global_variable = pmr_setup has_variable = pmr_abroad_{b} owner = {{ is_player = yes }} }} }}\n'
+        f'\t\tset_variable = {solo}\n\t}}\n')
     put = lambda name: lambda i: ' '.join(f'set_variable = {{ name = {name}_{d} value = {axes[i][d - 1]} }}'   # noqa: E731
                                           for d in range(1, nd + 1))
     o.append('\t# the floor and the raise (Pat 19:30Z)\n'
@@ -4733,6 +4784,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                 + ' if = { limit = { var:pmr_rr < 0 NOT = { var:pmr_ok = 1 } } '
                 + ' '.join(edge(c, d, -1) for d in dims) + ' }')
     o.append('\tset_variable = { name = pmr_rr value = 0 }\n'
+             + ('\tset_variable = { name = pmr_nrv value = 0 }\n' if SOLO_GATE else '')
              + ''.join(f'\tset_variable = {{ name = pmr_lo_{d} value = -1 }}\n'
                        f'\tset_variable = {{ name = pmr_hi_{d} value = 999 }}\n' for d in range(1, nd + 1))
              + lookup('var:pmr_ref', list(range(1, k + 1)), box))
@@ -4744,7 +4796,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     def price(i, ind):
         body = (f'{ind}if = {{\n{ind}\tlimit = {{ NOT = {{ var:pmr_ref = {i} }} }}\n'
                 f'{ind}\tset_variable = {{ name = {xv("pmr_rav", i)} value = 0 }}\n'
-                f'{ind}\tif = {{ limit = {{ {can(i)} }} set_variable = {{ name = {xv("pmr_rav", i)} value = 1 }} {rmx(i)} }}\n'
+                f'{ind}\tif = {{ limit = {{ {can(i)} }} set_variable = {{ name = {xv("pmr_rav", i)} value = 1 }} {rmx(i)}'
+                + (' change_variable = { name = pmr_nrv add = 1 }' if SOLO_GATE else '') + ' }\n'
                 f'{ind}}}\n')
         rest = inside(i, range(2, nd + 1))
         if not rest:
@@ -4837,6 +4890,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\t\t{cv("pmr_swr", "max", 1)}\n\t\t{cv("pmr_swr", "min", SWITCH_MONTHS)}\n\t}}\n'
              + vanilla_score(bk, b, econ, goods_cost, setv, v)
              + pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v)
+             + solo_flag
              + '\t# what this run used, for the monthly check (pmr_moved_<b>): each price and the wage, PRICE_MOVE either side\n'
              + ''.join(f'\tset_variable = {{ name = pmr_px{e}_{g}_{b} value = var:pmr_px_{g} }}\n'
                        f'\tchange_variable = {{ name = pmr_px{e}_{g}_{b} multiply = {fmt(1 + s * PRICE_MOVE)} }}\n'
@@ -4849,16 +4903,80 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     # the last run used; prices first (read once a day per state anyway), the wage only when they stand. Updates come
     # every other month, so the wage is read every other month as review 8's T-1 had it (Pat 2026-10-21 02:37Z).
     # Bounds from an older build (no pmr_pmb_<b>, or another goods count) recompute at once.
+    spread = ' '.join(f'1 = {{ set_variable = {{ name = pmr_pchk_{b} value = yes days = {d} }} }}'
+                      for d in range(PROFIT_RECHECK_DAYS - PROFIT_RECHECK_SPREAD // 2,
+                                     PROFIT_RECHECK_DAYS + PROFIT_RECHECK_SPREAD // 2 + 1, PROFIT_RECHECK_SPREAD // 6))
+    px_moved = ('OR = { ' + ' '.join(f'var:pmr_px_{g} >= var:pmr_pxh_{g}_{b} var:pmr_px_{g} <= var:pmr_pxl_{g}_{b}'
+                                     for g in goods) + ' }')
+    xm = 'scope:pmr_xmo'
+    xm_moved = ('OR = { ' + ' '.join(f'{xm}.var:pmr_mpx_{g} >= var:pmr_pxh_{g}_{b} {xm}.var:pmr_mpx_{g} <= var:pmr_pxl_{g}_{b}'
+                                     for g in goods) + ' }')
+    # WATCH_DIRECT: the market's prices, refreshed where their 28 days ran out (pmr_xmkt_<good>, one test for them all)
+    xm_fresh = (f'if = {{ limit = {{ {xm} = {{ NOT = {{ AND = {{ ' + ' '.join(f'has_variable = pmr_xmm_{g}' for g in goods)
+                + ' } } } } ' + ' '.join(f'pmr_xmkt_{g} = yes' for g in goods) + ' }')
+
+    def at(lines, ind):
+        """lines written at one tab, moved to ind"""
+        return ''.join(ind + ln[1:] + '\n' for ln in lines.split('\n') if ln)
+
+    def ready(ind):
+        """the prices at hand, for pmr_lite_<b>: the market's (WATCH_DIRECT), else the state's copies"""
+        if not goods:
+            return ''
+        if not WATCH_DIRECT:
+            return at(read_px, ind)
+        return (f'{ind}market ?= {{ owner ?= {{ save_temporary_scope_as = pmr_xmo }} }}\n'
+                f'{ind}if = {{ limit = {{ exists = {xm} }} {xm_fresh} }}\n'
+                f'{ind}else = {{\n' + at(read_px, ind + '\t') + f'{ind}}}\n')
+
+    def watch(ind, then, other=None):
+        """the price check at ind: `then` where a price is PRICE_MOVE off the last run's, else other(ind)'s lines"""
+        def old(i):
+            return (at(read_px, i) + f'{i}if = {{ limit = {{ {px_moved} }} {then} }}\n'
+                    + (f'{i}else = {{\n' + other(i + '\t') + f'{i}}}\n' if other else ''))
+        if not WATCH_DIRECT:
+            return old(ind)
+        return (f'{ind}market ?= {{ owner ?= {{ save_temporary_scope_as = pmr_xmo }} }}\n'
+                f'{ind}if = {{\n{ind}\tlimit = {{ exists = {xm} }}\n{ind}\t{xm_fresh}\n'
+                f'{ind}\tif = {{ limit = {{ {xm_moved} }} {then} }}\n'
+                + (f'{ind}\telse = {{\n' + other(ind + '\t\t') + f'{ind}\t}}\n' if other else '')
+                + f'{ind}}}\n{ind}else = {{\n' + old(ind + '\t') + f'{ind}}}\n')
+    solo_watch = ''
+    sgc = (lambda n: f'pmr_sgc_{n} = yes') if SOLO_GATE and not RELEASE else (lambda n: '')   # the SOLO line's counts
+    if SOLO_GATE:
+        # the engine's books say when the gate ends: the building's owner, staff, subsidy, profit and earnings, the
+        # conditions pmr_wage_<b> and pmr_ok read off them. Then prices alone: a full run (1) or the light one (2, 3)
+        on_move = 'set_variable = pmr_pmv' if SOLO_GATE == 1 else f'pmr_lite_{b} = yes'
+        prices = watch('\t\t\t', on_move) if goods and SOLO_GATE < 4 else ''
+        recheck = '' if SOLO_GATE < 3 else (
+            f'\t\telse_if = {{\n\t\t\tlimit = {{ NOT = {{ has_variable = pmr_pchk_{b} }} }}\n'
+            f'\t\t\tpmr_newest_{b} = yes\n\t\t\tset_variable = {{ name = pmr_nel_{b} value = var:pmr_lsup }}\n'
+            f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{v("pmr_new_now")} = var:{now} }}\n'
+            + (f'\t\t\t\t{sgc("held")}\n' if sgc('held') else '')
+            + ready('\t\t\t\t')
+            + f'\t\t\t\tpmr_lite_{b} = yes\n\t\t\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
+            f'\t\t\t\trandom_list = {{ {spread} }}\n\t\t\t}}\n'
+            f'\t\t\telse = {{ remove_variable = {solo} }}\n\t\t}}\n')
+        solo_watch = (f'\telse_if = {{\n\t\tlimit = {{ has_variable = {solo} }}\n'
+                      f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} '
+                      f'NOT = {{ exists = b:{bk} }} var:{v("pmr_level")} <= 0 b:{bk} = {{ OR = {{ is_subsidized = yes '
+                      f'occupancy < {fmt(BOOKS_OCC)} weekly_profit <= {fmt(-BOOKS_PROFIT[0])} NOT = {{ earnings >= {fmt(BOOKS_EARN[0])} }} }} }} }} }}\n'
+                      f'\t\t\tremove_variable = {solo}\n\t\t\tset_variable = pmr_pmv\n'
+                      + (f'\t\t\t{sgc("end")}\n' if sgc('end') else '') + '\t\t}\n'
+                      + recheck
+                      + '\t\telse = {\n' + (f'\t\t\t{sgc("held")}\n' if sgc('held') else '') + prices + '\t\t}\n\t}\n')
+
+    def wage_watch(ind):
+        return (f'{ind}pmr_wage_{b} = yes\n'
+                f'{ind}if = {{ limit = {{ OR = {{ var:pmr_wg_{b} >= var:pmr_wgh_{b} var:pmr_wg_{b} <= var:pmr_wgl_{b} }} }} '
+                'set_variable = pmr_pmv }\n')
     o.append(f'pmr_moved_{b} = {{\n'
              f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pmb_{b} }} NOT = {{ var:pmr_pmb_{b} = {len(goods) + PROFIT_RULE} }} }} }}\n'
-             '\t\tset_variable = pmr_pmv\n\t}\n\telse = {\n'
-             + read_px.replace('\tif = {', '\t\tif = {')
-             + ('\t\tif = { limit = { OR = { ' + ' '.join(f'var:pmr_px_{g} >= var:pmr_pxh_{g}_{b} var:pmr_px_{g} <= var:pmr_pxl_{g}_{b}'
-                                                          for g in goods) + ' } } set_variable = pmr_pmv }\n'
-                '\t\telse = {\n' if goods else '\t\tif = { limit = { always = yes }\n')
-             + f'\t\t\tpmr_wage_{b} = yes\n'
-             f'\t\t\tif = {{ limit = {{ OR = {{ var:pmr_wg_{b} >= var:pmr_wgh_{b} var:pmr_wg_{b} <= var:pmr_wgl_{b} }} }} '
-             'set_variable = pmr_pmv }\n\t\t}\n\t}\n}\n\n')
+             '\t\tset_variable = pmr_pmv\n\t}\n' + solo_watch + '\telse = {\n'
+             + (f'\t\t{sgc("watch")}\n' if sgc('watch') else '')
+             + (watch('\t\t', 'set_variable = pmr_pmv', wage_watch) if goods else
+                '\t\tif = { limit = { always = yes }\n' + wage_watch('\t\t\t') + '\t\t}\n')
+             + '\t}\n}\n\n')
 
     # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
     def var(name, d=0):
@@ -4876,9 +4994,6 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                   'cp=' + '/'.join(var(f'pmr_cp_{i}_{a}_{b}', 1) for i, a in sorted(pair['econ'])) + ';') if pair else '')
             + 'px='
             + ','.join(f"{g}:{var('pmr_px_' + g, 2)}" for g in goods))
-    spread = ' '.join(f'1 = {{ set_variable = {{ name = pmr_pchk_{b} value = yes days = {d} }} }}'
-                      for d in range(PROFIT_RECHECK_DAYS - PROFIT_RECHECK_SPREAD // 2,
-                                     PROFIT_RECHECK_DAYS + PROFIT_RECHECK_SPREAD // 2 + 1, PROFIT_RECHECK_SPREAD // 6))
     # The first calculation runs during game setup, before the market has real prices (q23: steel read 0.25-0.35
     # of base in every French state, so Blister Steel showed -£2,990 a level while the mill made +£1.57K; q31: the
     # Investments tab showed those figures on 1 January, Pat 23:22Z). It uses base prices (pmr_setup) and is
@@ -4889,10 +5004,14 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              '\t# Pat 02:43Z: each monthly pulse after the first pick at market prices looks for moved prices or wage\n'
              f'\tif = {{ limit = {{ has_variable = pmr_month has_variable = pmr_pmkt_{b}'
              + (' NOT = { has_global_variable = pmr_off_watch }' if OBS_PARTS_ON else '') + f' }} pmr_moved_{b} = yes }}\n'
-             f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pchk_{b} }} '
-             f'NOT = {{ has_variable = {v("pmr_new")} }} NOT = {{ var:{v("pmr_new")} = var:{v("pmr_new_now")} }} '
+             # SOLO_GATE 3: a solo building's re-check is pmr_moved_<b>'s, at its next monthly update
+             f'\tif = {{\n\t\tlimit = {{ OR = {{ '
+             + (f'NOT = {{ has_variable = pmr_pchk_{b} }} ' if SOLO_GATE < 3 else
+                f'AND = {{ NOT = {{ has_variable = pmr_pchk_{b} }} OR = {{ has_variable = pmr_month NOT = {{ has_variable = {solo} }} }} }} ')
+             + f'NOT = {{ has_variable = {v("pmr_new")} }} NOT = {{ var:{v("pmr_new")} = var:{v("pmr_new_now")} }} '
              f'has_variable = {v("pmr_new_build")} AND = {{ {first} }} has_variable = pmr_pmv }} }}\n'
-             f'\t\tpmr_profit_{b} = yes\n\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
+             f'\t\tpmr_profit_{b} = yes\n' + (f'\t\t{sgc("full")}\n' if sgc('full') else '')
+             + f'\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
              f'\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
              f'\t\trandom_list = {{ {spread} }}\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ {first} }}\n\t\t\tset_variable = pmr_pmkt_{b}\n'
@@ -4902,7 +5021,50 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              '\tif = { limit = { has_variable = pmr_pmv } remove_variable = pmr_pmv }\n'
              + f'\tpmr_switch_{b} = yes\n}}\n\n')
+    if SOLO_GATE >= 2:
+        o.append(lite_effect(bk, b, econ, goods, goods_cost, setv, v))
     return switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + ''.join(pre) + ''.join(o)
+
+
+def lite_effect(bk, b, econ, goods, goods_cost, setv, v):
+    """State scope, SOLO_GATE 2 and 3: pmr_lite_<b>, what pmr_profit_<b> would change for a building the solo gate
+    holds (pmr_moved_<b> has just read the engine's books: not subsidised, BOOKS_OCC staffed, earning, no loss). Its
+    pick is the default, and the default's figure is held to the books (profit_effect's calib), so the run comes to
+    the books' profit per level (pmr_bpl_<b>, as pmr_wage_<b> reads it), the pick's row (pmr_prm_<b>), the investment
+    score (vanilla_score, the same weights) and the prices the next check compares with."""
+    emps = TARGET_EMPLOYEES.get(bk, [])
+    pvs = v('pmr_pvs')
+
+    def score(i):
+        gd = econ[i - 1][0]
+        e = max(emps[i - 1] if i <= len(emps) else 0, 1)
+        out = sum(q * goods_cost[g] for g, q in gd.items() if q > 0 and goods_cost.get(g))
+        return (f'{setv("pmr_pve", e)} '
+                f'if = {{ limit = {{ var:{pvs} > 0 }} change_variable = {{ name = {pvs} multiply = {fmt(VANILLA_PROFIT_W / e)} }} }} '
+                f'else = {{ change_variable = {{ name = {pvs} multiply = {fmt(VANILLA_DEFICIT_W / e)} }} }} '
+                f'{setv("pmr_pvp", "var:" + pvs)} '
+                f'change_variable = {{ name = {pvs} add = {fmt(out * VANILLA_OUTPUT_W)} }}')
+    keep = ('' if RELEASE else
+            ''.join(f'\tset_variable = {{ name = pmr_bk{x}_{b} value = var:pmr_bk_{x} }}\n' for x in 'po'))
+
+    def bound(src, ind):
+        return ''.join(f'{ind}set_variable = {{ name = pmr_px{e}_{g}_{b} value = {src(g)} }}\n'
+                       f'{ind}change_variable = {{ name = pmr_px{e}_{g}_{b} multiply = {fmt(1 + sg * PRICE_MOVE)} }}\n'
+                       for g in goods for e, sg in (('h', 1), ('l', -1)))
+    bounds = bound(lambda g: f'var:pmr_px_{g}', '\t')
+    if WATCH_DIRECT and goods:   # the prices pmr_moved_<b> compared: the market's where it has one
+        bounds = ('\tif = {\n\t\tlimit = { exists = scope:pmr_xmo }\n'
+                  + bound(lambda g: f'scope:pmr_xmo.var:pmr_mpx_{g}', '\t\t')
+                  + '\t}\n\telse = {\n' + bounds.replace('\n\t', '\n\t\t').replace('\t', '\t\t', 1) + '\t}\n')
+    return (f'pmr_lite_{b} = {{\n' + ('' if RELEASE else '\tpmr_sgc_lite = yes\n')
+            + f'\tb:{bk} = {{ save_temporary_scope_as = pmr_bk }}\n\tpmr_read_books_po = yes\n' + keep
+            + f'\tset_variable = {{ name = pmr_bpl_{b} value = var:pmr_bk_p }}\n'
+            f'\tchange_variable = {{ name = pmr_bpl_{b} divide = var:pmr_bk_o }}\n'
+            f'\tchange_variable = {{ name = pmr_bpl_{b} divide = var:{v("pmr_level")} }}\n'
+            f'\t{setv("pmr_prm", "var:pmr_bpl_" + b)}\n\t{setv("pmr_pvs", "var:pmr_bpl_" + b)}\n'
+            + lookup(f'var:{v("pmr_pbest")}', list(range(1, len(econ) + 1)), score)
+            + bounds
+            + '}\n\n')
 
 
 def switch_effect(b, bk, k, setv, v, var):
@@ -4923,18 +5085,20 @@ def switch_effect(b, bk, k, setv, v, var):
     dead = ' '.join(f'AND = {{ var:{now} = {i} var:pmr_rav_{i}_{b} = 0 }}' for i in range(1, k + 1))
     where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
              f'state=[THIS.GetState.GetNameNoFormatting];building={bk}')
+    same = f'\telse_if = {{\n\t\tlimit = {{ OR = {{ var:{pick} = 0 var:{pick} = var:{now} }} }}\n' + clear + '\t}\n'
     return (f'pmr_switch_{b} = {{\n'
             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {now} }} }}\n' + take + '\t}\n'
+            + (same if SWITCH_QUICK else '')
             # bug review q51, P2-2: a default the first pick at market prices lowers is marked like one a red bar lowered
-            f'\telse_if = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_sw_inst {dead} }} }}\n'
+            + f'\telse_if = {{\n\t\tlimit = {{ OR = {{ has_variable = pmr_sw_inst {dead} }} }}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:{pick} > 0 NOT = {{ var:{pick} = var:{now} }} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_pdn'))};months=0\" }}\n"
             f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} set_variable = pmr_dn_{b} }}\n'
             f'\t\t\telse_if = {{ limit = {{ has_variable = pmr_dn_{b} }} remove_variable = pmr_dn_{b} }}\n\t\t}}\n'
             + take + '\t}\n'
-            f'\telse_if = {{\n\t\tlimit = {{ OR = {{ var:{pick} = 0 var:{pick} = var:{now} }} }}\n' + clear + '\t}\n'
-            '\telse = {\n'
+            + ('' if SWITCH_QUICK else same)
+            + '\telse = {\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ var:{v("pmr_swto")} = var:{pick} }} }}\n'
             f'\t\t\t{setv("pmr_swto", "var:" + pick)}\n\t\t\t{setv("pmr_sw", 0)}\n'
             f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} {setv("pmr_swd", -1)} }}\n'
@@ -5082,6 +5246,14 @@ def shared_effects(price_goods=()):
         return out
     # Method-count rework, test builds: a frame pmr_frame_<b> puts back after a change from outside PMR's tick (the AI's,
     # the game's: pmr_pmc, pmr_on_production_method_changed), counted for the month's UNDO line (pmr_skip_report).
+    if SOLO_GATE:
+        # the solo gate's month, for the SOLO line (pmr_skip_report): building updates the gate held, updates it ended on
+        # (the books), light runs, full profit runs and updates that took the full price and wage watch
+        out += '# Any scope (test builds): the solo gate\'s counts for the month\'s SOLO line.\n'
+        for n in SOLO_COUNTS:
+            out += (f'pmr_sgc_{n} = {{\n\tif = {{ limit = {{ NOT = {{ has_global_variable = pmr_sg_{n} }} }} '
+                    f'set_global_variable = {{ name = pmr_sg_{n} value = 0 }} }}\n'
+                    f'\tchange_global_variable = {{ name = pmr_sg_{n} add = 1 }}\n}}\n\n')
     out += ('# State scope (test builds): count a frame put back after a change from outside PMR\'s tick.\n'
             'pmr_count_undo = {\n\tif = {\n\t\tlimit = { has_variable = pmr_pmc }\n'
             '\t\tif = { limit = { NOT = { has_global_variable = pmr_undo } } set_global_variable = { name = pmr_undo value = 0 } }\n'
@@ -5123,7 +5295,8 @@ def state_tick_type(bk, t='\t'):
              f'{t}\tpmr_close_retool_{b} = yes\n'
              + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
                        for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
-                                 f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ()))
+                                 f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ())
+                       + ((f'pmr_solo_{b}',) if SOLO_GATE else ()))
              + (frames.clear_vars(FRAMES[bk], t + '\t') if bk in FRAMES else ''))
     # performance review 6, S-14: pmr_mix_<b> is set whenever the other two can be, so it alone says to clean up;
     # nothing is pending for a building that is gone, so the gate closes now (performance review 6)
@@ -5494,7 +5667,14 @@ def dispatch_effects(buildings):
                  "n=[THIS.Var('pmr_undo_v').GetValue|0];first=[THIS.Var('pmr_undo_fv').GetValue|0]\"\n"
                  '\t\tremove_variable = pmr_undo_v\n'
                  '\t\tremove_variable = pmr_undo_fv\n'
-                 '\t\tdebug_log = "PMR;rec=SKIP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+                 + ('' if not SOLO_GATE else
+                    ''.join(f'\t\tif = {{ limit = {{ has_global_variable = pmr_sg_{n} }} set_variable = {{ name = pmr_sg_{n}_v value = global_var:pmr_sg_{n} }} '
+                            f'set_global_variable = {{ name = pmr_sg_{n} value = 0 }} }}\n'
+                            f'\t\telse = {{ set_variable = {{ name = pmr_sg_{n}_v value = 0 }} }}\n' for n in SOLO_COUNTS)
+                    + '\t\tdebug_log = "PMR;rec=SOLO;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+                    + ';'.join(f"{n}=[THIS.Var('pmr_sg_{n}_v').GetValue|0]" for n in SOLO_COUNTS) + '"\n'
+                    + ''.join(f'\t\tremove_variable = pmr_sg_{n}_v\n' for n in SOLO_COUNTS))
+                 + '\t\tdebug_log = "PMR;rec=SKIP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
                  + ';'.join(f"{n[7:]}=[THIS.Var('{n}').GetValue|0]" for n in counts) + '"\n'
                  + ''.join(f'\t\tset_variable = {{ name = {n} value = 0 }}\n' for n in counts) + '\t}\n}\n')
     return ''.join(o)
