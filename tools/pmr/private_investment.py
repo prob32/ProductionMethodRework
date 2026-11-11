@@ -4,9 +4,9 @@ Pat, 2026-10-13 03:52Z and 04:03Z, revised 04:50Z, 13:05Z and 14:28Z. The constr
 government one, and the funding-type filter goes. The Government tab keeps the construction sector and the government
 queue and loses the investment pool. The Private tab, top to bottom:
   1. the budget panel's Investment Pool line (Pat 13:05Z), and the next private construction
-  2. the weekly re-investment as a trend line in vanilla's graph frame (Pat 04:13Z: the weekly inflow, not the pool
-     amount; the game keeps no history of it, so PMR samples investment_pool_income weekly into country variables),
-     with a column under the line, in one colour since the gui review (C3); beside it the budget's own pool graph (14:28Z)
+  2. two of the budget's own graphs side by side: the Investment Pool Transfer, what the pool pays out for
+     construction each week (Pat 2026-11-11 20:31Z; until then the weekly inflow as columns over a script record,
+     Pat 04:13Z, as the game keeps no history of the inflow), and the pool itself (14:28Z)
   3. what feeds the pool, as a tree chart by priority group (Pat 13:05Z). The game gives its per-building amounts
      only as text (1.14.5 exe: no datamodel, no script value), so the chart shows the privately owned building levels
      of each group, and the game's own list in money is its tooltip
@@ -228,11 +228,12 @@ POLICY_COST_LOW, POLICY_COST_MID, POLICY_COST_HIGH = 200, 100, 50
 # pmr_policy_lock_m counts the months left, down on each monthly pulse.
 POLICY_LOCK_MONTHS = 60
 AI_SKIP = ('steer',)       # the AI never picks Steer the Economy: it only raises the cap of the player's priorities
-# Re-investment chart: one column per week (Pat 14:28Z), newest on the right, over the year the engine's investment
-# pool trend covers beside it (Pat 20:28Z: the same dates; the trend held 30 Jan 1840 .. 22 Jan 1841, 52 weeks).
-RI_WEEKS = 52
-RI_ROWS, RI_ROW_H, RI_COL_W = 20, 6, 4    # columns are measured in rows of 6 px, from zero to the highest week
+# The Private tab's two graphs, both the engine's own weekly trends over the same year (Pat 14:28Z, 20:28Z; the
+# trends held 30 Jan 1840 .. 22 Jan 1841, 52 weeks): the Investment Pool Transfer on the left (Pat 2026-11-11
+# 20:31Z, in place of the weekly reinvestment columns a script record fed) and the pool on the right.
+GRAPH_H = 120              # both graphs' height
 PLOT_MARGINS = (52, 14)    # v3_plotline's left and right margins, narrowed so two graphs share the row
+TRANSFER_GRAPH_W = 208     # the Investment Pool Transfer graph: the width the columns had
 POOL_GRAPH_W = 192         # the vanilla investment pool graph beside it (Pat 14:28Z), so both fit 540 px
 # Recent investments as the market panel's Exports and Imports charts (Pat 16:12Z): vanilla compact_chart
 # (politics_panel_types.gui), a 120 px tree map in its frame with legend rows of 28 px, four to a column.
@@ -616,6 +617,8 @@ def sguis():
             '# and companies only as it opens: pmr_pt_record, pmr_co_rank); opening the tab also\n'
             '# starts the weekly clock if it is not running.\n'
             'pmr_pc_refresh_sgui = {\n\tscope = country\n\teffect = {\n\t\tpmr_pc_record = yes\n\t\tpmr_pt_record = yes\n'
+            + (f'\t\tset_variable = {{ name = pmr_pc_seen value = yes days = {PC_SEEN_DAYS} }}   # LEAN_CHARTS\n'
+               f'\t\tset_variable = {{ name = pmr_pc_hold value = yes days = {PC_HOLD_DAYS} }}\n' if LEAN_CHARTS else '') +
             '\t\tpmr_co_rank = yes\n\t\tpmr_pi_v2 = yes\n'
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n\t\t}\n'
             '\t\tpmr_pi_start_clock = yes\n\t}\n}\n\n')
@@ -660,55 +663,6 @@ def static_modifiers():
         out += (f'pmr_titans_{inst} = {{\n\ticon = "gfx/interface/icons/law_icons/corporate_state.dds"\n'
                 f'\tinterest_group_ig_industrialists_approval_add = {TITANS_APPROVAL}\n}}\n\n')
     return out
-
-
-def reinvest_effect():
-    """Country scope, weekly (pmr_pi.1, Pat 14:28Z), players only. The game keeps no history of the pool's weekly
-    income (the budget's Investment Pool Transfer trend is money drawn out for construction), so PMR samples
-    investment_pool_income (a country value; its description string is in the 1.14.5 exe) once a week into
-    pmr_rw_0 (newest) .. pmr_rw_<N-1>. Each week is a column from zero (Pat 15:33Z: no line over it): pmr_rw_h_<i>
-    is its height in rows against the highest week shown, and pmr_rw_b_<i> is 1 once the week is recorded. The
-    column is split by the tree chart's shares that week (Pat 14:28Z): pmr_rs_<g>_<i> is the running total of the
-    shares of groups 0..g (1 for the last group, 0 when nothing was counted), and pmr_rc_<g>_<i> the height of that
-    running total, in rows; the GUI draws the five as bars from the back (the whole column) to the front (the first
-    group alone). The monthly series (pmr_ri_*) and the line rows (pmr_rw_lo_*, pmr_rw_hi_*) of earlier versions are
-    left alone and no longer drawn."""
-    n, ng = RI_WEEKS, len(GROUPS)
-    shift = ''.join(f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i - 1} }}\n'
-                    f'\t\tset_variable = {{ name = pmr_rw_{i} value = var:pmr_rw_{i - 1} }}\n'
-                    + ''.join(f'\t\tset_variable = {{ name = pmr_rs_{g}_{i} value = var:pmr_rs_{g}_{i - 1} }}\n'
-                              for g in range(ng))
-                    + '\t}\n'
-                    for i in range(n - 1, 0, -1))
-    shares = '\tset_variable = { name = pmr_rs_0_0 value = var:pmr_pc_share_0 }\n'
-    shares += ''.join(f'\tset_variable = {{\n\t\tname = pmr_rs_{g}_0\n\t\tvalue = {{\n\t\t\tvalue = var:pmr_rs_{g - 1}_0\n'
-                      f'\t\t\tadd = var:pmr_pc_share_{g}\n\t\t}}\n\t}}\n' for g in range(1, ng - 1))
-    shares += (f'\tset_variable = {{ name = pmr_rs_{ng - 1}_0 value = 0 }}\n'
-               f'\tif = {{\n\t\tlimit = {{ var:pmr_pc_total > 0 }}\n\t\tset_variable = {{ name = pmr_rs_{ng - 1}_0 value = 1 }}\n\t}}\n')
-    fold = ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_rw_{i} }}\n\t\t\t\tmin = var:pmr_rw_{i}\n\t\t\t}}\n'
-                   for i in range(1, n))
-    rows = ''.join(
-        f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_rw_{i} }}\n'
-        f'\t\tset_variable = {{ name = pmr_rw_b_{i} value = 1 }}\n'
-        f'\t\tset_variable = {{\n\t\t\tname = pmr_rw_h_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = 0\n'
-        f'\t\t\t\tif = {{\n\t\t\t\t\tlimit = {{ var:pmr_rw_max > 0 }}\n'
-        f'\t\t\t\t\tvalue = var:pmr_rw_{i}\n\t\t\t\t\tdivide = var:pmr_rw_max\n\t\t\t\t\tmultiply = {RI_ROWS}\n\t\t\t\t}}\n'
-        f'\t\t\t}}\n\t\t}}\n'
-        + ''.join(f'\t\tset_variable = {{\n\t\t\tname = pmr_rc_{g}_{i}\n\t\t\tvalue = {{\n\t\t\t\tvalue = var:pmr_rw_h_{i}\n'
-                  f'\t\t\t\tmultiply = var:pmr_rs_{g}_{i}\n\t\t\t}}\n\t\t}}\n' for g in range(ng))
-        + '\t}\n'
-        for i in range(n))
-    return ('pmr_rw_record = {\n'
-            + shift +
-            '\tset_variable = {\n\t\tname = pmr_rw_0\n\t\tvalue = {\n\t\t\tvalue = investment_pool_income\n\t\t\tmin = 0\n\t\t}\n\t}\n'
-            + shares +
-            '\t# the highest week shown (min = X keeps a value at least X)\n'
-            '\tset_variable = {\n\t\tname = pmr_rw_max\n\t\tvalue = {\n\t\t\tvalue = var:pmr_rw_0\n' + fold + '\t\t}\n\t}\n'
-            + rows +
-            '\tdebug_log = "PMR;rec=REINVEST;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
-            'weekly=[THIS.Var(\'pmr_rw_0\').GetValue|0];max=[THIS.Var(\'pmr_rw_max\').GetValue|0];'
-            'height=[THIS.Var(\'pmr_rw_h_0\').GetValue|1];column_first_group=[THIS.Var(\'pmr_rc_0_0\').GetValue|2]"\n'
-            '}\n')
 
 
 CO_SLOTS = 15   # the Companies row's tooltip: the country's companies, most profitable first (Pat 2026-10-20 03:52Z)
@@ -1193,12 +1147,17 @@ def clock_effect():
 
 def events():
     return ('namespace = pmr_pi\n\n'
-            '# Country, every 7 days while it is a player\'s: the Private tab\'s weekly chart (Pat 14:28Z). 1.14.5 runs\n'
+            '# Country, every 7 days while it is a player\'s: the Private tab\'s weekly figures (Pat 14:28Z). 1.14.5 runs\n'
             '# no weekly on_action for script, so the event re-arms itself; pmr_pi_start_clock restarts a broken chain.\n'
             'pmr_pi.1 = {\n\ttype = country_event\n\thidden = yes\n\timmediate = {\n\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
             '\t\t\tset_variable = { name = pmr_pi_clock days = 9 }\n'
             '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
-            '\t\t\tpmr_pc_record = yes\n\t\t\tpmr_rw_record = yes\n\t\t\tpmr_ipw_weekly = yes\n\t\t\tpmr_reinvest_publish = yes\n'
+            + ('\t\t\tpmr_pc_record = yes\n' if not LEAN_CHARTS else
+               # LEAN_CHARTS: weekly while the tab was shown lately, else every fourth week
+               '\t\t\tif = {\n\t\t\t\tlimit = { OR = { has_variable = pmr_pc_seen NOT = { has_variable = pmr_pc_hold } } }\n'
+               '\t\t\t\tpmr_pc_record = yes\n'
+               f'\t\t\t\tset_variable = {{ name = pmr_pc_hold value = yes days = {PC_HOLD_DAYS} }}\n\t\t\t}}\n') +
+            '\t\t\tpmr_ipw_weekly = yes\n\t\t\tpmr_reinvest_publish = yes\n'
             '\t\t\ttrigger_event = { id = pmr_pi.1 days = 7 }\n\t\t}\n\t}\n}\n')
 
 
@@ -1470,6 +1429,9 @@ def patch_panel(text):
                 f'\t\t\t\tvisible = "[InformationPanel.IsTabSelected(\'{TAB}\')]"\n'
                 '\t\t\t\tdirection = vertical\n'
                 '\t\t\t\tdatacontext = "[AccessPlayer]"\n'
+                + ('\t\t\t\tstate = {\n\t\t\t\t\tname = _show\n'
+                   f'\t\t\t\t\ton_start = "[{REFRESH}]"   # PMR, LEAN_CHARTS: the charts recount as the tab shows\n'
+                   '\t\t\t\t}\n' if LEAN_CHARTS else '') +
                 '\t\t\t\tpmr_private_tab = {}\n'
                 '\t\t\t}\n\n'
                 '\t\t\t# FOREIGN QUEUE TAB CONTENTS\n', where)
@@ -1585,72 +1547,19 @@ def priority_row(g, ind):
     return out + f'{ind}}}\n'
 
 
-def bar(ind, x, y, w, h, value, maximum, color, direction='horizontal', visible=None):
-    """A flat progressbar in one colour (vanilla's white_progressbar_vertical colours its bar the same way)."""
-    r, g, b = color
-    vis = f'{ind}\tvisible = "[{visible}]"\n' if visible else ''
-    return (f'{ind}progressbar = {{\n{vis}{ind}\tposition = {{ {x} {y} }}\n{ind}\tsize = {{ {w} {h} }}\n'
-            f'{ind}\tdirection = {direction}\n{ind}\tmin = 0\n{ind}\tmax = {maximum}\n{ind}\tvalue = "[{value}]"\n'
-            f'{ind}\tprogresstexture = "{WHITE}"\n{ind}\tnoprogresstexture = "{TRANSPARENT}"\n'
-            f'{ind}\tcolor = {{ {r:.2f} {g:.2f} {b:.2f} 1 }}\n{ind}\talwaystransparent = yes\n{ind}}}\n')
-
-
-RW_COLOR = (0.74, 0.74, 0.72)   # the weekly column: off-white, a solid column at the pool line's 0.9 read brighter than the
-                                # line beside it (Q104-FEEDBACK L5)
-
-
-def reinvest_chart(ind):
-    """The weekly reinvestment in vanilla's graph frame (v3_plotline, as the GDP graph; Pat 04:50Z, weekly since
-    14:28Z). GUI plot lines only take the engine's own trends, so each week (pmr_rw_<i>, 0 = newest, rightmost) is a
-    column from zero, pmr_rw_h_<i> rows tall (reinvest_effect), in one colour (gui review C3, Pat 2026-11-11: its
-    tooltip gives the week's total, and the split by group is the tree chart's; the five-colour split, pmr_rc_<g>_<i>,
-    is still recorded). Pat 15:33Z: no line over the columns, and "No historical data" until the first week is
-    recorded."""
-    var = lambda name: f"{COUNTRY}.MakeScope.Var('{name}').GetValue"
-    fp = lambda x: f"'(CFixedPoint){x}'"
-    w, h = RI_WEEKS * RI_COL_W, RI_ROWS * RI_ROW_H
-    i2, i3 = ind + '\t\t', ind + '\t\t\t'
-    columns, hover = '', ''
-    for c in range(RI_WEEKS):
-        i = RI_WEEKS - 1 - c
-        columns += bar(i2, c * RI_COL_W, 0, RI_COL_W - 1, h, f"FixedPointToFloat({var(f'pmr_rw_h_{i}')})",
-                       RI_ROWS, RW_COLOR, 'vertical', f"GreaterThan_CFixedPoint({var(f'pmr_rw_h_{i}')}, {fp(0)})")
-        hover += (f'{i2}widget = {{\n{i3}visible = "[GreaterThan_CFixedPoint({var(f"pmr_rw_b_{i}")}, {fp(0)})]"\n'
-                  f'{i3}position = {{ {c * RI_COL_W} 0 }}\n{i3}size = {{ {RI_COL_W} {h} }}\n'
-                  f'{i3}tooltip = "PMR_RW_COLUMN_{i}"\n{i3}using = tooltip_above\n{i2}}}\n')
-    has = f"GreaterThan_CFixedPoint({var('pmr_rw_b_0')}, {fp(0)})"
-    bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
+def trend_chart(ind, trend, header, w):
+    """One of the budget's own graphs as its graph tooltip draws it (vanilla graph_tooltips.gui): the engine's weekly
+    trend <trend> of the country on v3_plotline, w wide, narrowed so two share the row. The engine keeps the trend,
+    so no script records anything for it."""
+    t = f'{COUNTRY}.{trend}'
     left, right = PLOT_MARGINS
+    bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
     return (f'{ind}v3_plotline = {{\n'
             + bo('margins', f'{ind}\t\tmargin_bottom = 40\n{ind}\t\tmargin_left = {left}\n{ind}\t\tmargin_right = {right}\n')
             + bo('text_max_width', f'{ind}\t\tmax_width = {w + left + right - 10}\n')
-            + bo('header', f'{ind}\t\ttext = "PMR_RW_CHART_HEADER"\n')
-            + bo('size', f'{ind}\t\tsize = {{ {w} {h} }}\n')
-            + bo('singleitem', '') + bo('multiitem', '')
-            + bo('extra_plotlines', columns + hover)
-            + bo('maxvalue', f'{ind}\t\traw_text = "@money![{var("pmr_rw_max")}|K]"\n')
-            + bo('minvalue', f'{ind}\t\traw_text = "@money!0"\n')
-            # the pool graph's own dates (Pat 20:28Z): its trend covers the same RI_WEEKS weeks
-            + bo('startdate', f'{ind}\t\ttext = "[GetOldestDate({COUNTRY}.GetInvestmentFundTrend)]"\n')
-            + bo('enddate', f'{ind}\t\ttext = "[GetLatestDate({COUNTRY}.GetInvestmentFundTrend)]"\n')
-            + bo('empty_state_visibility', f'{ind}\t\tvisible = "[Not({has})]"\n')
-            + bo('everything_that_is_not_empty_state_visibility', f'{ind}\t\tvisible = "[{has}]"\n')
-            + bo('empty_state_text', f'{ind}\t\ttext = "PMR_RW_EMPTY"\n')
-            + f'{ind}}}\n')
-
-
-def pool_chart(ind):
-    """The budget's own investment pool graph (Pat 14:28Z, beside the re-investment line): vanilla's
-    GraphTooltip_InvestmentPool plot, the engine's weekly trend of the pool, narrowed to share the row."""
-    t = f'{COUNTRY}.GetInvestmentFundTrend'
-    left, right = PLOT_MARGINS
-    bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
-    return (f'{ind}v3_plotline = {{\n'
-            + bo('margins', f'{ind}\t\tmargin_bottom = 40\n{ind}\t\tmargin_left = {left}\n{ind}\t\tmargin_right = {right}\n')
-            + bo('text_max_width', f'{ind}\t\tmax_width = {POOL_GRAPH_W + left + right - 10}\n')
-            + bo('header', f'{ind}\t\ttext = "[concept_investment_pool]"\n')
+            + bo('header', f'{ind}\t\ttext = "{header}"\n')
             + bo('line_color', f'{ind}\t\tcolor = {{ .9 .9 .9 1.0 }}\n')
-            + bo('size', f'{ind}\t\tsize = {{ {POOL_GRAPH_W} {RI_ROWS * RI_ROW_H} }}\n')
+            + bo('size', f'{ind}\t\tsize = {{ {w} {GRAPH_H} }}\n')
             + bo('line_plotpoints', f'{ind}\t\tvisible = "[Not(IsEmpty({t}))]"\n'
                  f'{ind}\t\tplotpoints = "[GetTrendPlotPointsNormalized({t}, GetMinPadded({t}), GetMaxPadded({t}))]"\n')
             + bo('maxvalue', f'{ind}\t\ttext = "[GetMax({t})|D]"\n')
@@ -1664,10 +1573,24 @@ def pool_chart(ind):
             + f'{ind}}}\n')
 
 
+def transfer_chart(ind):
+    """What the pool pays out for construction each week: the budget's Investment Pool Transfer graph, vanilla's
+    GraphTooltip_InvestmentIncome (Pat 2026-11-11 20:31Z, in place of the weekly reinvestment columns). The game
+    keeps no trend of the money entering the pool, so the columns were 52 bars and 52 hover areas over a weekly
+    script record (pmr_rw_record); both are gone, and this is one plot line of a trend the engine keeps."""
+    return trend_chart(ind, 'GetInvestmentIncomeTrend', '[concept_budget_investment_income]', TRANSFER_GRAPH_W)
+
+
+def pool_chart(ind):
+    """The budget's own investment pool graph (Pat 14:28Z): vanilla's GraphTooltip_InvestmentPool plot, the engine's
+    weekly trend of the pool."""
+    return trend_chart(ind, 'GetInvestmentFundTrend', '[concept_investment_pool]', POOL_GRAPH_W)
+
+
 def charts_row(ind):
-    """Pat 14:28Z: the space split down the middle, the re-investment line on the left and the pool on the right."""
+    """Pat 14:28Z: the space split down the middle, the pool's weekly payout on the left and the pool on the right."""
     return (f'{ind}flowcontainer = {{\n{ind}\tparentanchor = hcenter\n{ind}\tspacing = 8\n'
-            + reinvest_chart(ind + '\t') + pool_chart(ind + '\t') + f'{ind}}}\n')
+            + transfer_chart(ind + '\t') + pool_chart(ind + '\t') + f'{ind}}}\n')
 
 
 def tree_chart(ind, items, prefix, tooltip, caption, empty):
@@ -2236,7 +2159,7 @@ def private_tab():
         f'{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 10 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = hcenter|nobaseline\n{i1}\ttext = "NEXT_PRIVATE_CONSTRUCTION"\n'
         f'{i1}\tbackground = {{\n{i1}\t\tusing = dark_area\n{i1}\t}}\n{i1}}}\n'
-        # 2. the weekly re-investment over time beside the pool (Pat 14:28Z), titled inside their frames like vanilla's
+        # 2. the pool's weekly payout beside the pool (Pat 14:28Z, 2026-11-11), titled inside their frames like vanilla's
         + charts_row(i1) +
         # 3. contributors, as tree charts by group (Pat 13:05Z) and by owner (Pat 15:33Z)
         header('PMR_PI_SOURCES_HEADER', i1) + contributors_charts(i1) +
@@ -2372,6 +2295,14 @@ PROFIT_TYPES = set()
 PF_SUMS = False
 PF_SYNC = set()
 PF_CHECK = False
+# LEAN_CHARTS (generate.py sets it): the contributors charts' count (pmr_pc_record, eight sweeps of the country's
+# buildings and one of its companies) runs weekly only while the Private tab was shown in the last PC_SEEN_DAYS
+# days, else every fourth week, which keeps the By owner share the bylaws read (bylaws.pmr_bl_private,
+# pmr_po_share_3) no older than their own 28-day read. The tab's contents recount as they show (vanilla's
+# budget_panel.gui runs a call from a tab's _show state the same way), so the charts are never older on screen.
+LEAN_CHARTS = False
+PC_SEEN_DAYS = 30
+PC_HOLD_DAYS = 27   # a count stands this long unseen: the weekly clock's fourth turn (day 28) counts again
 PF_RESCAN_DAYS = 365
 AI_FLOOR = 100
 
@@ -2568,8 +2499,6 @@ def localization(types, chart_types=None):
         'Expansion"',
         f' PMR_PI_RESEARCH_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_rweek\').GetValue)|D+=]#! '
         'Research grants"',
-        ' PMR_RW_CHART_HEADER:0 "Weekly Reinvestment"',
-        ' PMR_RW_EMPTY:0 "$GRAPH_NOT_INITIALIZED$"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
         ' PMR_PI_SOURCES_HEADER:0 "Buildings Adding to the Pool"',
         ' PMR_PC_CAPTION:0 "Private Levels"',
@@ -2680,9 +2609,6 @@ def localization(types, chart_types=None):
         loc.append(f' PMR_IPW_NOTCH_{s}:0 "' + ('#grey 0%#! weight' if s == 0 else
                    f'#v +[FixedPointToInt(Multiply_CFixedPoint({COUNTRY}.MakeScope.ScriptValue(\'pmr_ipw_cap\'), \'(CFixedPoint){s}\'))]%#! weight')
                    + '"')
-    for i in range(RI_WEEKS):
-        when = 'This Week' if i == 0 else ('1 Week Ago' if i == 1 else f'{i} Weeks Ago')
-        loc.append(f' PMR_RW_COLUMN_{i}:0 "#header {when}#!\\n#v @money![{var(f"pmr_rw_{i}")}|D]#! reinvested"')
     loc.append(' PMR_IPW_W0:0 "#grey 0%#! weight"')
     for i, (g, name, _d, _c, bgs) in enumerate(GROUPS):
         v = VAR.format(g)
@@ -2752,7 +2678,7 @@ def write_all(game, write, header_text, out=None):
     write('common/scripted_guis/pmr_ipw_sguis.txt', header_text + sguis())
     write('common/static_modifiers/pmr_policy_modifiers.txt', header_text + static_modifiers())
     write('common/on_actions/pmr_pi_on_actions.txt', header_text + on_actions())
-    write('common/scripted_effects/pmr_pi_effects.txt', header_text + reinvest_effect() + '\n' + chart_effect() + '\n'
+    write('common/scripted_effects/pmr_pi_effects.txt', header_text + chart_effect() + '\n'
           + rank_effects(chart_types) + '\n'
           + clock_effect() + '\n' + upkeep_effect() + '\n' + policy_effects() + '\n'
           + invest_effects(types, retool_types(game, out)))

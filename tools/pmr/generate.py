@@ -340,6 +340,9 @@ VALUE_READS = 0
 # the state can earn none and has none standing; the Buildings tab's list where the state has no list walks the
 # state's buildings for a retool site twice a year, not monthly (a site's build events refresh the list at once).
 LEAN_CHECKS = False
+# LEAN_CHARTS: the Private tab's contributors charts are counted weekly only while the tab was shown in the last
+# 30 days, else every fourth week, and recount as the tab shows (private_investment.LEAN_CHARTS).
+LEAN_CHARTS = False
 URB_WALK_DAYS = 180   # LEAN_CHECKS: a state with no urban list walks its buildings for a retool site this often
 PROFIT_RECHECK_SPREAD = 60     # re-checks fall 30 days either side, in 7 steps
 SWITCH_MONTHS = 6
@@ -1391,13 +1394,14 @@ def main():
                     help='VALUE_READS (performance review 12): 1 checks plain reads of the books against the ladders '
                          'in a test build, 2 uses them')
     ap.add_argument('--lean-checks', action='store_true', help='LEAN_CHECKS (performance review 12)')
+    ap.add_argument('--lean-charts', action='store_true', help='LEAN_CHARTS (performance review 13)')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
                     help='diagnostic build: flushed T lines from this game date on (see TRACE_FIELDS)')
     args = ap.parse_args()
     global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD, SOLO_GATE, SWITCH_QUICK, WATCH_DIRECT
-    global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS
+    global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS, LEAN_CHARTS
     RELEASE = args.release
     if args.solo is not None:
         SOLO_GATE = args.solo
@@ -1409,6 +1413,7 @@ def main():
     if args.value_reads is not None:
         VALUE_READS = args.value_reads
     LEAN_CHECKS = LEAN_CHECKS or args.lean_checks
+    LEAN_CHARTS = LEAN_CHARTS or args.lean_charts
     if VALUE_READS == 1 and RELEASE:
         raise SystemExit('--value-reads 1 is a test-build check; a release takes 0 or 2')
     SHARE_DIGITS = args.digit_shares
@@ -2550,6 +2555,7 @@ def main():
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
     private_investment.PF_SUMS, private_investment.PF_SYNC = PF_SUMS, set(PF_SYNC)
     private_investment.PF_CHECK = PF_SUMS and not RELEASE
+    private_investment.LEAN_CHARTS = LEAN_CHARTS
     loc += private_investment.write_all(game, write, header, args.out)
     if args.trace_from:
         write('common/scripted_effects/pmr_trace_effects.txt', header + trace_pm_effects(game, args.out, args.trace_from))
@@ -2682,7 +2688,7 @@ TRACE_CALLS = {
     'pmr_state_tick': 'state', 'pmr_state_research': 'state', 'pmr_auto_best': 'state',
     'pmr_probe_state': 'state', 'pmr_state_research_abroad': 'state',
     'pmr_c_sum_all': 'country', 'pmr_c_sum_every': 'country', 'pmr_policy_upkeep': 'country',
-    'pmr_pi_start_clock': 'country', 'pmr_pc_record': 'country', 'pmr_rw_record': 'country',
+    'pmr_pi_start_clock': 'country', 'pmr_pc_record': 'country',
 }
 
 
