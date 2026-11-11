@@ -41,8 +41,10 @@ SECTIONS = ('building_modifiers', 'state_modifiers', 'country_modifiers')
 LOOKUP_FROM = 7      # as generate.py: a ladder this long becomes a binary search
 EPS = 1e-9
 # The cut lines' name, which the GUI also hides them by (generate.py LESS_SHOWN). q102: a pure mill's trade-off cuts
-# read "Retooling" in the Modifier Entries tooltips (Pat's screenshot 2026-11-11 15:50Z); "Method mix" from q103.
-LESS_NAME = 'Method mix'
+# read "Retooling" in the Modifier Entries tooltips (Pat's screenshot 2026-11-11 15:50Z); "Method mix" from q103, Title
+# Case from q104 (interface review K2). One name for every good: the GUI can only hide by an exact name, so the review's
+# per-good "Method Mix: <good>" (T12) would put the timed modifiers back on the tab.
+LESS_NAME = 'Method Mix'
 # q99's run (Pat, 2026-11-10): building_employment_<pop>_mult on a building's own modifier reads back and shows on the
 # Modifiers tab ("Shopkeepers Per Level -60%") but moves no jobs: the Midlands furniture manufactory kept the union's
 # 30.0K capacity with its shopkeepers cut 43%, and the probe wharf every laborer at -50%. A blend holds its union's jobs

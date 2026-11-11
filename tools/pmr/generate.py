@@ -196,9 +196,11 @@ COMPANY_RETOOL_ABROAD = bool(ABROAD_SLOT)
 # Recipe bar colour per recipe tier (position in vanilla's group, oldest first), the same on every
 # building. Pat, 2026-10-13: muted, in Victoria 3's own style, and no red or green, which read as bad
 # and good. Drawn on vanilla's stacked bar chart texture, as the Owners bar is.
-TIER_COLORS = [('Bronze', (0.60, 0.43, 0.27)), ('Ochre', (0.74, 0.60, 0.30)), ('Steel blue', (0.29, 0.43, 0.62)),
-               ('Plum', (0.48, 0.34, 0.53)), ('Slate', (0.43, 0.48, 0.53)),
-               ('Moss', (0.42, 0.52, 0.33))]   # 1.15: artillery foundries have six (the bronze cannons and smoothbores)
+# Interface review 2026-11-11 (gui-review/SPEC.md A7): re-stepped so neighbours stay apart under colour blindness; the
+# moss tier went, which also keeps the tiers clear of green.
+TIER_COLORS = [('Bronze', (0.59, 0.40, 0.25)), ('Ochre', (0.79, 0.65, 0.33)), ('Steel blue', (0.29, 0.46, 0.66)),
+               ('Dusty rose', (0.73, 0.56, 0.66)), ('Slate teal', (0.34, 0.47, 0.51)),
+               ('Parchment', (0.84, 0.80, 0.69))]   # 1.15: artillery foundries have six (the bronze cannons and smoothbores)
 RECIPE_ICON_SHARE = 0.25   # a recipe's slice of the bar shows its icon above this share (Pat, 2026-10-13)
 # Pat, 2026-10-13: every recipe from this tier up includes the building's automation, blended with it:
 # from each automation group (vanilla names them pmg_automation_*, pmg_steam_automation_*,
@@ -233,6 +235,7 @@ def is_automation(g):
 
 
 SPLIT_BARS = {}   # short name -> plain recipes of a split building: its bars read pmr_rs_<j> (recipe j's share), not pmr_sh_<i>
+RETOOL_COST = {}  # short name -> construction one retool level costs (pmr_retool_cost_<b>), for tooltips
 # Pat, 2026-10-18 14:48Z: every automation method pays for itself at 1836 wages with its goods at the +75%
 # price cap (buff_automation). Vanilla's lose GBP 220 to 900 a level a week there: they save 1,000 to 3,000
 # laborers, whose wage is about GBP 0.04 a week each. Each method now removes AUTOMATION_LABOUR_MULT times
@@ -505,9 +508,9 @@ DEMAND_BAND = 0.25
 # goes to the nearest treatment they allow (violent to harsh to standard; standard, barred under the
 # slave trade, to harsh, then violent).
 # Trade-off bar colours, muted and never red or green, apart from the recipe tiers; "none" is grey.
-OPTION_COLORS = [('Sand', (0.74, 0.66, 0.48)), ('Dusk blue', (0.42, 0.52, 0.66)),
-                 ('Mauve', (0.60, 0.46, 0.56)), ('Umber', (0.52, 0.41, 0.31))]
-OPTION_NONE_COLOR = (0.36, 0.36, 0.36)
+OPTION_COLORS = [('Sand', (0.80, 0.71, 0.50)), ('Dusk blue', (0.31, 0.45, 0.66)),
+                 ('Rose', (0.77, 0.58, 0.66)), ('Umber', (0.54, 0.40, 0.27))]   # SPEC.md A7
+OPTION_NONE_COLOR = (0.40, 0.40, 0.40)
 # Pat, 2026-10-18 17:15Z: an automation bar under the recipe bar, the levels by how automated their recipe is,
 # in shades of green, the darkest the most automated: none (recipes below AUTOMATION_FROM_TIER), the folded
 # automation, electric automation (ElectricRecipe). Only on buildings that fold automation.
@@ -1891,6 +1894,7 @@ def main():
         if base_cost is None:
             raise SystemExit(f'{bk}: no required_construction')
         retool_cost = base_cost * RETOOL_SHARE / N
+        RETOOL_COST[b] = retool_cost
         costs.append(f'pmr_retool_cost_{b} = {fmt(retool_cost)}  # {rc.value} = {fmt(base_cost)} x {RETOOL_SHARE} / {N}')
         icon = pdx.get(bn.value, 'icon').value
         retools.append(retool_buildings(b, bk, icon))
@@ -1900,14 +1904,14 @@ def main():
 
         for rbx in priv_slots(b):
             loc += [f' {rbx}:0 "Retooling: ${bk}$"',
-                    f' {rbx}_desc:0 "Switches one level of ${bk}$ to its newest recipe."']
+                    f' {rbx}_desc:0 "Switches one level of ${bk}$ to its newest [concept_production_method]."']
         for r in recipes:
             if isinstance(r, (ElectricRecipe, PairRecipe)):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
         loc += [f' building_pmr_retool_gov_{b}:0 "Retooling (Government): ${bk}$"',
-                f' building_pmr_retool_gov_{b}_desc:0 "Switches the government\'s levels of ${bk}$ to the new recipe."',
+                f' building_pmr_retool_gov_{b}_desc:0 "Switches the government\'s levels of ${bk}$ to the new [concept_production_method]."',
                 f' building_pmr_retool_gova_{b}:0 "Retooling (Government): ${bk}$"',
-                f' building_pmr_retool_gova_{b}_desc:0 "Switches your government\'s levels of ${bk}$ here to the new recipe."']
+                f' building_pmr_retool_gova_{b}_desc:0 "Switches your government\'s levels of ${bk}$ here to the new [concept_production_method]."']
 
         # Blended recipe: per recipe i, a tens and a units group whose two running digits carry recipe i's
         # workforce-scaled modifiers x n / SHARE_STEPS, so the building's goods are the level-weighted
@@ -2495,6 +2499,14 @@ def main():
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts, opt_ui, auto_ui)
     loc += [' PMR_GOV_RETOOL_ALL:0 "Retool Government Levels"'] + GOV_ALL_LOC
+    # Interface review 2026-11-11 (gui-review/SPEC.md P2, Pat's "All three" at 19:30Z): one game concept, the one place
+    # the mechanic is explained, linked from the bar tooltips' "To retool" and the retool buttons' header only.
+    write('common/game_concepts/pmr_concepts.txt', f'concept_pmr_retooling = {{\n\ttexture = "{GOV_RETOOL_ICON}"\n}}\n')
+    share = 'half' if RETOOL_SHARE == 0.5 else f'{RETOOL_SHARE:.0%} of'
+    loc += [' concept_pmr_retooling:0 "Retooling"',
+            ' concept_pmr_retooling_desc:0 "Moves a [concept_building]\'s levels to a newer [concept_production_method].'
+            f'\\nEach level costs {share} the building\'s [concept_construction] and is built through the [concept_construction_queue].'
+            '\\n[concept_government_construction] retools the government\'s levels, [concept_private_construction] the rest."']
     loc += [' bg_pmr_retool:0 "Retooling"', ' bg_pmr_retool_abroad:0 "Retooling Abroad"',
             ' bg_pmr_retool_gov:0 "Government Retooling"', ' bg_pmr_retool_gov_abroad:0 "Government Retooling Abroad"']
     # the "PMR test:" decision is for testing only: every player would see it. Pat 2026-10-20 13:26Z: out of the test
@@ -3770,7 +3782,9 @@ def gov_retool_all_sgui(buildings):
     count = ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ {open_(bk)} NOT = {{ has_variable = pmr_abroad_{short(bk)} }} '
                     f'has_variable = pmr_room_gov_{short(bk)} }}\n'
                     f'\t\t\t\troot = {{ change_variable = {{ name = pmr_gall_l add = scope:pmr_st.var:pmr_room_gov_{short(bk)} }} '
-                    'change_variable = { name = pmr_gall_b add = 1 } }\n\t\t\t}\n' for bk in buildings)
+                    'change_variable = { name = pmr_gall_b add = 1 } '
+                    f'change_variable = {{ name = pmr_gall_c add = {{ value = scope:pmr_st.var:pmr_room_gov_{short(bk)} '
+                    f'multiply = pmr_retool_cost_{short(bk)} }} }} }}\n\t\t\t}}\n' for bk in buildings)
     return ('pmr_gov_retool_all_sgui = {\n\tscope = country\n'
             f'\tis_valid = {{\n\t\tany_scope_state = {{\n\t\t\tOR = {{\n{any_open}'
             '\t\t\t}\n\t\t}\n\t}\n'
@@ -3778,9 +3792,11 @@ def gov_retool_all_sgui(buildings):
             '\t\t\tremove_variable = pmr_bulk\n\t\t}\n'
             '\t\tif = { limit = { has_variable = pmr_gall_l var:pmr_gall_l >= 0 var:pmr_gall_b >= 0 } '
             'remove_variable = pmr_gall_l remove_variable = pmr_gall_b }\n'
+            '\t\tif = { limit = { has_variable = pmr_gall_c var:pmr_gall_c >= 0 } remove_variable = pmr_gall_c }\n'
             + '\t\tpmr_c_sum_all = yes\n\t\tdebug_log = "PMR;rec=GOV_ALL;date=[TimeKeeper.GetCurrentDate.GetString]"\n\t}\n}\n\n'
             'pmr_gov_retool_count_sgui = {\n\tscope = country\n'
             '\teffect = {\n\t\tset_variable = { name = pmr_gall_l value = 0 }\n\t\tset_variable = { name = pmr_gall_b value = 0 }\n'
+            '\t\tset_variable = { name = pmr_gall_c value = 0 }\n'
             f'\t\tevery_scope_state = {{\n\t\t\tsave_temporary_scope_as = pmr_st\n{count}\t\t}}\n\t}}\n}}\n\n')
 
 
@@ -3807,8 +3823,11 @@ def patch_browser_retool_all(text):
     ind = '\t\t\t\t\t\t'
     scope = GOV_ALL_SCOPE
     i3 = '\t\t\t'
+    # interface review (SPEC.md B3, P1): both buttons take the same tooltip, and say why while greyed
+    tip = (f"tooltip = \"[SelectLocalization(GetScriptedGui('pmr_gov_retool_all_sgui').IsValid({scope}), "
+           "'PMR_GOV_RETOOL_ALL_TT', 'PMR_GOV_RETOOL_ALL_NONE')]\"\n")
     gear = (f'{i3}# PMR: Retool Government Levels, under the map mode button\n{i3}button = {{\n{i3}\tposition = {{ 607 152 }}\n'
-            f'{i3}\tsize = {{ 45 45 }}\n{i3}\tusing = default_button\n{i3}\ttooltip = "PMR_GOV_RETOOL_ALL"\n'
+            f'{i3}\tsize = {{ 45 45 }}\n{i3}\tusing = default_button\n{i3}\t{tip}'
             f'{i3}\tusing = tooltip_ne\n'
             f"{i3}\tenabled = \"[GetScriptedGui('pmr_gov_retool_all_sgui').IsValid({scope})]\"\n"
             f'{i3}\t' + GOV_ALL_CLICK.format(i=i3 + '\t')
@@ -3817,6 +3836,7 @@ def patch_browser_retool_all(text):
     text = text.replace(modes, modes + gear)
     button = (f'{ind}# PMR: government retooling for every building at once\n{ind}button = {{\n'
               f'{ind}\tsize = {{ 404 50 }}\n{ind}\tusing = default_button_primary\n{ind}\tusing = confirm_button_sound\n'
+              f'{ind}\t{tip}{ind}\tusing = tooltip_ne\n'
               f"{ind}\tenabled = \"[GetScriptedGui('pmr_gov_retool_all_sgui').IsValid({scope})]\"\n"
               f'{ind}\t' + GOV_ALL_CLICK.format(i=ind + '\t') + '\n'
 
@@ -6563,8 +6583,13 @@ def patch_hud_gov_all(text):
 
 
 GALL_N = "#v [GetPlayer.MakeScope.Var('{v}').GetValue|0]#!"
-GOV_ALL_LOC = [f' PMR_GALL_ASK:0 "Retool all government-owned buildings?\\n\\n{GALL_N.format(v="pmr_gall_l")} levels in '
-               f'{GALL_N.format(v="pmr_gall_b")} buildings"']
+# interface review (SPEC.md B3, P1): the confirmation names the action and its cost; the buttons' tooltip, and the reason
+GOV_ALL_LOC = [f' PMR_GALL_ASK:0 "#header $PMR_GOV_RETOOL_ALL$#!\\n{GALL_N.format(v="pmr_gall_l")} levels in '
+               f'{GALL_N.format(v="pmr_gall_b")} buildings\\n@construction! {GALL_N.format(v="pmr_gall_c")}"',
+               ' PMR_GOV_RETOOL_ALL_TT:0 "#header [Concept(\'concept_pmr_retooling\',\'$PMR_GOV_RETOOL_ALL$\')]#!'
+               '\\n$TOOLTIP_DELIMITER$\\n#instruction Click to queue every level#!"',
+               ' PMR_GOV_RETOOL_ALL_NONE:0 "#header [Concept(\'concept_pmr_retooling\',\'$PMR_GOV_RETOOL_ALL$\')]#!'
+               '\\n$TOOLTIP_DELIMITER$\\n@red_cross! #N Nothing to retool#!"']
 
 
 # --script-profile (Pat 2026-10-20: checks log on their own, no console steps). 1.14.5's text script profiler collects
@@ -7053,8 +7078,16 @@ def gov_button(b, size, ind, place=''):
     site = f"Building.GetState.GetBuilding('building_pmr_retool_gova_{b}')"
     room = state_var(b, 'pmr_room_gov')
 
+    pending = state_var(b, 'pmr_pending_gov')
+
+    def why(tooltip, on):
+        """The tooltip, or with the button greyed the reason (SPEC.md P1): all levels queued, or none to retool."""
+        return (f"[SelectLocalization({on}, '{tooltip}', SelectLocalization(GreaterThan_CFixedPoint({pending}, '(CFixedPoint)0.5'), "
+                f"'PMR_GOV_RETOOL_QUEUED_{b}', 'PMR_GOV_RETOOL_NONE'))]")
+
     def button(visible, enabled, clicks, tooltip):
-        return (f'{ind}button_icon_round = {{\n{place}'
+        # the action style, as vanilla's subsidise and pause buttons on the same rows (SPEC.md B1)
+        return (f'{ind}button_icon_round_action = {{\n{place}'
                 f'{ind}\tvisible = "[{visible}]"\n'
                 f'{ind}\tsize = {{ {size} {size} }}\n'
                 f'{ind}\tenabled = {enabled}\n'
@@ -7072,11 +7105,11 @@ def gov_button(b, size, ind, place=''):
             return at_least
         return f"And({at_least}, LessThan_CFixedPoint({room}, '(CFixedPoint){n + 1}'))"
 
-    out = button(f'Not({abroad})',
-                 f'"[And(ObjectsEqual(Building.GetState.GetOwner.Self, GetPlayer.Self), {sgui}.IsValid({scope}))]"',
-                 [f'{sgui}.Execute({scope})'], f'PMR_GOV_RETOOL_TOOLTIP_{b}')
+    home = f'And(ObjectsEqual(Building.GetState.GetOwner.Self, GetPlayer.Self), {sgui}.IsValid({scope}))'
+    out = button(f'Not({abroad})', f'"[{home}]"',
+                 [f'{sgui}.Execute({scope})'], why(f'PMR_GOV_RETOOL_TOOLTIP_{b}', home))
     out += button(f"And({abroad}, Or(Not({site}.IsValid), LessThan_CFixedPoint({room}, '(CFixedPoint)1')))",
-                  'no', [], f'PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}')
+                  'no', [], why(f'PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}', f"GreaterThanOrEqualTo_CFixedPoint({room}, '(CFixedPoint)1')"))
     for n in range(1, GOV_ABROAD_CLICKS + 1):
         out += button(f'And({abroad}, And({site}.IsValid, {room_is(n)}))',
                       f'"[IsValid({site}.QueueConstruction)]"',
@@ -7114,7 +7147,7 @@ def recipe_bar(bk, b, textures):
 						align = left|nobaseline
 						elide = right
 						text = "PMR_RECIPE_BAR_TITLE"
-						tooltip = "PMR_RECIPE_BAR_TOOLTIP"
+						tooltip = "PMR_BAR_FULL_TOOLTIP"
 						using = tooltip_above
 					}}
 					textbox = {{
@@ -7457,7 +7490,7 @@ BUY_ICON = 20  # an owner's icon in the AI column's who-buys cells
 CO_SIZE = 26   # the company's round icon, a badge on the top-right corner of a card's building icon (Pat 02:32Z)
 AI_H = 82      # the AI column's height: label, weight and two rows of who-buys cells
 LEFT_H = 78    # the icon column: the icon with the country's levels on it, its productivity under it (Pat 01:07Z)
-MINI_H, MINI_GAP = 10, 4   # the automation and trade-off bars under the grid (Pat 01:07Z: "smaller bars")
+MINI_H, MINI_GAP = 14, 4   # the automation and trade-off bars under the grid (Pat 01:07Z: "smaller bars"; 14 px, SPEC.md C6)
 CSW_H = 18     # the switching bar under the grid, only while a switch is under way (Pat 02:32Z: "thicker")
 
 
@@ -7480,7 +7513,7 @@ def ai_column(bk, h, x, ind):
         cells += f'{i2}flowcontainer = {{\n'
         for key, icon, name in private_investment.BUYERS[2 * r:2 * r + 2]:
             cells += (f'{i3}flowcontainer = {{\n{i4}minimumsize = {{ {AI_W // 2} -1 }}\n{i4}spacing = 3\n'
-                      f'{i4}tooltip = "{name}"\n{i4}using = tooltip_above\n'
+                      f'{i4}tooltip = "PMR_MV_BUY_TT_{key}_{b}"\n{i4}using = tooltip_above\n'
                       f'{i4}icon = {{\n{i4}\tsize = {{ {BUY_ICON} {BUY_ICON} }}\n{i4}\ttexture = "{icon}"\n{i4}}}\n'
                       f'{i4}textbox = {{\n{i4}\tautoresize = yes\n{i4}\tparentanchor = vcenter\n{i4}\talign = left|nobaseline\n'
                       f'{i4}\tusing = fontsize_small\n{i4}\ttext = "PMR_MV_BUY_{key}_{b}"\n{i4}}}\n{i3}}}\n')
@@ -7692,12 +7725,11 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
     loc = [' PMR_MV_HEADER:0 "Production Methods"',   # Pat 21:53Z, with no explainer text under it
            ' PMR_BB_TAB_INVEST:0 "Policies"',   # Pat 2026-10-19 01:07Z
            ' PMR_BB_TAB_BUILDINGS:0 "Buildings"',
-           ' PMR_PAIR_NOTE_BEST:0 " (best combination)"',
-           ' PMR_MV_AI_LABEL:0 "Investment chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_BASE:0 "Base"',
+           ' PMR_PAIR_NOTE_BEST:0 "  #P Most profitable#!"',
+           ' PMR_MV_AI_LABEL:0 "Investment Chance"', ' PMR_MV_POLICY:0 "Policy"', ' PMR_MV_BASE:0 "Base"',
            ' PMR_MV_COMPANIES:0 "Companies"', ' PMR_MV_PROD:0 "Productivity"', ' PMR_MV_LOSS:0 "Losses"', ' PMR_MV_PRF:0 "Profit"',
            ' PMR_MV_OUT:0 "Output"', ' PMR_MV_PROFIT_LV:0 "Profit per level a week"',
-           ' PMR_MV_EMP_LV:0 "Employees per level"', ' PMR_MV_GOODS_LV:0 "Goods per level a week at base prices"',
-           ' PMR_MV_WEIGHT:0 "Weight"']
+           ' PMR_MV_EMP_LV:0 "Employees per level"', ' PMR_MV_GOODS_LV:0 "Goods per level a week at base prices"']
     for bk, keys in recipe_keys.items():
         b = short(bk)
         if (pair_ui or {}).get(bk, {}).get('split'):
@@ -7708,8 +7740,8 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
             loc.append(f' PMR_MV_PL_{b}_{i}:0 "\\n{profit}"')
             loc.append(f' PMR_MV_TIP_{b}_{i}:0 "{name}'
                        f"[SelectLocalization({methods_row.eq(mv_read(f'pmr_rav_{i}_{b}'), 1)}, 'PMR_MV_PL_{b}_{i}', 'PMR_EMPTY')]"
-                       f"\\nPicked: #bold [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#!"
-                       f"\\nRunning: #bold [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#!\"")
+                       f"{TT_DELIM}\\nTarget of #v [{mv_read(f'pmr_mv_ps_{i}_{b}')}|%0]#! of levels"
+                       f"\\nRunning on #v [{mv_read(f'pmr_c_sh_{i}_{b}')}|%0]#! of levels\"")
     for bk, group in (ai or {}).items():
         if bk not in recipe_keys:
             continue
@@ -7722,16 +7754,19 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
         # Pat 21:53Z: less text, on the card and in the tooltip; 23:22Z: the card shows the share of all weights
         loc.append(f' PMR_MV_AI_{b}:0 "#bold [{mv_read(f"pmr_mv_sh_{b}")}|%1]#!"')
         loc += [f' PMR_MV_BUY_{key}_{b}:0 "[{mv_read(f"pmr_mv_b{key}_{b}")}|%0]"' for key, *_r in private_investment.BUYERS]
+        # interface review (SPEC.md A3, T10): the owner's name, and what the figure is a share of
+        loc += [f' PMR_MV_BUY_TT_{key}_{b}:0 "#header ${name}$#!\\n#v [{mv_read(f"pmr_mv_b{key}_{b}")}|%0]#! of new private levels"'
+                for key, _icon, name in private_investment.BUYERS]
 
         def nonzero(val):
             return f"Or(GreaterThan_CFixedPoint({val}, '(CFixedPoint)0.5'), LessThan_CFixedPoint({val}, '(CFixedPoint)-0.5'))"
 
         def line(key, label, val):
-            loc.append(f' {key}:0 "\\n{label}: [{val}|=+0]"')
+            loc.append(f' {key}:0 "\\n[{val}|=+0] from {label}"')
             return f"[SelectLocalization({nonzero(val)}, '{key}', 'PMR_EMPTY')]"
         # Pat 2026-10-19 00:01Z: Policy opens a nested tooltip with each policy's part, the ones not 0, then the
         # priority group's (Pat 03:52Z: "everything I change to augment the ai weightings should show up in policies")
-        pol = [f'#bold $PMR_MV_POLICY$ [{pola}|=+0]#!']
+        pol = [f'#header $PMR_MV_POLICY$#!\\n[{pola}|=+0]{TT_DELIM}']
         pol += [line(f'PMR_MV_POL_{key}_{b}', f'${name}$', mv_read(f'pmr_mv_p{key}_{b}'))
                 for key, name in (parts or {}).get(bk, []) if name and key != 'fd']
         pol.append(line(f'PMR_MV_POL_PRIO_{b}', f'$PMR_IPW_GROUP_{group}$', mv_read(f'pmr_mv_prio_{b}')))
@@ -7740,22 +7775,22 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
         # Pat 2026-10-19 12:56Z: Productivity and Output open a nested tooltip with what they value: the profit and
         # employees per level and vanilla's weight; the goods per level at base prices and its weight
         pprod, pout = mv_read(f'pmr_mv_pprod_{b}'), mv_read(f'pmr_mv_pout_{b}')
-        loc.append(f' PMR_MV_PROD_TT_{b}:0 "#bold $PMR_MV_PROD$ [{pprod}|=+0]#!\\n'
-                   f'$PMR_MV_PROFIT_LV$: @money![{mv_read(f"pmr_mv_pp_{b}")}|0]\\n'
-                   f'$PMR_MV_EMP_LV$: [{mv_read(f"pmr_mv_pe_{b}")}|0]\\n'
-                   f'$PMR_MV_WEIGHT$: ×{VANILLA_PROFIT_W:g}"')
-        loc.append(f' PMR_MV_OUT_TT_{b}:0 "#bold $PMR_MV_OUT$ [{pout}|=+0]#!\\n'
-                   f'$PMR_MV_GOODS_LV$: @money![{mv_read(f"pmr_mv_pv_{b}")}|0]\\n'
-                   f'$PMR_MV_WEIGHT$: ×{VANILLA_OUTPUT_W:g}"')
+        # interface review (SPEC.md A3): the formula's weights are constants, not something to act on, so not shown
+        loc.append(f' PMR_MV_PROD_TT_{b}:0 "#header $PMR_MV_PROD$#!\\n[{pprod}|=+0]{TT_DELIM}\\n'
+                   f'$PMR_MV_PROFIT_LV$ @money!#v [{mv_read(f"pmr_mv_pp_{b}")}|0]#!\\n'
+                   f'$PMR_MV_EMP_LV$ #v [{mv_read(f"pmr_mv_pe_{b}")}|0]#!"')
+        loc.append(f' PMR_MV_OUT_TT_{b}:0 "#header $PMR_MV_OUT$#!\\n[{pout}|=+0]{TT_DELIM}\\n'
+                   f'$PMR_MV_GOODS_LV$ @money!#v [{mv_read(f"pmr_mv_pv_{b}")}|0]#!"')
         nest = {'PROD': f'PMR_MV_PROD_TT_{b}', 'OUT': f'PMR_MV_OUT_TT_{b}'}
         rest = ([line(f'PMR_MV_CO_{b}', '$PMR_MV_COMPANIES$', mv_read(f'pmr_mv_pworks_{b}'))] if tail else []) + [
             line(f'PMR_MV_{x.upper()}_{b}',
                  (f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],{nest[lab]} $PMR_MV_{lab}$#!' if lab in nest
                   else f'$PMR_MV_{lab}$'), mv_read(f'pmr_mv_{x}_{b}'))
             for x, lab in (('pprod', 'PROD'), ('pprf', 'PRF'), ('ploss', 'LOSS'), ('pout', 'OUT'))]
-        loc.append(f' PMR_MV_AI_TT_{b}:0 "#bold $PMR_MV_AI_LABEL$ [{mv_read(f"pmr_mv_w_{b}")}|0] of [{mv_read("pmr_mv_wsum")}|0]#!\\n'
-                   f'$PMR_MV_BASE$: [{aib}|0]\\n'
-                   f'#tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],PMR_MV_POL_TT_{b} $PMR_MV_POLICY$#!: [{pola}|=+0]'
+        loc.append(f' PMR_MV_AI_TT_{b}:0 "#header $PMR_MV_AI_LABEL$#!\\n#v [{mv_read(f"pmr_mv_sh_{b}")}|%1]#!  '
+                   f'(#v [{mv_read(f"pmr_mv_w_{b}")}|0]#! of #v [{mv_read("pmr_mv_wsum")}|0]#!){TT_DELIM}\\n'
+                   f'#v [{aib}|0]#! base\\n'
+                   f'[{pola}|=+0] from #tooltippable;tooltip:[{MV_COUNTRY}.GetTooltipTag],PMR_MV_POL_TT_{b} $PMR_MV_POLICY$#!'
                    + ''.join(rest) + '"')
     for bk, pr in (pair_ui or {}).items():
         b = short(bk)
@@ -7765,21 +7800,21 @@ def methods_view_loc(recipe_keys, pair_ui=None, ai=None, parts=None, opt_ui=None
         names = pr.get('keys') or recipe_keys[bk]
         for i, a in sorted(pr['econ']):
             # with the split each cell is a retool target: how much of the country picks it, and runs it
-            more = (f"\\nPicked: #bold [{mv_read(f'pmr_mv_ps_{pr['index'][(i, a)]}_{b}')}|%0]#!"
-                    f"\\nRunning: #bold [{mv_read(f'pmr_c_sh_{pr['index'][(i, a)]}_{b}')}|%0]#!"
+            more = (f"{TT_DELIM}\\nTarget of #v [{mv_read(f'pmr_mv_ps_{pr['index'][(i, a)]}_{b}')}|%0]#! of levels"
+                    f"\\nRunning on #v [{mv_read(f'pmr_c_sh_{pr['index'][(i, a)]}_{b}')}|%0]#! of levels"
                     if pr.get('split') else '')
-            loc.append(f' PMR_MVP_PL_{b}_{i}_{a}:0 "\\n@money![{mv_read(f"pmr_cp_{i}_{a}_{b}")}|0] per level a week'
+            loc.append(f' PMR_MVP_PL_{b}_{i}_{a}:0 "\\n@money!#v [{mv_read(f"pmr_cp_{i}_{a}_{b}")}|0]#! per level a week'
                        f"[{MV_COUNTRY}.GetCustom('pmr_mvcn_{b}_{i}_{a}')]\"")
-            loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#bold ${names[i - 1]}$#! + #bold $PMR_MVA_{b}_{a}$#!'
+            loc.append(f' PMR_MVP_TIP_{b}_{i}_{a}:0 "#header ${names[i - 1]}$ + $PMR_MVA_{b}_{a}$#!'
                        f"[SelectLocalization(Not({methods_row.eq(mv_read(f'pmr_cav_{i}_{a}_{b}'), 0)}), "
                        f"'PMR_MVP_PL_{b}_{i}_{a}', 'PMR_EMPTY')]{more}\"")
     # the bars under the grid (card_bars): the group's name, then each option that holds a share
     def shares(tip, head, rows):
         body = []
         for n, (key, e, f) in enumerate(rows):
-            loc.append(f' {tip}_{n}:0 "\\n${key}$: #bold [{e}|{f}#!"')
+            loc.append(f' {tip}_{n}:0 "\\n${key}$ #v [{e}|{f}#!"')
             body.append(f"[SelectLocalization({methods_row.gt(e, 0)}, '{tip}_{n}', 'PMR_EMPTY')]")
-        loc.append(f' {tip}:0 "#bold ${head}$#!' + ''.join(body) + '"')
+        loc.append(f' {tip}:0 "#header ${head}$#!{TT_DELIM}' + ''.join(body) + '"')
     for bk, (group, levels) in (auto_ui or {}).items():
         b = short(bk)
         if bk in recipe_keys and (pair_ui or {}).get(bk, {}).get('split'):
@@ -7814,31 +7849,34 @@ def pick_custom_loc(pick_ui):
 def pick_loc(pick_ui):
     """The switching bars' tooltips, and the notes the Policies cards' tooltips put after a recipe's profit. Pat,
     2026-10-19 02:32Z: no "Most profitable" line (PMR_PICK_ROW_<b>) and no idle bar (PMR_CSW_IDLE_<b>) any more."""
-    loc = [' PMR_PICK_NOTE_BEST:0 " (most profitable)"', ' PMR_PICK_NOTE_VETO:0 " (input at price cap)"']
+    loc = [' PMR_PICK_NOTE_BEST:0 "  #P Most profitable#!"', ' PMR_PICK_NOTE_VETO:0 "  @warning! #N Input at price cap#!"']
     for bk, keys in pick_ui.items():
         b = short(bk)
 
         def var(name, f='0'):
             return f"[Building.GetState.MakeScope.Var('{name}').GetValue|{f}]"
-        # the switching bar (switch_bar): from, to, the gain over the default, points (Pat 12:59Z)
+        # the switching bar (switch_bar): the pick it fills toward, the gain over the default, months (Pat 12:59Z;
+        # interface review SPEC.md A2)
         cvar = lambda name, f='0': f"[GetPlayer.MakeScope.Var('{name}').GetValue|{f}]"   # noqa: E731
-        loc.append(f' PMR_SW_TT_{b}:0 "#bold [Building.GetState.GetCustom(\'pmr_sw_now_{b}\')]#! → '
-                   f'#bold [Building.GetState.GetCustom(\'pmr_sw_to_{b}\')]#!\\n'
-                   f'{var(f"pmr_swg_{b}", "=+%0")} profit\\n{var(f"pmr_sw_{b}", "1")} of {SWITCH_MONTHS} points"')
-        loc.append(f' PMR_CSW_TT_{b}:0 "#bold [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]#! → '
-                   f'#bold [GetPlayer.GetCustom(\'pmr_csw_to_{b}\')]#!\\n'
-                   f'{cvar(f"pmr_c_swg_{b}", "=+%0")} profit\\n{cvar(f"pmr_c_sw_{b}", "1")} of {SWITCH_MONTHS} points"')
+        loc.append(f' PMR_SW_TT_{b}:0 "#header New Default: [Building.GetState.GetCustom(\'pmr_sw_to_{b}\')]#!{TT_DELIM}'
+                   f'\\n{var(f"pmr_swg_{b}", "=+%0")} profit over [Building.GetState.GetCustom(\'pmr_sw_now_{b}\')]'
+                   f'\\n#v {var(f"pmr_sw_{b}", "0")}#! of #v {SWITCH_MONTHS}#! months"')
+        loc.append(f' PMR_CSW_TT_{b}:0 "#header New Default: [GetPlayer.GetCustom(\'pmr_csw_to_{b}\')]#!{TT_DELIM}'
+                   f'\\n{cvar(f"pmr_c_swg_{b}", "=+%0")} profit over [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]'
+                   f'\\n#v {cvar(f"pmr_c_sw_{b}", "0")}#! of #v {SWITCH_MONTHS}#! months"')
     return loc
 
 
 def automation_loc(auto_ui):
-    """The automation bar's tooltips, from vanilla's own names, so every language has them."""
+    """The automation bar's tooltips, from vanilla's own names, so every language has them. Interface review
+    (SPEC.md A2): a #header and divider, rows at 0 left out."""
     loc = []
     for bk, (group, levels) in auto_ui.items():
         b = short(bk)
-        lines = [f"${key}$: #bold [Building.GetState.MakeScope.Var('pmr_ash_{a}_{b}').GetValue|%0]#!"
-                 for a, (key, _, _) in enumerate(levels, 1)]
-        loc.append(f' PMR_AUTO_TOOLTIP_{b}:0 "#bold ${group}$#!\\n' + '\\n'.join(lines) + '"')
+        rows = ''.join(zrow(loc, f'PMR_AUTO_R_{b}_{a}', f"${key}$ #v [Building.GetState.MakeScope.Var('pmr_ash_{a}_{b}').GetValue|%0]#!",
+                            methods_row.gt(f"Building.GetState.MakeScope.Var('pmr_ash_{a}_{b}').GetValue", 0.005))
+                       for a, (key, _, _) in enumerate(levels, 1))
+        loc.append(f' PMR_AUTO_TOOLTIP_{b}:0 "#header ${group}$#!{TT_DELIM}{rows}"')
     return loc
 
 
@@ -7891,8 +7929,7 @@ def patch_grid_instance(text, buildings, ind, name, outer, cell, anchor='', extr
               f'{ind}widget = {{\n{ind}\tvisible = "[{any_type(buildings)}]"\n{ind}\tsize = {{ {outer[0]} {outer[1]} }}\n'
               + (f'{ind}\tparentanchor = {anchor}\n' if anchor else '') +
               f'{ind}\twidget = {{\n{ind}\t\tsize = {{ {cell} {cell} }}\n{ind}\t\tparentanchor = vcenter\n'
-              f'{ind}\t\ttooltip = "PMR_LABOUR_ICON_TOOLTIP"\n'
-              f'{ind}\t\tusing = tooltip_ne\n{icons}{ind}\t}}\n{extra}{ind}}}')
+              f'{icons}{ind}\t}}\n{extra}{ind}}}')
     hide = (text[:at] + f'{ind}\t# PMR: no grid on PMR building types\n'
             f'{ind}\tvisible = "[Not({any_type(list(buildings) + list(also))})]"\n')
     if not labour_icon:
@@ -8408,12 +8445,19 @@ def type_bar(bk, textures):
 
 
 def patch_type_row_buttons(text, buildings):
-    """production_methods.gui, the Buildings tab's building type row: the government upgrade button
-    left of nationalize, at the row's 40 px, queueing every government retool level the player's
-    buildings of the type still need, in every state (pmr_gov_retool_c_<b>_sgui, country scope)."""
+    """production_methods.gui, the Buildings tab's building type row: the government upgrade button, at the row's
+    40 px, queueing every government retool level the player's buildings of the type still need, in every state
+    (pmr_gov_retool_c_<b>_sgui, country scope). Interface review 2026-11-11 (SPEC.md B1, B4, P1): vanilla's action
+    style, directly left of expand (the plus) after the toggles, and the reason in its tooltip while greyed."""
     anchor = '\t\t\t\tspacing = 5\n\t\t\t\t\n\t\t\t\t### nationalize\n\t\t\t\tbuilding_type_nationalize_button = {\n'
     if text.count(anchor) != 1:
         raise SystemExit(f'production_methods.gui: expected one type-row nationalize button, found {text.count(anchor)}; '
+                         'update patch_type_row_buttons')
+    expand = '\t\t\t\t### expand\n\t\t\t\tbutton_icon_round_map_interaction = {\n\t\t\t\t\tsize = { 40 40 }\n'
+    at = text.find(expand, text.index(anchor))
+    span = text.find('### PRODUCTIVITY SPAN ###', text.index(anchor))
+    if at < 0 or not at < span:
+        raise SystemExit('production_methods.gui: the type row\'s expand button no longer follows its toggles; '
                          'update patch_type_row_buttons')
     ind = '\t\t\t\t'
     scope = 'GuiScope.SetRoot(GetPlayer.MakeScope).End'
@@ -8423,20 +8467,23 @@ def patch_type_row_buttons(text, buildings):
     any_bt = is_bt(buildings[-1])
     for bk in reversed(buildings[:-1]):
         any_bt = f'Or({is_bt(bk)}, {any_bt})'
-    buttons = ''.join(
-        f'{ind}\tbutton_icon_round = {{\n{ind}\t\tvisible = "[{is_bt(bk)}]"\n{ind}\t\tsize = {{ 40 40 }}\n'
-        f"{ind}\t\tenabled = \"[GetScriptedGui('pmr_gov_retool_c_{short(bk)}_sgui').IsValid({scope})]\"\n"
-        f"{ind}\t\tonclick = \"[GetScriptedGui('pmr_gov_retool_c_{short(bk)}_sgui').Execute({scope})]\"\n"
-        f'{ind}\t\ttooltip = "PMR_GOV_RETOOL_C_TOOLTIP_{short(bk)}"\n{ind}\t\tusing = tooltip_se\n'
-        f'{ind}\t\tusing = confirm_button_sound\n'
-        f'{ind}\t\tblockoverride "icon" {{\n{ind}\t\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t\t}}\n'
-        f'{ind}\t\tblockoverride "icon_size" {{\n{ind}\t\t\tsize = {{ 80% 80% }}\n{ind}\t\t}}\n{ind}\t}}\n'
-        for bk in buildings)
-    return text.replace(anchor,
-                        f'{ind}spacing = 5\n{ind}ignoreinvisible = yes  # PMR\n{ind}\n'
-                        f'{ind}# PMR: government upgrade button, every state at once\n{ind}widget = {{\n'
-                        f'{ind}\tvisible = "[{any_bt}]"\n{ind}\tsize = {{ 40 40 }}\n{buttons}{ind}}}\n\n'
-                        f'{ind}### nationalize\n{ind}building_type_nationalize_button = {{\n')
+
+    def button(bk):
+        on = f"GetScriptedGui('pmr_gov_retool_c_{short(bk)}_sgui').IsValid({scope})"
+        return (f'{ind}\tbutton_icon_round_action = {{\n{ind}\t\tvisible = "[{is_bt(bk)}]"\n{ind}\t\tsize = {{ 40 40 }}\n'
+                f'{ind}\t\tenabled = "[{on}]"\n'
+                f"{ind}\t\tonclick = \"[GetScriptedGui('pmr_gov_retool_c_{short(bk)}_sgui').Execute({scope})]\"\n"
+                f"{ind}\t\ttooltip = \"[SelectLocalization({on}, 'PMR_GOV_RETOOL_C_TOOLTIP_{short(bk)}', 'PMR_GOV_RETOOL_NONE')]\"\n"
+                f'{ind}\t\tusing = tooltip_se\n'
+                f'{ind}\t\tusing = confirm_button_sound\n'
+                f'{ind}\t\tblockoverride "icon" {{\n{ind}\t\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t\t}}\n'
+                f'{ind}\t\tblockoverride "icon_size" {{\n{ind}\t\t\tsize = {{ 80% 80% }}\n{ind}\t\t}}\n{ind}\t}}\n')
+    block = (f'{ind}# PMR: government upgrade button, every state at once\n{ind}widget = {{\n'
+             f'{ind}\tvisible = "[{any_bt}]"\n{ind}\tsize = {{ 40 40 }}\n' + ''.join(button(bk) for bk in buildings)
+             + f'{ind}}}\n\n')
+    text = text[:at] + block + text[at:]
+    return text.replace(anchor, f'{ind}spacing = 5\n{ind}ignoreinvisible = yes  # PMR\n{ind}\n'
+                                f'{ind}### nationalize\n{ind}building_type_nationalize_button = {{\n')
 
 
 def patch_type_grids(text, buildings, name, expected, replace=None, also=(), skip=()):
@@ -8520,71 +8567,124 @@ def patch_building_grids(text, buildings, name, expected, also=()):
     return text
 
 
+TT_DELIM = '\\n$TOOLTIP_DELIMITER$'   # vanilla's divider under a tooltip's header (SPEC.md A1)
+RETOOL_LINK = "[Concept('concept_pmr_retooling','$PMR_GOV_RETOOL_ALL$')]"   # the retool buttons' header (SPEC.md P2)
+
+
+def add_fp(a, b):
+    """a + b in a GUI expression, from Subtract_CFixedPoint alone (in game since q60; Add_CFixedPoint has no vanilla use)."""
+    return f"Subtract_CFixedPoint({a}, Subtract_CFixedPoint('(CFixedPoint)0', {b}))"
+
+
+def zrow(loc, key, text, cond):
+    """A tooltip row in a key of its own, shown only while cond holds (PMR_EMPTY otherwise), so rows at 0 drop out
+    (SPEC.md A2). The picked key reads the same data context, as vanilla's COASTAL_BUILDING_MARKER_* sub-keys do."""
+    loc.append(f' {key}:0 "\\n{text}"')
+    return f"[SelectLocalization({cond}, '{key}', 'PMR_EMPTY')]"
+
+
 def panel_loc(recipe_keys):
+    """The recipe bar's, owners' and government retool buttons' tooltips. Interface review 2026-11-11
+    (gui-review/SPEC.md A2, A6, P1-P3): a #header, vanilla's divider, #v figures, rows at 0 left out, the Retooling
+    concept linked from "To retool" and the buttons' header, and a greyed button says why."""
+    new = "[Building.GetCustom('pmr_new_recipe')]"
     loc = [
-        ' PMR_RECIPE_BAR_TITLE:0 "#bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
+        f' PMR_RECIPE_BAR_TITLE:0 "#bold {new}#!"',
         ' PMR_OWNERS_PM_HEADER:0 "Production Method"',
-        ' PMR_LABOUR_ICON_TOOLTIP:0 "#bold Blended recipes#!\\nThe mix of recipes its levels run"',
-        ' PMR_BAR_FULL_TOOLTIP:0 "Every level runs #bold [Building.GetCustom(\'pmr_new_recipe\')]#!."',
-        ' PMR_RECIPE_BAR_TOOLTIP:0 "Switches to newer recipes by retooling"',
+        f' PMR_BAR_FULL_TOOLTIP:0 "#v 100%#! on {new}"',
+        ' PMR_TO_RETOOL:0 "To retool"',
+        ' PMR_BAR_HEADER:0 "#header [Concept(\'concept_production_method\',\'$concept_production_methods$\')]#!"',
+        f' PMR_GOV_RETOOL_NONE:0 "#header {RETOOL_LINK}#!{TT_DELIM}\\n@red_cross! #N No government levels to retool#!"',
     ]
+    gtz = methods_row.gt
     for bk, keys in recipe_keys.items():
         b = short(bk)
 
+        def ex(name):
+            return f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue"
+
         def var(name, f):
-            return f"[Building.GetState.MakeScope.Var('{name}_{b}').GetValue|{f}]"
+            return f"[{ex(name)}|{f}]"
         # Pat, 2026-10-13: no colour names, and short. With the split, by plain recipe (SPLIT_BARS).
         sh, lvg, lvp = ('pmr_rs', 'pmr_rlvg', 'pmr_rlvp') if b in SPLIT_BARS else ('pmr_sh', 'pmr_lvg', 'pmr_lvp')
-        tiers = ''.join(f'\\n${key}$: #bold {var(f"{sh}_{i}", "%0")}#!' for i, key in enumerate(keys, 1))
-        gov = f'Government: #bold {var("pmr_pending_gov", "0")}#! queued, #bold {var("pmr_room_gov", "0")}#! room'
+        tiers = ''.join(zrow(loc, f'PMR_BAR_R_{b}_{i}', f'${key}$ #v {var(f"{sh}_{i}", "%0")}#!', gtz(ex(f'{sh}_{i}'), 0.005))
+                        for i, key in enumerate(keys, 1))
+        owners = ''.join(
+            zrow(loc, f'PMR_BAR_{w}_{b}', f'{label} #v {var(pend, "0")}#! of #v [{add_fp(ex(pend), ex(room))}|0]#! queued',
+                 gtz(add_fp(ex(pend), ex(room)), 0.5))
+            for w, label, pend, room in (('G', 'Government', 'pmr_pending_gov', 'pmr_room_gov'),
+                                         ('P', 'Private', 'pmr_pending_priv', 'pmr_room_priv')))
+        loc.append(f' PMR_BAR_RT_{b}:0 "\\n#title [Concept(\'concept_pmr_retooling\',\'$PMR_TO_RETOOL$\')]:#! '
+                   f'#v {var("pmr_need", "0")}#! levels{owners}"')
+        cost = RETOOL_COST.get(b)
+        price = f"  @construction! #v [Multiply_CFixedPoint({ex('pmr_room_gov')}, '(CFixedPoint){fmt(cost)}')|0]#!" if cost else ''
+        head = f'#header {RETOOL_LINK}#!{TT_DELIM}\\n#v {var("pmr_room_gov", "0")}#! levels to {new}{price}'
         loc += [
-            f' PMR_RECIPE_BAR_TITLE_RETOOLING_{b}:0 "#bold {var("pmr_p", "%0")}#! on #bold [Building.GetCustom(\'pmr_new_recipe\')]#!"',
-            f' PMR_BAR_TOOLTIP_{b}:0 "#bold Levels by recipe#!{tiers}'
-            f'\\n\\nTo retool: #bold {var("pmr_need", "0")}#!'
-            f'\\nPrivate: #bold {var("pmr_pending_priv", "0")}#! queued, #bold {var("pmr_room_priv", "0")}#! room'
-            f'\\n{gov}"',
-            f' PMR_GOV_RETOOL_TOOLTIP_{b}:0 "#bold Retool the government\'s levels#!'
-            f'\\nQueues #bold {var("pmr_room_gov", "0")}#! levels"',
-            f' PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}:0 "#bold Retool your government\'s levels#!'
-            f'\\nQueues #bold {var("pmr_room_gov", "0")}#! levels, up to {GOV_ABROAD_CLICKS} a click"',
-            f' PMR_OWNERS_GOV_TOOLTIP_{b}:0 "#bold Government-owned levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"{lvg}_{i}", "0")}#!' for i, key in enumerate(keys, 1)) + '"',
-            f' PMR_OWNERS_PRIV_TOOLTIP_{b}:0 "#bold Privately owned levels by recipe#!'
-            + ''.join(f'\\n${key}$: #bold {var(f"{lvp}_{i}", "0")}#!' for i, key in enumerate(keys, 1)) + '"',
+            f' PMR_RECIPE_BAR_TITLE_RETOOLING_{b}:0 "#v {var("pmr_p", "%0")}#! on {new}"',
+            f' PMR_BAR_TOOLTIP_{b}:0 "$PMR_BAR_HEADER${TT_DELIM}{tiers}'
+            f"[SelectLocalization({gtz(ex('pmr_need'), 0.5)}, 'PMR_BAR_RT_{b}', 'PMR_EMPTY')]\"",
+            f' PMR_GOV_RETOOL_TOOLTIP_{b}:0 "{head}\\n#instruction Click to queue#!"',
+            f' PMR_GOV_RETOOL_ABROAD_TOOLTIP_{b}:0 "{head}\\n#instruction Click to queue up to {GOV_ABROAD_CLICKS}#!"',
+            f' PMR_GOV_RETOOL_QUEUED_{b}:0 "#header {RETOOL_LINK}#!{TT_DELIM}'
+            f'\\n@red_cross! #N All #v {var("pmr_pending_gov", "0")}#! levels queued#!"',
+            f' PMR_OWNERS_GOV_TOOLTIP_{b}:0 "#header Government Levels#!{TT_DELIM}'
+            + ''.join(zrow(loc, f'PMR_OWN_G_{b}_{i}', f'${key}$ #v {var(f"{lvg}_{i}", "0")}#!', gtz(ex(f'{lvg}_{i}'), 0.5))
+                      for i, key in enumerate(keys, 1)) + '"',
+            f' PMR_OWNERS_PRIV_TOOLTIP_{b}:0 "#header Private Levels#!{TT_DELIM}'
+            + ''.join(zrow(loc, f'PMR_OWN_P_{b}_{i}', f'${key}$ #v {var(f"{lvp}_{i}", "0")}#!', gtz(ex(f'{lvp}_{i}'), 0.5))
+                      for i, key in enumerate(keys, 1)) + '"',
         ]
 
+        def cex(name):
+            return f"GetPlayer.MakeScope.Var('{name}_{b}').GetValue"
+
         def cvar(name, f):
-            return f"[GetPlayer.MakeScope.Var('{name}_{b}').GetValue|{f}]"
-        ctiers = ''.join(f'\\n${key}$: #bold {cvar(c_name(f"{sh}_{i}"), "%0")}#!' for i, key in enumerate(keys, 1))
+            return f"[{cex(name)}|{f}]"
+        ctiers = ''.join(zrow(loc, f'PMR_CBAR_R_{b}_{i}', f'${key}$ #v {cvar(c_name(f"{sh}_{i}"), "%0")}#!',
+                              gtz(cex(c_name(f'{sh}_{i}')), 0.005)) for i, key in enumerate(keys, 1))
+        loc.append(f' PMR_CBAR_RT_{b}:0 "\\n#title [Concept(\'concept_pmr_retooling\',\'$PMR_TO_RETOOL$\')]:#! '
+                   f'#v {cvar("pmr_c_need", "0")}#! of #v {cvar("pmr_c_level", "0")}#! levels"')
+        cprice = (f"  @construction! #v [Multiply_CFixedPoint({cex('pmr_c_room_gov')}, '(CFixedPoint){fmt(cost)}')|0]#!"
+                  if cost else '')
         loc += [
-            f' PMR_CBAR_TOOLTIP_{b}:0 "#bold Levels by recipe#!{ctiers}'
-            f'\\n\\nLevels: #bold {cvar("pmr_c_level", "0")}#!, to retool: #bold {cvar("pmr_c_need", "0")}#!"',
-            f' PMR_GOV_RETOOL_C_TOOLTIP_{b}:0 "#bold Retool the government\'s levels everywhere#!'
-            f'\\nQueues #bold {cvar("pmr_c_room_gov", "0")}#! levels"',
+            f' PMR_CBAR_TOOLTIP_{b}:0 "$PMR_BAR_HEADER${TT_DELIM}{ctiers}'
+            f"[SelectLocalization({gtz(cex('pmr_c_need'), 0.5)}, 'PMR_CBAR_RT_{b}', 'PMR_EMPTY')]\"",
+            f' PMR_GOV_RETOOL_C_TOOLTIP_{b}:0 "#header {RETOOL_LINK}#!{TT_DELIM}'
+            f'\\n#v {cvar("pmr_c_room_gov", "0")}#! levels{cprice}\\n#instruction Click to queue#!"',
         ]
     return loc
 
 
 def option_loc(opt_ui):
-    """Tooltips of the second group bars. Pat, 2026-10-13: short."""
-    loc = [' PMR_EMPTY:0 ""', ' PMR_OPT_LOCKED:0 " (locked)"', ' PMR_OPT_SHORT:0 " (shortage)"', ' PMR_OPT_BARRED:0 " (barred)"']
+    """Tooltips of the second group bars. Pat, 2026-10-13: short. Interface review 2026-11-11 (SPEC.md A2): a #header
+    and divider, #v shares, a status as icon and colour; a row at 0 stays only while it carries a status."""
+    loc = [' PMR_EMPTY:0 ""', ' PMR_OPT_LOCKED:0 "  @lock! #N Locked#!"', ' PMR_OPT_SHORT:0 "  @warning! #N Shortage#!"',
+           ' PMR_OPT_BARRED:0 "  @red_cross! #N Banned by law#!"']
+    gtz, eqz = methods_row.gt, methods_row.eq
     for bk, groups in opt_ui.items():
         b = short(bk)
 
+        def ex(name):
+            return f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue"
+
         def var(name, f='0'):
-            return f"[Building.GetState.MakeScope.Var('{name}_{b}').GetValue|{f}]"
+            return f"[{ex(name)}|{f}]"
         for gi, mode, none, tex, os_ in groups:
-            lines = [f'${none}$: #bold {var(f"pmr_xn_{gi}")}%#!']
+            rows = zrow(loc, f'PMR_OPT_N_{b}_{gi}', f'${none}$ #v {var(f"pmr_xn_{gi}")}%#!', gtz(ex(f'pmr_xn_{gi}'), 0.5))
             for o in os_:
                 note = f"[Building.GetState.GetCustom('pmr_xlk_{b}_{o.j}')]"
-                worth = f', @money!{var(f"pmr_xw_{o.j}")}' if mode == 'market' and o.group not in DEMAND_GROUPS else ''
-                lines.append(f'${o.key}$: #bold {var(f"pmr_x_{o.j}")}%#!{worth}{note}')
+                market = mode == 'market' and o.group not in DEMAND_GROUPS
+                worth = f'  @money!#v {var(f"pmr_xw_{o.j}")}#! / week' if market else ''
+                shown = f"Or({gtz(ex(f'pmr_x_{o.j}'), 0.5)}, {eqz(ex(f'pmr_xav_{o.j}'), 0)})"
+                if market:
+                    shown = f"Or({shown}, {eqz(ex(f'pmr_xsh_{o.j}'), 1)})"
+                rows += zrow(loc, f'PMR_OPT_X_{b}_{o.j}', f'${o.key}$ #v {var(f"pmr_x_{o.j}")}%#!{worth}{note}', shown)
             foot = ''
             if mode != 'market':
                 lo, hi = TREAT_BANDS
-                foot = (f'\\n\\nAcceptance under {lo}: #bold {var(f"pmr_xbv_{gi}")}%#!, {lo} to {hi - 1}: '
-                        f'#bold {var(f"pmr_xbh_{gi}")}%#!')
-            loc.append(f' PMR_OPT_TOOLTIP_{b}_{gi}:0 "#bold ${os_[0].group}$#!\\n' + '\\n'.join(lines) + f'{foot}"')
+                foot = (f'\\n\\nAcceptance under {lo} #v {var(f"pmr_xbv_{gi}")}%#!, {lo} to {hi - 1} '
+                        f'#v {var(f"pmr_xbh_{gi}")}%#!')
+            loc.append(f' PMR_OPT_TOOLTIP_{b}_{gi}:0 "#header ${os_[0].group}$#!{TT_DELIM}{rows}{foot}"')
     return loc
 
 
