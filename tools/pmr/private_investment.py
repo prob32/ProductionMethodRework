@@ -117,6 +117,7 @@ OWNERS = [
     ('company', 'Companies', 'peasants'),
     ('invest', 'Manor Houses and Financial Districts', 'officers'),
 ]
+OWNER_SHORT = {'invest': 'Investors'}   # the By Owner legend's name where the full one is cut off
 # Pat 15:33Z: a third chart, who built. Key, name, pop type for the colour (a tree map slice takes its colour from
 # the GUI, so pop types' colours: tan for your own investors and domestic, plum for foreign).
 # Q104-FEEDBACK F7 (Pat 2026-11-11 20:26Z): the aristocrats' navy and academics' maroon nearly vanished on the panel,
@@ -2617,7 +2618,9 @@ def localization(types, chart_types=None):
         loc.append(f' PMR_FD_NOTCH_{n}:0 "[SelectLocalization({cooling}, \'PMR_FD_COOLDOWN\', \'PMR_FD_OPEN_{n}\')]"')
         loc.append(f' PMR_FD_OPEN_{n}:0 "#header {names[n]}#!\\nYour states #v {times(FD_MULT[n])}#!"')
     for i, (k, name, _p) in enumerate(OWNERS):
-        loc.append(f' PMR_PO_NAME_{k}:0 "{name}"')
+        # Pat 2026-11-11 21:30Z (card, Q105-FEEDBACK N2): the legend says "Investors", as Built By does, where the
+        # full name was cut off; the row's tooltip keeps the full name
+        loc.append(f' PMR_PO_NAME_{k}:0 "{OWNER_SHORT.get(k, name)}"')
         # Pat 2026-10-20 03:52Z: the Companies row lists the companies by their week's profit (pmr_co_rank)
         cos = ('\\n$TOOLTIP_DELIMITER$'
                + ''.join(f"[SelectLocalization(NotZero_CFixedPoint({var(f'pmr_co_s_{n}')}), 'PMR_CO_{n}', 'PMR_EMPTY')]"

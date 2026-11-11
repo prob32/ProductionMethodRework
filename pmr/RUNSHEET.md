@@ -10,10 +10,11 @@ findstr /C:"PMR;rec=" "%USERPROFILE%\Documents\Paradox Interactive\Victoria 3\lo
 Also check `logs\error.log` for any line containing `pmr_` before reading anything else: a script
 error there means the mechanism below never ran, and a missing log line is then not a result.
 
-Timed runs: from switching to no country until the timed stretch ends, the game window stays in front and nothing is
-typed or clicked on that PC (messages from a phone are fine). Speed rows compare only such a stretch. Both q103's
-and q104's slow stretches began within half a minute of messages sent from that PC, with the engine's tick tasks
-flat (`/mnt/project-files/pmr/perf/review-13/q104-pace.md`).
+Timed runs: from switching to no country until the timed stretch ends, nothing else heavy runs on the PC (no other
+game or large program starting). Speed rows compare only such a stretch. q104's 1840 slowdown was most likely
+another game loading on the PC (Pat, 2026-11-11 21:32Z). The game keeps only six debug.log files of 512 KB, so a long run loses its first years'
+PMR lines (q105 kept them from September 1841); `logs\dedicated_server.log` logs every tick's wall clock, and the pace
+is read from there.
 
 ## Latest: your graph and tooltip asks, and the q105 screenshot fixes (q106, test mod)
 
@@ -76,7 +77,7 @@ Read `logs\error.log` first (X2, X3). The speed rows read the months with no cou
 | H9 | Private tab, any day after a private building has started | Left of the pool graph, a line graph headed "Investment Pool Transfer" in the same frame; no weekly columns (this replaces q104 P1's columns) | "No historical data" there while the pool graph beside it draws its line: the trend does not read, send back with error.log's line naming `GetInvestmentIncomeTrend`. Both graphs "No historical data": no week of history yet, look again a month in. A flat line at 0: nothing private is being built, not a result |
 | X3 | debug.log and error.log | No `PMR;rec=REINVEST` line; no error.log line naming `pmr_rw_` | A REINVEST line: the old record is still installed, send back |
 | V5 | Speed, February 1837 to February 1839 with no country and the game in front (the build thread times it) | No slower than q103's 7.43 s a game month by more than 0.1 | Slower with the window rule kept: plain reads or q105's changes cost time; the tick dumps say which. The rule broken (a message from that PC in the window): not a result, read only the stretch before it |
-| F1 | Step 5: the game behind another window for 1840, in front again from 1841 | The pace rises by about 1.5 s a game month within weeks of January 1840 and falls back within weeks of January 1841: the window is the cause, and timed runs need the game in front | No change at either date: the window is not it, and the next run sends its messages from a phone. A rise with no fall: something stays on after one switch, send back with the log clocks |
+| F1 | (Not run: no window test in q105, Pat 21:32Z) Step 5: the game behind another window for 1840, in front again from 1841 | The pace rises by about 1.5 s a game month within weeks of January 1840 and falls back within weeks of January 1841: the window is the cause, and timed runs need the game in front | No change at either date: the window is not it, and the next run sends its messages from a phone. A rise with no fall: something stays on after one switch, send back with the log clocks |
 | X2 | error.log | No line naming `pmr_rmk_`, and no "missing required quote-escaping" line naming a `PMR_` key | A `pmr_rmk_` line: the map marks a type it no longer tests, send back. A quote-escaping line: harmless, send back |
 
 Still unseen from q104: G1, G2 (lit), G3, G4, G6, G7's tiers mid-retool, K1's locked node, and P2 (only once a
