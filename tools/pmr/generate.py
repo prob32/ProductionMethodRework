@@ -8004,6 +8004,10 @@ def patch_modifier_list(text, modifiers_gui, cut_goods=(set(), set())):
             raise SystemExit('modifiers_panel.gui: type modifier_list_content moved; update patch_modifier_list')
         cstart = modifiers_gui.index(chead)
         cbody = modifiers_gui[cstart:block_end(modifiers_gui, cstart)]
+        for at in set(re.findall(r'@\w+', cbody)):   # its sizes too come from the building panel's constants
+            want, have = (re.search(rf'^{at} = (\S+)', t, re.M) for t in (modifiers_gui, text))
+            if not want or not have or want.group(1) != have.group(1):
+                raise SystemExit(f'building_details_panel.gui: {at} differs from modifiers_panel.gui; update patch_modifier_list')
         erows = 'datamodel = "[Modifier.GetEntries]"\n'
         eitem = 'item = {\n\t\t\t\twidget = {\n'
         if cbody.count(erows) != 1 or cbody.count(eitem) != 1 or cbody.index(eitem) < cbody.index(erows):
