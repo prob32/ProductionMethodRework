@@ -71,6 +71,7 @@ import methods_row  # noqa: E402
 import localise  # noqa: E402
 import frames  # noqa: E402
 import frame_probe  # noqa: E402
+import group_probe  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Tunables. Change here and regenerate; nothing below hard-codes them.
@@ -1410,6 +1411,9 @@ def main():
     ap.add_argument('--frame-probe', action='store_true',
                     help='test build: six British fishing wharves log which of five modifier routes moves a '
                          'building\'s jobs (frame_probe.py, method-count PLAN section 6)')
+    ap.add_argument('--group-probe', action='store_true',
+                    help='test build: British textile mills in a building group of their own log whether that group\'s '
+                         'employee multiplier moves their jobs (group_probe.py, fundamentals-review/group-jobs-probe)')
     ap.add_argument('--timing-only', action='store_true',
                     help='write only a small mod with vanilla\'s HUD and the same timing widget to --out, to time a '
                          'vanilla game (write_timing_mod)')
@@ -1466,6 +1470,8 @@ def main():
         raise SystemExit('--engine-timing is for test builds')
     if args.frame_probe and args.release:
         raise SystemExit('--frame-probe is for test builds')
+    if args.group_probe and args.release:
+        raise SystemExit('--group-probe is for test builds')
     if args.timing_only:
         if not args.out or args.release or args.test_name:
             raise SystemExit('--timing-only takes only --game and --out')
@@ -2145,8 +2151,15 @@ def main():
                                   'retool_cost': retool_cost})
 
     # ---- the vanilla files PMR changes, now that the frames have their bodies ----------------------
+    regrouped = 0
     for s in {id(t[2]): t[2] for t in treated}.values():
-        write(f'common/buildings/{s.name}', s.render())
+        text = s.render()
+        if args.group_probe:
+            text, hits = group_probe.regroup(s.name, text)
+            regrouped += hits
+        write(f'common/buildings/{s.name}', text)
+    if args.group_probe and regrouped != 1:
+        raise SystemExit(f'group probe: {group_probe.BUILDING} regrouped {regrouped} times, not once')
     for s in p_srcs:
         if s.cuts or s.inserts:
             write(f'common/production_methods/{s.name}', s.render())
@@ -2189,6 +2202,11 @@ def main():
     loc += frames.static_modifier_loc(*less_all) + frames.modifier_type_loc(less_types, add_names, named)
     if args.frame_probe:
         probe_files, probe_loc = frame_probe.files(declared | set(less_types))
+        for path, text in probe_files:
+            write(path, header + text)
+        loc += probe_loc
+    if args.group_probe:
+        probe_files, probe_loc = group_probe.files()
         for path, text in probe_files:
             write(path, header + text)
         loc += probe_loc
