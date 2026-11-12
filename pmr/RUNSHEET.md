@@ -29,14 +29,14 @@ whose types are gone.
 q115 is also the first build made from the game files as patched on 11 Nov. q114 (and most likely q105) came from an
 older copy, so their copies of vanilla files put back what the patch changed there: its culling of surplus characters,
 a personal-union check, port and trade-center method fixes and some interface fixes. q105 against q114 still compares
-like with like; q115 against q114 moves both at once.
+like with like; q115 against q114 moves both at once, and F1 reads them apart by the gain's shape.
 
 The yearly TREAT line now logs for the logged country only, and a TREAT_MOVES line each month counts every Treatment
 re-size in the world (buildings and states).
 
 | # | Read | Pass | A null means |
 | --- | --- | --- | --- |
-| F1 | Pace, observer with no country from 1 Jan 1836, Feb 1837 to Feb 1839 (`dedicated_server.log`) | Pace and midnight tick back near q105's (figures in the perf review, not here): the site types, or the vanilla files q114 put back, were q114's cost | Still at q114's: the types are cleared and the cost is elsewhere. Slow daytime ticks with a flat midnight tick: the PC was busy, the stretch is unread |
+| F1 | Midnight tick on ordinary days and pace, observer with no country from 1 Jan 1836 (`dedicated_server.log`; pace Feb 1837 to Feb 1839) | Midnight tick down from the first months of 1836 and level through the run: the site types were q114's cost (figures in the perf review, not here). Pace also below q105's: the patched game files gave something on top | A gain that is small in 1836 and grows by year: the patched files, not the types. No gain: the types are cleared and the cost is elsewhere. Slow daytime ticks with a flat midnight tick: the PC was busy, the stretch is unread |
 | F2 | `PROJECT_LEVEL` lines by 1840 | Lines with `project=eq` and `project=rc` beside `RETOOL_LEVEL` lines, about as many as q114-1's 81 and 138 (a retool level now writes two) | `PROJECT_OPEN` lines but no `PROJECT_LEVEL`: the projects never get the sites |
 | F3 | `TREAT_MOVES` lines | One a month, `building=` and `state=` counts | No line: the monthly report never ran; check `error.log` for `pmr_trm` |
 
