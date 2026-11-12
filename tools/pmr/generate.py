@@ -380,8 +380,8 @@ SWITCH_MIN = 20
 PROFIT_RULE = 107    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
                      # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway;
                      # 104: q50, no step down while the building makes money; 105: q52, SWITCH_MIN and unread books;
-                     # 106: q61, a subsidised building with staff steps up; 107: q79, SWITCH_GAIN_OF; 108: BAR_CLOCK,
-                     # rules review D, set in main())
+                     # 106: q61, a subsidised building with staff steps up; 107: q79, SWITCH_GAIN_OF; 108: BAR_CLOCK
+                     # or PRICE_NEWEST, rules review D and E, set in main())
 # Rules review item D (2026-11-12, Pat 14:29Z: "implement everything"; the switching bar by the clock, run sheet R7).
 # BAR_COUNT, test builds: the monthly BAR line (pmr_skip_report, beside the SOLO line and counted the same way: the
 # world's bars, logged at the player's monthly pulse). Bars started, restarted (the pick changed under a running bar),
@@ -397,6 +397,11 @@ BAR_FIELDS = ('start', 'restart', 'done', 'drop', 'red', 'a2', 'a6', 'a12', 'ax'
 # default takes the pick if it still clears SWITCH_GAIN and SWITCH_MIN; a red bar whose books are back in the black ends;
 # a pick that changed starts the bar again; no pick over the default ends it.
 BAR_CLOCK = False
+# Rules review item E (2026-11-12, Pat 14:29Z; run sheet R8; changes Pat's 2026-10-19 13:09Z rule): PRICE_NEWEST.
+# profit_effect also prices the newest runnable recipe (pmr_new_now_<b>) where it is neither the reference nor one
+# runnable step from it, one more option at most, never below the reference while the books are in the black (the box's
+# lower edges), so a building two recipes behind retools once. The PROFIT line's nw= is its index, 0 when not priced so.
+PRICE_NEWEST = False
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -1481,6 +1486,7 @@ def main():
     ap.add_argument('--lean-charts', action='store_true', help='LEAN_CHARTS (performance review 13)')
     ap.add_argument('--bar-count', action='store_true', help='test build: the monthly BAR line (BAR_COUNT, rules review D)')
     ap.add_argument('--bar-clock', action='store_true', help='BAR_CLOCK (rules review D): the switching bar by the clock')
+    ap.add_argument('--price-newest', action='store_true', help='PRICE_NEWEST (rules review E): price the newest runnable recipe too')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
@@ -1490,7 +1496,7 @@ def main():
     global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS, LEAN_CHARTS
     global PTERM_OFF
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD
-    global BAR_COUNT, BAR_CLOCK, PROFIT_RULE
+    global BAR_COUNT, BAR_CLOCK, PRICE_NEWEST, PROFIT_RULE
     RELEASE = args.release
     if args.solo is not None:
         SOLO_GATE = args.solo
@@ -1520,7 +1526,8 @@ def main():
         raise SystemExit('--bar-count is for test builds')
     BAR_COUNT = BAR_COUNT or args.bar_count
     BAR_CLOCK = BAR_CLOCK or args.bar_clock
-    if BAR_CLOCK:
+    PRICE_NEWEST = PRICE_NEWEST or args.price_newest
+    if BAR_CLOCK or PRICE_NEWEST:
         PROFIT_RULE = 108   # rules review D and E: saves recompute once
     SHARE_DIGITS = args.digit_shares
     OBS_AB = args.obs_script_off
@@ -5203,6 +5210,20 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                  + '\t}\n\telse = {\n'
                  + ''.join(f'\t\tset_variable = {{ name = {xv("pmr_rav", i)} value = 0 }}\n' for i in xs)
                  + '\t}\n')
+    # PRICE_NEWEST (rules review E, Pat 2026-11-12 14:29Z): the newest runnable recipe too where this run left it out
+    # (pmr_rav 0: neither the reference nor one runnable step from it), inside the box's lower edges, so nothing below
+    # the reference while the books are in the black; pmr_nw: its index, for the PROFIT line
+    if PRICE_NEWEST:
+        def newest_at(i):
+            low = ' '.join(f'var:pmr_lo_{d} <= {axes[i][d - 1]}' for d in range(1, nd + 1))
+            return (f'if = {{ limit = {{ var:{xv("pmr_rav", i)} = 0 {low} {can(i)} }} '
+                    f'set_variable = {{ name = {xv("pmr_rav", i)} value = 1 }} {rmx(i)}'
+                    + (' change_variable = { name = pmr_nrv add = 1 }' if SOLO_GATE else '')
+                    + f' set_variable = {{ name = pmr_nw value = {i} }} }}')
+        o.append('\t# PRICE_NEWEST: the newest runnable recipe too, one more option at most\n'
+                 '\tset_variable = { name = pmr_nw value = 0 }\n'
+                 f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_new_now")} }}\n'
+                 + lookup(f'var:{v("pmr_new_now")}', list(range(1, k + 1)), newest_at, '\t\t') + '\t}\n')
     # the veto: an input recipe i needs more of than the reference c, at the price cap. One branch per reference c,
     # so a run tests about k/2 references and then k recipes, not k x (k-1) (perf review 3, S1)
     inputs = [{g: -q for g, q in gd.items() if q < 0 and goods_cost.get(g)} for gd, _ in econ]
@@ -5418,7 +5439,9 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     per = lambda name, d=0: '/'.join(var(xv(name, i), d) for i in range(1, k + 1))   # noqa: E731
     line = (f'PMR;rec=PROFIT;date=[TimeKeeper.GetCurrentDate.GetString];'
             f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
-            f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};pick={var(v('pmr_pbest'))};"
+            f"building={bk};to={var(v('pmr_to'))};newest={var(v('pmr_new_now'))};"
+            + (f"nw={var('pmr_nw')};" if PRICE_NEWEST else '')   # PRICE_NEWEST: the newest priced as one more option
+            + f"pick={var(v('pmr_pbest'))};"
             f"ref={var('pmr_ref')};floor={var('pmr_fl')};ok={var('pmr_ok')};frz={var('pmr_frz')};gain={var(v('pmr_swg'), 2)};wage={var('pmr_wage')};thr={var('pmr_thr', 2)};off={var('pmr_off', 1)};"
             f"earn={var(v('pmr_bke'), 2)};bal={var(v('pmr_bkp'))};occ={var(v('pmr_bko'), 3)};"
             f"rm={per('pmr_rm', 1)};rg={per('pmr_rg', 1)};rw={per('pmr_rw', 1)};"
