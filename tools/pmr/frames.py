@@ -1033,7 +1033,9 @@ def frame_effect(bld, log=True, count=False):
                 body += f' {"if" if i == 0 else "else_if"} = {{ limit = {{ {cond} }} {setv("pmr_fm_pair", p)} }}'
         return body
     o.append('\t# the target the largest shares make\n'
-             + lookup('var:pmr_fm_r', sorted(m.j for m in bld.recipes), pair_of))
+             + lookup('var:pmr_fm_r', sorted(m.j for m in bld.recipes), pair_of)
+             # kept, for the posts a retool brings (generate.py wf_effect, Pat 2026-11-12 17:07Z)
+             + f'\t{setv(v("pmr_wfp"), "var:pmr_fm_pair")}\n')
 
     # 3. the recipe frame: pure only where the building may run it (technology, laws: may_run), else its union; each
     # frame activated only if it isn't running (activate_production_method checks no unlock, and a frame the game
