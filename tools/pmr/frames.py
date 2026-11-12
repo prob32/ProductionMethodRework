@@ -112,6 +112,7 @@ GATES = {}   # {(building key, method key): Gate} of the locked frames; generate
 # lines in pmr_treat_slave_<b> on the state (size = share). Its goods leave A and B, as no method adds them any more.
 # Job lines stay share methods (generate.py treat_jobs): no modifier moves jobs (q99, q100).
 TREAT_MOD = False
+TREAT_COUNT = False   # test builds with TREAT_MOD (generate.py): the month's TREAT_MOVES line counts the re-sizes
 
 # Automation on rails (fundamentals review, automation/SPEC.md v4, sections 3.3 and 3.4; Pat 2026-11-12 13:40Z "Shared
 # laborers method", 14:29Z go; generate.py RAILS). A step type's automation is no axis of its targets: each rung is a
@@ -880,7 +881,7 @@ def treat_loc(blds):
 
 
 def treat_log(bld, ind='\t'):
-    """State scope, test builds: the TREAT line, once a year a building (pmr_trl_<b>, 350 days, so a building updated
+    """State scope, test builds: the TREAT line, the logged country's (pmr_logged), once a year a building (pmr_trl_<b>, 350 days, so a building updated
     every other month logs every sixth update): each option's share and each modifier's size in force (both set at the
     building's last update, pmr_opts_<b> then pmr_frame_<b>), and the lines as the game reads them back, the building's
     and the state's totals from every source (-99: a read the engine refused)."""
@@ -901,7 +902,8 @@ def treat_log(bld, ind='\t'):
                                   + ([f'slave:{f(f"pmr_txs_{b}", 2)}'] if state else []))
             + ';read=' + ','.join([f'{k}:{f(f"pmr_trd_{i}", 3)}' for i, k in enumerate(keys)]
                                   + [f'{k}:{f(f"pmr_trs_{i}", 3)}' for i, k in enumerate(skeys)]))
-    return (f'{ind}if = {{\n{ind}\tlimit = {{ has_variable = pmr_xinit_{b} NOT = {{ has_variable = pmr_trl_{b} }} }}\n'
+    # q115 (perf review 16): the logged country's only; TREAT_MOVES counts the world's re-sizes
+    return (f'{ind}if = {{\n{ind}\tlimit = {{ has_variable = pmr_xinit_{b} NOT = {{ has_variable = pmr_trl_{b} }} owner = {{ pmr_logged = yes }} }}\n'
             f'{ind}\tset_variable = {{ name = pmr_trl_{b} value = yes days = 350 }}\n' + reads
             + f'{ind}\tdebug_log = "{line}"\n'
             + ''.join(f'{ind}\tremove_variable = pmr_trd_{i}\n' for i in range(len(keys)))
@@ -943,8 +945,12 @@ def treat_sizes(bld, size, xs, setv):
         # takes a modifier still there off first.
         at = lambda x: f'{on} = {{ {x} }}' if on else x   # noqa: E731
         rm = at(f'if = {{ limit = {{ has_modifier = {mod} }} remove_modifier = {mod} }}')
+        # TREAT_COUNT: each re-size, the building's (pmr_trm_b) or the state's (pmr_trm_s), for the TREAT_MOVES line
+        g = f'pmr_trm_{"b" if on else "s"}'
+        cnt = (f'\t\tif = {{ limit = {{ NOT = {{ has_global_variable = {g} }} }} set_global_variable = {{ name = {g} value = 0 }} }}\n'
+               f'\t\tchange_global_variable = {{ name = {g} add = 1 }}\n' if TREAT_COUNT else '')
         return (f'\tif = {{ limit = {{ NOT = {{ has_variable = {var} }} }} {setv(var, 0)} {rm} }}\n'
-                f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:{var} = var:pmr_fm_x }} }}\n\t\t{rm}\n'
+                f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:{var} = var:pmr_fm_x }} }}\n\t\t{rm}\n' + cnt +
                 '\t\tif = {\n\t\t\tlimit = { var:pmr_fm_x > 0 }\n'
                 '\t\t\tset_local_variable = { name = pmr_fm_lx value = var:pmr_fm_x }\n'
                 f'\t\t\t{at(f"add_modifier = {{ name = {mod} multiplier = local_var:pmr_fm_lx }}")}\n\t\t}}\n'

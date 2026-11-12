@@ -17,7 +17,30 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Investment Pool chart back to the game's own year (q114, test mod)
+## Latest: New Equipment and Rail Connection built on the retool sites (q115, test mod)
+
+q114 ran slower than q105 from the first day, all of it in the midnight tick, and the likeliest cost is the 184
+hidden building types New Equipment and Rail Connection had of their own. You chose to fold them into the retool
+sites (2026-11-12 21:20Z): each building keeps its four retool sites, which serve the retool, New Equipment or Rail
+Connection, one at a time, so the mod adds 192 hidden building types instead of 376. Prices are unchanged; a retool
+level is two site levels. A queued project shows the retool's name. Needs a new game: a q114 save has project sites
+whose types are gone.
+
+q115 is also the first build made from the game files as patched on 11 Nov. q114 (and most likely q105) came from an
+older copy, so their copies of vanilla files put back what the patch changed there: its culling of surplus characters,
+a personal-union check, port and trade-center method fixes and some interface fixes. q105 against q114 still compares
+like with like; q115 against q114 moves both at once.
+
+The yearly TREAT line now logs for the logged country only, and a TREAT_MOVES line each month counts every Treatment
+re-size in the world (buildings and states).
+
+| # | Read | Pass | A null means |
+| --- | --- | --- | --- |
+| F1 | Pace, observer with no country from 1 Jan 1836, Feb 1837 to Feb 1839 (`dedicated_server.log`) | Pace and midnight tick back near q105's (figures in the perf review, not here): the site types, or the vanilla files q114 put back, were q114's cost | Still at q114's: the types are cleared and the cost is elsewhere. Slow daytime ticks with a flat midnight tick: the PC was busy, the stretch is unread |
+| F2 | `PROJECT_LEVEL` lines by 1840 | Lines with `project=eq` and `project=rc` beside `RETOOL_LEVEL` lines, about as many as q114-1's 81 and 138 (a retool level now writes two) | `PROJECT_OPEN` lines but no `PROJECT_LEVEL`: the projects never get the sites |
+| F3 | `TREAT_MOVES` lines | One a month, `building=` and `state=` counts | No line: the monthly report never ran; check `error.log` for `pmr_trm` |
+
+## Earlier: the Investment Pool chart back to the game's own year (q114, test mod)
 
 q113 drew the pool's years before the game's own year on the Investment Pool chart. You asked for it out again
 (2026-11-12 20:15Z, "just set it to vanilla 52 week history its not worth the performance and jankiness"), so q114

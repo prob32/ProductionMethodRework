@@ -2355,18 +2355,17 @@ def patch_retool_ai(text, btype, parent, invest):
         if 'building_' + b in invest:
             fallback = re.compile(r'\t\t\tvalue = \d+\n\t\t\tif = \{ limit = \{ has_variable = pmr_ai_w_' + b
                                   + r' \} value = var:pmr_ai_w_' + b + r' \}\n')
-            f = fallback.search(text, a, close)
             # the payoff score (generate.py ai_base: PAY_SCORE, and every project): the building's own ai_value, then
-            # its payoff added and x PAY_TILT there
-            pay = re.compile(r'\t\t\tvalue = \d+  # PMR pay: base\n').search(text, a, close)
-            if f:
-                edits.append((f.start(), f'\t\t\t# PMR: the building\'s own ai_value and earnings\n\t\t\tvalue = pmr_ai_value_{b}\n'
-                                         f'\t\t\tif = {{ limit = {{ has_variable = pmr_earn_{b} }} add = {{ value = var:pmr_earn_{b} '
-                                         f'multiply = {PROFIT_WEIGHT} }} }}\n', f.end()))
-            elif pay:
-                edits.append((pay.start(), f'\t\t\t# PMR: the building\'s own ai_value\n\t\t\tvalue = pmr_ai_value_{b}\n', pay.end()))
-            else:
+            # its payoff added and x PAY_TILT there. With FOLD_SITES one site scores each project it serves: every base.
+            pay = re.compile(r'\t\t\tvalue = \d+  # PMR pay: base\n')
+            bases = ([('f', m) for m in fallback.finditer(text, a, close)] + [('p', m) for m in pay.finditer(text, a, close)])
+            if not bases:
                 fail('pmr_retool_buildings.txt', f'{k}: ai_value base not found')
+            for kind, m in bases:
+                edits.append((m.start(), f'\t\t\t# PMR: the building\'s own ai_value and earnings\n\t\t\tvalue = pmr_ai_value_{b}\n'
+                                         f'\t\t\tif = {{ limit = {{ has_variable = pmr_earn_{b} }} add = {{ value = var:pmr_earn_{b} '
+                                         f'multiply = {PROFIT_WEIGHT} }} }}\n' if kind == 'f' else
+                              f'\t\t\t# PMR: the building\'s own ai_value\n\t\t\tvalue = pmr_ai_value_{b}\n', m.end()))
         mult = f'pmr_reinvest_mult_abroad_{g}' if 'building_group = bg_pmr_retool_abroad' in text[o:c] else f'pmr_reinvest_mult_{g}'
         edits.append((close, f'\t# PMR: Re-invest card, x the {g} priority\n\t\tmultiply = {mult}\n\t', close))
         n += 1
