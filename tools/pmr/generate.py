@@ -543,7 +543,7 @@ GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
 MOD_NAME = 'ProductionMethodRework'
-MOD_VERSION = '0.4.0'
+MOD_VERSION = '0.5.0'
 SUPPORTED_VERSION = '1.15.*'
 
 # Building files whose buildings make goods from goods. Government, military, monuments, canals,
@@ -1380,6 +1380,10 @@ def main():
     ap.add_argument('--release', action='store_true',
                     help='the build players get: no test decisions, no generation report, no log lines but '
                          + ' and '.join(RELEASE_LOGS))
+    ap.add_argument('--beta', action='store_true',
+                    help='with --release: the open beta, a Workshop item of its own beside the published mod (Pat '
+                         '2026-11-12 02:55Z): named "Production Method Rework BETA", id org.prob32.pmr.beta, version '
+                         'MOD_VERSION-beta')
     ap.add_argument('--version-label', default='', help='game build label written into the README header')
     ap.add_argument('--test-name', default='', metavar='LABEL',
                     help='a test build for its own mod folder: names the mod "Production Method Rework (LABEL)" '
@@ -1454,6 +1458,8 @@ def main():
         raise SystemExit('--obs-parts-off is a test build of its own: not with --release, --obs-script-off or --script-profile')
     if args.test_name and args.release:
         raise SystemExit('--test-name is for test builds; a release build is the published mod')
+    if args.beta and not args.release:
+        raise SystemExit('--beta is a release build (--release) published as its own Workshop item')
     if args.script_profile and args.release:
         raise SystemExit('--script-profile is for test builds')
     if args.engine_timing and args.release:
@@ -2627,15 +2633,17 @@ def main():
 
     # A test build for its own mod folder (--test-name) carries its own name and id, so the launcher lists it
     # beside the published mod and a playset holds one or the other.
-    title = 'Production Method Rework' + (f' ({args.test_name})' if args.test_name else '')
-    mod_id = 'org.prob32.pmr' + ('.' + re.sub(r'[^a-z0-9]+', '_', args.test_name.lower()) if args.test_name else '')
+    title = 'Production Method Rework' + (f' ({args.test_name})' if args.test_name else ' BETA' if args.beta else '')
+    mod_id = 'org.prob32.pmr' + ('.' + re.sub(r'[^a-z0-9]+', '_', args.test_name.lower()) if args.test_name
+                                 else '.beta' if args.beta else '')
+    version = MOD_VERSION + ('-beta' if args.beta else '')
     # The Modding Co-op's Mod Template (Pat 2026-11-05 14:23Z, "Template layout only"): its metadata fields, and tags
     # from its list (the Workshop page's "Economy And Buildings"). The id stays org.prob32.pmr: launchers and playsets
     # already know the mod by it.
-    write('descriptor.mod', f'version="{MOD_VERSION}"\ntags={{\n\t"Gameplay"\n\t"Economy And Buildings"\n}}\n'
+    write('descriptor.mod', f'version="{version}"\ntags={{\n\t"Gameplay"\n\t"Economy And Buildings"\n}}\n'
           f'name="{title}"\nsupported_version="{SUPPORTED_VERSION}"\n', bom=False)
     write('.metadata/metadata.json', json.dumps({
-        'name': title, 'id': mod_id, 'version': MOD_VERSION,
+        'name': title, 'id': mod_id, 'version': version,
         'game_id': 'victoria3', 'picture': 'thumbnail.png', 'supported_game_version': SUPPORTED_VERSION,
         'short_description': SHORT_DESCRIPTION,
         'tags': ['Gameplay', 'Economy And Buildings'], 'relationships': [],
