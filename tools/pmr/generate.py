@@ -380,7 +380,23 @@ SWITCH_MIN = 20
 PROFIT_RULE = 107    # added to pmr_pmb_<b> (pmr_moved_<b>): a new pick rule makes older saves recompute once (q40;
                      # 101: q46, the transportation rule; 102: q47, figures held to the books; 103: q48, a railway;
                      # 104: q50, no step down while the building makes money; 105: q52, SWITCH_MIN and unread books;
-                     # 106: q61, a subsidised building with staff steps up; 107: q79, SWITCH_GAIN_OF)
+                     # 106: q61, a subsidised building with staff steps up; 107: q79, SWITCH_GAIN_OF; 108: BAR_CLOCK,
+                     # rules review D, set in main())
+# Rules review item D (2026-11-12, Pat 14:29Z: "implement everything"; the switching bar by the clock, run sheet R7).
+# BAR_COUNT, test builds: the monthly BAR line (pmr_skip_report, beside the SOLO line and counted the same way: the
+# world's bars, logged at the player's monthly pulse). Bars started, restarted (the pick changed under a running bar),
+# ended in a switch (the default took the pick) and ended without one (back on the default or no pick, a red bar's books
+# in the black, the floor's raise); and each running red bar (pmr_swd_<b> -1: the pick below the default, pmr_pdn_<b>) at
+# its state's update, by its age in months since it turned red (pmr_bra_<b>, kept through a restart to another lower
+# pick): 2 or less, 3 to 6, 7 to 12, over 12, and the oldest. Its own switch only so a build without it is today's.
+BAR_COUNT = False
+BAR_FIELDS = ('start', 'restart', 'done', 'drop', 'red', 'a2', 'a6', 'a12', 'ax', 'max')   # the BAR line's counts
+# BAR_CLOCK: a bar runs by the clock. Its points are today's (gain / SWITCH_GAIN a month, 1 to SWITCH_MONTHS, TICK_EVERY
+# months an update), so its end falls on the update they fill it (pmr_best_<b> sees it coming: pmr_swdue). Nothing watches
+# it meanwhile (pmr_moved_<b> waits). That update prices the pick once more (pmr_profit_<b>, the books read again): the
+# default takes the pick if it still clears SWITCH_GAIN and SWITCH_MIN; a red bar whose books are back in the black ends;
+# a pick that changed starts the bar again; no pick over the default ends it.
+BAR_CLOCK = False
 # Pat, 2026-10-18 21:32Z: "Whatever the true basis for ai scoring is should be reflected." What vanilla's investment
 # pool adds to a building's ai_value for a new level (00_ai.txt): its predicted weekly profit divided by the employees
 # a level has, x PRODUCTION_BUILDING_GOODS_PROFIT_FACTOR 5000 x the pool's PROFIT_FACTOR_MULT 1.5 (a deficit x
@@ -1463,6 +1479,8 @@ def main():
                          'in a test build, 2 uses them')
     ap.add_argument('--lean-checks', action='store_true', help='LEAN_CHECKS (performance review 12)')
     ap.add_argument('--lean-charts', action='store_true', help='LEAN_CHARTS (performance review 13)')
+    ap.add_argument('--bar-count', action='store_true', help='test build: the monthly BAR line (BAR_COUNT, rules review D)')
+    ap.add_argument('--bar-clock', action='store_true', help='BAR_CLOCK (rules review D): the switching bar by the clock')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
@@ -1472,6 +1490,7 @@ def main():
     global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS, LEAN_CHARTS
     global PTERM_OFF
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD
+    global BAR_COUNT, BAR_CLOCK, PROFIT_RULE
     RELEASE = args.release
     if args.solo is not None:
         SOLO_GATE = args.solo
@@ -1497,6 +1516,12 @@ def main():
     LEAN_CHARTS = LEAN_CHARTS or args.lean_charts
     if VALUE_READS == 1 and RELEASE:
         raise SystemExit('--value-reads 1 is a test-build check; a release takes 0 or 2')
+    if args.bar_count and RELEASE:
+        raise SystemExit('--bar-count is for test builds')
+    BAR_COUNT = BAR_COUNT or args.bar_count
+    BAR_CLOCK = BAR_CLOCK or args.bar_clock
+    if BAR_CLOCK:
+        PROFIT_RULE = 108   # rules review D and E: saves recompute once
     SHARE_DIGITS = args.digit_shares
     OBS_AB = args.obs_script_off
     OBS_PARTS_ON = args.obs_parts_off
@@ -5099,7 +5124,10 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                                  'date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
                                  f'state=[THIS.GetState.GetNameNoFormatting];building={bk};from=[THIS.Var(\'{now}\').GetValue|0];'
                                  f'to={i};floor=[THIS.Var(\'pmr_fl\').GetValue|0];books=[THIS.Var(\'pmr_bpl_{b}\').GetValue|1]" }} '
-                                 f'{setv("pmr_best_now", i)} {setv("pmr_sw", 0)} {setv("pmr_swd", 0)} {setv("pmr_swto", 0)} }}'),
+                                 # rules review D (BAR_COUNT): a running bar the raise empties ends without a switch
+                                 + (f'if = {{ limit = {{ NOT = {{ var:{v("pmr_swto")} = 0 }} }} pmr_bar_count = {{ N = pmr_bar_drop }} }} '
+                                    if BAR_COUNT else '')
+                                 + f'{setv("pmr_best_now", i)} {setv("pmr_sw", 0)} {setv("pmr_swd", 0)} {setv("pmr_swto", 0)} }}'),
                       '\t\t\t\t')
              + '\t\t\t}\n\t\t}\n'
              f'\t\telse_if = {{ limit = {{ has_variable = pmr_dn_{b} }} remove_variable = pmr_dn_{b} }}\n\t}}\n')
@@ -5352,15 +5380,19 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         # building asks the engine's books, the conditions that end the solo gate, where its last run read them in
         # the black, and then waits for its re-check
         mine = '' if INVEST_WINDOW >= 2 else f'owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} '
+        # BAR_CLOCK (rules review D): pmr_best_<b> runs no watch for a filling bar, so only a player's figures take it
+        who = mine.strip() if BAR_CLOCK else (
+            f'{mine}AND = {{ has_variable = {v("pmr_swd")} NOT = {{ var:{v("pmr_swd")} = 0 }} }}')
         the_watch = (
-            f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ {mine}AND = {{ has_variable = {v("pmr_swd")} NOT = {{ var:{v("pmr_swd")} = 0 }} }} }} }}\n'
-            + (f'\t\t\t{sgc("bar")}\n' if sgc('bar') else '')
-            + (watch('\t\t\t', 'set_variable = pmr_pmv', wage_watch) if goods else
-               '\t\t\tif = { limit = { always = yes }\n' + wage_watch('\t\t\t\t') + '\t\t\t}\n')
-            + '\t\t}\n'
+            ('' if not who else
+             f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ {who} }} }}\n'
+             + (f'\t\t\t{sgc("bar")}\n' if sgc('bar') else '')
+             + (watch('\t\t\t', 'set_variable = pmr_pmv', wage_watch) if goods else
+                '\t\t\tif = { limit = { always = yes }\n' + wage_watch('\t\t\t\t') + '\t\t\t}\n')
+             + '\t\t}\n')
             # the books' doors. In the black at the last run: a subsidy, too few staff or a losing week. At a loss:
             # a week in the black. Each closes with the run it opens (pmr_wage_<b> reads pmr_bpl_<b> or sets pmr_bsx_<b>)
-            f'\t\telse_if = {{\n\t\t\tlimit = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 NOT = {{ has_variable = pmr_bsx_{b} }} '
+            + f'\t\t{"else_if" if who else "if"} = {{\n\t\t\tlimit = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 NOT = {{ has_variable = pmr_bsx_{b} }} '
             f'exists = b:{bk} b:{bk} = {{ OR = {{ is_subsidized = yes occupancy < {fmt(BOOKS_OCC)} '
             f'AND = {{ weekly_profit <= {fmt(-BOOKS_PROFIT[0])} earnings >= {fmt(BOOKS_EARN[0])} }} }} }} }}\n'
             '\t\t\tset_variable = pmr_pmv\n'
@@ -5402,12 +5434,28 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     # not trusted: every building's pick is computed once more on its first monthly pulse (pmr_pmkt_<b>), which
     # also gives the log every player building's pick on its own (Pat, 17:59Z), then the yearly re-check runs.
     first = f'has_variable = pmr_month NOT = {{ has_variable = pmr_pmkt_{b} }}'
+    swd = v('pmr_swd')
+    bar_runs = f'has_variable = {swd} NOT = {{ var:{swd} = 0 }}'
+    # rules review D (BAR_CLOCK, Pat 2026-11-12 14:29Z): no watch while a bar runs (a save's older rule still recomputes
+    # once); the update today's points fill the bar prices its pick once more (pmr_swdue: that bar, for pmr_switch_<b>)
+    clock = '' if not BAR_CLOCK else (
+        f'\t# BAR_CLOCK: a running bar\'s last update prices its pick once more (today\'s points, as pmr_switch_{b} adds them)\n'
+        f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month {bar_runs} }}\n'
+        '\t\tset_variable = { name = pmr_t value = 1 }\n'
+        f'\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} set_variable = {{ name = pmr_t value = var:{v("pmr_swr")} }} }}\n'
+        + every_other(f'change_variable = {{ name = pmr_t multiply = {TICK_EVERY} }}', '\t\t')
+        + f'\t\tchange_variable = {{ name = pmr_t add = var:{v("pmr_sw")} }}\n'
+        f'\t\tif = {{ limit = {{ var:pmr_t >= {SWITCH_MONTHS} }} set_variable = {{ name = pmr_swdue value = var:{v("pmr_swto")} }} '
+        'set_variable = pmr_pmv }\n\t}\n')
     o.append(f'pmr_best_{b} = {{\n{newest}'
              '\t# Pat 02:43Z: each monthly pulse after the first pick at market prices looks for moved prices or wage\n'
              f'\tif = {{ limit = {{ has_variable = pmr_month has_variable = pmr_pmkt_{b}'
-             + (' NOT = { has_global_variable = pmr_off_watch }' if OBS_PARTS_ON else '') + f' }} pmr_moved_{b} = yes }}\n'
+             + (' NOT = { has_global_variable = pmr_off_watch }' if OBS_PARTS_ON else '')
+             + (f' NOT = {{ AND = {{ {bar_runs} has_variable = pmr_pmb_{b} var:pmr_pmb_{b} = {len(goods) + PROFIT_RULE} }} }}'
+                if BAR_CLOCK else '') + f' }} pmr_moved_{b} = yes }}\n'
+             + clock
              # SOLO_GATE 3: a solo building's re-check is pmr_moved_<b>'s, at its next monthly update
-             f'\tif = {{\n\t\tlimit = {{ OR = {{ '
+             + f'\tif = {{\n\t\tlimit = {{ OR = {{ '
              + (f'NOT = {{ has_variable = pmr_pchk_{b} }} ' if SOLO_GATE < 3 else
                 f'AND = {{ NOT = {{ has_variable = pmr_pchk_{b} }} OR = {{ has_variable = pmr_month NOT = {{ has_variable = {solo} }} }} }} ')
              + f'NOT = {{ has_variable = {v("pmr_new")} }} NOT = {{ var:{v("pmr_new")} = var:{v("pmr_new_now")} }} '
@@ -5421,7 +5469,9 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + f'\t\tif = {{\n\t\t\tlimit = {{ {first} }}\n\t\t\tset_variable = pmr_pmkt_{b}\n'
              '\t\t\tset_variable = pmr_sw_inst  # the first pick at market prices stands at once (pmr_switch)\n'
              f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=first_month" }}\n\t\t}}\n'
-             f'\t\telse_if = {{ limit = {{ has_variable = pmr_pmv owner = {{ is_player = yes }} }} debug_log = "{line};why=price" }}\n'
+             + (f'\t\telse_if = {{ limit = {{ has_variable = pmr_swdue owner = {{ is_player = yes }} }} debug_log = "{line};why=bar" }}\n'
+                if BAR_CLOCK else '')
+             + f'\t\telse_if = {{ limit = {{ has_variable = pmr_pmv owner = {{ is_player = yes }} }} debug_log = "{line};why=price" }}\n'
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              '\tif = { limit = { has_variable = pmr_pmv } remove_variable = pmr_pmv }\n'
              + (f'\tif = {{ limit = {{ has_variable = pmr_month has_variable = pmr_wl_{b} owner = {{ is_player = yes }} }} '
@@ -5511,7 +5561,31 @@ def switch_effect(b, bk, k, setv, v, var):
     dead = ' '.join(f'AND = {{ var:{now} = {i} var:pmr_rav_{i}_{b} = 0 }}' for i in range(1, k + 1))
     where = ('date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
              f'state=[THIS.GetState.GetNameNoFormatting];building={bk}')
-    same = f'\telse_if = {{\n\t\tlimit = {{ OR = {{ var:{pick} = 0 var:{pick} = var:{now} }} }}\n' + clear + '\t}\n'
+    swto = v('pmr_swto')
+    # rules review D (BAR_COUNT): the month's bar events for the BAR line; a bar runs while pmr_swto_<b> is not 0
+    bc = lambda n: f'pmr_bar_count = {{ N = pmr_bar_{n} }}'   # noqa: E731
+    running = lambda then: (f'if = {{ limit = {{ NOT = {{ var:{swto} = 0 }} }} {then} }}' if BAR_COUNT else '')   # noqa: E731
+    same = (f'\telse_if = {{\n\t\tlimit = {{ OR = {{ var:{pick} = 0 var:{pick} = var:{now} }} }}\n'
+            + (f'\t\t{running(bc("drop"))}\n' if BAR_COUNT else '') + clear + '\t}\n')
+    # a bar the default takes at once (the first pick at market prices, a default that can no longer run): its pick
+    # taken, a switch; else none
+    inst = '' if not BAR_COUNT else (
+        '\t\t' + running(f'if = {{ limit = {{ var:{pick} > 0 NOT = {{ var:{pick} = var:{now} }} }} {bc("done")} }} '
+                         f'else = {{ {bc("drop")} }}') + '\n')
+    # BAR_CLOCK: the bar pmr_best_<b> found due at this update (pmr_swdue, its pmr_swto_<b>) ends in it, whatever its
+    # points: the default takes the pick that bar still points at
+    full = f'var:{v("pmr_sw")} >= {SWITCH_MONTHS}'
+    if BAR_CLOCK:
+        full = f'OR = {{ {full} AND = {{ has_variable = pmr_swdue var:pmr_swdue = var:{swto} }} }}'
+    # BAR_COUNT: a running red bar's age in months (pmr_bra_<b>), counted at each update of its state
+    age = '' if not BAR_COUNT else (
+        f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_swd")} ?= -1 }}\n'
+        f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_bra")} }} }} {setv("pmr_bra", 0)} }}\n'
+        '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_month }\n'
+        + every_other(f'change_variable = {{ name = {v("pmr_bra")} add = {TICK_EVERY} }}', '\t\t\t',
+                      f'change_variable = {{ name = {v("pmr_bra")} add = 1 }}')
+        + f'\t\t\tpmr_bar_age = {{ A = {v("pmr_bra")} }}\n\t\t}}\n\t}}\n'
+        f'\telse_if = {{ limit = {{ has_variable = {v("pmr_bra")} }} remove_variable = {v("pmr_bra")} }}\n')
     return (f'pmr_switch_{b} = {{\n'
             f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {now} }} }}\n' + take + '\t}\n'
             + (same if SWITCH_QUICK else '')
@@ -5522,17 +5596,20 @@ def switch_effect(b, bk, k, setv, v, var):
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_pdn'))};months=0\" }}\n"
             f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} set_variable = pmr_dn_{b} }}\n'
             f'\t\t\telse_if = {{ limit = {{ has_variable = pmr_dn_{b} }} remove_variable = pmr_dn_{b} }}\n\t\t}}\n'
-            + take + '\t}\n'
+            + inst + take + '\t}\n'
             + ('' if SWITCH_QUICK else same)
             + '\telse = {\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ NOT = {{ var:{v("pmr_swto")} = var:{pick} }} }}\n'
-            f'\t\t\t{setv("pmr_swto", "var:" + pick)}\n\t\t\t{setv("pmr_sw", 0)}\n'
+            + (f'\t\t\tif = {{ limit = {{ var:{swto} = 0 }} {bc("start")} }}\n\t\t\telse = {{ {bc("restart")} }}\n'
+               if BAR_COUNT else '')
+            + f'\t\t\t{setv("pmr_swto", "var:" + pick)}\n\t\t\t{setv("pmr_sw", 0)}\n'
             f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} {setv("pmr_swd", -1)} }}\n'
             f'\t\t\telse = {{ {setv("pmr_swd", 1)} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=SWITCH_START;{where};'
             f"default={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};gain={var(v('pmr_swg'), 2)};pts={var(v('pmr_swr'), 2)}\" }}\n\t\t}}\n"
             # bug review q51, P2-3: a red bar stops once the books show no loss (Pat 19:30Z), and the next tick prices again
             f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_swd")} = -1 has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 }}\n'
+            + (f'\t\t\t{bc("drop")}\n' if BAR_COUNT else '')
             + clear.replace('\t\t', '\t\t\t')
             + f'\t\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n\t\t}}\n'
             # Pat 12:59Z: the bigger the gain over the default, the more points a month (pmr_swr_<b>, profit_effect)
@@ -5542,17 +5619,19 @@ def switch_effect(b, bk, k, setv, v, var):
             f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} set_variable = {{ name = pmr_t value = var:{v("pmr_swr")} }} }}\n'
             + every_other(f'change_variable = {{ name = pmr_t multiply = {TICK_EVERY} }}', '\t\t\t')
             + f'\t\t\tchange_variable = {{ name = {v("pmr_sw")} add = var:pmr_t }}\n\t\t}}\n'
-            f'\t\tif = {{\n\t\t\tlimit = {{ var:{v("pmr_sw")} >= {SWITCH_MONTHS} }}\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ {full} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=DEFAULT;{where};'
             f"from={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};months={var(v('pmr_sw'))}\" }}\n"
-            f'\t\t\t{setv("pmr_best_now", "var:" + pick)}\n'
+            + (f'\t\t\t{bc("done")}\n' if BAR_COUNT else '')
+            + f'\t\t\t{setv("pmr_best_now", "var:" + pick)}\n'
             # a default a loss lowered keeps the floor from raising it while its levels retool (profit_effect)
             f'\t\t\tif = {{ limit = {{ var:{v("pmr_swd")} = -1 }} set_variable = pmr_dn_{b} }}\n'
             f'\t\t\telse_if = {{ limit = {{ has_variable = pmr_dn_{b} }} remove_variable = pmr_dn_{b} }}\n'
             # the next tick prices the options around the new default (profit_effect's box)
             f'\t\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
             + clear.replace('\t\t', '\t\t\t') + '\t\t}\n\t}\n'
-            '\tif = { limit = { has_variable = pmr_sw_inst } remove_variable = pmr_sw_inst }\n'
+            + age + ('\tif = { limit = { has_variable = pmr_swdue } remove_variable = pmr_swdue }\n' if BAR_CLOCK else '')
+            + '\tif = { limit = { has_variable = pmr_sw_inst } remove_variable = pmr_sw_inst }\n'
             # Pat 2026-10-19 03:51Z: the card showed a finished bar for a month, as the country's copy (pmr_c_sum_<b>, the
             # state with the most levels) waited for the country's monthly pulse. That state's bar now reaches it at once.
             f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_level")} owner = {{ is_player = yes has_variable = pmr_c_swm_{b} }} }}\n'
@@ -5680,6 +5759,20 @@ def shared_effects(price_goods=()):
             out += (f'pmr_sgc_{n} = {{\n\tif = {{ limit = {{ NOT = {{ has_global_variable = pmr_sg_{n} }} }} '
                     f'set_global_variable = {{ name = pmr_sg_{n} value = 0 }} }}\n'
                     f'\tchange_global_variable = {{ name = pmr_sg_{n} add = 1 }}\n}}\n\n')
+    if BAR_COUNT:
+        # rules review D: the month's bar events and running red bars, for the BAR line (pmr_skip_report)
+        out += ('# Any scope (test builds, BAR_COUNT): one more of the month\'s bar counts $N$ for the BAR line.\n'
+                'pmr_bar_count = {\n\tif = { limit = { NOT = { has_global_variable = $N$ } } '
+                'set_global_variable = { name = $N$ value = 0 } }\n'
+                '\tchange_global_variable = { name = $N$ add = 1 }\n}\n\n'
+                '# State scope (test builds, BAR_COUNT): one running red bar, its age in months in the variable $A$.\n'
+                'pmr_bar_age = {\n\tpmr_bar_count = { N = pmr_bar_red }\n'
+                '\tif = { limit = { var:$A$ <= 2 } pmr_bar_count = { N = pmr_bar_a2 } }\n'
+                '\telse_if = { limit = { var:$A$ <= 6 } pmr_bar_count = { N = pmr_bar_a6 } }\n'
+                '\telse_if = { limit = { var:$A$ <= 12 } pmr_bar_count = { N = pmr_bar_a12 } }\n'
+                '\telse = { pmr_bar_count = { N = pmr_bar_ax } }\n'
+                '\tif = { limit = { OR = { NOT = { has_global_variable = pmr_bar_max } var:$A$ > global_var:pmr_bar_max } } '
+                'set_global_variable = { name = pmr_bar_max value = var:$A$ } }\n}\n\n')
     out += ('# State scope (test builds): count a frame put back after a change from outside PMR\'s tick.\n'
             'pmr_count_undo = {\n\tif = {\n\t\tlimit = { has_variable = pmr_pmc }\n'
             '\t\tif = { limit = { NOT = { has_global_variable = pmr_undo } } set_global_variable = { name = pmr_undo value = 0 } }\n'
@@ -6152,6 +6245,17 @@ def dispatch_effects(buildings):
                     + '\t\tdebug_log = "PMR;rec=SOLO;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
                     + ';'.join(f"{n}=[THIS.Var('pmr_sg_{n}_v').GetValue|0]" for n in SOLO_COUNTS) + '"\n'
                     + ''.join(f'\t\tremove_variable = pmr_sg_{n}_v\n' for n in SOLO_COUNTS))
+                 # rules review D (BAR_COUNT): the world's bars this month (pmr_bar_count, pmr_bar_age); age= is red bars
+                 # 2 months or less / 3 to 6 / 7 to 12 / over 12, max= the oldest
+                 + ('' if not BAR_COUNT else
+                    ''.join(f'\t\tif = {{ limit = {{ has_global_variable = pmr_bar_{n} }} set_variable = {{ name = pmr_bar_{n}_v value = global_var:pmr_bar_{n} }} '
+                            f'set_global_variable = {{ name = pmr_bar_{n} value = 0 }} }}\n'
+                            f'\t\telse = {{ set_variable = {{ name = pmr_bar_{n}_v value = 0 }} }}\n' for n in BAR_FIELDS)
+                    + '\t\tdebug_log = "PMR;rec=BAR;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+                    + ';'.join(f"{n}=[THIS.Var('pmr_bar_{n}_v').GetValue|0]" for n in BAR_FIELDS[:5])
+                    + ';age=' + '/'.join(f"[THIS.Var('pmr_bar_{n}_v').GetValue|0]" for n in BAR_FIELDS[5:9])
+                    + f";max=[THIS.Var('pmr_bar_max_v').GetValue|0]\"\n"
+                    + ''.join(f'\t\tremove_variable = pmr_bar_{n}_v\n' for n in BAR_FIELDS))
                  + '\t\tdebug_log = "PMR;rec=SKIP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
                  + ';'.join(f"{n[7:]}=[THIS.Var('{n}').GetValue|0]" for n in counts) + '"\n'
                  + ''.join(f'\t\tset_variable = {{ name = {n} value = 0 }}\n' for n in counts) + '\t}\n}\n')
