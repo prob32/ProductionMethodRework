@@ -236,6 +236,19 @@ GRAPH_H = 120              # both graphs' height
 PLOT_MARGINS = (52, 14)    # v3_plotline's left and right margins, narrowed so two graphs share the row
 TRANSFER_GRAPH_W = 208     # the Investment Pool Transfer graph: the width the columns had
 POOL_GRAPH_W = 192         # the vanilla investment pool graph beside it (Pat 14:28Z), so both fit 540 px
+# Pat 2026-11-12 17:40Z, the pool graph: "make them track to 1836; keep the charts how they are but start tracking
+# history beyond 52 weeks, compress the history after it so it only marks one year as a data point", and 17:39Z
+# "store it cheaply". The game keeps 52 weekly points of the pool (GetInvestmentFundTrend) and a plot line draws only
+# a trend, so the player's country keeps one reading a year from its first January (pmr_ihd_<k>) and the twelve
+# months to where the trend starts (pmr_ih_r1..13); the years are drawn left of the game's own line, on one scale, as
+# columns spanning the line between two readings (hist_chart). Scripts cannot read the Investment Pool Transfer, so
+# that graph keeps the game's year.
+HIST_YEARS = 100           # yearly readings kept, 1836 to 1936
+HIST_RING = 13             # monthly readings; r13 is twelve months back, where the game's weekly trend starts
+HIST_COLS = 24             # columns the first year is drawn with; year k gets ceil(HIST_COLS / (k + 1))
+HIST_TAIL = 12             # columns for the part-year from the last 1 January reading to the trend's start
+HIST_LINE_H = 3            # the line's thickness (vanilla's plot line is 3.5 wide)
+HIST_PAD = 0.08            # the scale's room above and below the readings, of their range
 # Recent investments as the market panel's Exports and Imports charts (Pat 16:12Z): vanilla compact_chart
 # (politics_panel_types.gui), a 120 px tree map in its frame with legend rows of 28 px, four to a column.
 TREE = 120
@@ -564,6 +577,9 @@ def script_values():
         out += (f'pmr_po_{k} = {{\n\tvalue = 0\n\tevery_scope_building = {{\n\t\tlimit = {{\n\t\t\tlevel > 0\n'
                 f'\t\t\tOR = {{\n{ors}\t\t\t}}\n\t\t\tNOR = {{\n{excl}\t\t\t}}\n\t\t}}\n'
                 f'\t\tadd = pmr_po_{k}_levels\n\t}}\n}}\n\n')
+    out += ('# Country scope. The investment pool, for the pool graph\'s yearly readings (hist_effect), read the way the\n'
+            '# observer\'s BUDGET line reads it.\n'
+            'pmr_ih_pool = {\n\tvalue = investment_pool\n}\n\n')
     return out
 
 
@@ -782,8 +798,91 @@ def chart_effect():
             '}\n')
 
 
+def hist_sub(k):
+    """The columns year k of the pool graph's history is drawn with: the first year is drawn alone across half the
+    graph, a later one shares it with the years before it, so fewer columns keep each a few pixels wide."""
+    return max(1, -(-HIST_COLS // (k + 1)))
+
+
+def hist_effect():
+    """Country scope, the player's monthly pulse (pmr_pi_monthly_country). The pool graph's history (HIST_YEARS):
+    from the first January pulse on, pmr_ih_m counts the months, pmr_ih_r1..r<HIST_RING> hold the last readings
+    (r<HIST_RING> twelve months back, where the game's weekly trend starts), and each reading that falls twelve
+    months back in a January becomes the year's point pmr_ihd_<k> (k = 0 for the first January). The graph's history
+    then runs pmr_ih_K whole years and pmr_ih_w months (pmr_ih_L months in all) from pmr_ihd_0 to that trend's start,
+    the last part-year from pmr_ih_ta (pmr_ihd_<K>) to r<HIST_RING>. pmr_ih_lo/hi span the readings drawn and the
+    last year's; pmr_ih_lop/hip are the graph's scale, with HIST_PAD room. pmr_ih_y0 is the first year, for the axis."""
+    r = lambda i: f'pmr_ih_r{i}'   # noqa: E731
+    last = r(HIST_RING)
+    ring_all = ''.join(f'\t\t\tset_variable = {{ name = {r(i)} value = var:{r(1)} }}\n' for i in range(2, HIST_RING + 1))
+    shift = ''.join(f'\t\tset_variable = {{ name = {r(i)} value = var:{r(i - 1)} }}\n' for i in range(HIST_RING, 1, -1))
+    y0 = ''.join(f'\t\t\t{"if" if i == 0 else "else_if"} = {{ limit = {{ year = {y} }} '
+                 f'set_variable = {{ name = pmr_ih_y0 value = {y} }} }}\n'
+                 for i, y in enumerate(range(1836, 1836 + HIST_YEARS + 1)))
+    years = ''.join(f'\t\t\t\t{"if" if k == 1 else "else_if"} = {{ limit = {{ var:pmr_ih_K = {k} }} '
+                    f'set_variable = {{ name = pmr_ihd_{k} value = var:{last} }} }}\n' for k in range(1, HIST_YEARS))
+    span = ''.join(f'\t\tif = {{ limit = {{ var:{r(i)} < var:pmr_ih_lo }} set_variable = {{ name = pmr_ih_lo value = var:{r(i)} }} }}\n'
+                   f'\t\tif = {{ limit = {{ var:{r(i)} > var:pmr_ih_hi }} set_variable = {{ name = pmr_ih_hi value = var:{r(i)} }} }}\n'
+                   for i in range(1, HIST_RING + 1))
+    return ('# Country scope, the player\'s monthly pulse: the pool graph\'s yearly readings (private_investment.py,\n'
+            '# hist_effect). Nothing is read until the first January.\n'
+            'pmr_ih_record = {\n'
+            '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_ih_m } }\n'
+            '\t\t# January, or the first pulse of a new game when it falls on 1 Feb 1836\n'
+            '\t\tif = {\n\t\t\tlimit = {\n\t\t\t\tOR = {\n\t\t\t\t\tmonth = 0\n'
+            '\t\t\t\t\tAND = { year = 1836 month = 1 }\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t\tset_variable = { name = pmr_ih_m value = 0 }\n'
+            f'\t\t\tset_variable = {{ name = {r(1)} value = pmr_ih_pool }}\n' + ring_all +
+            f'\t\t\tset_variable = {{ name = pmr_ihd_0 value = var:{r(1)} }}\n'
+            f'\t\t\tset_variable = {{ name = pmr_ih_ta value = var:{r(1)} }}\n'
+            f'\t\t\tset_variable = {{ name = pmr_ih_rlo value = var:{r(1)} }}\n'
+            f'\t\t\tset_variable = {{ name = pmr_ih_rhi value = var:{r(1)} }}\n'
+            '\t\t\tset_variable = { name = pmr_ih_K value = 0 }\n\t\t\tset_variable = { name = pmr_ih_w value = 0 }\n'
+            '\t\t\tset_variable = { name = pmr_ih_L value = 0 }\n'
+            '\t\t\tset_variable = { name = pmr_ih_y0 value = 0 }\n' + y0 +
+            '\t\t\tdebug_log = "PMR;rec=POOLH;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'year=0;pool=[THIS.Var(\'pmr_ihd_0\').GetValue|0];from=[THIS.Var(\'pmr_ih_y0\').GetValue|0]"\n'
+            '\t\t}\n\t}\n'
+            '\telse = {\n'
+            '\t\tchange_variable = { name = pmr_ih_m add = 1 }\n' + shift +
+            f'\t\tset_variable = {{ name = {r(1)} value = pmr_ih_pool }}\n'
+            '\t\t# a month more of history once the trend no longer reaches back to the first reading\n'
+            '\t\tif = {\n\t\t\tlimit = { var:pmr_ih_m > 12 }\n'
+            '\t\t\tchange_variable = { name = pmr_ih_w add = 1 }\n'
+            '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_ih_w >= 12 var:pmr_ih_K < ' + str(HIST_YEARS - 1) + ' }\n'
+            '\t\t\t\tchange_variable = { name = pmr_ih_K add = 1 }\n\t\t\t\tset_variable = { name = pmr_ih_w value = 0 }\n'
+            '\t\t\t\t# the January reading now twelve months back is the year\'s point\n' + years +
+            f'\t\t\t\tset_variable = {{ name = pmr_ih_ta value = var:{last} }}\n'
+            f'\t\t\t\tif = {{ limit = {{ var:{last} < var:pmr_ih_rlo }} set_variable = {{ name = pmr_ih_rlo value = var:{last} }} }}\n'
+            f'\t\t\t\tif = {{ limit = {{ var:{last} > var:pmr_ih_rhi }} set_variable = {{ name = pmr_ih_rhi value = var:{last} }} }}\n'
+            '\t\t\t\t# a year\'s point, for the run sheet (test builds only: POOLH is not a release log)\n'
+            '\t\t\t\tdebug_log = "PMR;rec=POOLH;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            'year=[THIS.Var(\'pmr_ih_K\').GetValue|0];pool=[THIS.Var(\'pmr_ih_ta\').GetValue|0];lo=[THIS.Var(\'pmr_ih_rlo\').GetValue|0];'
+            'hi=[THIS.Var(\'pmr_ih_rhi\').GetValue|0]"\n'
+            '\t\t\t}\n'
+            '\t\t\tif = { limit = { var:pmr_ih_w >= 12 } set_variable = { name = pmr_ih_w value = 11 } }   # past the last year kept\n'
+            '\t\t\tset_variable = {\n\t\t\t\tname = pmr_ih_L\n\t\t\t\tvalue = {\n\t\t\t\t\tvalue = var:pmr_ih_K\n'
+            '\t\t\t\t\tmultiply = 12\n\t\t\t\t\tadd = var:pmr_ih_w\n\t\t\t\t}\n\t\t\t}\n'
+            '\t\t}\n\t}\n'
+            '\t# the scale: the yearly points and the last year\'s readings, with room above and below\n'
+            '\tif = {\n\t\tlimit = { has_variable = pmr_ih_m }\n'
+            '\t\tset_variable = { name = pmr_ih_lo value = var:pmr_ih_rlo }\n'
+            '\t\tset_variable = { name = pmr_ih_hi value = var:pmr_ih_rhi }\n'
+            + span +
+            '\t\tset_variable = {\n\t\t\tname = pmr_ih_pad\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ih_hi\n'
+            f'\t\t\t\tsubtract = var:pmr_ih_lo\n\t\t\t\tmultiply = {HIST_PAD}\n\t\t\t}}\n\t\t}}\n'
+            '\t\tif = { limit = { var:pmr_ih_pad < 1 } set_variable = { name = pmr_ih_pad value = 1 } }\n'
+            '\t\tset_variable = {\n\t\t\tname = pmr_ih_lop\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ih_lo\n'
+            '\t\t\t\tsubtract = var:pmr_ih_pad\n\t\t\t}\n\t\t}\n'
+            '\t\tif = { limit = { var:pmr_ih_lo >= 0 var:pmr_ih_lop < 0 } set_variable = { name = pmr_ih_lop value = 0 } }\n'
+            '\t\tset_variable = {\n\t\t\tname = pmr_ih_hip\n\t\t\tvalue = {\n\t\t\t\tvalue = var:pmr_ih_hi\n'
+            '\t\t\t\tadd = var:pmr_ih_pad\n\t\t\t}\n\t\t}\n'
+            '\t}\n'
+            '}\n')
+
+
 def on_actions():
-    drop = ''.join(f'\t\tif = {{\n\t\t\tlimit = {{\n\t\t\t\thas_modifier = pmr_policy_{k}\n'
+    drop =''.join(f'\t\tif = {{\n\t\t\tlimit = {{\n\t\t\t\thas_modifier = pmr_policy_{k}\n'
                    f'\t\t\t\tNOT = {{ has_law_or_variant = law_type:{POLICY_LAWS[k]} }}\n\t\t\t}}\n'
                    f'\t\t\tremove_modifier = pmr_policy_{k}\n\t\t\tpmr_policy_drop = yes\n'
                    '\t\t\tdebug_log = "PMR;rec=POLICY;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];policy=dropped"\n'
@@ -804,7 +903,8 @@ def on_actions():
             '\t\tif = {\n\t\t\tlimit = { is_player = yes }\n'
             '\t\t\tset_global_variable = { name = pmr_player value = ROOT }\n'
             '\t\t\tpmr_reinvest_publish = yes\n'
-            '\t\t\tpmr_pi_start_clock = yes\n\t\t}\n'
+            '\t\t\tpmr_pi_start_clock = yes\n'
+            '\t\t\tpmr_ih_record = yes   # the pool graph\'s yearly readings (hist_effect)\n\t\t}\n'
             '\t}\n}\n\n'
             '# Root = building, a level of it starting construction (the Recent Investments bars).\n'
             'pmr_pi_on_start = {\n\ttrigger = { NOT = { has_global_variable = pmr_ticks_paused } }\n\teffect = {\n\t\tpmr_pi_start = yes\n'
@@ -1596,41 +1696,50 @@ def priority_row(g, ind):
     return out + f'{ind}}}\n'
 
 
-def trend_chart(ind, trend, header, w, peak=False, tooltip=None):
+def trend_chart(ind, trend, header, w, peak=False, tooltip=None, scale=None, labels=None, top=None, start=None,
+                single=None, visible=None):
     """One of the budget's own graphs as its graph tooltip draws it (vanilla graph_tooltips.gui): the engine's weekly
     trend <trend> of the country on v3_plotline, w wide, narrowed so two share the row. The engine keeps the trend,
     so no script records anything for it. peak: the line at the latest value and its "-X below peak" tag, as vanilla's
     Population and GDP graphs draw them (v3_plotline_population, politics_panel_types.gui). tooltip: the line's, in
-    vanilla's latest-and-peak form (trend_tooltip_loc)."""
+    vanilla's latest-and-peak form (trend_tooltip_loc). For the pool graph's history (hist_chart): scale, the plot's
+    (min, max) in place of the trend's padded ones; labels, the axis' (min, max) in place of the trend's; top, the
+    peak in place of the trend's; start, the axis' first date; single, the plot in place of the trend's line;
+    visible, when the graph shows."""
     t = f'{COUNTRY}.{trend}'
     left, right = PLOT_MARGINS
-    bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'
-    vals = (f'{ind}\t\t\tmin = "[GetMinPadded({t})]"\n{ind}\t\t\tmax = "[GetMaxPadded({t})]"\n'
+    lo, hi = scale or (f'GetMinPadded({t})', f'GetMaxPadded({t})')
+    lab_lo, lab_hi = labels or (f'GetMin({t})', f'GetMax({t})')
+    top = top or f'GetMax({t})'
+    bo = lambda name, body: f'{ind}\tblockoverride "{name}" {{\n{body}{ind}\t}}\n'   # noqa: E731
+    vals = (f'{ind}\t\t\tmin = "[{lo}]"\n{ind}\t\t\tmax = "[{hi}]"\n'
             f'{ind}\t\t\tvalue = "[GetTrendValue({t})]"\n')
     marks = (bo('underlay_plotlines', f'{ind}\t\tv3_plotline_current_value_marker = {{\n'
                 f'{ind}\t\t\tblockoverride "marker_values" {{\n{vals.replace(ind, ind + chr(9))}{ind}\t\t\t}}\n{ind}\t\t}}\n')
              + bo('extra_plotlines', f'{ind}\t\tv3_plotline_current_value_readout = {{\n'
                   f'{ind}\t\t\tblockoverride "marker_values" {{\n{vals.replace(ind, ind + chr(9))}{ind}\t\t\t}}\n'
                   f'{ind}\t\t\tblockoverride "marker_peak_visibility" {{\n'
-                  f'{ind}\t\t\t\tvisible = "[GreaterThan_CFixedPoint(Subtract_CFixedPoint(GetMax({t}), GetTrendValue({t})), '
-                  f"Multiply_CFixedPoint(GetMax({t}), '(CFixedPoint)0.001'))]\"\n{ind}\t\t\t}}\n"
+                  f'{ind}\t\t\t\tvisible = "[GreaterThan_CFixedPoint(Subtract_CFixedPoint({top}, GetTrendValue({t})), '
+                  f"Multiply_CFixedPoint({top}, '(CFixedPoint)0.001'))]\"\n{ind}\t\t\t}}\n"
                   f'{ind}\t\t\tblockoverride "marker_peak_text" {{\n'
-                  f'{ind}\t\t\t\traw_text = "-[Subtract_CFixedPoint(GetMax({t}), GetTrendValue({t}))|D]"\n{ind}\t\t\t}}\n'
+                  f'{ind}\t\t\t\traw_text = "-[Subtract_CFixedPoint({top}, GetTrendValue({t}))|D]"\n{ind}\t\t\t}}\n'
                   f'{ind}\t\t}}\n')) if peak else ''
     return (f'{ind}v3_plotline = {{\n'
+            + (f'{ind}\tvisible = "[{visible}]"\n' if visible else '')
             + bo('margins', f'{ind}\t\tmargin_bottom = 40\n{ind}\t\tmargin_left = {left}\n{ind}\t\tmargin_right = {right}\n')
             + bo('text_max_width', f'{ind}\t\tmax_width = {w + left + right - 10}\n')
             + bo('header', f'{ind}\t\ttext = "{header}"\n')
             + bo('line_color', f'{ind}\t\tcolor = {{ .9 .9 .9 1.0 }}\n')
             + bo('size', f'{ind}\t\tsize = {{ {w} {GRAPH_H} }}\n')
-            + bo('line_plotpoints', f'{ind}\t\tvisible = "[Not(IsEmpty({t}))]"\n'
-                 f'{ind}\t\tplotpoints = "[GetTrendPlotPointsNormalized({t}, GetMinPadded({t}), GetMaxPadded({t}))]"\n')
-            + bo('maxvalue', f'{ind}\t\ttext = "[GetMax({t})|D]"\n')
-            + bo('minvalue', f'{ind}\t\ttext = "[GetMin({t})|D]"\n')
-            + bo('startdate', f'{ind}\t\ttext = "[GetOldestDate({t})]"\n')
+            + (bo('singleitem', single) if single else
+               bo('line_plotpoints', f'{ind}\t\tvisible = "[Not(IsEmpty({t}))]"\n'
+                  f'{ind}\t\tplotpoints = "[GetTrendPlotPointsNormalized({t}, {lo}, {hi})]"\n'))
+            + bo('maxvalue', f'{ind}\t\ttext = "[{lab_hi}|D]"\n')
+            + bo('minvalue', f'{ind}\t\ttext = "[{lab_lo}|D]"\n')
+            + bo('startdate', f'{ind}\t\ttext = "{start or f"[GetOldestDate({t})]"}"\n')
             + bo('enddate', f'{ind}\t\ttext = "[GetLatestDate({t})]"\n')
             + bo('multiitem', '')
-            + (bo('tooltip', f'{ind}\t\ttooltip = "{tooltip}"\n') if tooltip else '')
+            + (bo('tooltip', f'{ind}\t\ttooltip = "{tooltip}"\n') if tooltip and not single else '')
             + marks
             + bo('empty_state_visibility', f'{ind}\t\tvisible = "[IsEmpty({t})]"\n')
             + bo('everything_that_is_not_empty_state_visibility', f'{ind}\t\tvisible = "[Not(IsEmpty({t}))]"\n')
@@ -1653,8 +1762,81 @@ def pool_chart(ind):
     weekly trend of the pool."""
     # Q105-FEEDBACK A1: the peak line and tag on both graphs of the pair, so the two frames stay alike
     return trend_chart(ind, 'GetInvestmentFundTrend', '[concept_investment_pool]', POOL_GRAPH_W,
-                       peak=True, tooltip='PMR_TREND_TT_POOL')
+                       peak=True, tooltip='PMR_TREND_TT_POOL', visible=f'Not({HIST_SHOWN})')
 
+
+def hist_plot(ind):
+    """The pool graph's plot with its history (HIST_*, hist_effect), in place of the trend's line: the months of
+    history (pmr_ih_L) left of the game's own year, both on the scale pmr_ih_lop..hip. Each whole year k is a slot of
+    12 months holding hist_sub(k) columns, and the part-year (pmr_ih_w months) HIST_TAIL; a column spans the line
+    between two points of its year, a slice of white as thick as the line (HIST_LINE_H) at least, as vertical
+    layout stretch places it: the room above, the span, the room below. The whole plot carries the line's tooltip."""
+    var = lambda n: f"{COUNTRY}.MakeScope.Var('{n}').GetValue"   # noqa: E731
+    lop, hip = var('pmr_ih_lop'), var('pmr_ih_hip')
+    t = f'{COUNTRY}.GetInvestmentFundTrend'
+    i1, i2, i3, i4, i5, i6 = (ind + '\t' * k for k in range(1, 7))
+
+    def lerp(a, b, num, den):
+        if num == 0:
+            return a
+        if num == den:
+            return b
+        return f"Subtract_CFixedPoint({a}, Multiply_CFixedPoint(Subtract_CFixedPoint({a}, {b}), '(CFixedPoint){num / den:.4f}'))"
+
+    def part(stretch, ind_, line=False):
+        return (f'{ind_}hbox = {{\n{ind_}\tlayoutpolicy_horizontal = expanding\n{ind_}\tlayoutpolicy_vertical = expanding\n'
+                f'{ind_}\tlayoutstretchfactor_vertical = "[Add_int32(FixedPointToInt({stretch}), \'(int32)1\')]"\n'
+                + (f'{ind_}\tmin_height = {HIST_LINE_H}\n{ind_}\tbackground = {{\n'
+                   f'{ind_}\t\ttexture = "gfx/interface/backgrounds/white.dds"\n{ind_}\t\tcolor = {{ .9 .9 .9 .8 }}\n{ind_}\t}}\n'
+                   if line else '')
+                + f'{ind_}}}\n')
+
+    def columns(a, b, n, ind_):
+        out = ''
+        for s in range(n):
+            v0, v1 = lerp(a, b, s, n), lerp(a, b, s + 1, n)
+            low, high = f'Min_CFixedPoint({v0}, {v1})', f'Max_CFixedPoint({v0}, {v1})'
+            out += (f'{ind_}vbox = {{\n{ind_}\tlayoutpolicy_horizontal = expanding\n{ind_}\tlayoutpolicy_vertical = expanding\n'
+                    + part(f'Subtract_CFixedPoint({hip}, {high})', ind_ + '\t')
+                    + part(f'Subtract_CFixedPoint({high}, {low})', ind_ + '\t', line=True)
+                    + part(f'Subtract_CFixedPoint({low}, {lop})', ind_ + '\t')
+                    + f'{ind_}}}\n')
+        return out
+
+    def slot(visible, stretch, a, b, n):
+        return (f'{i2}hbox = {{\n{i3}visible = "[{visible}]"\n{i3}layoutpolicy_horizontal = expanding\n'
+                f'{i3}layoutpolicy_vertical = expanding\n{i3}layoutstretchfactor_horizontal = {stretch}\n'
+                + columns(a, b, n, i3) + f'{i2}}}\n')
+    years = ''.join(f'{i2}# year {k} from the first January read\n'
+                    + slot(f"GreaterThan_CFixedPoint({var('pmr_ih_K')}, '(CFixedPoint){k}')", 12,
+                           var(f'pmr_ihd_{k}'), var(f'pmr_ihd_{k + 1}'), hist_sub(k)) for k in range(HIST_YEARS - 1))
+    tail = slot(f"GreaterThan_CFixedPoint({var('pmr_ih_w')}, '(CFixedPoint)0')",
+                f'"[FixedPointToInt({var("pmr_ih_w")})]"', var('pmr_ih_ta'), var(f'pmr_ih_r{HIST_RING}'), HIST_TAIL)
+    return (f'{ind}hbox = {{\n{i1}size = {{ 100% 100% }}\n{i1}tooltip = "PMR_TREND_TT_POOLH"\n'
+            f'{i1}# the history\n{i1}hbox = {{\n{i2}layoutpolicy_horizontal = expanding\n{i2}layoutpolicy_vertical = expanding\n'
+            f'{i2}layoutstretchfactor_horizontal = "[FixedPointToInt({var("pmr_ih_L")})]"\n'
+            + years + tail + f'{i1}}}\n'
+            f'{i1}# the game\'s own year of weekly points\n{i1}widget = {{\n{i2}layoutpolicy_horizontal = expanding\n'
+            f'{i2}layoutpolicy_vertical = expanding\n{i2}layoutstretchfactor_horizontal = 12\n'
+            f'{i2}plotline = {{\n{i3}size = {{ 100% 100% }}\n{i3}using = plot_line\n{i3}width = 3.5\n'
+            f'{i3}color = {{ .9 .9 .9 1.0 }}\n{i3}visible = "[Not(IsEmpty({t}))]"\n'
+            f'{i3}plotpoints = "[GetTrendPlotPointsNormalized({t}, {lop}, {hip})]"\n{i2}}}\n{i1}}}\n{ind}}}\n')
+
+
+def hist_chart(ind):
+    """The pool graph once the player's country has more than the game's year of it (pmr_ih_m over 12): the axis from
+    the first January read (1 Jan 1836 in a new game) to the trend's last week, on one scale."""
+    var = lambda n: f"{COUNTRY}.MakeScope.Var('{n}').GetValue"   # noqa: E731
+    t = f'{COUNTRY}.GetInvestmentFundTrend'
+    return trend_chart(ind, 'GetInvestmentFundTrend', '[concept_investment_pool]', POOL_GRAPH_W, peak=True,
+                       scale=(var('pmr_ih_lop'), var('pmr_ih_hip')),
+                       labels=(f"Min_CFixedPoint(GetMin({t}), {var('pmr_ih_lo')})",
+                               f"Max_CFixedPoint(GetMax({t}), {var('pmr_ih_hi')})"),
+                       top=f"Max_CFixedPoint(GetMax({t}), {var('pmr_ih_hi')})", start='PMR_IH_START',
+                       single=hist_plot(ind + '\t\t'), visible=HIST_SHOWN)
+
+
+HIST_SHOWN = f"GreaterThan_CFixedPoint({COUNTRY}.MakeScope.Var('pmr_ih_m').GetValue, '(CFixedPoint)12')"
 
 TRENDS = (('TRANSFER', 'GetInvestmentIncomeTrend', 'concept_budget_investment_income'),
           ('POOL', 'GetInvestmentFundTrend', 'concept_investment_pool'))
@@ -1671,13 +1853,22 @@ def trend_tooltip_loc():
         loc += [f' PMR_TREND_BELOW_{key}:0 "\\n#n @money!-[{gap}|D]#! below peak"',
                 f' PMR_TREND_TT_{key}:0 "#header [{concept}]#!\\n@money!#v [GetTrendValue({t})|D]#! currently'
                 f"[SelectLocalization({below}, 'PMR_TREND_BELOW_{key}', 'PMR_EMPTY')]\""]
+    # the pool graph with its history (hist_chart): the peak of the years drawn, and the first January read
+    t = f'{COUNTRY}.GetInvestmentFundTrend'
+    top = f"Max_CFixedPoint(GetMax({t}), {COUNTRY}.MakeScope.Var('pmr_ih_hi').GetValue)"
+    gap = f'Subtract_CFixedPoint({top}, GetTrendValue({t}))'
+    below = f"GreaterThan_CFixedPoint({gap}, Multiply_CFixedPoint({top}, '(CFixedPoint)0.001'))"
+    loc += [f' PMR_TREND_BELOW_POOLH:0 "\\n#n @money!-[{gap}|D]#! below peak"',
+            f' PMR_TREND_TT_POOLH:0 "#header [concept_investment_pool]#!\\n@money!#v [GetTrendValue({t})|D]#! currently'
+            f"[SelectLocalization({below}, 'PMR_TREND_BELOW_POOLH', 'PMR_EMPTY')]\"",
+            f' PMR_IH_START:0 "1 Jan, [{COUNTRY}.MakeScope.Var(\'pmr_ih_y0\').GetValue|0]"']
     return loc
 
 
 def charts_row(ind):
     """Pat 14:28Z: the space split down the middle, the pool's weekly payout on the left and the pool on the right."""
-    return (f'{ind}flowcontainer = {{\n{ind}\tparentanchor = hcenter\n{ind}\tspacing = 8\n'
-            + transfer_chart(ind + '\t') + pool_chart(ind + '\t') + f'{ind}}}\n')
+    return (f'{ind}flowcontainer = {{\n{ind}\tparentanchor = hcenter\n{ind}\tspacing = 8\n{ind}\tignoreinvisible = yes\n'
+            + transfer_chart(ind + '\t') + pool_chart(ind + '\t') + hist_chart(ind + '\t') + f'{ind}}}\n')
 
 
 def tree_chart(ind, items, prefix, tooltip, caption, empty):
@@ -2786,7 +2977,7 @@ def write_all(game, write, header_text, out=None):
     write('common/scripted_guis/pmr_ipw_sguis.txt', header_text + sguis())
     write('common/static_modifiers/pmr_policy_modifiers.txt', header_text + static_modifiers())
     write('common/on_actions/pmr_pi_on_actions.txt', header_text + on_actions())
-    write('common/scripted_effects/pmr_pi_effects.txt', header_text + chart_effect() + '\n'
+    write('common/scripted_effects/pmr_pi_effects.txt', header_text + chart_effect() + '\n' + hist_effect() + '\n'
           + rank_effects(chart_types) + '\n'
           + clock_effect() + '\n' + upkeep_effect() + '\n' + policy_effects() + '\n'
           + invest_effects(types, retool_types(game, out)))
