@@ -879,6 +879,9 @@ def pf_effects(shorts):
         # the averages and parts are the player's log and Policies tooltip
         # Review 8, R8-2: a type the country has no level of costs the gate and one has_variable (it was seven
         # statements: two sets, two removes and three tests); the result is the same, pmr_pterm_<b> gone.
+        # PTERM_OFF: no ai_value reads it, so no AI country takes it (rules review item C, Pat 2026-11-12 14:29Z)
+        if PTERM_OFF:
+            continue
         o.append(f'pmr_pfa_{b} = {{\n'
                  f'\tif = {{\n\t\tlimit = {{ country_has_building_type_levels = {{ target = bt:building_{b} value > 0 }} }}\n'
                  f'\t\tset_variable = {{ name = pmr_pf_t_{b} value = 0 }}\n'
@@ -919,6 +922,10 @@ def pf_effects(shorts):
                  + '\t\t\tpmr_pf_rescan = yes\n'
                  + ('\t\t\tremove_variable = pmr_pfk\n' if PF_CHECK else '')
                  + '\t\t}\n\t\tremove_variable = pmr_pfq\n\t}\n}\n\n' + pf_sums_effects(shorts))
+        return ''.join(o)
+    if PTERM_OFF:   # the player's averages only (rules review item C, Pat 2026-11-12 14:29Z)
+        o.append('pmr_pf_all = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
+                 + ''.join(f'\t\tpmr_pf_{b} = yes\n' for b in shorts) + '\t}\n}\n')
         return ''.join(o)
     o.append('pmr_pf_all = {\n\tif = {\n\t\tlimit = { is_player = yes }\n'
              + ''.join(f'\t\tpmr_pf_{b} = yes\n' for b in shorts) + '\t}\n\telse = {\n'
@@ -2381,6 +2388,10 @@ PROFIT_TYPES = set()
 PF_SUMS = False
 PF_SYNC = set()
 PF_CHECK = False
+# PTERM_OFF (rules review item C, Pat 2026-11-12 14:29Z; generate.py sets it, with PF_SUMS off): no ai_value adds
+# pmr_ai_pt_<b>, so profit counts once, the engine's own; the floor stays. Only the player's country takes the averages
+# (pmr_pf_<b>): pmr_ai_pt_<b> stays for the Policies tab, which adds the player's term back to the weight it shows.
+PTERM_OFF = False
 # LEAN_CHARTS (generate.py sets it): the contributors charts' count (pmr_pc_record, eight sweeps of the country's
 # buildings and one of its companies) runs weekly only while the Private tab was shown in the last PC_SEEN_DAYS
 # days, else every fourth week, which keeps the By owner share the bylaws read (bylaws.pmr_bl_private,
@@ -2546,7 +2557,8 @@ def patch_ai_value(text, owners, invest):
                          f'\t\t\tvalue = {e}\n\t\t}}\n' for j, e in enumerate(EARNINGS_LADDER))
         pf = ''
         if k in PROFIT_TYPES:
-            extra += f'\tadd = pmr_ai_pt_{b}\n\tmin = {AI_FLOOR}\n'
+            # PTERM_OFF: the term leaves the ai_value (rules review item C, Pat 2026-11-12 14:29Z), the floor stays
+            extra += ('' if PTERM_OFF else f'\tadd = pmr_ai_pt_{b}\n') + f'\tmin = {AI_FLOOR}\n'
             pf = (f'pmr_ai_pt_{b} = {{\n\tvalue = 0\n\tif = {{\n\t\tlimit = {{ owner ?= {{ has_variable = pmr_pterm_{b} }} }}\n'
                   f'\t\tvalue = owner.var:pmr_pterm_{b}\n\t}}\n}}\n')
         # Expanded Works multiplies the whole value at its end. The value before it is its own script value,

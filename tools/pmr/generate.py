@@ -342,6 +342,12 @@ RESEARCH_OTHER = {}   # building short name -> unlock keys of its recipes that a
 # saw (the state kept its last pmr_level_<b>). Test builds log PMR;rec=PFSUM monthly.
 PF_SUMS = False
 PF_SYNC = set()   # short names of the types whose pmr_best_<b> calls pmr_pf_sync_<b> (tick_effect fills it)
+# PTERM_OFF (rules review item C, Pat 2026-11-12 14:29Z): pmr_ai_pt_<b> leaves every type's ai_value, so the engine's own
+# profit and output terms for the state it scores count once. The AI countries' averaging that only fed it stops
+# (pmr_pfa_<b>, and PF_SUMS' running sums, which this turns off); the player's country keeps its averages for the
+# Policies tab (private_investment.pf_effects) and the PF line, and the tab adds the player's term back to the weight
+# it shows (methods_view_effects), so its numbers stay as before.
+PTERM_OFF = False
 # QUIET_TICK: an AI building's monthly update with nothing open, queued or moved since its last accounting ends after
 # the ownership read and the trade-off step: every later step of pmr_tick_body_<b> tests one of the same facts and
 # would skip its part. Test builds count them (PMR;rec=QUIET monthly).
@@ -1449,6 +1455,8 @@ def main():
     ap.add_argument('--direct-watch', action='store_true', help='WATCH_DIRECT (performance review 11)')
     ap.add_argument('--research-map', action='store_true', help='RESEARCH_MAP (performance review 12)')
     ap.add_argument('--pf-sums', action='store_true', help='PF_SUMS (performance review 12)')
+    ap.add_argument('--no-pterm', action='store_true',
+                    help='PTERM_OFF (rules review item C): no country-average profit term in the ai_values')
     ap.add_argument('--quiet-tick', action='store_true', help='QUIET_TICK (performance review 12)')
     ap.add_argument('--value-reads', type=int, default=None, choices=(0, 1, 2),
                     help='VALUE_READS (performance review 12): 1 checks plain reads of the books against the ladders '
@@ -1462,6 +1470,7 @@ def main():
     args = ap.parse_args()
     global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD, SOLO_GATE, SWITCH_QUICK, WATCH_DIRECT
     global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS, LEAN_CHARTS
+    global PTERM_OFF
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD
     RELEASE = args.release
     if args.solo is not None:
@@ -1479,7 +1488,8 @@ def main():
         PROFIT_RECHECK_SPREAD = args.window_spread
     WATCH_DIRECT = WATCH_DIRECT or args.direct_watch
     RESEARCH_MAP = RESEARCH_MAP or args.research_map
-    PF_SUMS = PF_SUMS or args.pf_sums
+    PTERM_OFF = PTERM_OFF or args.no_pterm
+    PF_SUMS = (PF_SUMS or args.pf_sums) and not PTERM_OFF   # PTERM_OFF: no AI term left to keep sums for
     QUIET_TICK = QUIET_TICK or args.quiet_tick
     if args.value_reads is not None:
         VALUE_READS = args.value_reads
@@ -2662,6 +2672,7 @@ def main():
     # pmr_retool_buildings.txt written above (company ai_value; the Re-invest card's retool multiplier).
     private_investment.PROFIT_TYPES = set(pick_ui)   # their ai_value follows their average profit (Pat 21:10Z)
     private_investment.PF_SUMS, private_investment.PF_SYNC = PF_SUMS, set(PF_SYNC)
+    private_investment.PTERM_OFF = PTERM_OFF
     private_investment.PF_CHECK = PF_SUMS and not RELEASE
     private_investment.LEAN_CHARTS = LEAN_CHARTS
     loc += private_investment.write_all(game, write, header, args.out)
@@ -7666,7 +7677,15 @@ def methods_view_effects(recipe_keys, pair_ui=None, ai=None, parts=None, compani
         if bk in ai:
             sv = lambda n: f'pmr_mv_{n}_{b}'   # noqa: E731
             snap = (f'\t\t\tset_variable = {{ name = {sv("pt")} value = {"pmr_ai_pre_" if tail else "pmr_ai_value_"}{b} }}\n'
-                    f'\t\t\tset_variable = {{ name = {sv("wb")} value = var:{sv("pt")} }}\n'
+                    # PTERM_OFF (rules review item C, Pat 2026-11-12 14:29Z): the ai_value has no term; the weight
+                    # shown adds the player's (pmr_ai_pt_<b>) before the floor, and the Focus factor applies to that
+                    # sum, as the ai_value did, so the tab's numbers stay
+                    + ((f'\t\t\tchange_variable = {{ name = pmr_mv_aiv_{b} divide = var:{sv("pt")} }}\n' if tail else '')
+                       + f'\t\t\tchange_variable = {{ name = {sv("pt")} add = pmr_ai_pt_{b} }}\n'
+                       f'\t\t\tchange_variable = {{ name = {sv("pt")} max = {private_investment.AI_FLOOR} }}\n'
+                       + (f'\t\t\tchange_variable = {{ name = pmr_mv_aiv_{b} multiply = var:{sv("pt")} }}\n' if tail else '')
+                       if PTERM_OFF else '')
+                    + f'\t\t\tset_variable = {{ name = {sv("wb")} value = var:{sv("pt")} }}\n'
                     + (f'\t\t\tchange_variable = {{ name = {sv("wb")} subtract = var:{sv("pfd")} }}\n' if fd else '')
                     + f'\t\t\tset_variable = {{ name = {sv("pworks")} value = 0 }}\n'
                     # what Expanded Works multiplies onto the card's weight: (total / before - 1) x the card's part
