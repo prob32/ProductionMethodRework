@@ -301,6 +301,24 @@ SWITCH_QUICK = False
 # pmr_price_<good> copies) with the bounds, without the state's copy and its day guard; pmr_profit_<b> and the
 # trade-offs read their own copies as before. The same prices.
 WATCH_DIRECT = False
+# Fundamentals review (2026-11-12; Pat 03:46Z, decision card "Both, window first"): the investment window. A
+# building looks at its recipe when it has a reason to: news (a technology its rules name, a new level, electricity
+# or a railway, a law: all of them already run pmr_profit_<b> at once), its books (the conditions that end the solo
+# gate: a loss, a subsidy, too few staff), and the re-check timer (pmr_pchk_<b>, PROFIT_RECHECK_DAYS: the window).
+# pmr_moved_<b>'s price and wage watch then runs only while a switching bar is filling, so a pick still has to hold
+# at every update of its bar, as now. Needs SOLO_GATE 3 or more: a solo building's re-check is the light one.
+#   0  off: the watch at every update
+#   1  AI buildings; a player's building and one the player owns levels in abroad keep the watch (their cards
+#      show every figure), so nothing changes on screen
+#   2  every building; pmr_wl_<b> counts a player's building's months to its next look, for the panel
+# Between looks a building whose bar is not filling reads its books at each update: their profit per level at full
+# staffing (pmr_bx, as pmr_bpl_<b>) against the figure last noted (pmr_bxh/bxl_<b>: PRICE_MOVE either side, and
+# BOOKS_MOVE_ABS for a figure near nothing). A solo building whose books moved refreshes its investment score
+# (pmr_lite_<b>, which no longer keeps price bounds); any other building looks at its recipe when its books change
+# sign. (Looking whenever the books moved was replayed too: no better than a shorter timer, left out.)
+# Test builds add door (the books opened a look) and bar (the watch ran for a filling bar) to the SOLO line.
+INVEST_WINDOW = 0
+BOOKS_MOVE_ABS = 10
 # Performance review 12 (2026-11-11; Pat 17:29Z: "a full review of where else we can save on performance ... through
 # restructuring and otherwise clever scripting and better engine leverage for outcomes"). Each switch is off by default
 # (= the q102 output) and stands alone.
@@ -1421,6 +1439,13 @@ def main():
                     help='the solo gate (SOLO_GATE): 0 off, 1 no wage watch for a building with nothing to choose, '
                          '2 a light refresh on a price move, 3 a light re-check too')
     ap.add_argument('--quick-switch', action='store_true', help='SWITCH_QUICK (performance review 11)')
+    ap.add_argument('--window', type=int, default=None, choices=(0, 1, 2),
+                    help='the investment window (INVEST_WINDOW): 1 AI buildings look at their recipe on news, on '
+                         'their books and at the re-check only, 2 a player\'s buildings too; needs --solo 3')
+    ap.add_argument('--window-days', type=int, default=None, metavar='DAYS',
+                    help='the re-check timer in days (PROFIT_RECHECK_DAYS, 182)')
+    ap.add_argument('--window-spread', type=int, default=None, metavar='DAYS',
+                    help='the days the re-check timers are spread over, in 7 steps (PROFIT_RECHECK_SPREAD, 60; a multiple of 6)')
     ap.add_argument('--direct-watch', action='store_true', help='WATCH_DIRECT (performance review 11)')
     ap.add_argument('--research-map', action='store_true', help='RESEARCH_MAP (performance review 12)')
     ap.add_argument('--pf-sums', action='store_true', help='PF_SUMS (performance review 12)')
@@ -1437,10 +1462,21 @@ def main():
     args = ap.parse_args()
     global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD, SOLO_GATE, SWITCH_QUICK, WATCH_DIRECT
     global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS, LEAN_CHARTS
+    global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD
     RELEASE = args.release
     if args.solo is not None:
         SOLO_GATE = args.solo
     SWITCH_QUICK = SWITCH_QUICK or args.quick_switch
+    if args.window is not None:
+        INVEST_WINDOW = args.window
+    if INVEST_WINDOW and SOLO_GATE < 3:
+        raise SystemExit('--window needs --solo 3: a solo building\'s re-check is the light one')
+    if INVEST_WINDOW:
+        SOLO_COUNTS = SOLO_COUNTS + ('door', 'bar')
+    if args.window_days is not None:
+        PROFIT_RECHECK_DAYS = args.window_days
+    if args.window_spread is not None:
+        PROFIT_RECHECK_SPREAD = args.window_spread
     WATCH_DIRECT = WATCH_DIRECT or args.direct_watch
     RESEARCH_MAP = RESEARCH_MAP or args.research_map
     PF_SUMS = PF_SUMS or args.pf_sums
@@ -5206,6 +5242,10 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + vanilla_score(bk, b, econ, goods_cost, setv, v)
              + pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v)
              + solo_flag
+             + ('' if not INVEST_WINDOW else
+                '\t# the investment window: the books this run read, for the books watch (pmr_moved_<b>)\n'
+                f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_bpl_{b} }}\n' + books_bounds(b, '\t\t') + '\t}\n'
+                f'\telse_if = {{ limit = {{ has_variable = pmr_bxh_{b} }} remove_variable = pmr_bxh_{b} remove_variable = pmr_bxl_{b} }}\n')
              + '\t# what this run used, for the monthly check (pmr_moved_<b>): each price and the wage, PRICE_MOVE either side\n'
              + ''.join(f'\tset_variable = {{ name = pmr_px{e}_{g}_{b} value = var:pmr_px_{g} }}\n'
                        f'\tchange_variable = {{ name = pmr_px{e}_{g}_{b} multiply = {fmt(1 + s * PRICE_MOVE)} }}\n'
@@ -5256,20 +5296,31 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                 f'{ind}\tif = {{ limit = {{ {xm_moved} }} {then} }}\n'
                 + (f'{ind}\telse = {{\n' + other(ind + '\t\t') + f'{ind}\t}}\n' if other else '')
                 + f'{ind}}}\n{ind}else = {{\n' + old(ind + '\t') + f'{ind}}}\n')
+    def books_now(ind):
+        """pmr_bx: the books' weekly profit per level at full staffing, now (as pmr_bpl_<b>; the caller has seen staff)"""
+        return (f'{ind}b:{bk} = {{ save_temporary_scope_as = pmr_bk }}\n{ind}pmr_read_books_po = yes\n'
+                f'{ind}set_variable = {{ name = pmr_bx value = var:pmr_bk_p }}\n'
+                f'{ind}change_variable = {{ name = pmr_bx divide = var:pmr_bk_o }}\n'
+                f'{ind}change_variable = {{ name = pmr_bx divide = var:{v("pmr_level")} }}\n')
+    books_moved = (f'OR = {{ NOT = {{ has_variable = pmr_bxh_{b} }} var:pmr_bx >= var:pmr_bxh_{b} '
+                   f'var:pmr_bx <= var:pmr_bxl_{b} }}')
     solo_watch = ''
     sgc = (lambda n: f'pmr_sgc_{n} = yes') if SOLO_GATE and not RELEASE else (lambda n: '')   # the SOLO line's counts
     if SOLO_GATE:
         # the engine's books say when the gate ends: the building's owner, staff, subsidy, profit and earnings, the
         # conditions pmr_wage_<b> and pmr_ok read off them. Then prices alone: a full run (1) or the light one (2, 3)
         on_move = 'set_variable = pmr_pmv' if SOLO_GATE == 1 else f'pmr_lite_{b} = yes'
-        prices = watch('\t\t\t', on_move) if goods and SOLO_GATE < 4 else ''
+        prices = watch('\t\t\t', on_move) if goods and SOLO_GATE < 4 and not INVEST_WINDOW else ''
+        if INVEST_WINDOW:   # the books watch instead: the investment score follows the books
+            prices = books_now('\t\t\t') + f'\t\t\tif = {{ limit = {{ {books_moved} }} pmr_lite_{b} = yes }}\n'
         recheck = '' if SOLO_GATE < 3 else (
             f'\t\telse_if = {{\n\t\t\tlimit = {{ NOT = {{ has_variable = pmr_pchk_{b} }} }}\n'
             f'\t\t\tpmr_newest_{b} = yes\n\t\t\tset_variable = {{ name = pmr_nel_{b} value = var:pmr_lsup }}\n'
             f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:{v("pmr_new_now")} = var:{now} }}\n'
             + (f'\t\t\t\t{sgc("held")}\n' if sgc('held') else '')
-            + ready('\t\t\t\t')
-            + f'\t\t\t\tpmr_lite_{b} = yes\n\t\t\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
+            + (ready('\t\t\t\t') + f'\t\t\t\tpmr_lite_{b} = yes\n' if not INVEST_WINDOW else
+               books_now('\t\t\t\t') + f'\t\t\t\tif = {{ limit = {{ {books_moved} }} pmr_lite_{b} = yes }}\n')
+            + f'\t\t\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
             f'\t\t\t\trandom_list = {{ {spread} }}\n\t\t\t}}\n'
             f'\t\t\telse = {{ remove_variable = {solo} }}\n\t\t}}\n')
         solo_watch = (f'\telse_if = {{\n\t\tlimit = {{ has_variable = {solo} }}\n'
@@ -5285,12 +5336,37 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         return (f'{ind}pmr_wage_{b} = yes\n'
                 f'{ind}if = {{ limit = {{ OR = {{ var:pmr_wg_{b} >= var:pmr_wgh_{b} var:pmr_wg_{b} <= var:pmr_wgl_{b} }} }} '
                 'set_variable = pmr_pmv }\n')
+    if INVEST_WINDOW:
+        # the investment window: the watch runs for a filling bar (and, at 1, for a player's figures); any other
+        # building asks the engine's books, the conditions that end the solo gate, where its last run read them in
+        # the black, and then waits for its re-check
+        mine = '' if INVEST_WINDOW >= 2 else f'owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} '
+        the_watch = (
+            f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ {mine}AND = {{ has_variable = {v("pmr_swd")} NOT = {{ var:{v("pmr_swd")} = 0 }} }} }} }}\n'
+            + (f'\t\t\t{sgc("bar")}\n' if sgc('bar') else '')
+            + (watch('\t\t\t', 'set_variable = pmr_pmv', wage_watch) if goods else
+               '\t\t\tif = { limit = { always = yes }\n' + wage_watch('\t\t\t\t') + '\t\t\t}\n')
+            + '\t\t}\n'
+            # the books' doors. In the black at the last run: a subsidy, too few staff or a losing week. At a loss:
+            # a week in the black. Each closes with the run it opens (pmr_wage_<b> reads pmr_bpl_<b> or sets pmr_bsx_<b>)
+            f'\t\telse_if = {{\n\t\t\tlimit = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 NOT = {{ has_variable = pmr_bsx_{b} }} '
+            f'exists = b:{bk} b:{bk} = {{ OR = {{ is_subsidized = yes occupancy < {fmt(BOOKS_OCC)} '
+            f'AND = {{ weekly_profit <= {fmt(-BOOKS_PROFIT[0])} earnings >= {fmt(BOOKS_EARN[0])} }} }} }} }}\n'
+            '\t\t\tset_variable = pmr_pmv\n'
+            + (f'\t\t\t{sgc("door")}\n' if sgc('door') else '') + '\t\t}\n'
+            f'\t\telse_if = {{\n\t\t\tlimit = {{ has_variable = pmr_bpl_{b} var:pmr_bpl_{b} < 0 exists = b:{bk} '
+            f'b:{bk} = {{ is_subsidized = no occupancy >= {fmt(BOOKS_OCC)} weekly_profit >= {fmt(BOOKS_PROFIT[0])} '
+            f'earnings >= {fmt(BOOKS_EARN[0])} }} }}\n'
+            '\t\t\tset_variable = pmr_pmv\n'
+            + (f'\t\t\t{sgc("door")}\n' if sgc('door') else '') + '\t\t}\n')
+    else:
+        the_watch = (watch('\t\t', 'set_variable = pmr_pmv', wage_watch) if goods else
+                     '\t\tif = { limit = { always = yes }\n' + wage_watch('\t\t\t') + '\t\t}\n')
     o.append(f'pmr_moved_{b} = {{\n'
              f'\tif = {{\n\t\tlimit = {{ OR = {{ NOT = {{ has_variable = pmr_pmb_{b} }} NOT = {{ var:pmr_pmb_{b} = {len(goods) + PROFIT_RULE} }} }} }}\n'
              '\t\tset_variable = pmr_pmv\n\t}\n' + solo_watch + '\telse = {\n'
              + (f'\t\t{sgc("watch")}\n' if sgc('watch') else '')
-             + (watch('\t\t', 'set_variable = pmr_pmv', wage_watch) if goods else
-                '\t\tif = { limit = { always = yes }\n' + wage_watch('\t\t\t') + '\t\t}\n')
+             + the_watch
              + '\t}\n}\n\n')
 
     # pmr_best_<b>: the target candidate every tick reads (pmr_best_now), the cached pick
@@ -5329,12 +5405,17 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + f'\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
              f'\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
              f'\t\trandom_list = {{ {spread} }}\n'
-             f'\t\tif = {{\n\t\t\tlimit = {{ {first} }}\n\t\t\tset_variable = pmr_pmkt_{b}\n'
+             + (f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} '
+                f'set_variable = {{ name = pmr_wl_{b} value = {round(PROFIT_RECHECK_DAYS / 30.4)} }} }}\n' if INVEST_WINDOW >= 2 else '')
+             + f'\t\tif = {{\n\t\t\tlimit = {{ {first} }}\n\t\t\tset_variable = pmr_pmkt_{b}\n'
              '\t\t\tset_variable = pmr_sw_inst  # the first pick at market prices stands at once (pmr_switch)\n'
              f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=first_month" }}\n\t\t}}\n'
              f'\t\telse_if = {{ limit = {{ has_variable = pmr_pmv owner = {{ is_player = yes }} }} debug_log = "{line};why=price" }}\n'
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              '\tif = { limit = { has_variable = pmr_pmv } remove_variable = pmr_pmv }\n'
+             + (f'\tif = {{ limit = {{ has_variable = pmr_month has_variable = pmr_wl_{b} owner = {{ is_player = yes }} }} '
+                f'change_variable = {{ name = pmr_wl_{b} subtract = {TICK_EVERY} }} '
+                f'change_variable = {{ name = pmr_wl_{b} max = 0 }} }}\n' if INVEST_WINDOW >= 2 else '')
              + f'\tpmr_switch_{b} = yes\n'
              + (f'\tif = {{ limit = {{ NOT = {{ AND = {{ has_variable = pmr_pfx_l_{b} var:pmr_pfx_l_{b} = var:{v("pmr_level")} '
                 f'var:pmr_pfx_v_{b} = var:{v("pmr_pvs")} }} }} }} pmr_pf_sync_{b} = yes }}'
@@ -5344,6 +5425,18 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     if SOLO_GATE >= 2:
         o.append(lite_effect(bk, b, econ, goods, goods_cost, setv, v))
     return switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + ''.join(pre) + ''.join(o)
+
+
+def books_bounds(b, ind):
+    """pmr_bxh_<b> and pmr_bxl_<b>: pmr_bpl_<b> with PRICE_MOVE of its size and BOOKS_MOVE_ABS either side (INVEST_WINDOW)"""
+    return (f'{ind}set_variable = {{ name = pmr_t value = var:pmr_bpl_{b} }}\n'
+            f'{ind}if = {{ limit = {{ var:pmr_t < 0 }} change_variable = {{ name = pmr_t multiply = -1 }} }}\n'
+            f'{ind}change_variable = {{ name = pmr_t multiply = {fmt(PRICE_MOVE)} }}\n'
+            f'{ind}change_variable = {{ name = pmr_t add = {BOOKS_MOVE_ABS} }}\n'
+            f'{ind}set_variable = {{ name = pmr_bxh_{b} value = var:pmr_bpl_{b} }}\n'
+            f'{ind}change_variable = {{ name = pmr_bxh_{b} add = var:pmr_t }}\n'
+            f'{ind}set_variable = {{ name = pmr_bxl_{b} value = var:pmr_bpl_{b} }}\n'
+            f'{ind}change_variable = {{ name = pmr_bxl_{b} subtract = var:pmr_t }}\n')
 
 
 def lite_effect(bk, b, econ, goods, goods_cost, setv, v):
@@ -5376,6 +5469,8 @@ def lite_effect(bk, b, econ, goods, goods_cost, setv, v):
         bounds = ('\tif = {\n\t\tlimit = { exists = scope:pmr_xmo }\n'
                   + bound(lambda g: f'scope:pmr_xmo.var:pmr_mpx_{g}', '\t\t')
                   + '\t}\n\telse = {\n' + bounds.replace('\n\t', '\n\t\t').replace('\t', '\t\t', 1) + '\t}\n')
+    if INVEST_WINDOW:   # no price watch for a solo building: the books watch's bounds instead
+        bounds = books_bounds(b, '\t')
     return (f'pmr_lite_{b} = {{\n' + ('' if RELEASE else '\tpmr_sgc_lite = yes\n')
             + f'\tb:{bk} = {{ save_temporary_scope_as = pmr_bk }}\n\tpmr_read_books_po = yes\n' + keep
             + f'\tset_variable = {{ name = pmr_bpl_{b} value = var:pmr_bk_p }}\n'
