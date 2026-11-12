@@ -67,6 +67,14 @@ Investment window (`PMR;rec=SOLO`, `PROFIT`, `DEFAULT`, `SWITCH_START`, `RETOOL_
 | Y5 | Only if the game runs on past 1837: runs.py compare with q105 | DEFAULT changes for the logged countries in q105's range | Far fewer: price-driven changes are being lost, not delayed |
 | Y6 | Build thread, before install | Without `--window` the generated mod equals q107's apart from the build stamp | Passed 2026-11-12 (dev 4029e78) |
 
+**Result (run q108-1, Great Britain to 1 Oct 1837; logs and verdicts in `/mnt/project-files/pmr/runs/logs/q108-1/README.md`):**
+G0-G5 passed and G6 was not taken. A mod-made group's employee multiplier halves every pop type within a month (G1),
+comes off at once (G2, rehiring stops near 89%) and is reached by a parent group's multiplier (G3). G3's shopkeeper
+ratio prints 0.25 only because its January count came before PMR's first retool; it is 3,250 of 6,500 slots. Y1 and Y3
+passed. Y2: `lite` was 0.61x q105's over March to December 1836, less saving than the half expected; `held` and `end`
+were near. Y4: the lines were present; RETOOL_LEVEL was 23 in 1836 against q105's 30, and 32 from January to September
+1837. Y5 was not run. Later test builds drop `--group-probe`.
+
 ## Earlier: administrations that wait for telephones (q107, test mod, K rows not yet run)
 
 From the build thread, after your q106 observer game (Great Britain given every technology): PMR put the Midlands
