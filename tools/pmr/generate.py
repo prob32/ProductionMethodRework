@@ -244,6 +244,7 @@ def is_automation(g):
 
 SPLIT_BARS = {}   # short name -> plain recipes of a split building: its bars read pmr_rs_<j> (recipe j's share), not pmr_sh_<i>
 RETOOL_COST = {}  # short name -> construction one retool level costs (pmr_retool_cost_<b>), for tooltips
+PROJECT_COST = {}  # (project, short name) -> construction one project level costs (pmr_<vp>_cost_<b>), for tooltips
 # Pat, 2026-10-18 14:48Z: every automation method pays for itself at 1836 wages with its goods at the +75%
 # price cap (buff_automation). Vanilla's lose GBP 220 to 900 a level a week there: they save 1,000 to 3,000
 # laborers, whose wage is about GBP 0.04 a week each. Each method now removes AUTOMATION_LABOUR_MULT times
@@ -255,6 +256,13 @@ AUTOMATION_PRICE_CAP = 1.75    # the game clamps prices to +75% (PRICE_LADDER)
 AUTOMATION_LABOUR_MULT = 1.5   # workforce removed, x vanilla's, to the nearest AUTOMATION_JOBS_STEP
 AUTOMATION_JOBS_STEP = 250
 AUTOMATION_GOODS_STEP = 0.1    # goods rounded down to this, never below it, so a method keeps its demand
+# Pat, 2026-11-12 16:10Z: "increase the amount of labor reduced so transport IS always more productive unless transport
+# is in shortage". RAILS only: a Rail Connection step (a rail track's rung, rail_track) cuts at least the laborers whose
+# wages pay for its goods at their base price in a low-wage state (RAIL_WAGE a week per 10,000 wage units, about the
+# lowest tenth of Great Britain's states in q109) at RAIL_THR throughput, to AUTOMATION_JOBS_STEP. Its goods stay as
+# buff_automation sized them at AUTOMATION_LABOUR_MULT, so the step saves more for the same transportation.
+RAIL_WAGE = 100
+RAIL_THR = 1.2
 # The profit calculation (Pat, 2026-10-18 17:06Z, for Company Culture's best-methods window; SUMMARY.md §3 of
 # /mnt/project-files/pmr/retool-profitability): each recipe's weekly profit per level at the state's prices,
 # wages at pmr_wage (AUTOMATION_WAGE until a measured local wage replaces it), the best one in pmr_pbest_<b>.
@@ -464,6 +472,14 @@ RAILS_TYPES = {}        # building type -> RailsType, filled by main() (rails_ty
 PAY_SCORE = False
 
 
+def rung_opens(rg):
+    """rg's opening conditions (state scope): its technologies on the owner, a railway, a power plant, no Industry Banned"""
+    opens = (['owner = { ' + ' '.join(f'has_technology_researched = {x}' for x in rg.techs) + ' }'] if rg.techs else [])
+    opens += (['var:pmr_rail = 1'] if rg.rail else []) + (['var:pmr_elec = 1'] if rg.power else [])
+    opens += (['owner = { NOT = { has_law_or_variant = law_type:law_industry_banned } }'] if rg.ib else [])
+    return ' '.join(opens)
+
+
 def rail_track(g):
     """a track a Rail Connection project buys (SPEC 5: Train Automation and Transportation); the rest are equipment"""
     return 'train_automation' in g or 'transportation' in g
@@ -565,6 +581,11 @@ def project_sites(b, vp):
     abroad, as the retool twin's (priv_slots, retool_buildings)"""
     return ([(f'priv{j}', rbx, j) for j, rbx in enumerate(priv_slots(b, vp), 1)]
             + [('gov', f'building_pmr_{vp}_gov_{b}', 0), ('gova', f'building_pmr_{vp}_gova_{b}', 0)])
+
+
+def rail_rungs():
+    """RAILS: any rung buys transportation (Rung.rail), so the pay test reads its state's own price (local_price_effect)"""
+    return any(rg.rail for rt in RAILS_TYPES.values() for rg in rt.rungs)
 
 
 def rails_names(rt):
@@ -692,7 +713,8 @@ def rails_effects(bk, b, rt, goods_cost):
                  f'\t\tif = {{ limit = {{ var:{n("room_gov")} > var:{n("gm_room")} }} {S(n("room_gov"), "var:" + n("gm_room"))} }}\n\t}}\n'
                  f'\t{S(n("cap_gov"), "var:" + n("q_gov"))}\n\t{C(n("cap_gov"), "add", "var:" + n("room_gov"))}\n'
                  + ('' if RELEASE else
-                    f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_{vp}_gate_{b} }} owner = {{ pmr_logged = yes }} }} '
+                    f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_{vp}_olog_{b} }} owner = {{ pmr_logged = yes }} }} '
+                    f'set_variable = pmr_{vp}_olog_{b} '
                     f'set_variable = {{ name = pmr_rl_t value = {{ value = var:{n("pay")} multiply = {PAY_TILT} }} }} '
                     f'debug_log = "PMR;rec=PROJECT_OPEN;date=[TimeKeeper.GetCurrentDate.GetString];'
                     f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
@@ -725,12 +747,16 @@ def rails_effects(bk, b, rt, goods_cost):
                  + f'\tif = {{\n\t\tlimit = {{ var:{n("pending")} <= 0 }}\n'
                  f'\t\t{S(n("seen_gov"), 0)}\n\t\t{S(n("seen_priv"), 0)}\n'
                  f'\t\tif = {{ limit = {{ has_variable = pmr_{vp}_gate_{b} }} remove_variable = pmr_{vp}_gate_{b} }}\n'
-                 f'\t\tif = {{ limit = {{ has_variable = {n("cap_gov")} }} remove_variable = {n("cap_gov")} }}\n'
+                 + ('' if RELEASE else f'\t\tif = {{ limit = {{ has_variable = pmr_{vp}_olog_{b} }} remove_variable = pmr_{vp}_olog_{b} }}\n')
+                 + f'\t\tif = {{ limit = {{ has_variable = {n("cap_gov")} }} remove_variable = {n("cap_gov")} }}\n'
                  '\t}\n}\n\n')
 
     # ---- the tallies ----
     # Levels first seen (game start, a new building): every level on the none, a new building's on the target rungs
     # (SPEC 8.3: new levels arrive equipped); project levels already built count for nothing, as the retool twin's.
+    # Pat, 2026-11-12 16:10Z, "some buildings need to start with transport connected": at game start (pmr_setup) a
+    # building whose first Rail Connection step is open there (a railway in the state, its owner has the technology)
+    # starts with every level on it.
     o.append(f'pmr_rl_reset_{b} = {{\n')
     for tr in rt.tracks:
         t = tr.t
@@ -740,7 +766,9 @@ def rails_effects(bk, b, rt, goods_cost):
                  + ''.join(f'\t{S(aw(t, r), r)}\n' for r in range(1, tr.R))
                  + f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_new_build_{b} }}\n'
                  + lookup(f'var:{at(t)}', list(range(tr.R)), lambda r, t=t: S(al(t, r), f'var:{lvl}'), '\t\t')
-                 + f'\t}}\n\telse = {{ {S(al(t, 0), "var:" + lvl)} }}\n')
+                 + f'\t}}\n' + (f'\telse_if = {{ limit = {{ has_global_variable = pmr_setup {rung_opens(tr.rungs[0])} }} '
+                                f'{S(al(t, 1), "var:" + lvl)} }}\n' if tr.kind == 'rc' else '')
+                 + f'\telse = {{ {S(al(t, 0), "var:" + lvl)} }}\n')
     for vp in rt.kinds:
         o.append(f'\tpmr_{vp}_read_{b} = yes\n'
                  f'\t{S(K(vp, "seen_gov"), "var:" + K(vp, "built_gov"))}\n\t{S(K(vp, "seen_priv"), "var:" + K(vp, "built_priv"))}\n'
@@ -857,7 +885,16 @@ def rails_effects(bk, b, rt, goods_cost):
     w_lab = rt.weight.get(frames.JOB_POP, 1.0)
     top = fmt(1 + PRICE_LADDER[-1] / 100)
     targets = sorted(rt.lab_of)
-    p = [f'pmr_rl_pay_{b} = {{\n'
+    tr_g = TRANSPORTATION if any(rg.rail and goods_cost.get(TRANSPORTATION) for rg in rt.rungs) else None
+    lpx = (f'\t# the state\'s own transportation price (local_price_effect), once a day\n'
+           f'\tif = {{ limit = {{ has_global_variable = pmr_setup }} {S("pmr_lpx_" + TRANSPORTATION, 1)} }}\n'
+           f'\telse_if = {{ limit = {{ NOT = {{ has_variable = pmr_lpxd_{TRANSPORTATION} }} }} pmr_lprice_{TRANSPORTATION} = yes '
+           f'set_variable = {{ name = pmr_lpxd_{TRANSPORTATION} value = yes days = 1 }} }}\n') if tr_g else ''
+    px = lambda g: f'pmr_lpx_{g}' if g == tr_g else f'pmr_px_{g}'   # noqa: E731
+    # an input at its top price refuses the rung, as a shortage would; transportation's is the state's own shortage
+    short = lambda g: (f'sg:{g} ?= {{ state_goods_has_local_goods_shortage = yes }}' if g == tr_g   # noqa: E731
+                       else f'var:pmr_px_{g} >= {top}')
+    p = [f'pmr_rl_pay_{b} = {{\n' + lpx +
          '\t# the target recipe\'s laborers a level (the pick before the first target)\n\tset_variable = { name = pmr_rl_l value = 0 }\n'
          f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_to_{b} }}\n'
          + lookup(f'var:pmr_to_{b}', targets, lambda q: S('pmr_rl_l', fmt(rt.lab_of[q])), '\t\t')
@@ -887,24 +924,39 @@ def rails_effects(bk, b, rt, goods_cost):
             sv, gd, ok = f'pmr_rl_sv_{t}_{r}', f'pmr_rl_gd_{t}_{r}', f'pmr_rl_ok_{t}_{r}'
             units = -sum(x * rt.weight.get(pop, 1.0) for pop, x in rg.skilled.items())
             costed = {g: q for g, q in rg.goods.items() if goods_cost.get(g)}
-            opens = (['owner = { ' + ' '.join(f'has_technology_researched = {x}' for x in rg.techs) + ' }'] if rg.techs else [])
-            opens += (['var:pmr_rail = 1'] if rg.rail else []) + (['var:pmr_elec = 1'] if rg.power else [])
-            opens += (['owner = { NOT = { has_law_or_variant = law_type:law_industry_banned } }'] if rg.ib else [])
+            opens = [rung_opens(rg)] if rung_opens(rg) else []
             capped = [g for g in sorted(rg.inputs) if goods_cost.get(g)]
             p.append(f'\t# rung {r}: {rg.key}\n'
                      f'\tset_variable = {{ name = {sv} value = {{ value = var:pmr_rl_left max = {fmt(rg.lab)} multiply = {fmt(w_lab)}'
                      + (f' add = {fmt(units)}' if abs(units) > 1e-9 else '') + ' multiply = var:pmr_wage divide = 10000 } }\n'
                      f'\tset_variable = {{ name = {gd} value = {{ value = 0'
-                     + ''.join(f' add = {{ value = var:pmr_px_{g} multiply = {fmt(q * goods_cost[g])} }}' for g, q in sorted(costed.items()))
+                     + ''.join(f' add = {{ value = var:{px(g)} multiply = {fmt(q * goods_cost[g])} }}' for g, q in sorted(costed.items()))
                      + ' multiply = var:pmr_thr } }\n'
                      f'\t{S(ok, 0)}\n'
                      f'\tset_variable = {{ name = pmr_rl_gn_{t}_{r} value = {{ value = var:{sv} subtract = var:{gd} }} }}\n'
                      f'\tset_variable = {{ name = pmr_rl_t value = {{ value = var:{gd} multiply = {fmt(STEP_PAY)} }} }}\n'
                      f'\tif = {{\n\t\tlimit = {{ ' + ' '.join(opens)
-                     + (' NOT = { OR = { ' + ' '.join(f'var:pmr_px_{g} >= {top}' for g in capped) + ' } }' if capped else '')
+                     + (' NOT = { OR = { ' + ' '.join(short(g) for g in capped) + ' } }' if capped else '')
                      + f' var:{sv} >= var:pmr_rl_t }}\n'
                      f'\t\t{S(ok, 1)}\n'
                      f'\t\tif = {{ limit = {{ var:pmr_rl_gn_{t}_{r} > var:pmr_rl_bg }} {S("pmr_rl_bt", r)} {S("pmr_rl_bg", f"var:pmr_rl_gn_{t}_{r}")} }}\n\t}}\n')
+            if r == 1:
+                # why the first rung is not offered, for the Automation bar's tooltip (Q110-CARD C4): 0 offered, 1 its
+                # technology, 2 no railway, 3 no power plant, 4 Industry Banned, 5 an input at its cap, 6 not profitable
+                why, chain = f'pmr_rl_why_{t}_{b}', []
+                if rg.techs:
+                    chain.append(('NOT = { owner = { ' + ' '.join(f'has_technology_researched = {x}' for x in rg.techs) + ' } }', 1))
+                if rg.rail:
+                    chain.append(('NOT = { var:pmr_rail = 1 }', 2))
+                if rg.power:
+                    chain.append(('NOT = { var:pmr_elec = 1 }', 3))
+                if rg.ib:
+                    chain.append(('owner = { has_law_or_variant = law_type:law_industry_banned }', 4))
+                if capped:
+                    chain.append(('OR = { ' + ' '.join(short(g) for g in capped) + ' }', 5))
+                p.append(f'\tif = {{ limit = {{ var:{ok} = 1 }} {S(why, 0)} }}\n'
+                         + ''.join(f'\telse_if = {{ limit = {{ {c} }} {S(why, k)} }}\n' for c, k in chain)
+                         + f'\telse = {{ {S(why, 6)} }}\n')
         p.append(f'\tif = {{ limit = {{ NOT = {{ has_variable = {at(t)} }} }} {S(at(t), 0)} }}\n'
                  f'\tif = {{ limit = {{ NOT = {{ var:{at(t)} = var:pmr_rl_bt }} }} {S(at(t), "var:pmr_rl_bt")} {rmfp} }}\n'
                  f'\t{S(ag(t), "var:pmr_rl_bg")}\n')
@@ -956,7 +1008,8 @@ def rails_tail(bk, b, rt):
                       + f";as{tr.t}=" + '/'.join(g(aw(tr.t, r)) for r in range(1, tr.R)) for tr in rt.tracks)
             + ''.join(f";{vp}_need={g(f'pmr_{vp}_need_{b}')};{vp}_built={g(f'pmr_{vp}_built_{b}')};{vp}_queued={g(f'pmr_{vp}_pending_{b}')}"
                       f";{vp}_pay={g(f'pmr_{vp}_pay_{b}')}" for vp in rt.kinds)
-            + f";lab={g(f'pmr_lbm_{b}')}" + (f";pol={g(f'pmr_polv_{b}')}" if any(abs(rg.pol) > 1e-9 for rg in rt.rungs) else ''))
+            + f";lab={g(f'pmr_lbm_{b}')}" + (f";pol={g(f'pmr_polv_{b}')}" if any(abs(rg.pol) > 1e-9 for rg in rt.rungs) else '')
+            + (f";ltr=[THIS.Var('pmr_lpx_{TRANSPORTATION}').GetValue|2]" if any(rg.rail for rg in rt.rungs) else ''))
     return o + (f'\tif = {{ limit = {{ has_variable = pmr_month NOT = {{ has_variable = pmr_rlog_{b} }} owner = {{ is_player = yes }} }} '
                 f'set_variable = {{ name = pmr_rlog_{b} value = yes days = 175 }} debug_log = "{line}" }}\n')
 
@@ -1740,12 +1793,14 @@ def buff_automation(game, p_srcs, groups, b_srcs):
         return AUTOMATION_PRICE_CAP * k * (sum(q * cost[g] for g, q in a.inputs.items())
                                            - sum(q * cost[g] for g, q in a.outputs.items() if q < 0))
 
+    rail_methods = {p for g, ps in groups.items() if is_automation(g) and rail_track(g) for p in ps} if RAILS else set()
+
     worst = {}   # method -> (wage units it saves where it saves least, where)
     for bk, where, base, autos in places:
         for key, wu in saved(base, autos).items():
             if key not in worst or wu < worst[key][0]:
                 worst[key] = (wu, f'{bk}: {where}')
-    rows, edits = [], {}
+    rows, edits, lab_over = [], {}, {}
     for key, (wu, where) in sorted(worst.items()):
         a = rec(key)
         bill = goods_bill(a)
@@ -1765,6 +1820,13 @@ def buff_automation(game, p_srcs, groups, b_srcs):
                      'employment_before': dict(a.employment),
                      'employment_after': {k2: jobs(v) for k2, v in a.employment.items()}})
         edits[key] = new_goods
+        lab_k = f'building_employment_{frames.JOB_POP}_add'
+        if key in rail_methods and a.employment.get(lab_k, 0) < 0:
+            need = (sum(q * cost[g] for g, q in new_goods.items()) * RAIL_THR * 10000
+                    / (RAIL_WAGE * weight[frames.JOB_POP]))
+            cut = max(-jobs(a.employment[lab_k]), math.ceil(need / AUTOMATION_JOBS_STEP) * AUTOMATION_JOBS_STEP)
+            lab_over[key] = -cut
+            rows[-1]['employment_after'][lab_k] = -cut
     # Rewrite the values in place: every other byte of the file stays vanilla's.
     for s in p_srcs:
         spans = []
@@ -1783,7 +1845,8 @@ def buff_automation(game, p_srcs, groups, b_srcs):
             for block in pdx.get_all(bm.value, 'level_scaled'):
                 for m in block.value:
                     if m.key and m.key.startswith('building_employment_'):
-                        spans.append((m, fmt(jobs(num(m.value, m.key)))))
+                        lab = key in lab_over and m.key == f'building_employment_{frames.JOB_POP}_add'
+                        spans.append((m, fmt(lab_over[key] if lab else jobs(num(m.value, m.key)))))
         if not spans:
             continue
         text, pos, out = s.text, 0, []
@@ -2611,6 +2674,7 @@ def main():
         costs.append(retool_values(b))
         rt = RAILS_TYPES.get(bk)
         for vp in (rt.kinds if rt else {}):   # RAILS: the New Equipment and Rail Connection projects (SPEC 5)
+            PROJECT_COST[vp, b] = base_cost * PROJECT_SHARE / N
             costs.append(f'pmr_{vp}_cost_{b} = {fmt(base_cost * PROJECT_SHARE / N)}  # {rc.value} = {fmt(base_cost)} x {PROJECT_SHARE} / {N}')
             retools.append(retool_buildings(b, bk, icon, vp))
             triggers.append(retool_triggers(b, bk, vp))
@@ -3265,10 +3329,10 @@ def main():
     # bar, and the upgrade button goes left of nationalize. Expanded, each building's row is the
     # details panel's condensed_building_information, recipe row and button included.
     # (the second grid, buildings_production_method_item_potential, is shown nowhere: vanilla sets it visible = no)
-    write('gui/production_methods.gui', gate_type_copies(patch_type_row_buttons(patch_type_grids(
+    write('gui/production_methods.gui', gate_type_copies(patch_expanded_actions(patch_type_row_buttons(patch_type_grids(
         vanilla_gui('production_methods.gui'), dispatch, 'production_methods.gui', 3,
         replace={0: lambda bk, gind, vis: type_bar(bk, recipe_tex[bk])(bk, gind, vis)}, also=also, skip=(1,)),
-        dispatch)), bom=False)
+        dispatch), list(recipe_tex))), bom=False)
     # Building browser rows: the labour icon with the recipe bar beside it in the production method
     # column (220 wide), and the government upgrade button left of nationalize.
     browser_bars = ''.join(
@@ -3303,6 +3367,7 @@ def main():
     write('gui/goods_state_panel.gui', patch_building_grids(vanilla_gui('goods_state_panel.gui'), dispatch,
                                                             'goods_state_panel.gui', 1, also), bom=False)
     loc += panel_loc(bar_keys) + option_loc(opt_ui) + automation_loc(auto_ui) + pick_loc(pick_ui) + methods_view_loc(mv_keys, pair_ui, ai_of, ai_parts, opt_ui, auto_ui)
+    loc += automation_section_loc()
     loc += [' PMR_GOV_RETOOL_ALL:0 "Retool Government Levels"'] + GOV_ALL_LOC
     # Interface review 2026-11-11 (gui-review/SPEC.md P2, Pat's "All three" at 19:30Z): one game concept, the one place
     # the mechanic is explained, linked from the bar tooltips' "To retool" and the retool buttons' header only.
@@ -3647,6 +3712,30 @@ def price_effect(good):
             f'\tset_variable = {{ name = pmr_px_{good} value = 1 }}\n'
             f'\tif = {{\n\t\tlimit = {{ exists = scope:pmr_xmo }}\n\t\tpmr_xmkt_{good} = yes\n'
             f'\t\tset_variable = {{ name = pmr_px_{good} value = scope:pmr_xmo.var:pmr_mpx_{good} }}\n\t}}\n}}\n\n')
+
+
+def local_price_effect(good):
+    """State scope: pmr_lpx_<good>, a local good's price in this state as a multiple of its base price, read through
+    state_goods_pricier / _cheaper (in fractions: the PRICE probe read hardwood at +20% through them and nothing through
+    percent) and bisected to the PRICE_STEP nearest the price in about five comparisons, as q95 read local goods. RAILS
+    alone reads it, for transportation (Pat 2026-11-12 16:10Z: rail "always more productive unless transport is in
+    shortage", with Yorkshire's own price at -27% on screen): pmr_px_<good> stays the market's (q96)."""
+    half = PRICE_STEP / 200
+
+    def above(k):   # the price is at least k % off base, give or take half a step
+        if k > 0:
+            return f'sg:{good} = {{ state_goods_pricier > {fmt(k / 100 - half)} }}'
+        return f'NOT = {{ sg:{good} = {{ state_goods_cheaper > {fmt(-k / 100 + half)} }} }}'
+
+    def find(lo, hi, ind):   # above(PRICE_LADDER[lo]) holds
+        if lo == hi:
+            return f'{ind}set_variable = {{ name = pmr_lpx_{good} value = {fmt(1 + PRICE_LADDER[lo] / 100)} }}\n'
+        mid = (lo + hi + 1) // 2
+        return (f'{ind}if = {{ limit = {{ {above(PRICE_LADDER[mid])} }}\n' + find(mid, hi, ind + '\t')
+                + f'{ind}}}\n{ind}else = {{\n' + find(lo, mid - 1, ind + '\t') + f'{ind}}}\n')
+    return (f'pmr_lprice_{good} = {{\n\tif = {{\n\t\tlimit = {{ exists = sg:{good} }}\n'
+            + find(0, len(PRICE_LADDER) - 1, '\t\t')
+            + f'\t}}\n\telse = {{ set_variable = {{ name = pmr_lpx_{good} value = 1 }} }}\n}}\n\n')
 
 
 # Pat, 2026-10-19 02:32Z: "why are the pm options negative but the buildings profitable?" The profit calculation paid
@@ -6532,6 +6621,7 @@ def shared_effects(price_goods=()):
     once = ''.join(f'\t\tif = {{ limit = {{ {supply_test(bk)} }} set_variable = {{ name = {var} value = 1 }} }}\n'
                    f'\t\telse = {{ set_variable = {{ name = {var} value = 0 }} }}\n' for bk, var in SUPPLY)
     out = (''.join(price_effect(g) for g in price_goods) + (books_effect() if PROFIT_TARGET else '')
+           + (local_price_effect(TRANSPORTATION) if rail_rungs() else '')
            + '# State scope. pmr_elec: 1 while the state has a power plant, pmr_rail: 1 while it has a railway (SUPPLY;\n'
            '# electricity and transportation are local goods, so only the state\'s own count). The state\'s turn sets\n'
            '# them from the test it makes anyway to tick each building type (pmr_state_tick, power plants and railways\n'
@@ -8203,16 +8293,16 @@ def country_var(b, name):
     return f"GetPlayer.MakeScope.Var('{name}_{b}').GetValue"
 
 
-def stacked_bar(b, textures, size, icon, ind, var=None, tips=None):
+def stacked_bar(b, textures, size, icon, ind, var=None, tips=None, frame=False):
     """A recipe bar in the style of vanilla's Owners bar (building_ownership_stacked_barchart): one
     slice per recipe, oldest on the left, as wide as that recipe's share of the levels
     (layoutstretchfactor_horizontal, as vanilla sizes owners), coloured by its tier (TIER_COLORS),
     with the recipe's icon centred on it once the slice is over RECIPE_ICON_SHARE. var(name) reads a
     PMR variable (one building's state by default); tips are (visible, tooltip key) hover areas."""
     var = var or (lambda name: state_var(b, name))
-    retooling = f'NotZero_CFixedPoint({var("pmr_ui_retooling")})'
     if tips is None:
-        tips = [(retooling, f'PMR_BAR_TOOLTIP_{b}'), (f'Not({retooling})', 'PMR_BAR_FULL_TOOLTIP')]
+        # Q110-CARD C1: the bar's name and progress live only in its tooltip now, so it is the full one at rest too
+        tips = [(None, f'PMR_BAR_TOOLTIP_{b}')]
     slices = []
     for i, tex in enumerate(textures, 1):
         name, rgb = TIER_COLORS[i - 1]
@@ -8220,14 +8310,19 @@ def stacked_bar(b, textures, size, icon, ind, var=None, tips=None):
         slices.append((f'tier {i}, {name.lower()}', f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint)0')",
                        f"FixedPointToInt(Multiply_CFixedPoint({sh}, '(CFixedPoint)100'))",
                        f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint){RECIPE_ICON_SHARE}')", rgb, tex))
-    return slice_bar(slices, size, icon, ind, tips)
+    return slice_bar(slices, size, icon, ind, tips, frame)
 
 
-def slice_bar(slices, size, icon, ind, tips):
+BAR_FRAME = ('gfx/interface/progressbar/progressbar_frame.dds', 'Corneredstretched', 6, 3)   # vanilla's (progressbars.gui)
+
+
+def slice_bar(slices, size, icon, ind, tips, frame=False):
     """The Owners-style bar itself. slices are (comment, visible, stretch factor, icon visible,
-    colour, icon texture or None), left to right."""
+    colour, icon texture or None, or [(visible, texture)] for an icon that depends on more), left to right. frame puts
+    vanilla's progress bar frame over it (Q110-CARD C1), as default_progressbar_horizontal draws one."""
     items = []
     for comment, vis, stretch, icon_vis, (r, g, bl), tex in slices:
+        icons = tex if isinstance(tex, list) else ([(None, tex)] if tex else [])
         items.append(
             f'{ind}\t\t# {comment}\n'
             f'{ind}\t\thbox = {{\n'
@@ -8241,12 +8336,12 @@ def slice_bar(slices, size, icon, ind, tips):
             f'{ind}\t\t\t\tspriteborder = {{ 3 3 }}\n'
             f'{ind}\t\t\t\tusing = simple_frame_mask\n{ind}\t\t\t\tusing = progressbar_texture_properties\n'
             f'{ind}\t\t\t}}\n'
-            + (f'{ind}\t\t\ticon = {{\n'
-               f'{ind}\t\t\t\tvisible = "[{icon_vis}]"\n'
-               f'{ind}\t\t\t\tsize = {{ {icon} {icon} }}\n'
-               f'{ind}\t\t\t\talwaystransparent = yes\n'
-               f'{ind}\t\t\t\ttexture = "{tex}"\n'
-               f'{ind}\t\t\t}}\n' if tex else '')
+            + ''.join(f'{ind}\t\t\ticon = {{\n'
+                      f'{ind}\t\t\t\tvisible = "[{icon_vis if c is None else f"And({icon_vis}, {c})"}]"\n'
+                      f'{ind}\t\t\t\tsize = {{ {icon} {icon} }}\n'
+                      f'{ind}\t\t\t\talwaystransparent = yes\n'
+                      f'{ind}\t\t\t\ttexture = "{t}"\n'
+                      f'{ind}\t\t\t}}\n' for c, t in icons)
             + f'{ind}\t\t}}\n')
     return (f'{ind}widget = {{\n'
             f'{ind}\tsize = {{ {size[0]} {size[1]} }}\n'
@@ -8259,7 +8354,11 @@ def slice_bar(slices, size, icon, ind, tips):
             f'{ind}\t\tmargin = {{ 1 1 }}\n'
             + ''.join(items) +
             f'{ind}\t}}\n'
-            f'{ind}\t# hover areas\n'
+            + (f'{ind}\twidget = {{\n{ind}\t\tsize = {{ 100% 100% }}\n{ind}\t\talwaystransparent = yes\n'
+               f'{ind}\t\tbackground = {{\n{ind}\t\t\ttexture = "{BAR_FRAME[0]}"\n{ind}\t\t\tspriteType = {BAR_FRAME[1]}\n'
+               f'{ind}\t\t\tspriteborder = {{ {BAR_FRAME[2]} {BAR_FRAME[2]} }}\n{ind}\t\t\ttexture_density = 2\n'
+               f'{ind}\t\t\tmargin = {{ {BAR_FRAME[3]} {BAR_FRAME[3]} }}\n{ind}\t\t}}\n{ind}\t}}\n' if frame else '')
+            + f'{ind}\t# hover areas\n'
             + ''.join(f'{ind}\twidget = {{\n' + (f'{ind}\t\tvisible = "[{vis}]"\n' if vis else '')
                       + f'{ind}\t\tsize = {{ 100% 100% }}\n{ind}\t\ttooltip = "{key}"\n{ind}\t\tusing = tooltip_above\n{ind}\t}}\n'
                       for vis, key in tips)
@@ -8337,7 +8436,7 @@ def switch_row(slots, sw, swd, swto, x, w, h, size, y, ind, tip, room=1):
 GOV_ABROAD_CLICKS = 8   # most government retool levels one click queues abroad; more take another click
 
 
-def gov_button(b, size, ind, place=''):
+def gov_button(b, size, ind, place='', tip='tooltip_ne', icon='80%'):
     """The government upgrade button: queues every government retool level the building still
     needs (pmr_gov_retool_<b>_sgui). Greyed out unless the government has room left, which needs
     government-owned levels still to retool. At home the scripted GUI queues them; abroad (pmr_abroad_<b>,
@@ -8367,10 +8466,10 @@ def gov_button(b, size, ind, place=''):
                 f'{ind}\tenabled = {enabled}\n'
                 + ''.join(f'{ind}\tonclick = "[{c}]"\n' for c in clicks) +
                 f'{ind}\ttooltip = "{tooltip}"\n'
-                f'{ind}\tusing = tooltip_ne\n'
+                f'{ind}\tusing = {tip}\n'
                 f'{ind}\tusing = confirm_button_sound\n'
                 f'{ind}\tblockoverride "icon" {{\n{ind}\t\ttexture = "{GOV_RETOOL_ICON}"\n{ind}\t}}\n'
-                f'{ind}\tblockoverride "icon_size" {{\n{ind}\t\tsize = {{ 80% 80% }}\n{ind}\t}}\n'
+                f'{ind}\tblockoverride "icon_size" {{\n{ind}\t\tsize = {{ {icon} {icon} }}\n{ind}\t}}\n'
                 f'{ind}}}\n')
 
     def room_is(n):
@@ -8392,85 +8491,67 @@ def gov_button(b, size, ind, place=''):
     return out
 
 
-ROW_X, ROW_W = 6, 287   # the recipe row: from the panel's left edge to 12 px short of the employment bar
-# Pat, 2026-10-13: as tall as the cash reserves bar looks. That bar is 26 px in a frame that shows
-# about 3 px either side, so the recipe bar is 32 px, centred on it (y 34..60 in the 60 px row).
-RECIPE_BAR_Y, RECIPE_BAR_H, RECIPE_BAR_ICON = 31, 32, 26
+# Pat, 2026-11-12 16:13Z ("our PM1 and PM2 lines up with our labor and cash reserves ... make the bars the same size so
+# they're symmetrical"), as the interface review laid it out (/mnt/project-files/pmr/ui/Q110-CARD.md C1): the method
+# bars are vanilla's employment and cash column (building_progressbars: 230 x 26, spacing 8, centred on the 80 px row,
+# 5 px from the panel's edge) mirrored, 5 px from the left edge, with vanilla's bar frame on top. One bar centres on the
+# pair as vanilla's own column would. Bars under the row keep the column: 230 x 26, BAR_GAP apart.
+BAR_X, BAR_W, BAR_H, BAR_GAP, BAR_ICON = 5, 230, 26, 8, 22
+ROW_X, ROW_W = BAR_X, BAR_W   # the switching row (New Default) in the same column
 
 
-def recipe_bar(bk, b, textures):
-    """The recipe bar for one building type, in the details panel's row left of the employment and
-    cash-reserve bars (230 wide, 5 from the right edge of the 540 px panel). Pat, 2026-10-13: no goods
-    icon in front, so the row runs from the left edge: x 6..293. The top row holds the recipe's name
-    and, against the employment bar, the government upgrade button; below it the stacked recipe bar,
-    as tall as the cash reserves bar looks (RECIPE_BAR_H). The same row shows in the Buildings tab
-    when a building type is expanded (vanilla's condensed_building_information is both)."""
-    retooling = f'NotZero_CFixedPoint({state_var(b, "pmr_ui_retooling")})'
-    # Q105-FEEDBACK N5: "0% on Bronze Cannons" sat over a bar all of the method the building runs; the plain title
-    # stays until a level has moved, and the retooling tooltip shows from the start
-    moved = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_p')}, '(CFixedPoint)0.005')"
+def bar_row(bk, bars, recipe=''):
+    """The details panel's PMs row for one building type: up to two bars in a column at BAR_X, level with the employment
+    bar and the cash reserves bar, the first the recipe bar (recipe, its gui) when given. bars are (slices, tooltip)."""
     ind = '\t\t\t\t\t'
-    return f"""
-				# PMR: recipe bar and government upgrade button for {bk}
-				widget = {{
-					visible = "[{is_type(bk)}]"
-					position = {{ {ROW_X} 0 }}
-					size = {{ {ROW_W} 60 }}
-					parentanchor = vcenter
-
-					textbox = {{
-						visible = "[Not({retooling})]"
-						size = {{ {ROW_W - 34} 26 }}
-						align = left|nobaseline
-						elide = right
-						text = "PMR_RECIPE_BAR_TITLE"
-						tooltip = "PMR_BAR_FULL_TOOLTIP"
-						using = tooltip_above
-					}}
-					textbox = {{
-						visible = "[And({retooling}, Not({moved}))]"
-						size = {{ {ROW_W - 34} 26 }}
-						align = left|nobaseline
-						elide = right
-						text = "PMR_RECIPE_BAR_TITLE"
-						tooltip = "PMR_BAR_TOOLTIP_{b}"
-						using = tooltip_above
-					}}
-					textbox = {{
-						visible = "[And({retooling}, {moved})]"
-						size = {{ {ROW_W - 34} 26 }}
-						align = left|nobaseline
-						elide = right
-						text = "PMR_RECIPE_BAR_TITLE_RETOOLING_{b}"
-						tooltip = "PMR_BAR_TOOLTIP_{b}"
-						using = tooltip_above
-					}}
-{gov_button(b, 30, ind, f'{ind}\tposition = {{ {ROW_W - 30} -2 }}\n')}
-					widget = {{
-						position = {{ 0 {RECIPE_BAR_Y} }}
-						size = {{ {ROW_W} {RECIPE_BAR_H} }}
-{stacked_bar(b, textures, ('100%', '100%'), RECIPE_BAR_ICON, ind + chr(9))}					}}
-				}}
-"""
+    i2 = ind + '\t\t'
+    slots = ([recipe] if recipe else []) + [slice_bar(sl, ('100%', '100%'), BAR_ICON, i2 + '\t', [(None, tip)], frame=True)
+                                             for sl, tip in bars]
+    return (f'\n\t\t\t\t# PMR: method bars of {bk}\n\t\t\t\twidget = {{\n{ind}visible = "[{is_type(bk)}]"\n'
+            f'{ind}size = {{ {BAR_X + BAR_W} 80 }}\n'
+            f'{ind}flowcontainer = {{\n{ind}\tposition = {{ {BAR_X} 0 }}\n{ind}\tparentanchor = vcenter\n'
+            f'{ind}\tdirection = vertical\n{ind}\tspacing = {BAR_GAP}\n'
+            + ''.join(f'{ind}\twidget = {{\n{i2}size = {{ {BAR_W} {BAR_H} }}\n' + gui + f'{ind}\t}}\n' for gui in slots[:2])
+            + f'{ind}}}\n\t\t\t\t}}\n')
 
 
-# Pat, 2026-10-13: a second stacked bar under the recipe bar for each second group PMR blends,
-# one row per group: the trade-offs mixed by local prices, and plantation treatment set by the
-# workforce's acceptance. The bar lines up under the recipe bar; the leading option and its share
-# sit in the employment bars' column beside it.
-OPTION_ROW_H, OPTION_BAR_H, OPTION_BAR_ICON = 26, 22, 18
+def recipe_bar(bk, b, textures, second=None):
+    """The recipe bar for one building type, beside the details panel's employment bar, and the type's first
+    second-group bar (second, (slices, tooltip) from second_bars) beside the cash reserves bar (bar_row). Pat,
+    2026-11-12 16:12Z ("we have hover overs and icons, we don't need to explain everything in words"): no recipe name
+    above the bar, and 16:13Z: the government upgrade button moved to the action row (patch_action_buttons). The
+    same row shows in the Buildings tab when a building type is expanded (vanilla's condensed_building_information
+    is both)."""
+    return bar_row(bk, [second] if second else [],
+                   stacked_bar(b, textures, ('100%', '100%'), BAR_ICON, '\t\t\t\t\t\t\t\t', frame=True))
+
+
+# Pat, 2026-10-13: a second stacked bar under the recipe bar for each second group PMR blends: the trade-offs mixed by
+# local prices, and plantation treatment set by the workforce's acceptance. 2026-11-12 16:12Z: no group name beside it
+# (the hover names it), and the first of them sits beside the cash reserves bar (recipe_bar).
 OPTION_ICON_SHARE = 25      # an option's slice shows its icon above this share, as on the recipe bar
 
 
-def option_bars(bk, groups, ind):
-    """The details panel's option rows for one building type, at indent ind. groups are (gi, mode,
-    none key, none texture, [Option]) per converted group."""
+def second_bars(bk, auto=None, groups=()):
+    """A building type's second-group bars in the order the card shows them, as (slices, tooltip) for slice_bar: the
+    automation bar first (AUTO_COLORS), then one bar per converted option group. auto is (group, levels) from auto_ui;
+    groups are (gi, mode, none key, none texture, [Option]) from opt_ui."""
     b = short(bk)
     x = lambda name: state_var(b, name)    # noqa: E731
     gt = lambda e, n: f"GreaterThan_CFixedPoint({e}, '(CFixedPoint){n}')"    # noqa: E731
-    i2, i3 = ind + '\t\t', ind + '\t\t\t'
-    rows = []
-    for gi, mode, none, none_tex, os_ in groups:
+    bars = []
+    if auto:
+        _group, levels = auto
+        slices = []
+        for a, (key, tex, _) in enumerate(levels, 1):
+            # the least automated level is always the palest and the most automated the darkest
+            name, rgb = AUTO_COLORS[round((a - 1) * (len(AUTO_COLORS) - 1) / max(1, len(levels) - 1))]
+            sh = x(f'pmr_ash_{a}')
+            slices.append((f'{key}, {name.lower()}', gt(sh, 0),
+                           f"FixedPointToInt(Multiply_CFixedPoint({sh}, '(CFixedPoint)100'))",
+                           gt(sh, RECIPE_ICON_SHARE), rgb, tex))
+        bars.append((slices, f'PMR_AUTO_TOOLTIP_{b}'))
+    for gi, _mode, none, none_tex, os_ in groups:
         def piece(name, comment, rgb, tex):
             e = x(name)
             return (comment, gt(e, 0), f'FixedPointToInt({e})', gt(e, OPTION_ICON_SHARE), rgb, tex)
@@ -8478,53 +8559,27 @@ def option_bars(bk, groups, ind):
         for k, o in enumerate(os_):
             name, rgb = OPTION_COLORS[k % len(OPTION_COLORS)]
             slices.append(piece(f'pmr_x_{o.j}', f'{o.key}, {name.lower()}', rgb, o.texture))
-        tip = f'PMR_OPT_TOOLTIP_{b}_{gi}'
-        rows.append(
-            f'{ind}\twidget = {{\n{i2}size = {{ @panel_width {OPTION_ROW_H} }}\n'
-            f'{i2}widget = {{\n{i3}position = {{ {ROW_X} {(OPTION_ROW_H - OPTION_BAR_H) // 2} }}\n'
-            f'{i3}size = {{ {ROW_W} {OPTION_BAR_H} }}\n'
-            + slice_bar(slices, ('100%', '100%'), OPTION_BAR_ICON, i3, [(None, tip)])
-            + f'{i2}}}\n'
-            # Pat, 2026-10-13: a fixed name, vanilla's own for the group (Hardwood Production,
-            # Secondary, Luxury Production, Working Conditions), not the leading option's
-            + f'{i2}textbox = {{\n'
-            f'{i3}position = {{ {ROW_X + ROW_W + 12} 0 }}\n'
-            f'{i3}size = {{ 223 {OPTION_ROW_H} }}\n'
-            f'{i3}align = left|nobaseline\n{i3}elide = right\n'
-            f'{i3}text = "{os_[0].group}"\n{i3}tooltip = "{tip}"\n'
-            f'{i3}using = tooltip_above\n{i2}}}\n'
-            + f'{ind}\t}}\n')
-    return (f'{ind}# PMR: second groups of {bk}\n'
+        bars.append((slices, f'PMR_OPT_TOOLTIP_{b}_{gi}'))
+    return bars
+
+
+def more_bars(bk, bars, ind):
+    """The details panel's rows for a type's second-group bars after those in the PMs row, at indent ind: the column's
+    bars, BAR_GAP under the bar above (Q110-CARD C1)."""
+    if not bars:
+        return ''
+    i2 = ind + '\t\t'
+    rows = ''.join(f'{ind}\twidget = {{\n{i2}size = {{ @panel_width {BAR_H + BAR_GAP} }}\n'
+                   f'{i2}widget = {{\n{i2}\tposition = {{ {BAR_X} 0 }}\n{i2}\tsize = {{ {BAR_W} {BAR_H} }}\n'
+                   + slice_bar(slices, ('100%', '100%'), BAR_ICON, i2 + '\t', [(None, tip)], frame=True)
+                   + f'{i2}}}\n{ind}\t}}\n'
+                   for slices, tip in bars)
+    return (f'{ind}# PMR: more second-group bars of {bk}\n'
             f'{ind}flowcontainer = {{\n{ind}\tvisible = "[{is_type(bk)}]"\n{ind}\tdirection = vertical\n'
-            + ''.join(rows) + f'{ind}}}\n')
+            + rows + f'{ind}}}\n')
 
 
-def automation_bar(bk, group, levels, ind):
-    """The details panel's automation row for one building type (AUTO_COLORS), laid out as an option row."""
-    b = short(bk)
-    x = lambda name: state_var(b, name)    # noqa: E731
-    i2, i3 = ind + '\t\t', ind + '\t\t\t'
-    slices = []
-    for a, (key, tex, _) in enumerate(levels, 1):
-        # the least automated level is always the palest and the most automated the darkest
-        name, rgb = AUTO_COLORS[round((a - 1) * (len(AUTO_COLORS) - 1) / max(1, len(levels) - 1))]
-        sh = x(f'pmr_ash_{a}')
-        slices.append((f'{key}, {name.lower()}', f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint)0')",
-                       f"FixedPointToInt(Multiply_CFixedPoint({sh}, '(CFixedPoint)100'))",
-                       f"GreaterThan_CFixedPoint({sh}, '(CFixedPoint){RECIPE_ICON_SHARE}')", rgb, tex))
-    tip = f'PMR_AUTO_TOOLTIP_{b}'
-    return (f'{ind}# PMR: automation bar of {bk}\n'
-            f'{ind}widget = {{\n{ind}\tvisible = "[{is_type(bk)}]"\n{ind}\tsize = {{ @panel_width {OPTION_ROW_H} }}\n'
-            f'{ind}\twidget = {{\n{i2}position = {{ {ROW_X} {(OPTION_ROW_H - OPTION_BAR_H) // 2} }}\n'
-            f'{i2}size = {{ {ROW_W} {OPTION_BAR_H} }}\n'
-            + slice_bar(slices, ('100%', '100%'), OPTION_BAR_ICON, i2, [(None, tip)])
-            + f'{ind}\t}}\n'
-            f'{ind}\ttextbox = {{\n{i2}position = {{ {ROW_X + ROW_W + 12} 0 }}\n{i2}size = {{ 223 {OPTION_ROW_H} }}\n'
-            f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "{group}"\n{i2}tooltip = "{tip}"\n'
-            f'{i2}using = tooltip_above\n{ind}\t}}\n{ind}}}\n')
-
-
-SW_ROW_H, SW_BAR_H = OPTION_ROW_H, OPTION_BAR_H   # the details panel's switching row, as tall as an option row
+SW_ROW_H, SW_BAR_H = BAR_H + BAR_GAP, BAR_H   # the details panel's switching row: the column's bar, BAR_GAP below
 SWITCH_ICONS = {}   # building type -> its switching bar's target icons (switch_targets), filled by main()
 
 
@@ -9213,11 +9268,11 @@ def automation_loc(auto_ui):
     return loc
 
 
-def patch_option_bars(text, opt_ui, auto_ui=None, pick_ui=None):
+def patch_option_bars(text, opt_ui, auto_ui=None, pick_ui=None, in_row=None):
     """building_details_panel.gui: an empty block at the end of condensed_building_information,
-    filled only by the details panel's own instance, so the Buildings tab rows stay as they are.
-    The automation bars come first, right under the recipe bar."""
-    auto_ui, pick_ui = auto_ui or {}, pick_ui or {}
+    filled only by the details panel's own instance, so the Buildings tab rows stay as they are: the switching row,
+    then the second-group bars the recipe row has no slot for (in_row, building type -> how many it shows)."""
+    auto_ui, pick_ui, in_row = auto_ui or {}, pick_ui or {}, in_row or {}
     if not opt_ui and not auto_ui and not pick_ui:
         return text
     end = '\t\t\t}\n\t\t}\n\t}\n\n\ttype building_type_nationalize_button = '
@@ -9235,8 +9290,9 @@ def patch_option_bars(text, opt_ui, auto_ui=None, pick_ui=None):
             '\t\t\t\tflowcontainer = {\n\t\t\t\t\tdirection = vertical\n\t\t\t\t\tignoreinvisible = yes\n'
             '\t\t\t\t\tmargin_bottom = 4\n'
             + ''.join(pick_row(bk, '\t\t\t\t\t') for bk in pick_ui)
-            + ''.join(automation_bar(bk, group, levels, '\t\t\t\t\t') for bk, (group, levels) in auto_ui.items())
-            + ''.join(option_bars(bk, groups, '\t\t\t\t\t') for bk, groups in opt_ui.items())
+            + ''.join(more_bars(bk, second_bars(bk, auto_ui.get(bk), opt_ui.get(bk, ()))[in_row.get(bk, 0):],
+                                '\t\t\t\t\t')
+                      for bk in [*auto_ui, *(bk for bk in opt_ui if bk not in auto_ui)])
             + '\t\t\t\t}\n\t\t\t}\n' + text[at:])
 
 
@@ -9277,7 +9333,7 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, p
     buildings = list(recipe_tex)
     # 0. The "less" modifiers out of the icon row and the Modifiers tab, and goods at 0 out of the Process lists
     # (method-count rework, Pat's q99 screenshots).
-    text = patch_zero_rows(hide_less_icons(text, 'building_details_panel.gui'))
+    text = patch_zero_rows(hide_less_icons(automation_section(move_vacancies(text)), 'building_details_panel.gui'))
     if modifiers_gui is not None:
         text = patch_modifier_list(text, modifiers_gui, cut_goods)
     # 1. The production method row: no grid on a PMR building type, and nothing in its place (Pat,
@@ -9300,9 +9356,16 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, p
     if text.count(anchor) != 1:
         raise SystemExit(f'building_details_panel.gui: expected one {anchor.strip()!r}, found '
                          f'{text.count(anchor)}; the panel changed in this build, update patch_building_panel')
-    text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk]) for bk in buildings))
-    text = patch_input_mults(text)
-    return patch_option_bars(patch_owners(text, recipe_tex), opt_ui or {}, auto_ui or {}, pick_ui or {})
+    # A type with a recipe bar shows its first second-group bar beside it; a type without one (AUTO_BEST, also) shows
+    # its first two in the recipe bar's two slots.
+    opt_ui, auto_ui = opt_ui or {}, auto_ui or {}
+    seconds = {bk: second_bars(bk, auto_ui.get(bk), opt_ui.get(bk, ())) for bk in [*buildings, *auto_ui, *opt_ui]}
+    in_row = {bk: (1 if bk in recipe_tex else 2) for bk in seconds}
+    text = text.replace(anchor, anchor + ''.join(recipe_bar(bk, short(bk), recipe_tex[bk], (seconds[bk] or [None])[0])
+                                                 for bk in buildings)
+                        + ''.join(bar_row(bk, seconds[bk][:2]) for bk in seconds if bk not in recipe_tex and seconds[bk]))
+    text = patch_action_buttons(patch_input_mults(text), buildings)
+    return patch_option_bars(patch_owners(text, recipe_tex), opt_ui, auto_ui, pick_ui or {}, in_row)
 
 
 # The "less" modifiers (frames.py) are timed modifiers on the building, and the game lists every timed modifier a
@@ -9532,6 +9595,172 @@ def patch_owners(text, recipe_tex):
 
 
 BROWSER_EXTRA = 35  # px the building browser grows by, for the government upgrade button
+
+
+def gov_slot(buildings, size, ind, tip='tooltip_ne', icon='80%'):
+    """The government upgrade button of each building type in buildings (gov_button), in one size x size slot that a
+    layout skips on other types."""
+    return (f'{ind}# PMR: government upgrade button\n{ind}widget = {{\n{ind}\tvisible = "[{any_type(buildings)}]"\n'
+            f'{ind}\tsize = {{ {size} {size} }}\n'
+            + ''.join(f'{ind}\twidget = {{\n{ind}\t\tvisible = "[{is_type(bk)}]"\n{ind}\t\tsize = {{ {size} {size} }}\n'
+                      + gov_button(short(bk), size, ind + '\t\t', f'{ind}\t\t\tparentanchor = center\n', tip, icon)
+                      + f'{ind}\t}}\n' for bk in buildings)
+            + f'{ind}}}\n')
+
+
+def move_vacancies(text):
+    """building_details_panel.gui: the Vacancies section below the Owners (Pat, 2026-11-12 16:15Z), on every building:
+    vanilla's header, empty state and list, cut from above the Owners and put back after the Owners and the
+    workforce-ownership line that stands in for them."""
+    head, owners = '\t\t### VACANCIES\n', '\t\t### DETAILED BUILDING OWNERSHIP\n'
+    after = '\t\tdivider_clean = {\n\t\t\tvisible = "[Or(Building.IsSubsistenceBuilding, Building.IsUrbanCenter )]"\n'
+    if any(text.count(a) != 1 for a in (head, owners, after)) or not text.index(head) < text.index(owners) < text.index(after):
+        raise SystemExit('building_details_panel.gui: Vacancies, Owners and the subsistence divider are no longer in that '
+                         'order; update move_vacancies')
+    a, b = text.index(head), text.index(owners)
+    vac = text[a:b].rstrip('\n') + '\n\n\n'
+    text = text[:a] + text[b:]
+    at = text.index(after)
+    return text[:at] + vac + text[at:]
+
+
+# Q110-CARD C4 (Pat 2026-11-12 16:20Z): an Automation section where Vacancies stood, on the step types (RAILS): one bar
+# from hand labor to the building fully automated, each slice measured in the laborers its levels' steps take off.
+AUTO_SECTION_COLORS = {'hand': (0.32, 0.33, 0.35), 'eq': (0.38, 0.58, 0.36), 'rc': (0.36, 0.53, 0.72)}
+AUTO_SECTION_ICON, AUTO_SECTION_SHARE = 32, 0.08
+LABORERS_ICON = 'gfx/interface/icons/pops_icons/laborers.dds'
+
+
+def automation_parts(rt):
+    """GUI expressions (Building context) of rt's Automation bar: {part: laborers off}, with 'whole' the building on the
+    top rung of every track, and the laborers its steps take off now ('cut')"""
+    b = rt.b
+    al = lambda t, r: f"Building.GetState.MakeScope.Var('pmr_al_{t}_{r}_{b}').GetValue"   # noqa: E731
+    mul = lambda e, x: f"Multiply_CFixedPoint({e}, '(CFixedPoint){fmt(x)}')"   # noqa: E731
+    parts = {}
+    for kind in ('eq', 'rc'):
+        terms = [mul(al(tr.t, rg.r), rg.lab) for tr in rt.tracks if tr.kind == kind for rg in tr.rungs if rg.lab]
+        if terms:
+            e = terms[0]
+            for x in terms[1:]:
+                e = add_fp(e, x)
+            parts[kind] = e
+    top = sum(tr.rungs[-1].lab for tr in rt.tracks)
+    parts['whole'] = mul(f"Building.GetState.MakeScope.Var('pmr_level_{b}').GetValue", top)
+    cut = None
+    for kind in ('eq', 'rc'):
+        if kind in parts:
+            cut = parts[kind] if cut is None else add_fp(cut, parts[kind])
+    parts['cut'] = cut or "'(CFixedPoint)0'"
+    hand = parts['whole']
+    for kind in ('eq', 'rc'):
+        if kind in parts:
+            hand = f'Subtract_CFixedPoint({hand}, {parts[kind]})'
+    parts['hand'] = hand
+    return parts
+
+
+def automation_bar_gui(bk, ind):
+    """bk's Automation bar (slice_bar at the Owners bar's size): hand labor, machines, rail, left to right"""
+    rt = RAILS_TYPES[bk]
+    parts = automation_parts(rt)
+    gt0 = lambda e: f"GreaterThan_CFixedPoint({e}, '(CFixedPoint)0')"   # noqa: E731
+    big = lambda e: f"GreaterThan_CFixedPoint({e}, Multiply_CFixedPoint({parts['whole']}, '(CFixedPoint){AUTO_SECTION_SHARE}'))"   # noqa: E731
+    al = lambda t, r: f"Building.GetState.MakeScope.Var('pmr_al_{t}_{r}_{rt.b}').GetValue"   # noqa: E731
+    slices = [('hand labor, deep grey', gt0(parts['hand']), f"FixedPointToInt({parts['hand']})", big(parts['hand']),
+               AUTO_SECTION_COLORS['hand'], LABORERS_ICON)]
+    for kind, name in (('eq', 'machines, green'), ('rc', 'rail, steel blue')):
+        if kind not in parts:
+            continue
+        # the icon of the highest rung holding levels, the first track's before the second's
+        held = [(tr.t, rg) for tr in rt.tracks if tr.kind == kind for rg in reversed(tr.rungs)]
+        icons = []
+        for i, (t, rg) in enumerate(held):
+            c = gt0(al(t, rg.r))
+            if i:
+                c = f'And({c}, Not({any_of([gt0(al(t2, r2.r)) for t2, r2 in held[:i]])}))'
+            icons.append((c, rg.m.texture))
+        slices.append((name, gt0(parts[kind]), f'FixedPointToInt({parts[kind]})', big(parts[kind]),
+                       AUTO_SECTION_COLORS[kind], icons))
+    return (f'{ind}widget = {{\n{ind}\tvisible = "[{is_type(bk)}]"\n{ind}\tsize = {{ @panel_width 40 }}\n'
+            + slice_bar(slices, ('@panel_width', 40), AUTO_SECTION_ICON, ind + '\t', [(None, f'PMR_AUTOMATION_TT_{rt.b}')])
+            + f'{ind}}}\n')
+
+
+def automation_section(text):
+    """building_details_panel.gui, after move_vacancies: the Automation section where Vacancies stood, before the
+    Owners: vanilla's section header with vanilla's word (pmg_automation) and the type's bar, on the step types only"""
+    if not RAILS_TYPES:
+        return text
+    at = '\t\t### DETAILED BUILDING OWNERSHIP\n'
+    if text.count(at) != 1:
+        raise SystemExit('building_details_panel.gui: expected one Owners section; update automation_section')
+    ind = '\t\t\t\t'
+    sec = ('\t\t### PMR: AUTOMATION (step types)\n\t\tflowcontainer = {\n'
+           f'\t\t\tvisible = "[{any_type(list(RAILS_TYPES))}]"\n'
+           '\t\t\tusing = default_list_position\n\t\t\tdirection = vertical\n\t\t\tminimumsize = { @panel_width -1 }\n\n'
+           '\t\t\tdefault_header_2texts = {\n\t\t\t\tblockoverride "text1" {\n\t\t\t\t\ttext = "pmg_automation"\n'
+           '\t\t\t\t}\n\t\t\t}\n\n'
+           '\t\t\tflowcontainer = {\n\t\t\t\tmargin_top = 5\n\t\t\t\tmargin_bottom = 15\n\t\t\t\tparentanchor = hcenter\n'
+           + ''.join(automation_bar_gui(bk, ind) for bk in RAILS_TYPES)
+           + '\t\t\t}\n\t\t}\n\n')
+    return text.replace(at, sec + at)
+
+
+def automation_section_loc():
+    """PMR_AUTOMATION_TT_<b>: the Automation bar's tooltip (Q110-CARD C4): the laborers the steps take off, then a row a
+    rung holding levels, and for a track with none its first rung and why it is not offered (pmr_rl_why_<t>_<b>)"""
+    loc = []
+    why = {1: None, 2: '@lock! #N Requires a Railway#!', 3: '@lock! #N Requires a Power Plant#!',
+           4: '@lock! #N Banned by law#!', 5: '@warning! #N Input at price cap#!', 6: '@warning! #N Not profitable#!'}
+    for bk, rt in RAILS_TYPES.items():
+        b = rt.b
+        ex = lambda name: f"Building.GetState.MakeScope.Var('{name}').GetValue"   # noqa: E731
+        gtz = methods_row.gt
+        parts = automation_parts(rt)
+        rows = zrow(loc, f'PMR_AUTO_CUT_{b}', f"@laborers! #v [Multiply_CFixedPoint({parts['cut']}, '(CFixedPoint)-1')|K]#!",
+                    gtz(parts['cut'], 0.5))
+        body = ''
+        for tr in rt.tracks:
+            held = add_fp(*[ex(f'pmr_al_{tr.t}_{rg.r}_{b}') for rg in tr.rungs[:2]]) if len(tr.rungs) > 1 else ex(f'pmr_al_{tr.t}_1_{b}')
+            for rg in tr.rungs[2:]:
+                held = add_fp(held, ex(f'pmr_al_{tr.t}_{rg.r}_{b}'))
+            for rg in tr.rungs:
+                body += zrow(loc, f'PMR_AUTO_R_{b}_{tr.t}_{rg.r}',
+                             f"${rg.key}$ #v [{ex(f'pmr_al_{tr.t}_{rg.r}_{b}')}|0]#! of #v [{ex(f'pmr_level_{b}')}|0]#! levels",
+                             gtz(ex(f'pmr_al_{tr.t}_{rg.r}_{b}'), 0.5))
+            first = tr.rungs[0]
+            w = ex(f'pmr_rl_why_{tr.t}_{b}')
+            for k, text in why.items():
+                if k == 1:
+                    if not first.techs:
+                        continue
+                    text = f'@lock! #N Requires ${first.techs[0]}$#!'
+                cond = f"And(Not({gtz(held, 0.5)}), EqualTo_CFixedPoint({w}, '(CFixedPoint){k}'))"
+                body += zrow(loc, f'PMR_AUTO_W_{b}_{tr.t}_{k}', f'${first.key}$  {text}', cond)
+        loc.append(f' PMR_AUTOMATION_TT_{b}:0 "#header $pmg_automation$#!{rows}{TT_DELIM}{body}"')
+    return loc
+
+
+def patch_action_buttons(text, buildings):
+    """building_details_panel.gui: the government upgrade button in the details panel's action row, between
+    privatize and nationalize at their 35 px (Pat, 2026-11-12 16:13Z), where the recipe row's header held it before."""
+    old = '\t\t\t\tbuilding_privatize_toggle = {}\n'
+    if text.count(old) != 1:
+        raise SystemExit(f'building_details_panel.gui: expected one {old.strip()!r}, found {text.count(old)}; '
+                         'update patch_action_buttons')
+    return text.replace(old, old + '\n' + gov_slot(buildings, 35, '\t\t\t\t', 'tooltip_se', '77%'))
+
+
+def patch_expanded_actions(text, buildings):
+    """production_methods.gui: the same button in each building's row of an expanded building type on the Buildings
+    tab, whose action row vanilla leaves empty, at the row's 30 px."""
+    old = '\t\t\t\t\tblockoverride "action_buttons" {}\n\n\t\t\t\t\tblockoverride "extra_items_in_production_methods_list" {\n'
+    if text.count(old) != 1:
+        raise SystemExit(f'production_methods.gui: expected one empty action_buttons override, found {text.count(old)}; '
+                         'update patch_expanded_actions')
+    return text.replace(old, '\t\t\t\t\tblockoverride "action_buttons" {\n' + gov_slot(buildings, 30, '\t\t\t\t\t\t')
+                        + '\t\t\t\t\t}\n\n\t\t\t\t\tblockoverride "extra_items_in_production_methods_list" {\n')
 
 
 def patch_browser_actions(text, buildings):
@@ -9922,9 +10151,7 @@ def panel_loc(recipe_keys):
     concept linked from "To retool" and the buttons' header, and a greyed button says why."""
     new = "[Building.GetCustom('pmr_new_recipe')]"
     loc = [
-        f' PMR_RECIPE_BAR_TITLE:0 "#bold {new}#!"',
         ' PMR_OWNERS_PM_HEADER:0 "Production Method"',
-        f' PMR_BAR_FULL_TOOLTIP:0 "#v 100%#! on {new}"',
         ' PMR_TO_RETOOL:0 "To retool"',
         ' PMR_BAR_HEADER:0 "#header [Concept(\'concept_production_method\',\'$concept_production_methods|q$\')]#!"',
         f' PMR_GOV_RETOOL_NONE:0 "#header {RETOOL_LINK}#!{TT_DELIM}\\n@red_cross! #N No government levels to retool#!"',
@@ -9952,8 +10179,26 @@ def panel_loc(recipe_keys):
         cost = RETOOL_COST.get(b)
         price = f"  @construction! #v [Multiply_CFixedPoint({ex('pmr_room_gov')}, '(CFixedPoint){fmt(cost)}')|0]#!" if cost else ''
         head = f'#header {RETOOL_LINK}#!{TT_DELIM}\\n#v {var("pmr_room_gov", "0")}#! levels to {new}{price}'
+        rt = RAILS_TYPES.get(bk)
+        if rt:   # RAILS: the button queues the projects too (gov_open), so each project's room shows, rows at 0 left out
+            rows = zrow(loc, f'PMR_GOV_RT_{b}', f'#v {var("pmr_room_gov", "0")}#! levels to {new}{price}', gtz(ex('pmr_room_gov'), 0.5))
+            for vp, trs in rt.kinds.items():
+                room = f'pmr_{vp}_room_gov'
+                # Q110-CARD C2: the row names the step the levels go to (the track's target rung); a project that buys
+                # two tracks keeps its own name
+                step = PROJECT_NAMES[vp]
+                if len(trs) == 1:
+                    at = ex(f'pmr_at_{trs[0].t}')
+                    step = f"'{trs[0].rungs[-1].key}'"
+                    for rg in reversed(trs[0].rungs[:-1]):
+                        step = f"SelectLocalization(EqualTo_CFixedPoint({at}, '(CFixedPoint){rg.r}'), '{rg.key}', {step})"
+                    step = f'[{step}]' if len(trs[0].rungs) > 1 else f'${trs[0].rungs[0].key}$'
+                rows += zrow(loc, f'PMR_GOV_{vp.upper()}_{b}',
+                             f'#v {var(room, "0")}#! levels to {step}  @construction! '
+                             f"#v [Multiply_CFixedPoint({ex(room)}, '(CFixedPoint){fmt(PROJECT_COST[vp, b])}')|0]#!",
+                             gtz(ex(room), 0.5))
+            head = f'#header {RETOOL_LINK}#!{TT_DELIM}{rows}'
         loc += [
-            f' PMR_RECIPE_BAR_TITLE_RETOOLING_{b}:0 "#v {var("pmr_p", "%0")}#! on {new}"',
             f' PMR_BAR_TOOLTIP_{b}:0 "$PMR_BAR_HEADER${TT_DELIM}{tiers}'
             f"[SelectLocalization({gtz(ex('pmr_need'), 0.5)}, 'PMR_BAR_RT_{b}', 'PMR_EMPTY')]\"",
             f' PMR_GOV_RETOOL_TOOLTIP_{b}:0 "{head}\\n#instruction Click to queue#!"',
