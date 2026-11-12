@@ -29,6 +29,7 @@ What it does, building by building (see pmr/README.md for the design):
    The tick resets the frame only when the mix or a trade-off changes, and undoes any swap by the AI.
 3. Treatment shares keep their ladders, ``pm_pmr_x_<b>_<g>_<n>`` in ``pmg_pmr_x_<b>_<g>``, and count
    in the frame's mix; their 0% method is always open and the others unlock only while they run.
+   With ``--treat-mod`` (TREAT_MOD) they are building and state modifiers instead.
 4. Hidden pseudo-buildings retool one level each per completed level, at RETOOL_SHARE of the
    building's construction cost: RETOOL_SLOTS private ones, ``building_pmr_retool_<b>_<n>``, built
    by investors who own part of the building (with ABROAD_SLOT, that one only where the player owns
@@ -113,6 +114,12 @@ SHARE_STEPS = 100          # a recipe's share of the levels is blended in steps 
 TENS = list(range(0, SHARE_STEPS + 1, 10))
 UNITS = list(range(10))
 SHARE_DIGITS = False   # set by main()
+# Rules review item F, Treatment ladders as modifiers (Pat 2026-11-12 14:29Z, rules-review/HANDOFF.md F; --treat-mod):
+# the plantations' Treatment shares become modifiers pmr_frame_<b> sizes (frames.TREAT_MOD) and their ladders go. A
+# ladder's job lines stay methods, as no modifier moves jobs (q99, q100): Exploited Rollers' 1,000 laborers a level on
+# tobacco, in steps of TREAT_JOB_STEP points (250 laborers, the frames' JOB_STEP), the line alone.
+TREAT_MOD = False      # set by main()
+TREAT_JOB_STEP = 25
 
 
 def share_digits(stem, default_n, step=1):
@@ -1487,6 +1494,9 @@ def main():
     ap.add_argument('--bar-count', action='store_true', help='test build: the monthly BAR line (BAR_COUNT, rules review D)')
     ap.add_argument('--bar-clock', action='store_true', help='BAR_CLOCK (rules review D): the switching bar by the clock')
     ap.add_argument('--price-newest', action='store_true', help='PRICE_NEWEST (rules review E): price the newest runnable recipe too')
+    ap.add_argument('--treat-mod', action='store_true',
+                    help='TREAT_MOD (rules review item F): the plantations\' Treatment shares as building and state '
+                         'modifiers, without their ladders')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
@@ -1495,7 +1505,7 @@ def main():
     global RELEASE, SHARE_DIGITS, OBS_AB, OBS_PARTS_ON, OBS_PAD, SOLO_GATE, SWITCH_QUICK, WATCH_DIRECT
     global RESEARCH_MAP, PF_SUMS, QUIET_TICK, VALUE_READS, LEAN_CHECKS, LEAN_CHARTS
     global PTERM_OFF
-    global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD
+    global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD, TREAT_MOD
     global BAR_COUNT, BAR_CLOCK, PRICE_NEWEST, PROFIT_RULE
     RELEASE = args.release
     if args.solo is not None:
@@ -1530,6 +1540,11 @@ def main():
     if BAR_CLOCK or PRICE_NEWEST:
         PROFIT_RULE = 108   # rules review D and E: saves recompute once
     SHARE_DIGITS = args.digit_shares
+    TREAT_MOD = frames.TREAT_MOD = TREAT_MOD or args.treat_mod
+    if TREAT_MOD and SHARE_DIGITS:
+        raise SystemExit('--treat-mod keeps one method a share: not with --digit-shares')
+    if SHARE_STEPS % TREAT_JOB_STEP:
+        raise SystemExit(f'TREAT_JOB_STEP {TREAT_JOB_STEP} does not divide {SHARE_STEPS}')
     OBS_AB = args.obs_script_off
     OBS_PARTS_ON = args.obs_parts_off
     OBS_PAD = args.obs_pad
@@ -1856,11 +1871,11 @@ def main():
                 upm = pdx.get(o.node.value, 'unlocking_production_methods')
                 if er and upm and er.base.key in pdx.items(upm) and er.key not in pdx.items(upm):
                     o.src.inserts.append((upm.end - 1, f'\t{er.key}  # PMR: electric recipe\n\t'))
-        # The treatment share groups, last in the building's list.
+        # The treatment share groups, last in the building's list (TREAT_MOD: only a ladder of job lines, keeps_ladder).
         bsrc, bpg = next((t[2], t[5]) for t in treated if t[0] == bk)
         bsrc.inserts.append((bpg.end - 1, ''.join(
             f'\t{xg}  # PMR: share of {o.key}{part}\n\t'
-            for g, gi, mode, none, opts, std in conv if mode == 'treat' for o in opts
+            for g, gi, mode, none, opts, std in conv if mode == 'treat' for o in opts if keeps_ladder(o)
             for xg, part in ((f'pmg_pmr_x_{short(bk)}_{o.j}', ' (tens)' if SHARE_DIGITS else ''), (f'pmg_pmr_xu_{short(bk)}_{o.j}', ' (units)'))
             if SHARE_DIGITS or 'xu' not in xg)))
     report['options'] = [{'building': bk, 'group': g, 'mode': mode, 'none': none,
@@ -1961,6 +1976,7 @@ def main():
     less_all = (set(), set(), set())                     # goods in, goods out, pop types the "less" modifiers scale
     site_types = []    # every retool site type, hidden from the state Buildings tab
     blend_pms, blend_groups = [], []
+    treat_count = {'before': 0, 'after': 0}   # Treatment ladder methods with TREAT_MOD off, and as written
     triggers = []
     tick_effects, dispatch = [], []
     cost_values = {}
@@ -2163,12 +2179,20 @@ def main():
                     for o in opts]))
                 continue
             for o in opts:
-                live.append(frames.Live(o.j, o.mods))
+                live.append(frames.Live(o.j, o.mods, o.key, o.texture))
+                treat_count['before'] += SHARE_STEPS + 1
+                if not keeps_ladder(o):   # TREAT_MOD: its lines are modifiers (frames.treat_sizes)
+                    continue
+                treat_count['after'] += len(range(0, SHARE_STEPS + 1, opt_step(o)))
                 for sh, values, dv, _part in share_digits(f'pm_pmr_x_{b}_{o.j}', 0, opt_step(o)):
                     gs = sh.replace('pm_', 'pmg_', 1)
-                    ladder(sh, values, dv, o.share_body, o.texture,
+                    ladder(sh, values, dv, treat_job_body(o) if TREAT_MOD else o.share_body, o.texture,
                            lambda val, o=o: f'${o.key}$ ({val}% of the workforce)', (gs, f'${o.key}$ share'))
         fb = frames.Building(bk, g0, [r.key for r in recipes], fm, ogs, own, live, first=groups[g0][0])
+        if TREAT_MOD and live:
+            lost = set(frames.treat_plan(fb)[1]) - set(frames.frame_goods(fb)[1])
+            if lost:
+                raise SystemExit(f'TREAT_MOD: {bk} makes {sorted(lost)} by Treatment alone; no frame output to multiply')
         frames_of[bk] = fb
         FRAMES[bk] = fb
         for p, r in enumerate(recipes, 1):
@@ -2262,9 +2286,16 @@ def main():
         for path, text in frames.jobs_check_files(frames_of.values()):
             write(path, header + text)
     write('common/static_modifiers/pmr_less_modifiers.txt', header + frames.LESS_DOC + frames.static_modifiers(*less_all))
+    treat_blds = [fb for fb in frames_of.values() if fb.live] if TREAT_MOD else []
+    if treat_blds:
+        write('common/static_modifiers/pmr_treat_modifiers.txt', header + frames.TREAT_DOC
+              + frames.treat_static_modifiers(treat_blds))
     # the goods and job multipliers the engine knows only by pattern: vanilla declares some, Company Culture its own
     declared = company_culture.vanilla_modifier_types(game) | set(company_culture.goods_mults(cc_plan))
     less_types = frames.type_keys(*less_all, declared)
+    # TREAT_MOD: a Treatment good's output multiplier, where no "less" modifier declares it
+    less_types += [f'goods_output_{g}_mult' for g in sorted({g for fb in treat_blds for g in frames.treat_plan(fb)[1]})
+                   if f'goods_output_{g}_mult' not in declared and f'goods_output_{g}_mult' not in less_types]
     if args.frame_probe:
         # the jobs probe's own types, which the frames declare only with frames.JOB_LESS
         less_types += [t for t in sorted({t for t, _ in frame_probe.MODS.values()})
@@ -2278,6 +2309,7 @@ def main():
         # vanilla names every building_employment_<pop>_mult although it declares none
         named |= set(re.findall(r'^ ((?:goods|building_employment)_\w+_mult):', text, re.M))
     loc += frames.static_modifier_loc(*less_all) + frames.modifier_type_loc(less_types, add_names, named)
+    loc += frames.treat_loc(treat_blds)
     if args.frame_probe:
         probe_files, probe_loc = frame_probe.files(declared | set(less_types))
         for path, text in probe_files:
@@ -2291,6 +2323,14 @@ def main():
     report['frames'] = {'less_in': sorted(less_all[0]), 'less_out': sorted(less_all[1]), 'less_jobs': sorted(less_all[2]),
                         'types_added': less_types, 'unions': len(frame_pms),
                         'job_versions': sum(len(ks) for xr in frame_extras.values() for ks in xr.values())}
+    # rules review item F: the Treatment ladders' methods with TREAT_MOD off (before) and as written (after)
+    report['treat_mod'] = {'on': TREAT_MOD, 'ladder_methods': dict(treat_count),
+                           'ladder_groups': {'before': sum(1 for fb in frames_of.values() for _ in fb.live),
+                                             'after': len(blend_groups)},
+                           'modifiers': [line.split(':')[0].strip() for line in frames.treat_loc(treat_blds)],
+                           'job_ladders': [f'pmg_pmr_x_{short(bk)}_{o.j}' for bk, conv in options.items()
+                                           for _, _, mode, _, os_, _ in conv if mode == 'treat' for o in os_
+                                           if TREAT_MOD and keeps_ladder(o)]}
 
     # ---- companies: a company that owns a building type may own its private retooling ----------
     # When the investment pool builds a building type a company lists in building_types, the company
@@ -2446,7 +2486,9 @@ def main():
           '# Treatment share methods: pm_pmr_x_<b>_<option>_<n> carries the treatment\'s modifiers\n'
           + (f'# x n / {SHARE_STEPS}, n = 0, 10 .. 100; pm_pmr_xu_<b>_<option>_<u> its units, u = 0..9. Each\n'
              if SHARE_DIGITS else f'# x n / {SHARE_STEPS}, n = 0 .. {SHARE_STEPS}. Each but 0\n')
-          + '# unlocks only while it runs itself; the tick sets them with activate_production_method.\n\n'
+          + '# unlocks only while it runs itself; the tick sets them with activate_production_method.\n'
+          + (f'# TREAT_MOD: only a Treatment\'s job lines, n = 0 .. {SHARE_STEPS} in steps of {TREAT_JOB_STEP}; its other lines are\n'
+             '# the pmr_treat_ modifiers.\n' if TREAT_MOD else '') + '\n'
           + '\n'.join(blend_pms))
     write('common/production_method_groups/pmr_blend_groups.txt', header + '\n'.join(blend_groups))
     # q95: every good the profit pick or a trade-off prices, a traded one from its market's order book (market_read)
@@ -3244,8 +3286,26 @@ def throughput_keys(game, buildings):
 
 
 def opt_step(o):
-    """an option's share grain in points: a trade-off's OPT_STEP (Pat 2026-11-10), treatment's 1"""
-    return OPT_STEP if o.mode == 'market' else 1
+    """an option's share grain in points: a trade-off's OPT_STEP (Pat 2026-11-10), treatment's 1 (TREAT_MOD: its
+    job ladder's TREAT_JOB_STEP)"""
+    return OPT_STEP if o.mode == 'market' else TREAT_JOB_STEP if TREAT_MOD else 1
+
+
+def treat_jobs(o):
+    """TREAT_MOD: a Treatment option's job lines at 100%, all its ladder keeps (level_scaled building_employment_*)"""
+    return {k: x for k, x in o.mods.get(('building_modifiers', 'level_scaled'), {}).items()
+            if k.startswith('building_employment_') and abs(x) > 1e-9}
+
+
+def keeps_ladder(o):
+    return not TREAT_MOD or bool(treat_jobs(o))
+
+
+def treat_job_body(o):
+    """TREAT_MOD: body_of for a ladder carrying the option's job lines alone"""
+    jobs = treat_jobs(o)
+    return lambda f: ('\tbuilding_modifiers = {\n\t\tlevel_scaled = {\n'
+                      + ''.join(f'\t\t\t{k} = {fmt(x * f)}\n' for k, x in jobs.items()) + '\t\t}\n\t}\n')
 
 
 LOCAL_GOODS = ('services', 'transportation', 'electricity')   # local = yes: no market order book to share out
@@ -3642,7 +3702,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     # each option's tens (pmr_xqt, 0..10) and units (pmr_xqu, 0..9) of its share in % (pmr_x)
     halves = (('pmr_xqt', 'pmr_xat', 'x', 10, lambda d: 10 * d), ('pmr_xqu', 'pmr_xau', 'xu', 9, lambda d: d))
     # Method-count rework: only treatment runs share methods; a trade-off's shares are its frames (pmr_frame_<b>)
-    topts = [x for x in opts if x.mode == 'treat']
+    topts = [x for x in opts if x.mode == 'treat' and keeps_ladder(x)]   # TREAT_MOD: a job ladder alone
     o.append(f'pmr_xapply_{b} = {{\n')
     if not SHARE_DIGITS:   # one method per share
         # Review 8, R8-1: after a full read (pmr_xok_<b>) pmr_xa_<j> holds the share that runs, and only this effect
@@ -3694,7 +3754,9 @@ def option_effects(bk, b, conv, goods_cost, recipes):
                + ' '.join(f'NOT = {{ var:{xv("pmr_xo", x.j)} = var:{xv("pmr_x", x.j)} }}' for x in opts)
                + f' }} }} remove_variable = pmr_fok_{b} }}\n'
                + ''.join(f'\tremove_variable = {xv("pmr_xo", x.j)}\n' for x in opts))
-    o.append(f'pmr_opts_{b} = {{\n{keep}\tpmr_xavail_{b} = yes\n'
+    # TREAT_MOD, test builds: the TREAT line (rules review T1), the shares and sizes the last update left
+    tlog = frames.treat_log(FRAMES[bk]) if TREAT_MOD and not RELEASE and FRAMES[bk].live else ''
+    o.append(f'pmr_opts_{b} = {{\n{tlog}{keep}\tpmr_xavail_{b} = yes\n'
              + (f'\tif = {{ limit = {{ OR = {{ NOT = {{ has_variable = {bv("pmr_xinit")} }} has_variable = pmr_month }} }} pmr_xvalue_{b} = yes }}\n'
                 if market else '')
              + f'\tif = {{\n\t\tlimit = {{ NOT = {{ has_variable = {bv("pmr_xinit")} }} }}\n'
@@ -3715,7 +3777,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
     line = (f'PMR;rec=OPT;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk}'
             + ';x=' + '/'.join(f(xv('pmr_x', x.j)) for x in opts)
-            + ';running=' + '/'.join(f(xv('pmr_xa', x.j)) if x.mode == 'treat' else '-' for x in opts)
+            + ';running=' + '/'.join(f(xv('pmr_xa', x.j)) if x.mode == 'treat' and keeps_ladder(x) else '-' for x in opts)
             + ';can=' + '/'.join(f(xv('pmr_xav', x.j)) for x in opts))
     demand = [x for x in opts if x.group in DEMAND_GROUPS]
     if demand:   # the market's price signal at the last demand-led step: 1 over DEMAND_BAND, -1 under, 0 between
@@ -8512,7 +8574,7 @@ def patch_building_panel(recipe_tex, text, opt_ui=None, also=(), auto_ui=None, p
 # against a literal, as hide_pm_reset's lens option test. The name stays English in every language for that (main,
 # LESS_PREFIXES).
 LESS_SHOWN = f"Not(EqualTo_string(TimedModifier.GetName, '{frames.LESS_NAME}'))"
-LESS_PREFIXES = ('pmr_less_', 'pmr_probe_')   # static modifiers named frames.LESS_NAME: no translation
+LESS_PREFIXES = ('pmr_less_', 'pmr_probe_', 'pmr_treat_')   # static modifiers named frames.LESS_NAME: no translation
 LESS_ICON_FILES = ('custom_tooltip.gui', 'map_list_panel.gui')   # beside building_details_panel.gui
 LESS_STRIP = re.compile(r'datamodel = "\[Building\.GetTimedModifiers\]"\n(?:[ \t]*(?:spacing = \d+)?\n)*'
                         r'[ \t]*item = \{\n([ \t]*)icon = \{\n')

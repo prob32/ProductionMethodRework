@@ -25,7 +25,7 @@ blended buildings (jobs_check_files).
 
 Treatment (the working-conditions shares, pm_pmr_x_<b>_<j>_<n>) stays share methods for now: its goods and jobs are
 "live" amounts here, counted in both the blend (A) and the frames (B), so a "less" modifier on the same good leaves them
-whole.
+whole. With TREAT_MOD (rules review item F) they are modifiers instead (treat_sizes).
 
 The AI's lock (LOCK_PURE): a pure frame other than its group's first unlocks only while it runs, as the union frames do,
 so the AI finds nothing to switch a building to, and PMR asks what the frame needs itself (GATES).
@@ -104,6 +104,14 @@ OCC_BANDS = (1.5, 1.2, 1.05, 1.0, 0.98, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0
 # game's own check. False gives q100's methods and checks back unchanged.
 LOCK_PURE = True
 GATES = {}   # {(building key, method key): Gate} of the locked frames; generate.py fills it before any effect is built
+# Rules review item F, Treatment ladders as modifiers (Pat 2026-11-12 14:29Z, rules-review/HANDOFF.md F): with
+# TREAT_MOD (generate.py --treat-mod) a Treatment option's lines leave its share methods for modifiers pmr_frame_<b>
+# sizes by the share: its unscaled building lines at 100% in pmr_treat_<b>_<j> (size = share), its output as
+# goods_output_<good>_mult in pmr_treat_out_<b>_<good> (an _add is ignored on a building modifier: size = the options'
+# output a level at their shares / B, what the running frames carry a level, the B of the "less" sizes), its state
+# lines in pmr_treat_slave_<b> on the state (size = share). Its goods leave A and B, as no method adds them any more.
+# Job lines stay share methods (generate.py treat_jobs): no modifier moves jobs (q99, q100).
+TREAT_MOD = False
 
 
 class Gate:
@@ -246,9 +254,10 @@ class OptionGroup:
 
 
 class Live:
-    """A treatment option's share methods (pm_pmr_x_<b>_<j>_<n>): mods x pmr_x_<j>_<b> / SHARE_STEPS run as they are."""
-    def __init__(self, j, mods):
-        self.j, self.mods = j, mods
+    """A treatment option's share methods (pm_pmr_x_<b>_<j>_<n>): mods x pmr_x_<j>_<b> / SHARE_STEPS run as they are.
+    key, tex: its vanilla method and icon (TREAT_MOD names and draws its modifiers by them)."""
+    def __init__(self, j, mods, key=None, tex=None):
+        self.j, self.mods, self.key, self.tex = j, mods, key, tex
 
 
 class Building:
@@ -699,6 +708,131 @@ def modifier_type_loc(keys, vanilla_loc=frozenset(), named=frozenset()):
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# Treatment as modifiers (TREAT_MOD)
+
+TREAT_DOC = """# Treatment as modifiers (rules review item F, frames.py TREAT_MOD): pmr_frame_<b> puts each on a plantation with a
+# multiplier, removing and re-adding it only when its size moves. pmr_treat_<b>_<j>: option j's unscaled lines at 100%,
+# sized by its share. pmr_treat_out_<b>_<good>: the options' output of the good a level at their shares over what the
+# running frames carry a level, in steps of 0.01. pmr_treat_slave_<b>, on the state: the option's state lines at 100%,
+# sized by its share.
+
+"""
+
+
+def treat_split(lv):
+    """a Treatment option's lines at 100%: (unscaled building lines, output a level by good, state lines, job lines)"""
+    unscaled, out, state, jobs = {}, {}, {}, {}
+    for (sec, sub), d in lv.mods.items():
+        for k, x in d.items():
+            if abs(x) < EPS:
+                continue
+            if (sec, sub) == ('building_modifiers', 'unscaled'):
+                unscaled[k] = x
+            elif (sec, sub) == ('building_modifiers', 'workforce_scaled') and k.startswith('goods_output_') and k.endswith('_add'):
+                out[k[13:-4]] = x
+            elif (sec, sub) == ('state_modifiers', 'unscaled'):
+                state[k] = x
+            elif (sec, sub) == ('building_modifiers', 'level_scaled') and k.startswith('building_employment_') and k.endswith('_add'):
+                jobs[k] = x
+            else:
+                raise SystemExit(f'TREAT_MOD: {lv.key} has {sec}.{sub}.{k}, which no Treatment modifier carries; extend it')
+    return unscaled, out, state, jobs
+
+
+def treat_plan(bld):
+    """([(j, vanilla key, unscaled lines)], {good: [(j, output a level at 100%)]}, (j, key, icon, state lines) or None)"""
+    opts, goods, state = [], {}, None
+    for lv in bld.live:
+        un, out, st, _ = treat_split(lv)
+        if un:
+            opts.append((lv.j, lv.key, un))
+        for g, x in out.items():
+            goods.setdefault(g, []).append((lv.j, x))
+        if st:
+            if state:
+                raise SystemExit(f'TREAT_MOD: {bld.bk} has state lines on two options; pmr_treat_slave_<b> is one a type')
+            state = (lv.j, lv.key, lv.tex, st)
+    return opts, dict(sorted(goods.items())), state
+
+
+def treat_name(bld, j):
+    return f'pmr_treat_{bld.b}_{j}'
+
+
+def treat_out_name(bld, g):
+    return f'pmr_treat_out_{bld.b}_{g}'
+
+
+def treat_slave_name(bld):
+    return f'pmr_treat_slave_{bld.b}'
+
+
+def treat_vars(bld):
+    """the sizes applied: pmr_tx_<j>_<b>, pmr_txo_<good>_<b>, pmr_txs_<b>"""
+    opts, goods, state = treat_plan(bld)
+    return ([f'pmr_tx_{j}_{bld.b}' for j, _, _ in opts] + [f'pmr_txo_{g}_{bld.b}' for g in goods]
+            + ([f'pmr_txs_{bld.b}'] if state else []))
+
+
+def treat_static_modifiers(blds):
+    out = []
+    for bld in blds:
+        opts, goods, state = treat_plan(bld)
+        for j, _, un in opts:
+            out.append(f'{treat_name(bld, j)} = {{\n\ticon = "{LESS_ICON}"\n'
+                       + ''.join(f'\t{k} = {fmt(x)}\n' for k, x in un.items()) + '}\n\n')
+        for g in goods:
+            out.append(f'{treat_out_name(bld, g)} = {{\n\ticon = "{LESS_ICON}"\n\tgoods_output_{g}_mult = 1\n}}\n\n')
+        if state:
+            _, _, tex, st = state
+            out.append(f'{treat_slave_name(bld)} = {{\n\ticon = "{tex}"\n'
+                       + ''.join(f'\t{k} = {fmt(x)}\n' for k, x in st.items()) + '}\n\n')
+    return ''.join(out)
+
+
+def treat_loc(blds):
+    """The building's ones are LESS_NAME, so the lists that leave the "less" modifiers out leave them out too; the
+    state's is its option's vanilla name"""
+    out = []
+    for bld in blds:
+        opts, goods, state = treat_plan(bld)
+        out += [f' {treat_name(bld, j)}:0 "{LESS_NAME}"' for j, _, _ in opts]
+        out += [f' {treat_out_name(bld, g)}:0 "{LESS_NAME}"' for g in goods]
+        if state:
+            out.append(f' {treat_slave_name(bld)}:0 "${state[1]}$"')
+    return out
+
+
+def treat_log(bld, ind='\t'):
+    """State scope, test builds: the TREAT line, once a year a building (pmr_trl_<b>, 350 days, so a building updated
+    every other month logs every sixth update): each option's share and each modifier's size in force (both set at the
+    building's last update, pmr_opts_<b> then pmr_frame_<b>), and the lines as the game reads them back, the building's
+    and the state's totals from every source (-99: a read the engine refused)."""
+    bk, b = bld.bk, bld.b
+    opts, goods, state = treat_plan(bld)
+    keys = list(dict.fromkeys([k for _, _, un in opts for k in un] + [f'goods_output_{g}_mult' for g in goods]))
+    skeys = list(state[3]) if state else []
+    f = lambda name, d=0: f"[THIS.Var('{name}').GetValue|{d}]"   # noqa: E731
+    reads = (''.join(f'{ind}\tset_variable = {{ name = pmr_trd_{i} value = -99 }}\n'
+                     f'{ind}\tset_variable = {{ name = pmr_trd_{i} value = b:{bk}.modifier:{k} }}\n' for i, k in enumerate(keys))
+             + ''.join(f'{ind}\tset_variable = {{ name = pmr_trs_{i} value = -99 }}\n'
+                       f'{ind}\tset_variable = {{ name = pmr_trs_{i} value = modifier:{k} }}\n' for i, k in enumerate(skeys)))
+    line = ('PMR;rec=TREAT;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+            f'state=[THIS.GetState.GetNameNoFormatting];building={bk};level=[THIS.Var(\'pmr_level_{b}\').GetValue|0]'
+            + ';x=' + '/'.join(f(f'pmr_x_{lv.j}_{b}') for lv in bld.live)
+            + ';size=' + ','.join([f'{j}:{f(f"pmr_tx_{j}_{b}", 2)}' for j, _, _ in opts]
+                                  + [f'out_{g}:{f(f"pmr_txo_{g}_{b}", 2)}' for g in goods]
+                                  + ([f'slave:{f(f"pmr_txs_{b}", 2)}'] if state else []))
+            + ';read=' + ','.join([f'{k}:{f(f"pmr_trd_{i}", 3)}' for i, k in enumerate(keys)]
+                                  + [f'{k}:{f(f"pmr_trs_{i}", 3)}' for i, k in enumerate(skeys)]))
+    return (f'{ind}if = {{\n{ind}\tlimit = {{ has_variable = pmr_xinit_{b} NOT = {{ has_variable = pmr_trl_{b} }} }}\n'
+            f'{ind}\tset_variable = {{ name = pmr_trl_{b} value = yes days = 350 }}\n' + reads
+            + f'{ind}\tdebug_log = "{line}"\n'
+            + ''.join(f'{ind}\tremove_variable = pmr_trd_{i}\n' for i in range(len(keys)))
+            + ''.join(f'{ind}\tremove_variable = pmr_trs_{i}\n' for i in range(len(skeys))) + f'{ind}}}\n')
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # The effect
 
 def state_vars(bld):
@@ -708,11 +842,58 @@ def state_vars(bld):
     gin, gout, pops = frame_goods(bld)
     return ([f'pmr_lxi_{g}_{bld.b}' for g in gin] + [f'pmr_lxo_{g}_{bld.b}' for g in gout]
             + [f'pmr_lj_{p}_{bld.b}' for p in pops]
-            + [f'pmr_fz_{bld.b}', f'pmr_fok_{bld.b}', f'pmr_fu_{bld.b}', f'pmr_fq_{bld.b}', f'pmr_fpl_{bld.b}'])
+            + [f'pmr_fz_{bld.b}', f'pmr_fok_{bld.b}', f'pmr_fu_{bld.b}', f'pmr_fq_{bld.b}', f'pmr_fpl_{bld.b}']
+            + (treat_vars(bld) if TREAT_MOD else []))
 
 
 def clear_vars(bld, ind='\t'):
-    return ''.join(f'{ind}if = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n' for n in state_vars(bld))
+    """TREAT_MOD: the state's own Treatment modifier goes with its size (a building gone, seen again or new)"""
+    slave = treat_slave_name(bld) if TREAT_MOD and treat_plan(bld)[2] else None
+    return (''.join(f'{ind}if = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n' for n in state_vars(bld))
+            + (f'{ind}if = {{ limit = {{ has_modifier = {slave} }} remove_modifier = {slave} }}\n' if slave else ''))
+
+
+def treat_sizes(bld, size, xs, setv):
+    """TREAT_MOD, inside pmr_frame_<b> after the "less" sizes (the frames and pmr_fm_pr / pmr_fm_po<gi> are set):
+    each Treatment modifier sized from the shares pmr_x_<j>_<b>, removed and re-added only when its size moved. The
+    output's B is size()'s, the "less" sizes' own: the running pure frame's amount a level, or the union's, plus each
+    trade-off group's running frame (x SHARE_STEPS)."""
+    bk, b = bld.bk, bld.b
+    opts, goods, state = treat_plan(bld)
+
+    def put(var, mod, on):
+        # on: the building (b:<bk>) or None, the state itself. A size not set (a building gone and back, or seen again)
+        # takes a modifier still there off first.
+        at = lambda x: f'{on} = {{ {x} }}' if on else x   # noqa: E731
+        rm = at(f'if = {{ limit = {{ has_modifier = {mod} }} remove_modifier = {mod} }}')
+        return (f'\tif = {{ limit = {{ NOT = {{ has_variable = {var} }} }} {setv(var, 0)} {rm} }}\n'
+                f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:{var} = var:pmr_fm_x }} }}\n\t\t{rm}\n'
+                '\t\tif = {\n\t\t\tlimit = { var:pmr_fm_x > 0 }\n'
+                '\t\t\tset_local_variable = { name = pmr_fm_lx value = var:pmr_fm_x }\n'
+                f'\t\t\t{at(f"add_modifier = {{ name = {mod} multiplier = local_var:pmr_fm_lx }}")}\n\t\t}}\n'
+                f'\t\t{setv(var, "var:pmr_fm_x")}\n\t}}\n')
+
+    share = lambda j: f'set_variable = {{ name = pmr_fm_x value = {{ value = {xs(j)} multiply = {fmt(1 / SHARE_STEPS)} }} }}'   # noqa: E731
+    o = ['\t# Treatment as modifiers (TREAT_MOD): each option\'s lines at its share\n']
+    for j, key, _ in opts:
+        o.append(f'\t# {key}\n\t{share(j)}\n' + put(f'pmr_tx_{j}_{b}', treat_name(bld, j), f'b:{bk}'))
+    for g, terms in goods.items():
+        held = [j for j, _ in terms]
+        o.append(f'\t# output {g}: the options\' a level at their shares over B, in steps of 0.01\n\t{setv("pmr_fm_x", 0)}\n'
+                 '\tif = {\n\t\tlimit = { ' + (f'{xs(held[0])} > 0' if len(held) == 1 else
+                                               'OR = { ' + ' '.join(f'{xs(j)} > 0' for j in held) + ' }') + ' }\n'
+                 + size(1, g)
+                 + '\t\tif = {\n\t\t\tlimit = { var:pmr_fm_b > 0 }\n'
+                 '\t\t\tset_variable = { name = pmr_fm_x value = { value = 0'
+                 + ''.join(f' add = {{ value = {xs(j)} multiply = {fmt(x)} }}' for j, x in terms)
+                 + f' divide = var:pmr_fm_b multiply = {SHARE_STEPS} }} }}\n'
+                 '\t\t\tround_variable = { name = pmr_fm_x nearest = 1 }\n'
+                 f'\t\t\tchange_variable = {{ name = pmr_fm_x multiply = {fmt(1 / SHARE_STEPS)} }}\n'
+                 '\t\t}\n\t}\n' + put(f'pmr_txo_{g}_{b}', treat_out_name(bld, g), f'b:{bk}'))
+    if state:
+        j, key, _, _ = state
+        o.append(f'\t# {key}: its state lines, on the state\n\t{share(j)}\n' + put(f'pmr_txs_{b}', treat_slave_name(bld), None))
+    return ''.join(o)
 
 
 def frame_effect(bld, log=True, count=False):
@@ -855,7 +1036,7 @@ def frame_effect(bld, log=True, count=False):
     unions = {og.gi: option_union(og) for og in bld.option_groups}
     mem = {m.j: split(m.mods) for m in bld.members}
     opt = {og.gi: (option_full(og, None), {x.j: split(x.mods) for x in og.options}) for og in bld.option_groups}
-    live = [(lv.j, split(lv.mods)) for lv in bld.live]
+    live = [] if TREAT_MOD else [(lv.j, split(lv.mods)) for lv in bld.live]   # TREAT_MOD: no method adds its goods
 
     def size(side, name):
         # side: 0 goods in, 1 goods out, 2 jobs
@@ -910,6 +1091,9 @@ def frame_effect(bld, log=True, count=False):
                      '\t\t\tround_variable = { name = pmr_fm_x nearest = 1 }\n'
                      f'\t\t\tchange_variable = {{ name = pmr_fm_x multiply = {fmt(1 / SHARE_STEPS)} }}\n'
                      '\t\t}\n\t}\n' + apply(f'{pre}_{name}_{b}', less_name(kind, name)))
+
+    if TREAT_MOD and bld.live:
+        o.append(treat_sizes(bld, size, xs, setv))
 
     # SHORT (PLAN.md 8.6): a union frame with an input it carries at nothing; the tick asks the building for a shortage
     o.append(f'\tif = {{ limit = {{ has_variable = {v("pmr_fz")} }} remove_variable = {v("pmr_fz")} }}\n')
