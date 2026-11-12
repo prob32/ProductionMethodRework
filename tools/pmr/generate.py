@@ -8319,7 +8319,15 @@ BAR_FRAME = ('gfx/interface/progressbar/progressbar_frame.dds', 'Corneredstretch
 def slice_bar(slices, size, icon, ind, tips, frame=False):
     """The Owners-style bar itself. slices are (comment, visible, stretch factor, icon visible,
     colour, icon texture or None, or [(visible, texture)] for an icon that depends on more), left to right. frame puts
-    vanilla's progress bar frame over it (Q110-CARD C1), as default_progressbar_horizontal draws one."""
+    vanilla's progress bar frame over it (Q110-CARD C1), as default_progressbar_horizontal draws one, and then fills
+    the slices flush with vanilla's plain progress texture as that bar does: the Owners bar's slice texture has a rim of
+    its own, which doubled the frame (Pat, 2026-11-12 17:01Z: "The borders on our PM1 & 2 look a little big")."""
+    if frame:
+        fill = ('"gfx/interface/progressbar/progressbar_white.dds"', '\t\t\t\tspriteType = Corneredtiled\n',
+                '{ 4 4 }', '\t\t\t\ttexture_density = 2\n', '')
+    else:
+        fill = ('"gfx/interface/tooltip/stacked_barchart_small_item.dds"', '', '{ 3 3 }', '',
+                '\t\t\t\tusing = simple_frame_mask\n')
     items = []
     for comment, vis, stretch, icon_vis, (r, g, bl), tex in slices:
         icons = tex if isinstance(tex, list) else ([(None, tex)] if tex else [])
@@ -8331,10 +8339,10 @@ def slice_bar(slices, size, icon, ind, tips, frame=False):
             f'{ind}\t\t\tlayoutstretchfactor_horizontal = "[{stretch}]"\n'
             f'{ind}\t\t\talwaystransparent = yes\n'
             f'{ind}\t\t\tbackground = {{\n'
-            f'{ind}\t\t\t\ttexture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
-            f'{ind}\t\t\t\tcolor = {{ {r} {g} {bl} 1 }}\n'
-            f'{ind}\t\t\t\tspriteborder = {{ 3 3 }}\n'
-            f'{ind}\t\t\t\tusing = simple_frame_mask\n{ind}\t\t\t\tusing = progressbar_texture_properties\n'
+            f'{ind}\t\t\t\ttexture = {fill[0]}\n' + (ind + fill[1] if fill[1] else '')
+            + f'{ind}\t\t\t\tcolor = {{ {r} {g} {bl} 1 }}\n'
+            f'{ind}\t\t\t\tspriteborder = {fill[2]}\n' + (ind + fill[3] if fill[3] else '')
+            + (ind + fill[4] if fill[4] else '') + f'{ind}\t\t\t\tusing = progressbar_texture_properties\n'
             f'{ind}\t\t\t}}\n'
             + ''.join(f'{ind}\t\t\ticon = {{\n'
                       f'{ind}\t\t\t\tvisible = "[{icon_vis if c is None else f"And({icon_vis}, {c})"}]"\n'
@@ -8351,7 +8359,7 @@ def slice_bar(slices, size, icon, ind, tips, frame=False):
             f'{ind}\t\tusing = progressbar_texture_properties\n{ind}\t}}\n'
             f'{ind}\thbox = {{\n'
             f'{ind}\t\tlayoutpolicy_horizontal = expanding\n{ind}\t\tlayoutpolicy_vertical = expanding\n'
-            f'{ind}\t\tmargin = {{ 1 1 }}\n'
+            + ('' if frame else f'{ind}\t\tmargin = {{ 1 1 }}\n')
             + ''.join(items) +
             f'{ind}\t}}\n'
             + (f'{ind}\twidget = {{\n{ind}\t\tsize = {{ 100% 100% }}\n{ind}\t\talwaystransparent = yes\n'
@@ -9661,14 +9669,14 @@ def automation_parts(rt):
 
 
 def automation_bar_gui(bk, ind):
-    """bk's Automation bar (slice_bar at the Owners bar's size): hand labor, machines, rail, left to right"""
+    """bk's Automation bar (slice_bar at the Owners bar's size): machines, rail, hand labor, left to right, so the
+    automation fills from the left (Pat, 2026-11-12 17:03Z: "I want this to fill left to right")"""
     rt = RAILS_TYPES[bk]
     parts = automation_parts(rt)
     gt0 = lambda e: f"GreaterThan_CFixedPoint({e}, '(CFixedPoint)0')"   # noqa: E731
     big = lambda e: f"GreaterThan_CFixedPoint({e}, Multiply_CFixedPoint({parts['whole']}, '(CFixedPoint){AUTO_SECTION_SHARE}'))"   # noqa: E731
     al = lambda t, r: f"Building.GetState.MakeScope.Var('pmr_al_{t}_{r}_{rt.b}').GetValue"   # noqa: E731
-    slices = [('hand labor, deep grey', gt0(parts['hand']), f"FixedPointToInt({parts['hand']})", big(parts['hand']),
-               AUTO_SECTION_COLORS['hand'], LABORERS_ICON)]
+    slices = []
     for kind, name in (('eq', 'machines, green'), ('rc', 'rail, steel blue')):
         if kind not in parts:
             continue
@@ -9682,6 +9690,8 @@ def automation_bar_gui(bk, ind):
             icons.append((c, rg.m.texture))
         slices.append((name, gt0(parts[kind]), f'FixedPointToInt({parts[kind]})', big(parts[kind]),
                        AUTO_SECTION_COLORS[kind], icons))
+    slices.append(('hand labor, deep grey', gt0(parts['hand']), f"FixedPointToInt({parts['hand']})", big(parts['hand']),
+                   AUTO_SECTION_COLORS['hand'], LABORERS_ICON))
     return (f'{ind}widget = {{\n{ind}\tvisible = "[{is_type(bk)}]"\n{ind}\tsize = {{ @panel_width 40 }}\n'
             + slice_bar(slices, ('@panel_width', 40), AUTO_SECTION_ICON, ind + '\t', [(None, f'PMR_AUTOMATION_TT_{rt.b}')])
             + f'{ind}}}\n')
