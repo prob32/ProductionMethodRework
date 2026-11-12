@@ -411,6 +411,9 @@ BAR_FIELDS = ('start', 'restart', 'done', 'drop', 'red', 'a2', 'a6', 'a12', 'ax'
 # it meanwhile (pmr_moved_<b> waits). That update prices the pick once more (pmr_profit_<b>, the books read again): the
 # default takes the pick if it still clears SWITCH_GAIN and SWITCH_MIN; a red bar whose books are back in the black ends;
 # a pick that changed starts the bar again; no pick over the default ends it.
+# Pat, 2026-11-12 17:05Z ("it should do so by month and tick slowly not just appear full like this"): with BAR_CLOCK a
+# bar gains one month a month whatever the gain (Pat's 2026-10-19 12:59Z speed-up by the gain goes; pmr_swr_<b> stays
+# for the logs), none at the update that starts it, and the card shows the month between two updates (sw_shown).
 BAR_CLOCK = False
 # Rules review item E (2026-11-12, Pat 14:29Z; run sheet R8; changes Pat's 2026-10-19 13:09Z rule): PRICE_NEWEST.
 # profit_effect also prices the newest runnable recipe (pmr_new_now_<b>) where it is neither the reference nor one
@@ -6315,8 +6318,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     clock = '' if not BAR_CLOCK else (
         f'\t# BAR_CLOCK: a running bar\'s last update prices its pick once more (today\'s points, as pmr_switch_{b} adds them)\n'
         f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month {bar_runs} }}\n'
-        '\t\tset_variable = { name = pmr_t value = 1 }\n'
-        f'\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} set_variable = {{ name = pmr_t value = var:{v("pmr_swr")} }} }}\n'
+        '\t\tset_variable = { name = pmr_t value = 1 }   # a month a month (Pat 2026-11-12 17:05Z)\n'
         + every_other(f'change_variable = {{ name = pmr_t multiply = {TICK_EVERY} }}', '\t\t')
         + f'\t\tchange_variable = {{ name = pmr_t add = var:{v("pmr_sw")} }}\n'
         f'\t\tif = {{ limit = {{ var:pmr_t >= {SWITCH_MONTHS} }} set_variable = {{ name = pmr_swdue value = var:{v("pmr_swto")} }} '
@@ -6490,7 +6492,9 @@ def switch_effect(b, bk, k, setv, v, var):
             + (f'\t\t\tif = {{ limit = {{ var:{swto} = 0 }} {bc("start")} }}\n\t\t\telse = {{ {bc("restart")} }}\n'
                if BAR_COUNT else '')
             + f'\t\t\t{setv("pmr_swto", "var:" + pick)}\n\t\t\t{setv("pmr_sw", 0)}\n'
-            f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} {setv("pmr_swd", -1)} }}\n'
+            + ('\t\t\tset_variable = pmr_swst   # BAR_CLOCK: no points the update it starts\n'
+               if BAR_CLOCK else '')
+            + f'\t\t\tif = {{ limit = {{ var:{v("pmr_pdn")} ?= 1 }} {setv("pmr_swd", -1)} }}\n'
             f'\t\t\telse = {{ {setv("pmr_swd", 1)} }}\n'
             f'\t\t\tif = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec=SWITCH_START;{where};'
             f"default={var(now)};to={var(pick)};dir={var(v('pmr_swd'))};gain={var(v('pmr_swg'), 2)};pts={var(v('pmr_swr'), 2)}\" }}\n\t\t}}\n"
@@ -6501,9 +6505,11 @@ def switch_effect(b, bk, k, setv, v, var):
             + f'\t\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n\t\t}}\n'
             # Pat 12:59Z: the bigger the gain over the default, the more points a month (pmr_swr_<b>, profit_effect)
             # TICK_EVERY (Pat 2026-10-21 12:37Z): an update every other month adds two months' points
-            f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_month NOT = {{ var:{v("pmr_swd")} = 0 }} }}\n'
+            f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_month NOT = {{ var:{v("pmr_swd")} = 0 }}'
+            + (' NOT = { has_variable = pmr_swst }' if BAR_CLOCK else '') + ' }\n'
             '\t\t\tset_variable = { name = pmr_t value = 1 }\n'
-            f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} set_variable = {{ name = pmr_t value = var:{v("pmr_swr")} }} }}\n'
+            + ('' if BAR_CLOCK else
+               f'\t\t\tif = {{ limit = {{ has_variable = {v("pmr_swr")} }} set_variable = {{ name = pmr_t value = var:{v("pmr_swr")} }} }}\n')
             + every_other(f'change_variable = {{ name = pmr_t multiply = {TICK_EVERY} }}', '\t\t\t')
             + f'\t\t\tchange_variable = {{ name = {v("pmr_sw")} add = var:pmr_t }}\n\t\t}}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ {full} }}\n'
@@ -6519,9 +6525,10 @@ def switch_effect(b, bk, k, setv, v, var):
             + clear.replace('\t\t', '\t\t\t') + '\t\t}\n\t}\n'
             + age + ('\tif = { limit = { has_variable = pmr_swdue } remove_variable = pmr_swdue }\n' if BAR_CLOCK else '')
             + '\tif = { limit = { has_variable = pmr_sw_inst } remove_variable = pmr_sw_inst }\n'
+            + ('\tif = { limit = { has_variable = pmr_swst } remove_variable = pmr_swst }\n' if BAR_CLOCK else '')
             # Pat 2026-10-19 03:51Z: the card showed a finished bar for a month, as the country's copy (pmr_c_sum_<b>, the
             # state with the most levels) waited for the country's monthly pulse. That state's bar now reaches it at once.
-            f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_level")} owner = {{ is_player = yes has_variable = pmr_c_swm_{b} }} }}\n'
+            + f'\tif = {{\n\t\tlimit = {{ has_variable = {v("pmr_level")} owner = {{ is_player = yes has_variable = pmr_c_swm_{b} }} }}\n'
             '\t\tsave_temporary_scope_as = pmr_sws\n'
             f'\t\towner = {{\n\t\t\tif = {{\n\t\t\t\tlimit = {{ scope:pmr_sws.var:{v("pmr_level")} >= var:pmr_c_swm_{b} }}\n'
             + ''.join(f'\t\t\t\tset_variable = {{ name = pmr_c_{n}_{b} value = scope:pmr_sws.var:{v(x)} }}\n'
@@ -8289,6 +8296,16 @@ def state_var(b, name):
     return f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue"
 
 
+def sw_shown(b):
+    """The months a running bar shows on the card. BAR_CLOCK (Pat 2026-11-12 17:05Z, a month a month): the state's
+    buildings update every other month (TICK_EVERY), each update adding two months; the month between, the state's
+    pmr_ph is 1 (2 just after an update), so 2 - pmr_ph adds that month."""
+    sw = state_var(b, 'pmr_sw')
+    if not BAR_CLOCK or TICK_EVERY != 2:
+        return sw
+    return f"Subtract_CFixedPoint({add_fp(sw, "'(CFixedPoint)2'")}, Building.GetState.MakeScope.Var('pmr_ph').GetValue)"
+
+
 def country_var(b, name):
     return f"GetPlayer.MakeScope.Var('{name}_{b}').GetValue"
 
@@ -8601,7 +8618,7 @@ def pick_row(bk, ind):
     return (f'{ind}# PMR: switching bar of {bk}\n'
             f'{ind}widget = {{\n{ind}\tvisible = "[And({is_type(bk)}, Not(EqualTo_CFixedPoint({swd}, '
             f"'(CFixedPoint)0')))]\"\n{ind}\tsize = {{ @panel_width {SW_ROW_H} }}\n"
-            + switch_row(SWITCH_ICONS[bk], state_var(b, 'pmr_sw'), swd, state_var(b, 'pmr_swto'), ROW_X, ROW_W, SW_BAR_H,
+            + switch_row(SWITCH_ICONS[bk], sw_shown(b), swd, state_var(b, 'pmr_swto'), ROW_X, ROW_W, SW_BAR_H,
                          ('@panel_width', SW_ROW_H), (SW_ROW_H - SW_ICON) // 2, ind + '\t', f'PMR_SW_TT_{b}')
             + f'{ind}}}\n')
 
@@ -9256,7 +9273,7 @@ def pick_loc(pick_ui):
         cvar = lambda name, f='0': f"[GetPlayer.MakeScope.Var('{name}').GetValue|{f}]"   # noqa: E731
         loc.append(f' PMR_SW_TT_{b}:0 "#header New Default: [Building.GetState.GetCustom(\'pmr_sw_to_{b}\')]#!{TT_DELIM}'
                    f'\\n{var(f"pmr_swg_{b}", "=+%0")} profit over [Building.GetState.GetCustom(\'pmr_sw_now_{b}\')]'
-                   f'\\n#v {var(f"pmr_sw_{b}", "0")}#! of #v {SWITCH_MONTHS}#! months"')
+                   f'\\n#v [{sw_shown(b)}|0]#! of #v {SWITCH_MONTHS}#! months"')
         loc.append(f' PMR_CSW_TT_{b}:0 "#header New Default: [GetPlayer.GetCustom(\'pmr_csw_to_{b}\')]#!{TT_DELIM}'
                    f'\\n{cvar(f"pmr_c_swg_{b}", "=+%0")} profit over [GetPlayer.GetCustom(\'pmr_csw_now_{b}\')]'
                    f'\\n#v {cvar(f"pmr_c_sw_{b}", "0")}#! of #v {SWITCH_MONTHS}#! months"')
