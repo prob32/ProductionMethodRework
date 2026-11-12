@@ -1233,25 +1233,27 @@ def retool_types(game, out):
         return []
     common = os.path.join(out, 'common')
     text = open(os.path.join(common, 'buildings', 'pmr_retool_buildings.txt'), encoding='utf-8-sig').read()
-    costs = dict(re.findall(r'^pmr_retool_cost_([a-z_0-9]+) = ([0-9.]+)',
-                            open(os.path.join(common, 'script_values', 'pmr_values.txt'), encoding='utf-8-sig').read(),
-                            re.M))
+    # the retool twins, and with RAILS (generate.py) the New Equipment (eq) and Rail Connection (rc) projects' sites
+    costs = {(kind, b): c for kind, b, c in
+             re.findall(r'^pmr_(retool|eq|rc)_cost_([a-z_0-9]+) = ([0-9.]+)',
+                        open(os.path.join(common, 'script_values', 'pmr_values.txt'), encoding='utf-8-sig').read(), re.M)}
     btype, parent = building_groups(game)
     index = {k: i for i, (k, *_r) in enumerate(GROUPS)}
-    site_group = dict((k, g) for k, g in re.findall(r'^(building_pmr_retool_\w+) = \{.*?^\tbuilding_group = (\w+)', text,
-                                                    re.M | re.S))
+    site_group = dict((k, g) for k, g in re.findall(r'^(building_pmr_(?:retool|eq|rc)_\w+) = \{.*?^\tbuilding_group = (\w+)',
+                                                    text, re.M | re.S))
     res = []
     for k, _s, _o, _c in top_blocks(text):
-        m = re.fullmatch(r'building_pmr_retool_gova?_(.+)', k) or re.fullmatch(r'building_pmr_retool_(.+)_\d+', k)
+        m = (re.fullmatch(r'building_pmr_(retool|eq|rc)_gova?_(.+)', k)
+             or re.fullmatch(r'building_pmr_(retool|eq|rc)_(.+)_\d+', k))
         if not m:
             continue
-        b = m.group(1)
+        kind, b = m.group(1), m.group(2)
         g = group_of('building_' + b, btype, parent)
-        if not g or b not in costs:
-            fail('pmr_retool_buildings.txt', f'{k}: no priority group or no pmr_retool_cost_{b}')
+        if not g or (kind, b) not in costs:
+            fail('pmr_retool_buildings.txt', f'{k}: no priority group or no pmr_{kind}_cost_{b}')
         if k not in site_group:
             fail('pmr_retool_buildings.txt', f'{k}: no building_group')
-        res.append((k[len('building_'):], index[g], costs[b], b, site_group[k]))
+        res.append((k[len('building_'):], index[g], costs[(kind, b)], b, site_group[k]))
     if not res:
         fail('pmr_retool_buildings.txt', 'found no retool buildings')
     return res
@@ -2339,8 +2341,8 @@ def patch_retool_ai(text, btype, parent, invest):
     of the building, which generate.py's ai_value then multiplies by RETOOL_AI_MULT (Pat 20:12Z)."""
     edits, n = [], 0
     for k, _s, o, c in top_blocks(text):
-        m = re.fullmatch(r'building_pmr_retool_(.+)_(\d+)', k)
-        if not m or k.startswith('building_pmr_retool_gov_'):
+        m = re.fullmatch(r'building_pmr_(?:retool|eq|rc)_(.+)_(\d+)', k)   # with RAILS, the projects' private sites too
+        if not m or re.match(r'building_pmr_(?:retool|eq|rc)_gov', k):
             continue
         g = group_of('building_' + m.group(1), btype, parent)
         if not g:
@@ -2354,11 +2356,17 @@ def patch_retool_ai(text, btype, parent, invest):
             fallback = re.compile(r'\t\t\tvalue = \d+\n\t\t\tif = \{ limit = \{ has_variable = pmr_ai_w_' + b
                                   + r' \} value = var:pmr_ai_w_' + b + r' \}\n')
             f = fallback.search(text, a, close)
-            if not f:
+            # the payoff score (generate.py ai_base: PAY_SCORE, and every project): the building's own ai_value, then
+            # its payoff added and x PAY_TILT there
+            pay = re.compile(r'\t\t\tvalue = \d+  # PMR pay: base\n').search(text, a, close)
+            if f:
+                edits.append((f.start(), f'\t\t\t# PMR: the building\'s own ai_value and earnings\n\t\t\tvalue = pmr_ai_value_{b}\n'
+                                         f'\t\t\tif = {{ limit = {{ has_variable = pmr_earn_{b} }} add = {{ value = var:pmr_earn_{b} '
+                                         f'multiply = {PROFIT_WEIGHT} }} }}\n', f.end()))
+            elif pay:
+                edits.append((pay.start(), f'\t\t\t# PMR: the building\'s own ai_value\n\t\t\tvalue = pmr_ai_value_{b}\n', pay.end()))
+            else:
                 fail('pmr_retool_buildings.txt', f'{k}: ai_value base not found')
-            edits.append((f.start(), f'\t\t\t# PMR: the building\'s own ai_value and earnings\n\t\t\tvalue = pmr_ai_value_{b}\n'
-                                     f'\t\t\tif = {{ limit = {{ has_variable = pmr_earn_{b} }} add = {{ value = var:pmr_earn_{b} '
-                                     f'multiply = {PROFIT_WEIGHT} }} }}\n', f.end()))
         mult = f'pmr_reinvest_mult_abroad_{g}' if 'building_group = bg_pmr_retool_abroad' in text[o:c] else f'pmr_reinvest_mult_{g}'
         edits.append((close, f'\t# PMR: Re-invest card, x the {g} priority\n\t\tmultiply = {mult}\n\t', close))
         n += 1

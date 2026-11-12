@@ -441,6 +441,544 @@ SUPPLY = (('building_power_plant', 'pmr_elec'), ('building_railway', 'pmr_rail')
 def rails(goods):
     """a recipe's goods per level ({good: amount}, inputs negative) take transportation"""
     return goods.get(TRANSPORTATION, 0) < 0
+
+
+# Automation on rails (fundamentals review, automation/SPEC.md v4; Pat 2026-11-12 13:24Z "Level by level", 13:40Z "Shared
+# laborers method", 13:41Z the price, 14:29Z go). RAILS (--rails, test builds only): a step type's automation groups,
+# all but the processing ones (PROCESSING_GROUPS), leave its retool targets. Each method of such a group is a rung of a
+# track (Rung, Track), a frames step member whose share is the levels working on it. The state tallies the levels on
+# each rung, all and the government's (pmr_al_<t>_<r>_<b>, pmr_alg_<t>_<r>_<b>; rung 0 the group's none); the pay test
+# (pmr_rl_pay_<b>, SPEC 4) picks each track's target rung (pmr_at_<t>_<b>) and lets a rung that loses money work as a
+# lower one for free (pmr_aw_<t>_<r>_<b>); a "New Equipment" (eq) or "Rail Connection" (rc) project beside the retool
+# twin moves one level a paid level up to the target (SPEC 5). Laborers ride the shared group frames.LAB_GROUP.
+RAILS = False
+STEP_PAY = 1.0          # a rung is eligible while the wages it saves are at least this x the goods it buys (review rec. 2)
+PROJECT_SHARE = 0.25    # a project level costs this share of the building's construction cost (Pat 13:41Z)
+PAY_TILT = 1            # the payoff scores x this (SPEC 8.4, rules review A: Pat's to set)
+PROJECT_NAMES = {'eq': 'New Equipment', 'rc': 'Rail Connection'}
+RAILS_TYPES = {}        # building type -> RailsType, filled by main() (rails_type)
+# Rules review item A (Pat 2026-11-12 14:29Z, rules-review/HANDOFF.md A): PAY_SCORE (--pay-score). The retool twin
+# scores on its own payoff, as the projects do: pmr_pay_<b> = (the pick's profit a level a week less the reference's)
+# / employees a level x VANILLA_PROFIT_W / RETOOL_SHARE; private (pmr_ai_value_<b> + pmr_pay_<b>) x PAY_TILT,
+# government (RETOOL_AI_BASE + pmr_pay_<b>) x PAY_TILT, in place of the earnings term x RETOOL_AI_MULT.
+PAY_SCORE = False
+
+
+def rail_track(g):
+    """a track a Rail Connection project buys (SPEC 5: Train Automation and Transportation); the rest are equipment"""
+    return 'train_automation' in g or 'transportation' in g
+
+
+class Rung:
+    """Rung r (1..) of track t: the vanilla automation method m (buff_automation's October sizes), step member j.
+    lab: the laborers it removes a level; skilled: {pop: change a level} of the other pop types; goods: {good: amount a
+    level} it buys, its inputs and the cut in its own output; pol: its pollution a level; techs, rail, power, ib: what
+    opens it (its technologies, a railway, a power plant, no Industry Banned)."""
+    def __init__(self, t, r, m, j):
+        self.t, self.r, self.m, self.j, self.key = t, r, m, j, m.key
+        jobs = {k[len('building_employment_'):-len('_add')]: x for k, x in m.employment.items() if abs(x) > 1e-9}
+        lab = jobs.pop(frames.JOB_POP, 0)
+        if lab > 0:
+            raise SystemExit(f'{m.key}: a step that adds {frames.JOB_POP}; extend Rung before shipping')
+        self.lab, self.skilled = -lab, jobs
+        self.inputs = {g: q for g, q in m.inputs.items() if q}
+        self.goods = dict(self.inputs)
+        for g, q in m.outputs.items():
+            if q > 0:
+                raise SystemExit(f'{m.key}: a step that makes {g}; extend Rung before shipping')
+            self.goods[g] = self.goods.get(g, 0) - q
+        other = {k: x for k, x in m.blend.get('building_modifiers', {}).items()
+                 if not k.startswith(('goods_input_', 'goods_output_'))}
+        sm = dict(m.blend.get('state_modifiers', {}))
+        self.pol = sm.pop('state_pollution_generation_add', 0)
+        if other or sm or m.blend.get('country_modifiers') or m.rest:
+            raise SystemExit(f'{m.key}: a step with modifiers besides goods, jobs and pollution; extend Rung before shipping')
+        self.techs = list(m.unlock_techs)
+        self.rail, self.power = TRANSPORTATION in self.goods, ELECTRICITY in self.goods
+        self.ib = False
+        for n in m.node.value:
+            if not n.key or n.key == 'unlocking_technologies' or not n.key.startswith(('unlocking_', 'disallowing_')):
+                continue
+            if n.key == 'disallowing_laws' and set(pdx.items(n)) <= {'law_industry_banned'}:
+                self.ib = True
+            else:
+                raise SystemExit(f'{m.key}: {n.key} on a step; extend Rung before shipping')
+
+
+class Track:
+    """Track t: an automation group g whose first method is no step (rung 0), its other methods the rungs; kind 'rc'
+    (Rail Connection) or 'eq' (New Equipment), the project that buys it."""
+    def __init__(self, t, g, rungs):
+        self.t, self.g, self.rungs = t, g, rungs
+        self.kind = 'rc' if rail_track(g) else 'eq'
+        self.R = len(rungs) + 1
+
+
+class RailsType:
+    """A step type's tracks. kinds: {project: its tracks}; skilled: the skilled posts its skilled rungs move, a level
+    (one figure for all of them: frames' _s union); lab_of: {target: JOB_POP a level}, weight: wage weights (main())."""
+    def __init__(self, bk, tracks):
+        self.bk, self.b, self.tracks = bk, short(bk), tracks
+        self.rungs = [rg for tr in tracks for rg in tr.rungs]
+        self.kinds = {vp: [tr for tr in tracks if tr.kind == vp] for vp in ('eq', 'rc') if any(tr.kind == vp for tr in tracks)}
+        sk = [rg for rg in self.rungs if rg.skilled]
+        self.skilled = dict(sk[0].skilled) if sk else {}
+        if any(rg.skilled != self.skilled for rg in sk):
+            raise SystemExit(f'{bk}: steps that move different skilled posts; frames has one _s union a target')
+        self.skilled_js = [rg.j for rg in sk]
+        self.goods = sorted({g for rg in self.rungs for g in rg.goods})
+        self.lab_of, self.weight, self.one_frame = {}, {}, False
+
+
+def rails_type(bk, track_groups, groups, pms, members, s, pg):
+    """RAILS: bk's step tracks from its automation groups (not the processing ones): each rung a blend member with no
+    target, (j, [], group, Recipe), appended to members; the shared laborers group joins the building's groups."""
+    tracks = []
+    for t, g in enumerate(track_groups, 1):
+        none = Recipe(groups[g][0], *pms[groups[g][0]])
+        if none.blend or none.employment or none.rest or none.unlock_techs or none.gated_otherwise:
+            raise SystemExit(f'{bk}: {g} starts with {none.key}, which does something; a track needs a none first')
+        rungs = []
+        for r, pk in enumerate(groups[g][1:], 1):
+            m = Recipe(pk, *pms[pk])
+            members.append((len(members) + 1, [], g, m))
+            rungs.append(Rung(t, r, m, len(members)))
+        tracks.append(Track(t, g, rungs))
+    s.inserts.append((pg.end - 1, f'\t{frames.LAB_GROUP}  # PMR: laborers less the steps\' cut (automation on rails)\n\t'))
+    RAILS_TYPES[bk] = RailsType(bk, tracks)
+
+
+SHARED_RECIPES = set()   # recipe methods two treated building types list (main()): one body, so no ONE_FRAME
+
+
+def one_frame_type(bk, split_info):
+    """ONE_FRAME (rules review G): bk's recipe methods are their own union frames (frames.Building.one_frame), known
+    before its frames are: a step type with no processing axis whose recipes no other type lists (the grain farms
+    share pm_simple_farming and the rest, whose union frames differ by their steps)"""
+    sp = split_info.get(bk, {})
+    return (frames.ONE_FRAME and bk in RAILS_TYPES and not sp.get('axis')
+            and not any(r.key in SHARED_RECIPES for r in sp.get('plain', [])))
+
+
+def project_sites(b, vp):
+    """[(side, site type, slot)] of project vp of b: the private slots, the government's, the player's government's
+    abroad, as the retool twin's (priv_slots, retool_buildings)"""
+    return ([(f'priv{j}', rbx, j) for j, rbx in enumerate(priv_slots(b, vp), 1)]
+            + [('gov', f'building_pmr_{vp}_gov_{b}', 0), ('gova', f'building_pmr_{vp}_gova_{b}', 0)])
+
+
+def rails_names(rt):
+    """the state variable names of rt's tallies (pmr_al_<t>_<r>_<b> and the rest), as rails_effects writes them"""
+    b = rt.b
+    return (lambda t, r: f'pmr_al_{t}_{r}_{b}', lambda t, r: f'pmr_alg_{t}_{r}_{b}', lambda t: f'pmr_at_{t}_{b}',
+            lambda t: f'pmr_ag_{t}_{b}', lambda t, r: f'pmr_aw_{t}_{r}_{b}')
+
+
+def rails_effects(bk, b, rt, goods_cost):
+    """RAILS (automation/SPEC.md v4, sections 3.2, 4 and 5; rules review B), state scope: bk's step tallies and the New
+    Equipment (eq) and Rail Connection (rc) projects. Written ahead of pmr_reset_levels_<b>, which calls pmr_rl_reset_<b>.
+      pmr_al_<t>_<r>_<b>, pmr_alg_<t>_<r>_<b>  levels on rung r of track t, all and the government's (rung 0: none)
+      pmr_at_<t>_<b>, pmr_ag_<t>_<b>           the track's target rung (0: none) and its gain a level a week
+      pmr_aw_<t>_<r>_<b>                       the rung levels on rung r work as (r while it pays; lower while it idles)
+      pmr_<vp>_need_<b>, pmr_<vp>_gneed_<b>    project levels still to buy, all and the government's
+      pmr_<vp>_pay_<b>                         the project's payoff, its score before PAY_TILT (rules review A)
+    The sites of each project are read, counted, released, split and closed as the retool twin's (tick_effect)."""
+    S = lambda name, val: f'set_variable = {{ name = {name} value = {val} }}'   # noqa: E731
+    C = lambda name, op, val: f'change_variable = {{ name = {name} {op} = {val} }}'   # noqa: E731
+    al, alg, at, ag, aw = rails_names(rt)
+    K = lambda vp, name: f'pmr_{vp}_{name}_{b}'   # noqa: E731
+    lvl = f'pmr_level_{b}'
+    rmfp = f'if = {{ limit = {{ has_variable = pmr_fp_{b} }} remove_variable = pmr_fp_{b} }}'
+    mine = f'OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}'   # the player's, as log() reads it
+
+    def take(name, d, ind):
+        """up to var:d off name, d less what it took"""
+        return (f'{ind}if = {{\n{ind}\tlimit = {{ var:{d} > 0 var:{name} > 0 }}\n'
+                f'{ind}\tif = {{ limit = {{ var:{name} >= var:{d} }} {C(name, "subtract", "var:" + d)} {S(d, 0)} }}\n'
+                f'{ind}\telse = {{ {C(d, "subtract", "var:" + name)} {S(name, 0)} }}\n{ind}}}\n')
+
+    o = [f'# ----- {bk}: automation on rails (rails_effects); tracks '
+         + ', '.join(f'{tr.t} = {tr.g} ({tr.kind})' for tr in rt.tracks) + '\n\n']
+
+    # ---- the projects' sites, as the retool twin's (read, totals, crew, count, release, split, close) ----
+    def read_side(vp, rbx, side):
+        return (f'\t{S(K(vp, "built_" + side), 0)}\n\t{S(K(vp, "q_" + side), 0)}\n'
+                f'\tif = {{\n\t\tlimit = {{ OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
+                f'\t\t{S(K(vp, "built_" + side), f"b:{rbx}.level")}\n'
+                f'\t\t{S(K(vp, "q_" + side), f"b:{rbx}.level_after_queued_constructions")}\n\t}}\n')
+
+    def totals(vp):
+        slots = range(1, RETOOL_SLOTS + 1)
+        return (f'\t{S(K(vp, "built_priv"), 0)}\n\t{S(K(vp, "q_priv"), 0)}\n'
+                + ''.join(f'\t{C(K(vp, "built_priv"), "add", "var:" + K(vp, f"built_priv{j}"))}\n'
+                          f'\t{C(K(vp, "q_priv"), "add", "var:" + K(vp, f"q_priv{j}"))}\n' for j in slots)
+                + ''.join(f'\t{S(K(vp, "pending_" + side), "var:" + K(vp, "q_" + side))}\n'
+                          f'\t{C(K(vp, "pending_" + side), "subtract", "var:" + K(vp, "built_" + side))}\n'
+                          for side in ('priv', 'gov'))
+                + f'\t{S(K(vp, "built"), "var:" + K(vp, "built_priv"))}\n\t{C(K(vp, "built"), "add", "var:" + K(vp, "built_gov"))}\n'
+                f'\t{S(K(vp, "pending"), "var:" + K(vp, "pending_priv"))}\n\t{C(K(vp, "pending"), "add", "var:" + K(vp, "pending_gov"))}\n')
+
+    def crew(vp, j, rbx):
+        built, prev = K(vp, f'built_priv{j}'), K(vp, f'prev_priv{j}')
+        return (f'\t{S(K(vp, f"staff_priv{j}"), -1)}\n'
+                f'\tif = {{\n\t\tlimit = {{ var:{built} > 0 exists = b:{rbx} }}\n'
+                f'\t\tif = {{ limit = {{ b:{rbx} = {{ occupancy >= {RETOOL_CREW_STAFFED} }} }} {S(K(vp, f"staff_priv{j}"), 2)} }}\n'
+                f'\t\telse_if = {{ limit = {{ b:{rbx} = {{ occupancy > 0 }} }} {S(K(vp, f"staff_priv{j}"), 1)} }}\n'
+                f'\t\telse = {{ {S(K(vp, f"staff_priv{j}"), 0)} }}\n\t}}\n'
+                f'\tif = {{ limit = {{ NOT = {{ has_variable = {prev} }} }} {S(prev, 0)} }}\n'
+                f'\tif = {{ limit = {{ var:{built} > var:{prev} }} '
+                f'set_variable = {{ name = {K(vp, f"grace_priv{j}")} value = yes days = {RETOOL_CREW_GRACE_DAYS} }} }}\n'
+                f'\t{S(prev, "var:" + built)}\n')
+
+    def count(vp, side):
+        conv, seen, built = K(vp, f'conv_{side}'), K(vp, f'seen_{side}'), K(vp, f'built_{side}')
+        return (f'\tif = {{ limit = {{ NOT = {{ has_variable = {seen} }} }} {S(seen, 0)} }}\n'
+                f'\t{S(conv, "var:" + built)}\n\t{C(conv, "subtract", "var:" + seen)}\n'
+                f'\tif = {{ limit = {{ var:{conv} < 0 }} {S(conv, 0)} }}\n'
+                f'\t{S(seen, "var:" + built)}\n\t{C(conv, "divide", "pmr_retool_levels_per_level")}\n')
+
+    def release(vp, rbx, side, keep=''):
+        seen = K(vp, 'seen_gov') if side.startswith('gov') else K(vp, 'seen_priv')
+        built, q = K(vp, 'built_' + side), K(vp, 'q_' + side)
+        crumb = '' if side.startswith('gov') else f"\t\t{flush_log('RELEASE', rbx, f';built=[THIS.Var({built!r}).GetValue|0]', mine)}\n"
+        merged = (f'\t\t{C(K(vp, "built_gov"), "subtract", "var:" + built)}\n'
+                  f'\t\t{C(K(vp, "q_gov"), "subtract", "var:" + K(vp, "q_gova"))}\n' if side == 'gova' else '')
+        return (f'\tif = {{\n\t\tlimit = {{ var:{built} > 0 var:{q} <= var:{built} {keep}'
+                f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
+                + crumb + f'\t\tremove_building = {rbx}\n' + crumb.replace('RELEASE', 'RELEASED')
+                + f'\t\t{C(seen, "subtract", "var:" + built)}\n' + merged
+                + f'\t\t{S(built, 0)}\n\t\t{S(q, 0)}\n\t}}\n')
+
+    def slot_here(vp, j):
+        if not ABROAD_SLOT:
+            return ''
+        return f'has_variable = pmr_abroad_{b}' if j == ABROAD_SLOT else f'NOT = {{ has_variable = pmr_abroad_{b} }}'
+
+    if not RETOOL_STACK or not ABROAD_SLOT:
+        raise SystemExit('rails_effects: the projects copy the retool twin with RETOOL_STACK and ABROAD_SLOT on')
+    for vp, trs in rt.kinds.items():
+        sites = project_sites(b, vp)
+        privs = [(side, rbx, j) for side, rbx, j in sites if j]
+        rbg, rbga = sites[-2][1], sites[-1][1]
+        n = lambda x, vp=vp: K(vp, x)   # noqa: E731
+        o.append(f'pmr_{vp}_read_{b} = {{\n' + ''.join(read_side(vp, rbx, side) for side, rbx, _j in sites)
+                 + f'\t{C(n("built_gov"), "add", "var:" + n("built_gova"))}\n\t{C(n("q_gov"), "add", "var:" + n("q_gova"))}\n'
+                 + totals(vp) + '}\n\n')
+        o.append(f'pmr_{vp}_count_{b} = {{\n\tpmr_{vp}_read_{b} = yes\n'
+                 + (''.join(crew(vp, j, rbx) for _s, rbx, j in privs) if RETOOL_CREW else '')
+                 + count(vp, 'gov') + count(vp, 'priv') + '}\n\n')
+        keep = lambda j, vp=vp: (f'NOT = {{ has_variable = {K(vp, f"grace_priv{j}")} }} '   # noqa: E731
+                                 f'var:{K(vp, f"staff_priv{j}")} < 2 ')
+        o.append(f'pmr_{vp}_release_{b} = {{\n'
+                 + ''.join(release(vp, rbx, side, keep(j) if RETOOL_CREW else '') for side, rbx, j in privs)
+                 + release(vp, rbg, 'gov')
+                 + release(vp, rbga, 'gova', f'NOT = {{ AND = {{ has_variable = pmr_abroad_{b} has_variable = pmr_{vp}_open_gov_{b} }} }} ')
+                 + totals(vp) + '}\n\n')
+        # the split (SPEC 5): the government's room its own levels below a target rung (pmr_<vp>_gneed_<b>), the private
+        # owners' the rest; abroad the player's government's levels at most (pmr_gov_mine_<b>)
+        score = (f";pay=[THIS.Var('{n('pay')}').GetValue|0];score=[THIS.Var('pmr_rl_t').GetValue|0]"
+                 f";need={'[THIS.Var(' + repr(n('need')) + ').GetValue|0]'};gov_need={'[THIS.Var(' + repr(n('gneed')) + ').GetValue|0]'}"
+                 + ';target=' + '/'.join(f"[THIS.Var('{at(tr.t)}').GetValue|0]" for tr in trs))
+        o.append(f'pmr_{vp}_split_{b} = {{\n'
+                 f'\t{S(n("room"), "var:" + n("need"))}\n\t{C(n("room"), "subtract", "var:" + n("pending"))}\n'
+                 f'\tif = {{ limit = {{ var:{n("room")} < 0 }} {S(n("room"), 0)} }}\n'
+                 f'\t{S(n("room_gov"), "var:" + n("gneed"))}\n\t{C(n("room_gov"), "subtract", "var:" + n("pending_gov"))}\n'
+                 f'\tif = {{ limit = {{ var:{n("room_gov")} < 0 }} {S(n("room_gov"), 0)} }}\n'
+                 f'\tif = {{ limit = {{ var:{n("room_gov")} > var:{n("room")} }} {S(n("room_gov"), "var:" + n("room"))} }}\n'
+                 f'\t{S(n("room_priv"), "var:" + n("room"))}\n\t{C(n("room_priv"), "subtract", "var:" + n("room_gov"))}\n'
+                 f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} }}\n'
+                 f'\t\tset_variable = {{ name = {n("gm_room")} value = {{ value = var:pmr_gov_mine_{b} multiply = pmr_retool_levels_per_level '
+                 f'max = var:{n("gneed")} subtract = var:{n("pending_gov")} min = 0 }} }}\n'
+                 f'\t\tif = {{ limit = {{ var:{n("room_gov")} > var:{n("gm_room")} }} {S(n("room_gov"), "var:" + n("gm_room"))} }}\n\t}}\n'
+                 f'\t{S(n("cap_gov"), "var:" + n("q_gov"))}\n\t{C(n("cap_gov"), "add", "var:" + n("room_gov"))}\n'
+                 + ('' if RELEASE else
+                    f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_{vp}_gate_{b} }} owner = {{ pmr_logged = yes }} }} '
+                    f'set_variable = {{ name = pmr_rl_t value = {{ value = var:{n("pay")} multiply = {PAY_TILT} }} }} '
+                    f'debug_log = "PMR;rec=PROJECT_OPEN;date=[TimeKeeper.GetCurrentDate.GetString];'
+                    f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                    f'building={bk};project={vp}{score}" }}\n')
+                 + f'\tset_variable = pmr_{vp}_gate_{b}\n'
+                 f'\tif = {{ limit = {{ has_variable = pmr_{vp}_rq_{b} }} remove_variable = pmr_{vp}_rq_{b} }}\n'
+                 f'\tif = {{ limit = {{ var:{n("room_gov")} > 0 }} set_variable = pmr_{vp}_open_gov_{b} }}\n'
+                 f'\telse_if = {{ limit = {{ has_variable = pmr_{vp}_open_gov_{b} }} remove_variable = pmr_{vp}_open_gov_{b} }}\n'
+                 # no standing site abroad for the player's government: its upgrade button there expands the retool
+                 # twin's alone (gov_button), so nothing could expand one
+                 f'\t{S(n("slots_left"), "var:" + n("room_priv"))}\n'
+                 + ''.join(f'\t{S(n(f"alloc{j}"), 0)}\n' for _s, _r, j in privs)
+                 + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{n("slots_left")} > 0 {slot_here(vp, j)} }}\n'
+                           f'\t\t{S(n(f"alloc{j}"), "var:" + n("slots_left"))}\n\t\t{S(n("slots_left"), 0)}\n\t}}\n'
+                           for _s, _r, j in privs)
+                 + ''.join(f'\tset_variable = {{ name = pmr_{vp}_cap_priv{j}_{b} value = var:{n(f"q_priv{j}")} }}\n'
+                           f'\tchange_variable = {{ name = pmr_{vp}_cap_priv{j}_{b} add = var:{n(f"alloc{j}")} }}\n'
+                           f'\tif = {{ limit = {{ OR = {{ var:{n(f"alloc{j}")} > 0 var:{n(f"q_priv{j}")} > var:{n(f"built_priv{j}")} }} }} '
+                           f'set_variable = pmr_{vp}_open_priv_{b}_{j} }}\n'
+                           f'\telse_if = {{ limit = {{ has_variable = pmr_{vp}_open_priv_{b}_{j} }} remove_variable = pmr_{vp}_open_priv_{b}_{j} }}\n'
+                           for _s, _r, j in privs)
+                 + '}\n\n')
+        flags = [f'pmr_{vp}_open_priv_{b}_{j}' for _s, _r, j in privs] + [f'pmr_{vp}_open_gov_{b}']
+        o.append(f'pmr_{vp}_close_{b} = {{\n'
+                 + ''.join(f'\tif = {{ limit = {{ has_variable = {fl} }} remove_variable = {fl} }}\n' for fl in flags)
+                 + f'\t{S(n("room_priv"), 0)}\n\t{S(n("room_gov"), 0)}\n\t{S(n("cap_gov"), "var:" + n("q_gov"))}\n'
+                 + ''.join(f'\tif = {{ limit = {{ var:{n("q_" + side)} <= var:{n("built_" + side)} '
+                           f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }} remove_building = {rbx} }}\n'
+                           for side, rbx, _j in sites)
+                 + f'\tif = {{\n\t\tlimit = {{ var:{n("pending")} <= 0 }}\n'
+                 f'\t\t{S(n("seen_gov"), 0)}\n\t\t{S(n("seen_priv"), 0)}\n'
+                 f'\t\tif = {{ limit = {{ has_variable = pmr_{vp}_gate_{b} }} remove_variable = pmr_{vp}_gate_{b} }}\n'
+                 f'\t\tif = {{ limit = {{ has_variable = {n("cap_gov")} }} remove_variable = {n("cap_gov")} }}\n'
+                 '\t}\n}\n\n')
+
+    # ---- the tallies ----
+    # Levels first seen (game start, a new building): every level on the none, a new building's on the target rungs
+    # (SPEC 8.3: new levels arrive equipped); project levels already built count for nothing, as the retool twin's.
+    o.append(f'pmr_rl_reset_{b} = {{\n')
+    for tr in rt.tracks:
+        t = tr.t
+        o.append(f'\t# track {t}: {tr.g}\n'
+                 f'\tif = {{ limit = {{ NOT = {{ has_variable = {at(t)} }} }} {S(at(t), 0)} {S(ag(t), 0)} }}\n'
+                 + ''.join(f'\t{S(al(t, r), 0)} {S(alg(t, r), 0)}\n' for r in range(tr.R))
+                 + ''.join(f'\t{S(aw(t, r), r)}\n' for r in range(1, tr.R))
+                 + f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_new_build_{b} }}\n'
+                 + lookup(f'var:{at(t)}', list(range(tr.R)), lambda r, t=t: S(al(t, r), f'var:{lvl}'), '\t\t')
+                 + f'\t}}\n\telse = {{ {S(al(t, 0), "var:" + lvl)} }}\n')
+    for vp in rt.kinds:
+        o.append(f'\tpmr_{vp}_read_{b} = yes\n'
+                 f'\t{S(K(vp, "seen_gov"), "var:" + K(vp, "built_gov"))}\n\t{S(K(vp, "seen_priv"), "var:" + K(vp, "built_priv"))}\n'
+                 f'\t{S(K(vp, "conv_gov"), 0)}\n\t{S(K(vp, "conv_priv"), 0)}\n')
+    o.append(f'\t{rmfp}\n}}\n\n')
+
+    # Each track's levels add up to the building's: a gain lands on the target rung, a loss leaves the lowest rungs
+    # first; the government's (pmr_gov_levels_<b>) the same, placed on the target rung first (pmr_sync_gov_<b>'s rule).
+    o.append(f'pmr_rl_sync_{b} = {{\n\tif = {{ limit = {{ NOT = {{ has_variable = {al(1, 0)} }} }} pmr_rl_reset_{b} = yes }}\n')
+    for tr in rt.tracks:
+        t, rs = tr.t, list(range(tr.R))
+
+        def place(r, ind, t=t):
+            return (f'{ind}if = {{\n{ind}\tlimit = {{ var:pmr_rl_d > 0 }}\n'
+                    f'{ind}\tset_variable = {{ name = pmr_rl_a value = {{ value = var:{al(t, r)} subtract = var:{alg(t, r)} }} }}\n'
+                    f'{ind}\tif = {{ limit = {{ var:pmr_rl_a > var:pmr_rl_d }} {S("pmr_rl_a", "var:pmr_rl_d")} }}\n'
+                    f'{ind}\t{C(alg(t, r), "add", "var:pmr_rl_a")}\n{ind}\t{C("pmr_rl_d", "subtract", "var:pmr_rl_a")}\n{ind}}}\n')
+        o.append(f'\t# track {t}\n\t{S("pmr_rl_s", 0)}\n'
+                 + ''.join(f'\t{C("pmr_rl_s", "add", "var:" + al(t, r))}\n' for r in rs)
+                 + f'\tif = {{\n\t\tlimit = {{ var:pmr_rl_s < var:{lvl} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_rl_d value = {{ value = var:{lvl} subtract = var:pmr_rl_s }} }}\n'
+                 + lookup(f'var:{at(t)}', rs, lambda r, t=t: C(al(t, r), 'add', 'var:pmr_rl_d'), '\t\t')
+                 + f'\t}}\n\telse_if = {{\n\t\tlimit = {{ var:pmr_rl_s > var:{lvl} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_rl_d value = {{ value = var:pmr_rl_s subtract = var:{lvl} }} }}\n'
+                 + ''.join(take(al(t, r), 'pmr_rl_d', '\t\t') for r in rs) + '\t}\n'
+                 + ''.join(f'\tif = {{ limit = {{ var:{alg(t, r)} > var:{al(t, r)} }} {S(alg(t, r), "var:" + al(t, r))} }}\n' for r in rs)
+                 + f'\t{S("pmr_rl_s", 0)}\n' + ''.join(f'\t{C("pmr_rl_s", "add", "var:" + alg(t, r))}\n' for r in rs)
+                 + f'\tif = {{\n\t\tlimit = {{ var:pmr_rl_s < var:pmr_gov_levels_{b} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_rl_d value = {{ value = var:pmr_gov_levels_{b} subtract = var:pmr_rl_s }} }}\n'
+                 + lookup(f'var:{at(t)}', rs, lambda r, t=t: ' '.join(x.strip() for x in place(r, '').splitlines()), '\t\t')
+                 + ''.join(place(r, '\t\t') for r in rs)
+                 + f'\t}}\n\telse_if = {{\n\t\tlimit = {{ var:pmr_rl_s > var:pmr_gov_levels_{b} }}\n'
+                 f'\t\tset_variable = {{ name = pmr_rl_d value = {{ value = var:pmr_rl_s subtract = var:pmr_gov_levels_{b} }} }}\n'
+                 + ''.join(take(alg(t, r), 'pmr_rl_d', '\t\t') for r in rs) + '\t}\n')
+    o.append('}\n\n')
+
+    # Completed project levels (pmr_<vp>_conv_<side>_<b>, counted as the retool twin's) move one level each of that side
+    # to the target rung, lowest rung first; a ranch's two equipment tracks the one with the larger gain first (SPEC 5).
+    for vp, trs in rt.kinds.items():
+        if len(trs) > 2:
+            raise SystemExit(f'{bk}: {len(trs)} {vp} tracks; rails_effects orders two at most')
+
+        def conv_one(cv, tr, r, gov):
+            t = tr.t
+            avail = (S('pmr_rl_a', 'var:' + alg(t, r)) if gov else
+                     f'set_variable = {{ name = pmr_rl_a value = {{ value = var:{al(t, r)} subtract = var:{alg(t, r)} }} }}')
+            return (f'\t\tif = {{\n\t\t\tlimit = {{ var:{cv} > 0 var:{at(t)} > {r} }}\n\t\t\t{avail}\n'
+                    f'\t\t\tif = {{ limit = {{ var:pmr_rl_a > var:{cv} }} {S("pmr_rl_a", "var:" + cv)} }}\n'
+                    f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_rl_a > 0 }}\n\t\t\t\t{C(al(t, r), "subtract", "var:pmr_rl_a")}\n'
+                    + (f'\t\t\t\t{C(alg(t, r), "subtract", "var:pmr_rl_a")}\n\t\t\t\t{C(f"pmr_rl_gg_{t}", "add", "var:pmr_rl_a")}\n'
+                       if gov else '')
+                    + f'\t\t\t\t{C(cv, "subtract", "var:pmr_rl_a")}\n\t\t\t\t{C(f"pmr_rl_g_{t}", "add", "var:pmr_rl_a")}\n'
+                    '\t\t\t}\n\t\t}\n')
+
+        def each_pass(cv, gov, trs=trs):
+            seq = lambda order: ''.join(conv_one(cv, tr, r, gov) for tr in order for r in range(tr.R - 1))   # noqa: E731
+            if len(trs) == 1:
+                body = seq(trs)
+            else:
+                body = (f'\t\tif = {{\n\t\t\tlimit = {{ var:{ag(trs[0].t)} >= var:{ag(trs[1].t)} }}\n'
+                        + seq(trs).replace('\n\t\t', '\n\t\t\t').replace('\t\t', '\t\t\t', 1) + '\t\t}\n'
+                        '\t\telse = {\n' + seq(trs[::-1]).replace('\n\t\t', '\n\t\t\t').replace('\t\t', '\t\t\t', 1) + '\t\t}\n')
+            return f'\tif = {{\n\t\tlimit = {{ var:{cv} > 0 }}\n' + body + '\t}\n'
+        cg, cp = K(vp, 'conv_gov'), K(vp, 'conv_priv')
+        o.append(f'pmr_{vp}_progress_{b} = {{\n'
+                 + ''.join(f'\t{S(f"pmr_rl_g_{tr.t}", 0)} {S(f"pmr_rl_gg_{tr.t}", 0)}\n' for tr in trs)
+                 + each_pass(cg, True) + each_pass(cp, False)
+                 + f'\t{C(cp, "add", "var:" + cg)}\n'
+                 + each_pass(cp, False) + each_pass(cp, True)
+                 + ''.join(lookup(f'var:{at(tr.t)}', list(range(1, tr.R)),
+                                  lambda r, t=tr.t: f'{C(al(t, r), "add", f"var:pmr_rl_g_{t}")} {C(alg(t, r), "add", f"var:pmr_rl_gg_{t}")}')
+                           for tr in trs)
+                 + f'\t{S(cg, 0)}\n\t{S(cp, 0)}\n}}\n\n')
+
+    # The mix (end of pmr_mix_<b>): each step member's share, the levels working on its rung (pmr_rs_<j>_<b>, which
+    # pmr_blend_<b> turns into pmr_n_<j>_<b>, the frame's input); the share on each track's none (pmr_rl_n0_<t>_<b>,
+    # vanilla_compat); each project's levels still to buy; the pollution modifier (SPEC 3.5), moved only when its size does.
+    o.append(f'pmr_rl_mix_{b} = {{\n\t{S("pmr_rl_pl", 0)}\n')
+    for tr in rt.tracks:
+        t = tr.t
+        o.append(f'\t# track {t}\n' + ''.join(f'\t{S(f"pmr_rl_w_{r}", 0)}\n' for r in range(1, tr.R))
+                 + ''.join(f'\tif = {{\n\t\tlimit = {{ var:{al(t, s)} > 0 }}\n'
+                           + lookup(f'var:{aw(t, s)}', list(range(1, s + 1)),
+                                    lambda r, s=s, t=t: C(f'pmr_rl_w_{r}', 'add', 'var:' + al(t, s)), '\t\t')
+                           + '\t}\n' for s in range(1, tr.R))
+                 + f'\tset_variable = {{ name = pmr_rl_n0_{t}_{b} value = {{ value = var:{lvl}'
+                 + ''.join(f' subtract = var:pmr_rl_w_{r}' for r in range(1, tr.R)) + f' divide = var:{lvl} }} }}\n'
+                 + ''.join(f'\tset_variable = {{ name = pmr_rs_{rg.j}_{b} value = {{ value = var:pmr_rl_w_{rg.r} divide = var:{lvl} }} }}\n'
+                           for rg in tr.rungs)
+                 + ''.join(f'\tchange_variable = {{ name = pmr_rl_pl add = {{ value = var:pmr_rl_w_{rg.r} multiply = {fmt(rg.pol)} }} }}\n'
+                           for rg in tr.rungs if abs(rg.pol) > 1e-9))
+    for vp, trs in rt.kinds.items():
+        o.append(f'\t# {PROJECT_NAMES[vp]}: the levels below each target rung\n\t{S(K(vp, "need"), 0)}\n\t{S(K(vp, "gneed"), 0)}\n'
+                 + ''.join(lookup(f'var:{at(tr.t)}', list(range(1, tr.R)),
+                                  lambda r, t=tr.t: ' '.join(f'{C(K(vp, "need"), "add", "var:" + al(t, x))} '
+                                                             f'{C(K(vp, "gneed"), "add", "var:" + alg(t, x))}' for x in range(r)))
+                           for tr in trs)
+                 + f'\t{C(K(vp, "need"), "multiply", "pmr_retool_levels_per_level")}\n'
+                 f'\t{C(K(vp, "gneed"), "multiply", "pmr_retool_levels_per_level")}\n')
+    if any(abs(rg.pol) > 1e-9 for rg in rt.rungs):
+        mod, pv = f'pmr_less_pol_{b}', f'pmr_polv_{b}'
+        o.append(f'\t# pollution: the levels on each rung x its own a level\n'
+                 f'\tif = {{ limit = {{ NOT = {{ has_variable = {pv} }} }} {S(pv, 0)} }}\n'
+                 f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:{pv} = var:pmr_rl_pl }} }}\n'
+                 f'\t\tif = {{ limit = {{ has_modifier = {mod} }} remove_modifier = {mod} }}\n'
+                 '\t\tif = {\n\t\t\tlimit = { var:pmr_rl_pl > 0 }\n'
+                 '\t\t\tset_local_variable = { name = pmr_rl_lx value = var:pmr_rl_pl }\n'
+                 f'\t\t\tadd_modifier = {{ name = {mod} multiplier = local_var:pmr_rl_lx }}\n\t\t}}\n'
+                 f'\t\t{S(pv, "var:pmr_rl_pl")}\n\t}}\n')
+    o.append('}\n\n')
+
+    # ---- the pay test (SPEC 4, rules review B), inside pmr_profit_<b> at its prices (pmr_px_<good>), wage (pmr_wage)
+    # and throughput (pmr_thr), and at the solo gate's re-check (pmr_rl_look_<b>) ----
+    w_lab = rt.weight.get(frames.JOB_POP, 1.0)
+    top = fmt(1 + PRICE_LADDER[-1] / 100)
+    targets = sorted(rt.lab_of)
+    p = [f'pmr_rl_pay_{b} = {{\n'
+         '\t# the target recipe\'s laborers a level (the pick before the first target)\n\tset_variable = { name = pmr_rl_l value = 0 }\n'
+         f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_to_{b} }}\n'
+         + lookup(f'var:pmr_to_{b}', targets, lambda q: S('pmr_rl_l', fmt(rt.lab_of[q])), '\t\t')
+         + f'\t}}\n\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_pbest_{b} }}\n'
+         + lookup(f'var:pmr_pbest_{b}', targets, lambda q: S('pmr_rl_l', fmt(rt.lab_of[q])), '\t\t')
+         + '\t}\n\t# each track\'s target cut, for the others\' laborers left\n']
+    for tr in rt.tracks:
+        p.append(f'\t{S(f"pmr_rl_c_{tr.t}", 0)}\n'
+                 f'\tif = {{ limit = {{ has_variable = {at(tr.t)} }}\n'
+                 + lookup(f'var:{at(tr.t)}', [rg.r for rg in tr.rungs], lambda r, tr=tr: S(f'pmr_rl_c_{tr.t}', fmt(tr.rungs[r - 1].lab)), '\t\t')
+                 + '\t}\n')
+    line = lambda rec, t, r: (   # noqa: E731
+        f'if = {{ limit = {{ owner = {{ pmr_logged = yes }} }} debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
+        'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+        f"building={bk};track={t};rung={r};works_as=[THIS.Var('{aw(t, r)}').GetValue|0];"
+        f"saves=[THIS.Var('pmr_rl_sv_{t}_{r}').GetValue|1];buys=[THIS.Var('pmr_rl_gd_{t}_{r}').GetValue|1];"
+        f"levels=[THIS.Var('{al(t, r)}').GetValue|0];books=[THIS.Var('pmr_bpl_{b}').GetValue|1]\" }}")
+    for tr in rt.tracks:
+        t = tr.t
+        others = [x for x in rt.tracks if x.t != t]
+        p.append(f'\t# track {t}: {tr.g}\n'
+                 f'\tset_variable = {{ name = pmr_rl_left value = {{ value = var:pmr_rl_l'
+                 + ''.join(f' subtract = var:pmr_rl_c_{x.t}' for x in others) + ' min = 0 } }\n'
+                 '\tset_variable = { name = pmr_rl_bt value = 0 }\n\tset_variable = { name = pmr_rl_bg value = 0 }\n')
+        for rg in tr.rungs:
+            r = rg.r
+            sv, gd, ok = f'pmr_rl_sv_{t}_{r}', f'pmr_rl_gd_{t}_{r}', f'pmr_rl_ok_{t}_{r}'
+            units = -sum(x * rt.weight.get(pop, 1.0) for pop, x in rg.skilled.items())
+            costed = {g: q for g, q in rg.goods.items() if goods_cost.get(g)}
+            opens = (['owner = { ' + ' '.join(f'has_technology_researched = {x}' for x in rg.techs) + ' }'] if rg.techs else [])
+            opens += (['var:pmr_rail = 1'] if rg.rail else []) + (['var:pmr_elec = 1'] if rg.power else [])
+            opens += (['owner = { NOT = { has_law_or_variant = law_type:law_industry_banned } }'] if rg.ib else [])
+            capped = [g for g in sorted(rg.inputs) if goods_cost.get(g)]
+            p.append(f'\t# rung {r}: {rg.key}\n'
+                     f'\tset_variable = {{ name = {sv} value = {{ value = var:pmr_rl_left max = {fmt(rg.lab)} multiply = {fmt(w_lab)}'
+                     + (f' add = {fmt(units)}' if abs(units) > 1e-9 else '') + ' multiply = var:pmr_wage divide = 10000 } }\n'
+                     f'\tset_variable = {{ name = {gd} value = {{ value = 0'
+                     + ''.join(f' add = {{ value = var:pmr_px_{g} multiply = {fmt(q * goods_cost[g])} }}' for g, q in sorted(costed.items()))
+                     + ' multiply = var:pmr_thr } }\n'
+                     f'\t{S(ok, 0)}\n'
+                     f'\tset_variable = {{ name = pmr_rl_gn_{t}_{r} value = {{ value = var:{sv} subtract = var:{gd} }} }}\n'
+                     f'\tset_variable = {{ name = pmr_rl_t value = {{ value = var:{gd} multiply = {fmt(STEP_PAY)} }} }}\n'
+                     f'\tif = {{\n\t\tlimit = {{ ' + ' '.join(opens)
+                     + (' NOT = { OR = { ' + ' '.join(f'var:pmr_px_{g} >= {top}' for g in capped) + ' } }' if capped else '')
+                     + f' var:{sv} >= var:pmr_rl_t }}\n'
+                     f'\t\t{S(ok, 1)}\n'
+                     f'\t\tif = {{ limit = {{ var:pmr_rl_gn_{t}_{r} > var:pmr_rl_bg }} {S("pmr_rl_bt", r)} {S("pmr_rl_bg", f"var:pmr_rl_gn_{t}_{r}")} }}\n\t}}\n')
+        p.append(f'\tif = {{ limit = {{ NOT = {{ has_variable = {at(t)} }} }} {S(at(t), 0)} }}\n'
+                 f'\tif = {{ limit = {{ NOT = {{ var:{at(t)} = var:pmr_rl_bt }} }} {S(at(t), "var:pmr_rl_bt")} {rmfp} }}\n'
+                 f'\t{S(ag(t), "var:pmr_rl_bg")}\n')
+        # idle and resume (rules review B): a rung at a loss works as the best eligible rung below it, free and at once
+        for rg in tr.rungs:
+            r = rg.r
+            sv, gd, ok = f'pmr_rl_sv_{t}_{r}', f'pmr_rl_gd_{t}_{r}', f'pmr_rl_ok_{t}_{r}'
+            lower = ('\tset_variable = { name = pmr_rl_w value = 0 }\n\tset_variable = { name = pmr_rl_wg value = -1 }\n'
+                     + ''.join(f'\tif = {{ limit = {{ var:pmr_rl_ok_{t}_{x} = 1 var:pmr_rl_gn_{t}_{x} > var:pmr_rl_wg }} '
+                               f'{S("pmr_rl_w", x)} {S("pmr_rl_wg", f"var:pmr_rl_gn_{t}_{x}")} }}\n' for x in range(1, r)))
+            lower = ''.join('\t\t' + ln + '\n' for ln in lower.strip('\n').split('\n'))
+            p.append(f'\tif = {{ limit = {{ NOT = {{ has_variable = {aw(t, r)} }} }} {S(aw(t, r), r)} }}\n'
+                     f'\tif = {{\n\t\tlimit = {{ var:{aw(t, r)} < {r} }}\n'
+                     f'\t\tif = {{\n\t\t\tlimit = {{ var:{ok} = 1 }}\n\t\t\t{S(aw(t, r), r)}\n\t\t\t{rmfp}\n'
+                     f'\t\t\tif = {{ limit = {{ has_variable = {al(t, r)} var:{al(t, r)} > 0 }} {line("RESUME", t, r)} }}\n\t\t}}\n'
+                     '\t\telse = {\n' + lower.replace('\n\t\t', '\n\t\t\t').replace('\t\t', '\t\t\t', 1)
+                     + f'\t\t\tif = {{ limit = {{ NOT = {{ var:{aw(t, r)} = var:pmr_rl_w }} }} {S(aw(t, r), "var:pmr_rl_w")} {rmfp} }}\n'
+                     '\t\t}\n\t}\n'
+                     f'\telse_if = {{\n\t\tlimit = {{ has_variable = {al(t, r)} var:{al(t, r)} > 0 has_variable = pmr_bpl_{b} '
+                     f'var:pmr_bpl_{b} < 0 var:{sv} < var:{gd} }}\n'
+                     + lower + f'\t\t{S(aw(t, r), "var:pmr_rl_w")}\n\t\t{rmfp}\n\t\t{line("IDLE", t, r)}\n\t}}\n')
+    for vp, trs in rt.kinds.items():
+        # the payoff (SPEC 5, rules review A): the larger target gain a level a week / the parent's employees a level x
+        # VANILLA_PROFIT_W / PROJECT_SHARE; 0 with no employees read
+        p.append(f'\t# {PROJECT_NAMES[vp]}: its payoff\n\t{S(K(vp, "pay"), 0)}\n'
+                 f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_pve_{b} var:pmr_pve_{b} > 0 }}\n\t\tset_variable = {{ name = pmr_rl_t value = var:{ag(trs[0].t)} }}\n'
+                 + ''.join(f'\t\tif = {{ limit = {{ var:{ag(tr.t)} > var:pmr_rl_t }} {S("pmr_rl_t", "var:" + ag(tr.t))} }}\n' for tr in trs[1:])
+                 + f'\t\tset_variable = {{ name = {K(vp, "pay")} value = {{ value = var:pmr_rl_t divide = var:pmr_pve_{b} '
+                 f'multiply = {fmt(VANILLA_PROFIT_W / PROJECT_SHARE)} min = 0 }} }}\n\t}}\n')
+    p.append('}\n\n')
+    o += p
+    return ''.join(o)
+
+
+def rails_tail(bk, b, rt):
+    """RAILS, the end of pmr_tick_body_<b> (after the retool twin's split or close): each project opens while levels sit
+    below a target rung and closes once none do (SPEC 5); test builds log the player's tallies (RAILS) at a monthly
+    update about twice a year (pmr_rlog_<b>), as a line a building a month would fill the log."""
+    al, alg, at, _ag, aw = rails_names(rt)
+    o = ''.join(f'\tif = {{ limit = {{ var:pmr_{vp}_need_{b} > 0 }} pmr_{vp}_split_{b} = yes }}\n'
+                f'\telse_if = {{ limit = {{ has_variable = pmr_{vp}_gate_{b} }} pmr_{vp}_close_{b} = yes }}\n' for vp in rt.kinds)
+    if RELEASE:
+        return o
+    g = lambda name: f"[THIS.Var('{name}').GetValue|0]"   # noqa: E731
+    line = ('PMR;rec=RAILS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+            f"state=[THIS.GetState.GetNameNoFormatting];building={bk};level={g(f'pmr_level_{b}')};gov={g(f'pmr_gov_levels_{b}')}"
+            + ''.join(f";t{tr.t}={g(at(tr.t))};lv{tr.t}=" + '/'.join(g(al(tr.t, r)) for r in range(tr.R))
+                      + f";gv{tr.t}=" + '/'.join(g(alg(tr.t, r)) for r in range(tr.R))
+                      + f";as{tr.t}=" + '/'.join(g(aw(tr.t, r)) for r in range(1, tr.R)) for tr in rt.tracks)
+            + ''.join(f";{vp}_need={g(f'pmr_{vp}_need_{b}')};{vp}_built={g(f'pmr_{vp}_built_{b}')};{vp}_queued={g(f'pmr_{vp}_pending_{b}')}"
+                      f";{vp}_pay={g(f'pmr_{vp}_pay_{b}')}" for vp in rt.kinds)
+            + f";lab={g(f'pmr_lbm_{b}')}" + (f";pol={g(f'pmr_polv_{b}')}" if any(abs(rg.pol) > 1e-9 for rg in rt.rungs) else ''))
+    return o + (f'\tif = {{ limit = {{ has_variable = pmr_month NOT = {{ has_variable = pmr_rlog_{b} }} owner = {{ is_player = yes }} }} '
+                f'set_variable = {{ name = pmr_rlog_{b} value = yes days = 175 }} debug_log = "{line}" }}\n')
+
+
+def rails_look(bk, b, rt, goods_cost):
+    """pmr_rl_look_<b>, state scope: the pay test where pmr_profit_<b> does not run, at a solo building's re-check (the
+    solo gate, SOLO_GATE 3): its step goods' prices, its wage and throughput read as pmr_profit_<b> reads them. Written
+    after pmr_wage_<b>."""
+    goods = [g for g in rt.goods if goods_cost.get(g)]
+    thr = ''.join(f'\t\tchange_variable = {{ name = pmr_thr add = scope:pmr_bk.modifier:{m} }}\n'
+                  for m in THROUGHPUT_KEYS.get(bk, []))
+    return (f'pmr_rl_look_{b} = {{\n'
+            + ''.join(f'\tif = {{ limit = {{ has_global_variable = pmr_setup }} set_variable = {{ name = pmr_px_{g} value = 1 }} }}\n'
+                      f'\telse_if = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
+                      f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
+            + f'\tpmr_wage_{b} = yes\n\tset_variable = {{ name = pmr_wage value = var:pmr_wg_{b} }}\n'
+            '\tset_variable = { name = pmr_thr value = 1 }\n'
+            + (f'\tif = {{\n\t\tlimit = {{ exists = b:{bk} }}\n\t\tb:{bk} = {{ save_temporary_scope_as = pmr_bk }}\n{thr}'
+               '\t\tchange_variable = { name = pmr_thr max = 0.1 }\n\t}\n' if thr else '')
+            + f'\tpmr_rl_pay_{b} = yes\n}}\n\n')
+
+
 # Loop breaker (2026-10-13: Pat's game froze during the daily update of 16 June 1836, and debug.log
 # held nothing after 11 June). A building type's tick that runs more than TICK_TRIP times in one
 # state in one day stops there for the rest of the day and writes a TRIP line. TRIP and RELEASE (a
@@ -1497,6 +2035,13 @@ def main():
     ap.add_argument('--treat-mod', action='store_true',
                     help='TREAT_MOD (rules review item F): the plantations\' Treatment shares as building and state '
                          'modifiers, without their ladders')
+    ap.add_argument('--rails', action='store_true',
+                    help='RAILS (automation/SPEC.md v4): steps as tallies, the shared laborers group and the New '
+                         'Equipment and Rail Connection projects; test builds only, needs a new game')
+    ap.add_argument('--pay-score', action='store_true',
+                    help='PAY_SCORE (rules review item A): the retool twin scored on its payoff')
+    ap.add_argument('--one-frame', action='store_true',
+                    help='ONE_FRAME (rules review item G): a step type\'s recipe method carries its union frame; needs --rails')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
@@ -1507,6 +2052,7 @@ def main():
     global PTERM_OFF
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD, TREAT_MOD
     global BAR_COUNT, BAR_CLOCK, PRICE_NEWEST, PROFIT_RULE
+    global RAILS, PAY_SCORE
     RELEASE = args.release
     if args.solo is not None:
         SOLO_GATE = args.solo
@@ -1539,6 +2085,13 @@ def main():
     PRICE_NEWEST = PRICE_NEWEST or args.price_newest
     if BAR_CLOCK or PRICE_NEWEST:
         PROFIT_RULE = 108   # rules review D and E: saves recompute once
+    if args.rails and RELEASE:
+        raise SystemExit('--rails is for test builds (automation/SPEC.md v4, needs a new game)')
+    RAILS = frames.RAILS = RAILS or args.rails
+    PAY_SCORE = PAY_SCORE or args.pay_score
+    frames.ONE_FRAME = frames.ONE_FRAME or args.one_frame
+    if frames.ONE_FRAME and not RAILS:
+        raise SystemExit('--one-frame needs --rails: it folds the step types\' union frames')
     SHARE_DIGITS = args.digit_shares
     TREAT_MOD = frames.TREAT_MOD = TREAT_MOD or args.treat_mod
     if TREAT_MOD and SHARE_DIGITS:
@@ -1689,6 +2242,7 @@ def main():
     elec_pms = []     # the electric recipes' marker methods (ElectricRecipe), one per building that has one
     pair_pms = []     # the recipe + automation pairs' marker methods (PairRecipe, SPLIT_AUTOMATION)
     split_info = {}   # building -> its plain recipes, automation options, pair index and blend members
+    SHARED_RECIPES.update(k for k, n in collections.Counter(r.key for t in treated for r in t[3]).items() if n > 1)
     for bk, bn, s, recipes, g0, pg in treated:
         auto_groups = [g for g in pdx.items(pg) if g != g0 and is_automation(g)]
         if auto_groups and (SPLIT_AUTOMATION or len(recipes) >= AUTOMATION_FROM_TIER):
@@ -1707,13 +2261,17 @@ def main():
                     s.cuts.append(line_span(s.text, n))
             entry = {'building': bk, 'groups': auto_groups, 'folded': [a.key for a in automation[bk]],
                      'from_tier': AUTOMATION_FROM_TIER}
+            # RAILS (automation/SPEC.md 3.1, 3.2): only the processing groups stay an axis of the targets; every other
+            # automation group is a track whose rungs are step members, tallied by the tick, not targets
+            track_groups = [g for g in auto_groups if g not in PROCESSING_GROUPS] if RAILS else []
+            axis_groups = [g for g in auto_groups if g not in track_groups]
             if SPLIT_AUTOMATION:
                 # every recipe with every automation option; (recipe, first option) keeps the vanilla recipe as its marker
                 if group_users.get(g0, set()) != {bk}:
                     raise SystemExit(f'{bk}: {g0} is shared with {sorted(group_users[g0] - {bk})}; '
                                      'the recipe + automation pairs would need one marker per building')
                 plain_r = list(recipes)
-                options = automation_options(auto_groups, groups, pms)
+                options = automation_options(axis_groups, groups, pms)
                 pairs_l, index = [], {}
                 for ri, r in enumerate(plain_r, 1):
                     for a, opt in enumerate(options, 1):
@@ -1726,7 +2284,7 @@ def main():
                 recipes[:] = pairs_l
                 members = [(j, [index[(j, a)] for a in range(1, len(options) + 1)], 'recipe', r)
                            for j, r in enumerate(plain_r, 1)]
-                for g in auto_groups:
+                for g in axis_groups:
                     for pk in groups[g]:
                         m = Recipe(pk, *pms[pk])
                         if m.blend or m.employment or m.rest:
@@ -1734,8 +2292,10 @@ def main():
                                             [index[(ri, a)] for ri in range(1, len(plain_r) + 1)
                                              for a, opt in enumerate(options, 1) if any(x.key == pk for x in opt)],
                                             g, m))
+                if track_groups:
+                    rails_type(bk, track_groups, groups, pms, members, s, pg)
                 split_info[bk] = {'plain': plain_r, 'options': options, 'index': index, 'members': members,
-                                  'pairs': pairs_l}
+                                  'pairs': pairs_l, 'axis': axis_groups}
                 gsrc, gpm = group_src[g0]
                 markers = [r for r in pairs_l if isinstance(r, PairRecipe)]
                 pair_pms.extend(markers)
@@ -1754,7 +2314,10 @@ def main():
                 entry['electric_recipe'] = {'key': er.key, 'automation': [a.key for a in tops],
                                             'technologies': er.techs}
             report.setdefault('automation', []).append(entry)
-        # The union frames, last in the recipe group: one per retool target (frames.union_key), in pmr_to order.
+        # The union frames, last in the recipe group: one per retool target (frames.union_key), in pmr_to order. ONE_FRAME:
+        # none, the recipe method is its own.
+        if one_frame_type(bk, split_info):
+            continue
         gsrc, gpm = group_src[g0]
         gsrc.inserts.append((gpm.end - 1, ''.join(f'\tpm_pmr_union_{short(bk)}_{p}  # PMR: union frame of {r.key}\n\t'
                                                   for p, r in enumerate(recipes, 1))))
@@ -1788,7 +2351,10 @@ def main():
             base = r.base.key if isinstance(r, PairRecipe) else r.key
             if isinstance(r, PairRecipe):
                 pair_of.setdefault(base, []).append(r.key)
-            pair_of.setdefault(base, []).append(f'pm_pmr_union_{short(bk)}_{p}')
+            if one_frame_type(bk, split_info):   # ONE_FRAME: the recipe is its own union; its _s union joins below (xr)
+                pair_of.setdefault(base, [])
+            else:
+                pair_of.setdefault(base, []).append(f'pm_pmr_union_{short(bk)}_{p}')
     # Written once the AI's lock is known (frame_lock below): a locked method's list becomes the method itself, and
     # PMR's gate asks for the frames named here.
     frame_adds = {}
@@ -2043,6 +2609,15 @@ def main():
         site_types += priv_slots(b) + [f'building_pmr_retool_gov_{b}', f'building_pmr_retool_gova_{b}']
         triggers.append(retool_triggers(b, bk))
         costs.append(retool_values(b))
+        rt = RAILS_TYPES.get(bk)
+        for vp in (rt.kinds if rt else {}):   # RAILS: the New Equipment and Rail Connection projects (SPEC 5)
+            costs.append(f'pmr_{vp}_cost_{b} = {fmt(base_cost * PROJECT_SHARE / N)}  # {rc.value} = {fmt(base_cost)} x {PROJECT_SHARE} / {N}')
+            retools.append(retool_buildings(b, bk, icon, vp))
+            triggers.append(retool_triggers(b, bk, vp))
+            costs.append(retool_values(b, vp))
+            for _side, site, _j in project_sites(b, vp):
+                site_types.append(site)
+                loc += [f' {site}:0 "{PROJECT_NAMES[vp]}: ${bk}$"', f' {site}_desc:0 ""']
 
         for rbx in priv_slots(b):
             loc += [f' {rbx}:0 "Retool: ${bk}$"',
@@ -2073,7 +2648,8 @@ def main():
                 on = [m for m in opt if m.blend or m.employment]
                 auto_tiers.append((f'PMR_MVA_{b}_{a}', on[-1].texture if on else None,
                                    [sp['index'][(ri, a)] for ri in range(1, len(sp['plain']) + 1)]))
-            auto_ui[bk] = (auto_groups_of[bk][0], auto_tiers)
+            if sp['axis']:   # RAILS: a step type with no processing axis has no automation bar
+                auto_ui[bk] = (sp['axis'][0], auto_tiers)
         elif automation.get(bk):
             plain_i = [i for i, r in enumerate(recipes, 1) if not isinstance(r, ElectricRecipe)]
             er = [(i, r) for i, r in enumerate(recipes, 1) if isinstance(r, ElectricRecipe)]
@@ -2189,6 +2765,16 @@ def main():
                     ladder(sh, values, dv, treat_job_body(o) if TREAT_MOD else o.share_body, o.texture,
                            lambda val, o=o: f'${o.key}$ ({val}% of the workforce)', (gs, f'${o.key}$ share'))
         fb = frames.Building(bk, g0, [r.key for r in recipes], fm, ogs, own, live, first=groups[g0][0])
+        if rt:   # RAILS: the skilled posts its steps move; each target's laborers a level and the wage weights (pay test)
+            fb.skilled, fb.skilled_js = dict(rt.skilled), list(rt.skilled_js)
+            rt.lab_of = {p: max(0, frames.pair_jobs(fb, p)) for p in range(1, len(recipes) + 1)}
+            rt.weight = weight
+            profit_goods.update(g for g in rt.goods if goods_cost.get(g))
+        if one_frame_type(bk, split_info) and not fb.one_frame:
+            raise SystemExit(f'{bk}: ONE_FRAME read the type one way before its frames and another after')
+        fb.one_frame = one_frame_type(bk, split_info)   # not a type whose recipes another lists (SHARED_RECIPES)
+        if rt:
+            rt.one_frame = fb.one_frame
         if TREAT_MOD and live:
             lost = set(frames.treat_plan(fb)[1]) - set(frames.frame_goods(fb)[1])
             if lost:
@@ -2196,7 +2782,8 @@ def main():
         frames_of[bk] = fb
         FRAMES[bk] = fb
         for p, r in enumerate(recipes, 1):
-            body = frames.sections(frames.pure_mods(fb, p))
+            # ONE_FRAME: the recipe method carries its union frame's lines
+            body = frames.one_frame_body(fb, p) if fb.one_frame else frames.sections(frames.pure_mods(fb, p))
             if r.key in frame_body_of:
                 if frame_body_of[r.key] != body:
                     raise SystemExit(f'{r.key}: a recipe two buildings share, with different frames; extend the rework')
@@ -2251,6 +2838,10 @@ def main():
                                   'icon_good': good,
                                   'electric_tiers': elec_tiers,
                                   'retool_cost': retool_cost})
+
+    # RAILS: a step type with no processing axis shows as a building without automation (its one option is the none)
+    for bk in [bk for bk in RAILS_TYPES if bk in split_info and not split_info[bk]['axis']]:
+        pair_ui.pop(bk, None)
 
     # ---- the vanilla files PMR changes, now that the frames have their bodies ----------------------
     regrouped = 0
@@ -2431,6 +3022,22 @@ def main():
                                             | {r for rs in subsidiaries.RETOOL_OF.values() for r in rs})
 
     write('common/buildings/pmr_retool_buildings.txt', header + '\n'.join(retools))
+    if RAILS_TYPES:
+        # RAILS: the shared laborers group (frames.lab_methods, SPEC 3.3; its icon the laborers pop type's) and each step
+        # type's pollution modifier (rails_effects, SPEC 3.5), named as the "less" modifiers so the lists that leave
+        # those out leave it out too
+        lab_tex = re.search(r'texture\s*=\s*"([^"]+)"', open(os.path.join(game, 'common', 'pop_types', f'{frames.JOB_POP}.txt'),
+                                                         encoding='utf-8-sig').read()).group(1)
+        lab_group, lab_pms, lab_loc = frames.lab_methods(lab_tex)
+        write('common/production_method_groups/pmr_laborers_groups.txt', header + lab_group)
+        write('common/production_methods/pmr_laborers_production_methods.txt', header + lab_pms)
+        loc += lab_loc + [f' {frames.LAB_GROUP}:0 "${frames.JOB_POP}_no_icon$"']
+        pol = [rt.b for rt in RAILS_TYPES.values() if any(abs(rg.pol) > 1e-9 for rg in rt.rungs)]
+        if pol:
+            write('common/static_modifiers/pmr_rails_modifiers.txt', header
+                  + ''.join(f'pmr_less_pol_{b} = {{\n\ticon = "{frames.LESS_ICON}"\n\tstate_pollution_generation_add = 1\n}}\n\n'
+                            for b in pol))
+            loc += [f' pmr_less_pol_{b}:0 "{frames.LESS_NAME}"' for b in pol]
     # Written even while RETOOL_CREW is 0 (nothing uses them then), so a deployed folder never keeps a stale copy.
     write('common/production_methods/pmr_retool_production_methods.txt', header + RETOOL_CREW_DOC +
           'pm_pmr_retool_crew = {\n'
@@ -2543,7 +3150,8 @@ def main():
              OBS_ON_ACTIONS) + (BUILD_ON_ACTIONS if BUILD else ''))
     if not RELEASE:
         write('common/scripted_effects/pmr_obs_effects.txt', header + obs_report(dispatch) + obs_methods(options, dispatch, split_info) + obs_ab()
-              + obs_pad() + OBS_ARMY + obs_budget()[0] + build_stamp())
+              + obs_pad() + (OBS_ARMY.replace('\t\tpmr_obs_budget = yes\n', '\t\tpmr_obs_budget = yes\n\t\tpmr_obs_rungs = yes\n')
+                             + obs_rungs() if RAILS_TYPES else OBS_ARMY) + obs_budget()[0] + build_stamp())
         write('common/script_values/pmr_obs_values.txt', header + OBS_ARMY_VALUES + obs_budget()[1])
     for rel, text in history_start_shares(args.game, start_shares).items():
         # vanilla's own text with names added: no header, so the game's line numbers still match vanilla's
@@ -3202,6 +3810,25 @@ def wage_effect(bk, b, econ):
                    f'change_variable = {{ name = pmr_t multiply = {fmt(wu)} }} '
                    f'change_variable = {{ name = pmr_bk_u add = var:pmr_t }} }}\n'
                    for i, (_gd, wu) in enumerate(econ, 1))
+    rt = RAILS_TYPES.get(bk)
+    if rt:
+        # RAILS: the steps' laborers cut, the levels on each rung (pmr_rs_<j>_<b>) x its cut, and the skilled post the _s
+        # union adds while it runs (pmr_fsk_<b>), a level
+        w_lab = rt.weight.get(frames.JOB_POP, 1.0)
+        sk_n = sum(rt.skilled.values())
+        sk_u = sum(x * rt.weight.get(pop, 1.0) for pop, x in rt.skilled.items())
+        sums += (f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_rs_{rt.rungs[0].j}_{b} }}\n'
+                 '\t\t\t\tset_variable = { name = pmr_t value = { value = 0'
+                 + ''.join(f' add = {{ value = var:pmr_rs_{rg.j}_{b} multiply = {fmt(rg.lab)} }}' for rg in rt.rungs if rg.lab)
+                 + ' multiply = var:pmr_bk_l } }\n'
+                 '\t\t\t\tchange_variable = { name = pmr_bk_n subtract = var:pmr_t }\n'
+                 f'\t\t\t\tchange_variable = {{ name = pmr_t multiply = {fmt(w_lab)} }}\n'
+                 '\t\t\t\tchange_variable = { name = pmr_bk_u subtract = var:pmr_t }\n\t\t\t}\n'
+                 + (f'\t\t\tif = {{\n\t\t\t\tlimit = {{ var:pmr_fsk_{b} ?= 1 }}\n'
+                    f'\t\t\t\tset_variable = {{ name = pmr_t value = {{ value = var:pmr_bk_l multiply = {fmt(sk_n)} }} }}\n'
+                    '\t\t\t\tchange_variable = { name = pmr_bk_n add = var:pmr_t }\n'
+                    f'\t\t\t\tset_variable = {{ name = pmr_t value = {{ value = var:pmr_bk_l multiply = {fmt(sk_u)} }} }}\n'
+                    '\t\t\t\tchange_variable = { name = pmr_bk_u add = var:pmr_t }\n\t\t\t}\n' if rt.skilled else ''))
     drop = f'if = {{ limit = {{ has_variable = pmr_bpl_{b} }} remove_variable = pmr_bpl_{b} }}'
     # bug review q51, P2-1: books unreadable because the building is subsidised or under BOOKS_OCC staffed say nothing
     # good about it (pmr_bsx_<b>), unlike a building with no reading yet; profit_effect's pmr_ok tells them apart
@@ -3827,21 +4454,35 @@ RETOOL_CREW_DOC = f"""# The crew of a private retool building: {RETOOL_CREW} {RE
 """
 
 
-def priv_slots(b):
-    """The private retool building types of one building type."""
-    return [f'building_pmr_retool_{b}_{j}' for j in range(1, RETOOL_SLOTS + 1)]
+def priv_slots(b, vp='retool'):
+    """The private retool building types of one building type (RAILS: of its project vp, eq or rc)."""
+    return [f'building_pmr_{vp}_{b}_{j}' for j in range(1, RETOOL_SLOTS + 1)]
 
 
-def retool_buildings(b, bk, icon):
+def ai_base(b, vp):
+    """The opening lines of a retool or project site's ai_value while it is open. PAY_SCORE (rules review A) and every
+    project (RAILS, SPEC 5): RETOOL_AI_BASE plus its payoff (pmr_pay_<b>, pmr_<vp>_pay_<b>), x PAY_TILT; a private
+    site of an investable type starts from pmr_ai_value_<b> instead (private_investment.patch_retool_ai)."""
+    if vp == 'retool' and not PAY_SCORE:
+        return (f'\t\t\tvalue = {RETOOL_AI_BASE}\n'
+                f'\t\t\tif = {{ limit = {{ has_variable = pmr_ai_w_{b} }} value = var:pmr_ai_w_{b} }}\n'
+                f'\t\t\tmultiply = {RETOOL_AI_MULT}\n')
+    pay = f'pmr_pay_{b}' if vp == 'retool' else f'pmr_{vp}_pay_{b}'
+    return (f'\t\t\tvalue = {RETOOL_AI_BASE}  # PMR pay: base\n'
+            f'\t\t\tif = {{ limit = {{ has_variable = {pay} }} add = var:{pay} }}\n'
+            f'\t\t\tmultiply = {PAY_TILT}\n')
+
+
+def retool_buildings(b, bk, icon, vp='retool'):
     out = []
     sides = [('priv', 'bg_pmr_retool_abroad' if j == ABROAD_SLOT else 'bg_pmr_retool', rbx, j)
-             for j, rbx in enumerate(priv_slots(b), 1)]
-    sides.append(('gov', 'bg_pmr_retool_gov', f'building_pmr_retool_gov_{b}', 0))
-    sides.append(('gova', 'bg_pmr_retool_gov_abroad', f'building_pmr_retool_gova_{b}', 0))
+             for j, rbx in enumerate(priv_slots(b, vp), 1)]
+    sides.append(('gov', 'bg_pmr_retool_gov', f'building_pmr_{vp}_gov_{b}', 0))
+    sides.append(('gova', 'bg_pmr_retool_gov_abroad', f'building_pmr_{vp}_gova_{b}', 0))
     for side, group, rb, j in sides:
-        pot = f'has_variable = pmr_retool_gate_{b}'
+        pot = f'has_variable = pmr_{vp}_gate_{b}'
         if side == 'priv':
-            flag = f'pmr_retool_open_priv_{b}_{j}'
+            flag = f'pmr_{vp}_open_priv_{b}_{j}'
             open_ = f'has_variable = {flag}'
             ai_limit = open_
             who = ('\t# Private investors only, for the privately owned share. Every building vanilla lets private\n'
@@ -3854,24 +4495,24 @@ def retool_buildings(b, bk, icon):
                       if j == ABROAD_SLOT else
                       '; where the player owns levels abroad, also the host\'s (pmr_retool_investor_abroad_<b>)'
                       if not ABROAD_SLOT else '') + '.\n'
-                   f'\tcan_build_private = {{\n\t\t{open_}\n\t\tpmr_retool_room_priv_{b}_{j} = yes\n'
+                   f'\tcan_build_private = {{\n\t\t{open_}\n\t\tpmr_{vp}_room_priv_{b}_{j} = yes\n'
                    + (f'\t\tpmr_retool_investor{"_abroad" if j == ABROAD_SLOT else ""}_{b} = yes\n\t}}\n' if ABROAD_SLOT else
                       f'\t\ttrigger_if = {{\n\t\t\tlimit = {{ has_variable = pmr_abroad_{b} }}\n\t\t\tpmr_retool_investor_abroad_{b} = yes\n\t\t}}\n'
                       f'\t\ttrigger_else = {{ pmr_retool_investor_{b} = yes }}\n\t}}\n'))
             pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_pmr_retool'
         elif side == 'gov':
-            flag = f'pmr_retool_open_gov_{b}'
+            flag = f'pmr_{vp}_open_gov_{b}'
             who = ('\t# The government only, for the government-owned share, where the player owns no levels abroad\n'
                    '\t# (there building_pmr_retool_gova_<b>, for the player\'s government only).\n'
-                   f'\tcan_build_government = {{ pmr_retool_room_gov_{b} = yes }}\n'
+                   f'\tcan_build_government = {{ pmr_{vp}_room_gov_{b} = yes }}\n'
                    '\tcan_build_private = { always = no }\n')
             pmgs = 'pmg_pmr_retool'   # vanilla's pmg_dummy showed its placeholder name and icon (q105 screenshot)
             ai_limit = f'has_variable = {flag} NOT = {{ has_variable = pmr_abroad_{b} }}'
         else:
-            flag = f'pmr_retool_open_gov_{b}'
+            flag = f'pmr_{vp}_open_gov_{b}'
             who = ('\t# The player\'s government only, for its own levels abroad (pmr_abroad_<b>): the upgrade button\n'
                    '\t# expands the site the tick keeps standing there (Building.QueueConstruction), never an AI.\n'
-                   f'\tcan_build_government = {{ pmr_retool_room_gova_{b} = yes }}\n'
+                   f'\tcan_build_government = {{ pmr_{vp}_room_gova_{b} = yes }}\n'
                    '\tcan_build_private = { always = no }\n')
             pmgs = 'pmg_pmr_retool'   # vanilla's pmg_dummy showed its placeholder name and icon (q105 screenshot)
         out.append(
@@ -3882,60 +4523,63 @@ def retool_buildings(b, bk, icon):
             f'\tdownsizeable = no\n'
             '\t# Retool levels come only from the funders below, never from auto-expansion.\n'
             '\tshould_auto_expand = { always = no }\n'
-            f'\t# Open only while script is retooling a {bk} in this state'
+            + (f'\t# Open only while script is retooling a {bk} in this state' if vp == 'retool' else
+               f'\t# Open only while script is buying {PROJECT_NAMES[vp]} for a {bk} in this state')
             + (', where the player owns levels abroad' if j == ABROAD_SLOT else '')
             + '.\n'
             f'\tpotential = {{ {pot} }}\n'
             + who +
             ('\t# Only ever the player\'s click: no AI scores it.\n\tai_value = 0\n' if side == 'gova' else
-             '\t# While there is room: what an expansion of the building would score from its earnings\n'
-             f'\t# (pmr_ai_w_<b>, set by the tick), x {RETOOL_AI_MULT}, so investors (or an AI government) are likelier\n'
-             '\t# to retool it than to expand it.\n'
-             f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ {ai_limit} }}\n'
-             f'\t\t\tvalue = {RETOOL_AI_BASE}\n'
-             f'\t\t\tif = {{ limit = {{ has_variable = pmr_ai_w_{b} }} value = var:pmr_ai_w_{b} }}\n'
-             f'\t\t\tmultiply = {RETOOL_AI_MULT}\n'
-             '\t\t}\n\t}\n') +
-            f'\trequired_construction = pmr_retool_cost_{b}\n'
+             ('\t# While there is room: what an expansion of the building would score from its earnings\n'
+              f'\t# (pmr_ai_w_<b>, set by the tick), x {RETOOL_AI_MULT}, so investors (or an AI government) are likelier\n'
+              '\t# to retool it than to expand it.\n' if vp == 'retool' and not PAY_SCORE else
+              '\t# While there is room: its payoff, on the scale of a new level\'s score (rules review A, SPEC 5).\n')
+             + f'\tai_value = {{\n\t\tvalue = 0\n\t\tif = {{\n\t\t\tlimit = {{ {ai_limit} }}\n'
+             + ai_base(b, vp)
+             + '\t\t}\n\t}\n') +
+            f'\trequired_construction = pmr_{vp}_cost_{b}\n'
             f'\tproduction_method_groups = {{\n\t\t{pmgs}\n\t}}\n'
             f'\tbackground = "{RETOOL_BACKGROUND}"\n}}\n')
     return '\n'.join(out)
 
 
-def retool_triggers(b, bk):
-    rbg = f'building_pmr_retool_gov_{b}'
-    rbga = f'building_pmr_retool_gova_{b}'
-    cap = f'pmr_cap_gov_{b}'
+def retool_triggers(b, bk, vp='retool'):
+    pre = '' if vp == 'retool' else f'{vp}_'   # RAILS: a project's caps and values are named pmr_<vp>_...
+    rbg = f'building_pmr_{vp}_gov_{b}'
+    rbga = f'building_pmr_{vp}_gova_{b}'
+    cap = f'pmr_{pre}cap_gov_{b}'
     out = [
-        f'pmr_retool_room_gova_{b} = {{\n'
+        f'pmr_{vp}_room_gova_{b} = {{\n'
         f'\thas_variable = pmr_abroad_{b}\n'
         f'\thas_variable = {cap}\n'
         '\ttrigger_if = {\n'
         f'\t\tlimit = {{ exists = b:{rbga} }}\n'
-        f'\t\tb:{rbga} = {{ level_after_queued_constructions <= pmr_room_value_gov_{b} }}\n'
+        f'\t\tb:{rbga} = {{ level_after_queued_constructions <= pmr_{pre}room_value_gov_{b} }}\n'
         '\t}\n'
         f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
         '}\n',
-        f'pmr_retool_room_gov_{b} = {{\n'
+        f'pmr_{vp}_room_gov_{b} = {{\n'
         f'\tNOT = {{ has_variable = pmr_abroad_{b} }}\n'
         f'\thas_variable = {cap}\n'
         '\t# b: finds the retool building even while all of it is still queued (seen in 1.14.5).\n'
         '\ttrigger_if = {\n'
         f'\t\tlimit = {{ exists = b:{rbg} }}\n'
-        f'\t\tb:{rbg} = {{ level_after_queued_constructions <= pmr_room_value_gov_{b} }}\n'
+        f'\t\tb:{rbg} = {{ level_after_queued_constructions <= pmr_{pre}room_value_gov_{b} }}\n'
         '\t}\n'
         f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
         '}\n']
     # A private retool building takes levels up to the cap the tick gives it (pmr_cap_priv<j>_<b>).
-    for j, rbx in enumerate(priv_slots(b), 1):
-        cap = f'pmr_cap_priv{j}_{b}'
+    for j, rbx in enumerate(priv_slots(b, vp), 1):
+        cap = f'pmr_{pre}cap_priv{j}_{b}'
         plain = (f'\thas_variable = {cap}\n'
                  '\ttrigger_if = {\n'
                  f'\t\tlimit = {{ exists = b:{rbx} }}\n'
-                 f'\t\tb:{rbx} = {{ level_after_queued_constructions <= pmr_room_value_priv_{b}_{j} }}\n'
+                 f'\t\tb:{rbx} = {{ level_after_queued_constructions <= pmr_{pre}room_value_priv_{b}_{j} }}\n'
                  '\t}\n'
                  f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n')
-        out.append(f'pmr_retool_room_priv_{b}_{j} = {{\n' + plain + '}\n')
+        out.append(f'pmr_{vp}_room_priv_{b}_{j} = {{\n' + plain + '}\n')
+    if vp != 'retool':   # the investors are the retool twin's (pmr_retool_investor_<b>, _abroad_<b>)
+        return '\n'.join(out)
     # levels_owned_by_country counts "a country or investors in that country" (triggers.log), so for
     # the state's own country it includes the government's levels: its investors need more than those.
     # Vanilla compares the same trigger against c:RUS for the Manchurian railway.
@@ -3977,11 +4621,19 @@ SGUI_DOC = """# The government upgrade button on PMR buildings (details panel an
 """
 
 
+def gov_open(bk):
+    """the government may queue levels of bk here: its retool twin, or with RAILS any of its projects, is open"""
+    b, rt = short(bk), RAILS_TYPES.get(bk)
+    if not rt:
+        return f'has_variable = pmr_retool_open_gov_{b}'
+    return ('OR = { ' + ' '.join(f'has_variable = pmr_{vp}_open_gov_{b}' for vp in ['retool'] + list(rt.kinds)) + ' }')
+
+
 def gov_retool_sgui(bk):
     b = short(bk)
     return (f'pmr_gov_retool_{b}_sgui = {{\n\tscope = state\n'
             f'\tis_shown = {{ exists = b:{bk} }}\n'
-            f'\tis_valid = {{ has_variable = pmr_retool_open_gov_{b} NOT = {{ has_variable = pmr_abroad_{b} }} }}\n'
+            f'\tis_valid = {{ {gov_open(bk)} NOT = {{ has_variable = pmr_abroad_{b} }} }}\n'
             f'\teffect = {{ pmr_queue_gov_{b} = yes }}\n}}\n\n'
             '# Abroad the button queues through the game (Building.QueueConstruction on the standing site), then this\n'
             '# ticks the building so the room, and with it the button, drops to what is left.\n'
@@ -3995,7 +4647,7 @@ def gov_retool_all_sgui(buildings):
     """The Buildings panel's Retool Government Levels button (Pat 2026-10-20 21:54Z): every building type row's
     upgrade button at once, the player's own states only (abroad goes through the game's queue, building by building)."""
     def open_(bk):
-        return f'has_variable = pmr_retool_open_gov_{short(bk)} b:{bk} ?= {{ level >= 1 }}'
+        return f'{gov_open(bk)} b:{bk} ?= {{ level >= 1 }}'
     any_open = ''.join(f'\t\t\t\tAND = {{ {open_(bk)} }}\n' for bk in buildings)
     queue = ''.join(f'\t\t\tif = {{ limit = {{ {open_(bk)} }} pmr_queue_gov_{short(bk)} = yes }}\n' for bk in buildings)
     # Pat 2026-10-21 21:18Z: the button asks first, with how much it will queue: the levels (pmr_gall_l, one
@@ -4006,6 +4658,13 @@ def gov_retool_all_sgui(buildings):
                     'change_variable = { name = pmr_gall_b add = 1 } '
                     f'change_variable = {{ name = pmr_gall_c add = {{ value = scope:pmr_st.var:pmr_room_gov_{short(bk)} '
                     f'multiply = pmr_retool_cost_{short(bk)} }} }} }}\n\t\t\t}}\n' for bk in buildings)
+    # RAILS: and each project's government room, at its own cost
+    count += ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_{vp}_open_gov_{short(bk)} b:{bk} ?= {{ level >= 1 }} '
+                     f'NOT = {{ has_variable = pmr_abroad_{short(bk)} }} has_variable = pmr_{vp}_room_gov_{short(bk)} }}\n'
+                     f'\t\t\t\troot = {{ change_variable = {{ name = pmr_gall_l add = scope:pmr_st.var:pmr_{vp}_room_gov_{short(bk)} }} '
+                     f'change_variable = {{ name = pmr_gall_c add = {{ value = scope:pmr_st.var:pmr_{vp}_room_gov_{short(bk)} '
+                     f'multiply = pmr_{vp}_cost_{short(bk)} }} }} }}\n\t\t\t}}\n'
+                     for bk in buildings if bk in RAILS_TYPES for vp in RAILS_TYPES[bk].kinds)
     return ('pmr_gov_retool_all_sgui = {\n\tscope = country\n'
             f'\tis_valid = {{\n\t\tany_scope_state = {{\n\t\t\tOR = {{\n{any_open}'
             '\t\t\t}\n\t\t}\n\t}\n'
@@ -4075,20 +4734,21 @@ def gov_retool_country_sgui(bk):
     """The Buildings tab's upgrade button on a building type row: every state at once."""
     b = short(bk)
     return (f'pmr_gov_retool_c_{b}_sgui = {{\n\tscope = country\n'
-            f'\tis_valid = {{ any_scope_state = {{ has_variable = pmr_retool_open_gov_{b} b:{bk} ?= {{ level >= 1 }} }} }}\n'
-            f'\teffect = {{\n\t\tevery_scope_state = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} b:{bk} ?= {{ level >= 1 }} }}\n'
+            f'\tis_valid = {{ any_scope_state = {{ {gov_open(bk)} b:{bk} ?= {{ level >= 1 }} }} }}\n'
+            f'\teffect = {{\n\t\tevery_scope_state = {{\n\t\t\tlimit = {{ {gov_open(bk)} b:{bk} ?= {{ level >= 1 }} }}\n'
             '\t\t\tset_variable = pmr_bulk\n'
             f'\t\t\tpmr_queue_gov_{b} = yes\n'
             '\t\t\tremove_variable = pmr_bulk\n\t\t}\n'
             f'\t\tpmr_c_sum_{b} = yes\n\t}}\n}}\n\n')
 
 
-def retool_values(b):
+def retool_values(b, vp='retool'):
     """Building scope: the most retool levels each retool building may have after queued
     constructions, before the scope:num_levels being added."""
-    return (f'pmr_room_value_gov_{b} = {{\n\tvalue = state.var:pmr_cap_gov_{b}\n'
+    pre = '' if vp == 'retool' else f'{vp}_'
+    return (f'pmr_{pre}room_value_gov_{b} = {{\n\tvalue = state.var:pmr_{pre}cap_gov_{b}\n'
             '\tsubtract = scope:num_levels\n}\n'
-            + ''.join(f'pmr_room_value_priv_{b}_{j} = {{\n\tvalue = state.var:pmr_cap_priv{j}_{b}\n'
+            + ''.join(f'pmr_{pre}room_value_priv_{b}_{j} = {{\n\tvalue = state.var:pmr_{pre}cap_priv{j}_{b}\n'
                       '\tsubtract = scope:num_levels\n}\n' for j in range(1, RETOOL_SLOTS + 1)))
 
 
@@ -4168,6 +4828,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     lvg = lambda i: v(f'pmr_lvg_{i}')        # noqa: E731  of those, the government's
     o = [f'# ===== {bk}: ' + ', '.join(f'{i} = {r.key}' for i, r in enumerate(recipes, 1)) + '\n'
          '# State scope throughout; the building is b:' + bk + '.\n\n']
+    rt = RAILS_TYPES.get(bk)   # RAILS: its step tallies and projects (rails_effects), ahead of everything that calls them
+    if rt:
+        o.append(rails_effects(bk, b, rt, goods_cost or {}))
 
     def active(r):
         # the building runs r: its pure frame, or r is the target (a blended building runs a union frame)
@@ -4199,6 +4862,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + ''.join(f'\tset_variable = {{ name = {lvg(i)} value = 0 }}\n' for i in range(1, k + 1))
              + '\t# the level accounting runs in full again (S3)\n'
              f'\tif = {{ limit = {{ has_variable = pmr_fp_{b} }} remove_variable = pmr_fp_{b} }}\n'
+             + (f'\tpmr_rl_reset_{b} = yes   # RAILS: the step tallies\n' if rt else '')
              + '}\n\n')
 
     # The blend: each member's share of the levels, in steps of 1 / SHARE_STEPS. Members other than the target's are
@@ -4486,7 +5150,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                           for j, idxs, grp in bm) if split else '')
              + f'\tif = {{ limit = {{ var:{v("pmr_need")} > 0 }} {setv("pmr_ui_retooling", 1)} }}\n'
              f'\telse = {{ {setv("pmr_ui_retooling", 0)} }}\n'
-             '}\n\n')
+             + (f'\tpmr_rl_mix_{b} = yes   # RAILS: the step members\' shares, the projects\' levels to buy, the pollution\n' if rt else '')
+             + '}\n\n')
 
     # Who may add retool levels, from who owns the building now. The levels still to retool (need)
     # are split by ownership; each side's room is its share less what it already has queued, and
@@ -4607,10 +5272,15 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     o.append(f'pmr_read_earnings_{b} = {{\n'
              + highest(sorted(RETOOL_EARNINGS_LADDER), lambda x: f'b:{bk} = {{ earnings >= {x} }}',
                        lambda x: setv("pmr_earn", x or 0))
-             + f'\t{setv("pmr_ai_w", "var:" + v("pmr_earn"))}\n'
-             f'\t{chg("pmr_ai_w", "multiply", RETOOL_AI_PER_EARNING)}\n'
-             f'\t{chg("pmr_ai_w", "add", RETOOL_AI_BASE)}\n'
-             '}\n\n')
+             + (f'\t{setv("pmr_ai_w", "var:" + v("pmr_earn"))}\n'
+                f'\t{chg("pmr_ai_w", "multiply", RETOOL_AI_PER_EARNING)}\n'
+                f'\t{chg("pmr_ai_w", "add", RETOOL_AI_BASE)}\n' if not PAY_SCORE else
+                # PAY_SCORE (rules review A): the government's weight is the base plus the payoff (pmr_pay_<b>); the
+                # log's score (pmr_psc) the payoff x PAY_TILT
+                f'\t{setv("pmr_ai_w", RETOOL_AI_BASE)}\n\tset_variable = {{ name = pmr_psc value = 0 }}\n'
+                f'\tif = {{ limit = {{ has_variable = {v("pmr_pay")} }} {chg("pmr_ai_w", "add", "var:" + v("pmr_pay"))} '
+                f'set_variable = {{ name = pmr_psc value = {{ value = var:{v("pmr_pay")} multiply = {PAY_TILT} }} }} }}\n')
+             + '}\n\n')
 
     # newest recipe the building runs or can activate; vanilla lists recipes oldest first. A recipe
     # that needs electricity counts only while the state has a power plant (pmr_elec, SUPPLY's flag).
@@ -4706,6 +5376,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + f";elec=[THIS.Var('pmr_elec').GetValue|0];rail=[THIS.Var('pmr_rail').GetValue|0]" + (f";elec_wait={f('pmr_elec_wait')}" if elec_tiers else '')
              + f";home_investors={f('pmr_inv_home')};pool=[THIS.Var('pmr_pool').GetValue|0]"
              + f";earn={f('pmr_earn')};ai_w={f('pmr_ai_w')}"
+             + (f";pay={f('pmr_pay')};score=[THIS.Var('pmr_psc').GetValue|0]" if PAY_SCORE else '')
              + ";unemp=[THIS.Var('pmr_unemp').GetValue|0]")
     done = mix + f";queued_gov={f('pmr_pending_gov')};queued_priv={f('pmr_pending_priv')}"
 
@@ -4725,11 +5396,15 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # still check them (SKIP_MISS, pmr_skip_check_<b>).
     fp = [('pmr_level', 'pmr_fp_level'), ('pmr_to', 'pmr_fp_to'), ('pmr_gov_levels', 'pmr_fp_gl')]
     same = (f'has_variable = pmr_fp_{b} var:{v("pmr_conv_gov")} <= 0 var:{v("pmr_conv_priv")} <= 0 var:{v("pmr_to")} > 0 '
-            + ' '.join(f'var:{v(a)} = var:{v(s)}' for a, s in fp))
+            + ' '.join(f'var:{v(a)} = var:{v(s)}' for a, s in fp)
+            # RAILS: and no new project level
+            + ''.join(f' var:pmr_{vp}_conv_{side}_{b} <= 0' for vp in (rt.kinds if rt else {}) for side in ('gov', 'priv')))
     # (an older save keeps its pmr_fp_lv/lvg copies, unread: removing them names variables a new game never sets,
     # which error.log lists at every load)
-    o.append(f'pmr_recount_{b} = {{\n\tpmr_sync_levels_{b} = yes\n\tpmr_sync_gov_{b} = yes\n\tpmr_progress_{b} = yes\n'
-             f'\tpmr_mix_{b} = yes\n\tset_variable = pmr_fp_{b}\n'
+    o.append(f'pmr_recount_{b} = {{\n\tpmr_sync_levels_{b} = yes\n\tpmr_sync_gov_{b} = yes\n'
+             + (f'\tpmr_rl_sync_{b} = yes\n' if rt else '') + f'\tpmr_progress_{b} = yes\n'
+             + ''.join(f'\tpmr_{vp}_progress_{b} = yes\n' for vp in (rt.kinds if rt else {}))
+             + f'\tpmr_mix_{b} = yes\n\tset_variable = pmr_fp_{b}\n'
              + ''.join(f'\t{setv(s, "var:" + v(a))}\n' for a, s in fp) + '}\n\n')
     if not RELEASE:
         # The check (test builds): a player's building that skipped SKIP_CHECK ticks in a row runs the accounting
@@ -4757,8 +5432,12 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # perf review 5, S-7: the sites are read and released only where one can stand (the gate), or until a gate-less
     # state has read none built and none pending (pmr_rq_<b>, cleared where the gate is set)
     sites_may = f'OR = {{ has_variable = pmr_retool_gate_{b} NOT = {{ has_variable = pmr_rq_{b} }} }}'
+    # RAILS: each project's sites the same way (pmr_<vp>_gate_<b>, pmr_<vp>_rq_<b>)
+    vp_may = {vp: f'OR = {{ has_variable = pmr_{vp}_gate_{b} NOT = {{ has_variable = pmr_{vp}_rq_{b} }} }}'
+              for vp in (rt.kinds if rt else {})}
     recount = (f'\tpmr_read_gov_{b} = yes\n\tif = {{ limit = {{ {sites_may} }} pmr_count_retool_{b} = yes }}\n'
-               '\t# S3: the level accounting only when something it reads has changed (pmr_recount_<b>)\n'
+               + ''.join(f'\tif = {{ limit = {{ {m} }} pmr_{vp}_count_{b} = yes }}\n' for vp, m in vp_may.items())
+               + '\t# S3: the level accounting only when something it reads has changed (pmr_recount_<b>)\n'
                f'\tif = {{\n\t\tlimit = {{ NOT = {{ AND = {{ {same} }} }} }}\n\t\tpmr_recount_{b} = yes\n'
                + ('' if RELEASE else
                   f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} {sk_add("pmr_sk_ran")} {setv("pmr_skn", 0)} }}\n')
@@ -4772,7 +5451,10 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                   f'\t\telse = {{ {sk_add("pmr_sk_skip")} }}\n\t}}\n')
                + f'\tif = {{\n\t\tlimit = {{ {sites_may} }}\n\t\tpmr_release_retool_{b} = yes\n'
                f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_retool_gate_{b} }} var:{v("pmr_retool_built")} = 0 '
-               f'var:{v("pmr_pending")} = 0 }} set_variable = pmr_rq_{b} }}\n\t}}\n')
+               f'var:{v("pmr_pending")} = 0 }} set_variable = pmr_rq_{b} }}\n\t}}\n'
+               + ''.join(f'\tif = {{\n\t\tlimit = {{ {m} }}\n\t\tpmr_{vp}_release_{b} = yes\n'
+                         f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_{vp}_gate_{b} }} var:pmr_{vp}_built_{b} = 0 '
+                         f'var:pmr_{vp}_pending_{b} = 0 }} set_variable = pmr_{vp}_rq_{b} }}\n\t}}\n' for vp, m in vp_may.items()))
 
     # Every method change, including the tick's own, fires on_production_method_changed, and its tick
     # runs inside the change (seen in 1.14.5: a SWITCH line logged before the line of the tick that
@@ -4883,7 +5565,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\t\telse_if = {{ limit = {{ has_variable = {v("pmr_switched")} }} {log("CANCEL", bk, b, k, extra=mix)} }}\n'
              '\t}\n'
              f'\tif = {{ limit = {{ has_variable = {v("pmr_switched")} }} remove_variable = {v("pmr_switched")} }}\n'
-             '')
+             + (rails_tail(bk, b, rt) if rt else ''))
     if QUIET_TICK:
         # QUIET_TICK: an AI building's monthly update with nothing open, queued or moved since its last accounting.
         # Every step after the ownership read tests one of these and would skip its part; the trade-off step keeps
@@ -4893,7 +5575,9 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
             raise SystemExit('QUIET_TICK: pmr_tick_body tail does not start with the ownership read')
         quiet = (f'has_variable = pmr_month NOT = {{ has_variable = pmr_retool_gate_{b} }} has_variable = pmr_rq_{b} '
                  f'has_variable = pmr_bok_{b} has_variable = pmr_fok_{b} {same} NOT = {{ var:{v("pmr_need")} > 0 }} '
-                 f'NOT = {{ has_variable = {v("pmr_retooling")} }} NOT = {{ has_variable = {v("pmr_switched")} }} '
+                 + ''.join(f'NOT = {{ has_variable = pmr_{vp}_gate_{b} }} has_variable = pmr_{vp}_rq_{b} '
+                           f'NOT = {{ var:pmr_{vp}_need_{b} > 0 }} ' for vp in (rt.kinds if rt else {}))
+                 + f'NOT = {{ has_variable = {v("pmr_retooling")} }} NOT = {{ has_variable = {v("pmr_switched")} }} '
                  'NOT = { owner = { is_player = yes } }')
         oc = opts_call(b, any(mode == 'market' for _, _, mode, *_ in opts)) if opts else ''
         # the trade-off step drops pmr_fok_<b> when a share moved: the frame then follows at once, as in the full tail
@@ -4992,15 +5676,28 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     # The government upgrade button (pmr_gov_retool_<b>_sgui): queue every government retool level
     # the building still needs, as if the player had built them one by one, then tick so the room,
     # and with it the button, drops to nothing.
-    o.append(f'pmr_queue_gov_{b} = {{\n'
-             f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} NOT = {{ has_variable = pmr_abroad_{b} }} b:{bk} ?= {{ level >= 1 }} }}\n'
-             f'\t\t{setv("pmr_q", "var:" + v("pmr_room_gov"))}\n'
+    queue = (f'\t\t{setv("pmr_q", "var:" + v("pmr_room_gov"))}\n'
              f'\t\t{log("GOV_QUEUE", bk, b, k, extra=";queueing=" + f("pmr_q"))}\n'
              f'\t\twhile = {{\n\t\t\tlimit = {{ var:{v("pmr_q")} > 0 }}\n'
              f'\t\t\tstart_building_construction = {rbg}\n'
              f'\t\t\t{chg("pmr_q", "subtract", 1)}\n\t\t}}\n'
-             f'\t\tremove_variable = {v("pmr_q")}\n'
-             f'\t\tpmr_tick_{b} = yes\n\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n\t}}\n}}\n\n')
+             f'\t\tremove_variable = {v("pmr_q")}\n')
+    here = f'NOT = {{ has_variable = pmr_abroad_{b} }} b:{bk} ?= {{ level >= 1 }}'
+    if rt:   # RAILS (SPEC 5): the button queues the government's missing levels on the retool twin and every project
+        queue = (f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_retool_open_gov_{b} }}\n'
+                 + ''.join('\t' + ln for ln in queue.splitlines(True)) + '\t\t}\n'
+                 + ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = pmr_{vp}_open_gov_{b} }}\n'
+                           f'\t\t\tset_variable = {{ name = pmr_q_{b} value = var:pmr_{vp}_room_gov_{b} }}\n'
+                           '\t\t\tdebug_log = "PMR;rec=PROJECT_QUEUE;date=[TimeKeeper.GetCurrentDate.GetString];'
+                           'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                           f"building={bk};project={vp};queueing=[THIS.Var('pmr_q_{b}').GetValue|0]\"\n"
+                           f'\t\t\twhile = {{\n\t\t\t\tlimit = {{ var:pmr_q_{b} > 0 }}\n'
+                           f'\t\t\t\tstart_building_construction = building_pmr_{vp}_gov_{b}\n'
+                           f'\t\t\t\tchange_variable = {{ name = pmr_q_{b} subtract = 1 }}\n\t\t\t}}\n'
+                           f'\t\t\tremove_variable = pmr_q_{b}\n\t\t}}\n' for vp in rt.kinds))
+    o.append(f'pmr_queue_gov_{b} = {{\n'
+             f'\tif = {{\n\t\tlimit = {{ {gov_open(bk)} {here} }}\n' + queue
+             + f'\t\tpmr_tick_{b} = yes\n\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n\t}}\n}}\n\n')
     return ''.join(o)
 
 
@@ -5081,8 +5778,9 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     xv = lambda name, i: f'{name}_{i}_{b}'   # noqa: E731
     cv = lambda name, op, x: f'change_variable = {{ name = {v(name)} {op} = {x} }}'   # noqa: E731
     top = fmt(1 + PRICE_LADDER[-1] / 100)
+    rt = RAILS_TYPES.get(bk)   # RAILS: its step goods are priced here too, for the pay test (pmr_rl_pay_<b>)
     goods = sorted({g for gd, _ in list(econ) + list((pair or {}).get('econ', {}).values())
-                    for g in gd if goods_cost.get(g)})
+                    for g in gd if goods_cost.get(g)} | {g for g in (rt.goods if rt else ()) if goods_cost.get(g)})
     read_px = ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
                       f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
     thr = ''.join(f'\t\tchange_variable = {{ name = pmr_thr add = scope:pmr_bk.modifier:{m} }}\n'
@@ -5375,6 +6073,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + ''.join(f'\tset_variable = {{ name = pmr_wg{e}_{b} value = var:pmr_wage }}\n'
                        f'\tchange_variable = {{ name = pmr_wg{e}_{b} multiply = {fmt(1 + s * PRICE_MOVE)} }}\n'
                        for e, s in (('h', 1), ('l', -1)))
+             + (f'\tpmr_rl_pay_{b} = yes   # RAILS: the steps\' pay test at these prices (SPEC 4)\n' if rt else '')
+             + (pay_score(b) if PAY_SCORE else '')
              + f'\tset_variable = {{ name = pmr_pmb_{b} value = {len(goods) + PROFIT_RULE} }}\n}}\n\n')
     # pmr_moved_<b>: on a monthly update (TICK_EVERY), pmr_pmv when a good's price or the wage moved PRICE_MOVE off what
     # the last run used; prices first (read once a day per state anyway), the wage only when they stand. Updates come
@@ -5570,7 +6270,18 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         PF_SYNC.add(b)
     if SOLO_GATE >= 2:
         o.append(lite_effect(bk, b, econ, goods, goods_cost, setv, v))
-    return switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + ''.join(pre) + ''.join(o)
+    return (switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + (rails_look(bk, b, rt, goods_cost) if rt else '')
+            + ''.join(pre) + ''.join(o))
+
+
+def pay_score(b):
+    """Rules review item A (PAY_SCORE), the end of pmr_profit_<b>: pmr_pay_<b>, the retool twin's payoff, the pick's
+    profit a level a week less the reference's (pmr_rr, held to the books) / its employees a level (pmr_pve_<b>) x
+    VANILLA_PROFIT_W / RETOOL_SHARE, never below 0; 0 while the pick is the reference or there is none"""
+    return (f'\t# PAY_SCORE (rules review A): the retool twin\'s payoff\n\tset_variable = {{ name = pmr_pay_{b} value = 0 }}\n'
+            f'\tif = {{\n\t\tlimit = {{ var:pmr_pk > 0 var:pmr_ref > 0 NOT = {{ var:pmr_pk = var:pmr_ref }} var:pmr_pve_{b} > 0 }}\n'
+            f'\t\tset_variable = {{ name = pmr_pay_{b} value = {{ value = var:pmr_prm_{b} subtract = var:pmr_rr divide = var:pmr_pve_{b} '
+            f'multiply = {fmt(VANILLA_PROFIT_W / RETOOL_SHARE)} min = 0 }} }}\n\t}}\n')
 
 
 def books_bounds(b, ind):
@@ -5625,6 +6336,8 @@ def lite_effect(bk, b, econ, goods, goods_cost, setv, v):
             f'\t{setv("pmr_prm", "var:pmr_bpl_" + b)}\n\t{setv("pmr_pvs", "var:pmr_bpl_" + b)}\n'
             + lookup(f'var:{v("pmr_pbest")}', list(range(1, len(econ) + 1)), score)
             + bounds
+            + (f'\tset_variable = {{ name = pmr_pay_{b} value = 0 }}   # PAY_SCORE: the pick is the default\n' if PAY_SCORE else '')
+            + (f'\tpmr_rl_look_{b} = yes   # RAILS: the steps\' pay test, at its own prices (rails_look)\n' if bk in RAILS_TYPES else '')
             + '}\n\n')
 
 
@@ -5895,8 +6608,16 @@ def state_tick_type(bk, t='\t'):
     type also sets its flag, 1 or 0, and the last of them pmr_lsup."""
     b = short(bk)
     flag = dict(SUPPLY).get(bk)
+    rt = RAILS_TYPES.get(bk)
     clean = (f'{t}\tif = {{ limit = {{ has_variable = pmr_pending_{b} }} set_variable = {{ name = pmr_pending_{b} value = 0 }} }}\n'
              f'{t}\tpmr_close_retool_{b} = yes\n'
+             # RAILS: the projects close as the retool twin does; the pollution modifier goes with the building
+             + ''.join(f'{t}\tif = {{ limit = {{ has_variable = pmr_{vp}_pending_{b} }} set_variable = {{ name = pmr_{vp}_pending_{b} value = 0 }} }}\n'
+                       f'{t}\tif = {{ limit = {{ has_variable = pmr_{vp}_q_gov_{b} }} pmr_{vp}_close_{b} = yes }}\n'
+                       for vp in (rt.kinds if rt else {}))
+             + (f'{t}\tif = {{ limit = {{ has_modifier = pmr_less_pol_{b} }} remove_modifier = pmr_less_pol_{b} }}\n'
+                f'{t}\tif = {{ limit = {{ has_variable = pmr_polv_{b} }} remove_variable = pmr_polv_{b} }}\n'
+                if rt and any(abs(rg.pol) > 1e-9 for rg in rt.rungs) else '')
              + ''.join(f'{t}\tif = {{ limit = {{ has_variable = {n} }} remove_variable = {n} }}\n'
                        for n in (f'pmr_mix_{b}', f'pmr_abroad_{b}', f'pmr_bpl_{b}', f'pmr_bsx_{b}', f'pmr_dn_{b}',
                                  f'pmr_bok_{b}') + ((f'pmr_xok_{b}',) if bk in OPTION_TYPES else ())
@@ -6239,6 +6960,10 @@ def dispatch_effects(buildings):
         o.append(f'# Building scope: a retool site of {bk} completed a level; tick it.\npmr_tick_parent_{b} = {{\n'
                  f'\tstate = {{\n\t\t{flush_log("RETOOL_LEVEL", bk, mine=f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}")}\n'
                  f'\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t}}\n}}\n\n')
+        for vp in (RAILS_TYPES[bk].kinds if bk in RAILS_TYPES else {}):   # RAILS: a project site completed a level
+            o.append(f'pmr_tick_parent_{vp}_{b} = {{\n'
+                     f'\tstate = {{\n\t\t{flush_log("PROJECT_LEVEL", bk, f";project={vp}", mine=f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}")}\n'
+                     f'\t\tif = {{ limit = {{ {live(bk)} }} pmr_tick_{b} = yes }}\n\t}}\n}}\n\n')
     sites = {'bg_pmr_retool': lambda b: [t for j, t in enumerate(priv_slots(b), 1) if j != ABROAD_SLOT],
              'bg_pmr_retool_abroad': lambda b: [priv_slots(b)[ABROAD_SLOT - 1]],
              'bg_pmr_retool_gov': lambda b: [f'building_pmr_retool_gov_{b}'],
@@ -6252,6 +6977,10 @@ def dispatch_effects(buildings):
             ts = types(b)
             cond = f'is_building_type = {ts[0]}' if len(ts) == 1 else 'OR = { ' + ' '.join(f'is_building_type = {t}' for t in ts) + ' }'
             o.append(f'\t\t{"if" if i == 0 else "else_if"} = {{ limit = {{ {cond} }} pmr_tick_parent_{b} = yes }}\n')
+            for vp in (RAILS_TYPES[bk].kinds if bk in RAILS_TYPES else {}):   # RAILS: the projects' sites in this group
+                ts = [t.replace('_retool_', f'_{vp}_', 1) for t in types(b)]
+                cond = f'is_building_type = {ts[0]}' if len(ts) == 1 else 'OR = { ' + ' '.join(f'is_building_type = {t}' for t in ts) + ' }'
+                o.append(f'\t\telse_if = {{ limit = {{ {cond} }} pmr_tick_parent_{vp}_{b} = yes }}\n')
         o.append('\t}\n')
     o.append('}\n\n'
              '# State scope: tick every PMR building in the state. Run state by state over a country (monthly, on\n'
@@ -6894,9 +7623,15 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
 
     recipes_of = {t[0]: t[3] for t in treated}
     runs = {}   # method -> [(building, [recipe indices on which a method of its kind runs])]
+    rruns = {}  # RAILS: a track's method -> [(building, the state variable that holds its rung's share of the levels)]
     for bk, ags in auto_groups_of.items():
         sp = split_info.get(bk)
-        for gpos, g in enumerate(ags):
+        rt = RAILS_TYPES.get(bk)
+        for tr in (rt.tracks if rt else []):   # SPEC 5: levels on that rung (working as it), or on the none
+            rruns.setdefault(groups[tr.g][0], []).append((bk, f'pmr_rl_n0_{tr.t}_{rt.b}'))
+            for rg in tr.rungs:
+                rruns.setdefault(rg.key, []).append((bk, f'pmr_rs_{rg.j}_{rt.b}'))
+        for gpos, g in enumerate(sp['axis'] if sp else ags):   # RAILS: the processing axes only
             plain = [p for p in groups[g] if not Recipe(p, *pms[p]).needs(ELECTRICITY)]
             on = []   # the method of group g each recipe runs, by recipe index
             if sp:    # the split: each pair runs its option's method of group g
@@ -6917,13 +7652,16 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
         for p, r in enumerate(recipes, 1):
             base = r.base.key if isinstance(r, PairRecipe) else r.key
             alias.setdefault(base, [base])
-            alias[base] += (([r.key] if isinstance(r, PairRecipe) else []) + [f'pm_pmr_union_{short(bk)}_{p}']
+            uk = frames.union_key(FRAMES[bk], p) if bk in FRAMES else f'pm_pmr_union_{short(bk)}_{p}'
+            alias[base] += (([r.key] if isinstance(r, PairRecipe) else []) + ([uk] if uk != base else [])   # ONE_FRAME: none
                             + frame_extras.get(bk, {}).get(p, []))
     folded_bks = set(auto_groups_of)
     pm_users = {}
     for g, lst in groups.items():
         for p in lst:
             pm_users.setdefault(p, set()).update(group_users.get(g, set()))
+    for p in rruns:
+        runs.setdefault(p, [])
     still = {p for p in runs if pm_users.get(p, set()) - folded_bks}   # still a method of some other building
 
     used, files, lines = set(), {}, []
@@ -6990,6 +7728,8 @@ def vanilla_compat(game, treated, auto_groups_of, groups, pms, group_users, drop
                 lvs = [f'pmr_lv_{i}_{short(bk)}' for i in idx]
                 alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tstate = {{ OR = {{ '
                             + ' '.join(f'AND = {{ has_variable = {x} var:{x} > 0 }}' for x in lvs) + ' } }\n\t\t}\n')
+        for bk, x in rruns.get(p, []):
+            alts.append(f'\t\tAND = {{\n\t\t\tis_building_type = {bk}\n\t\t\tstate = {{ has_variable = {x} var:{x} > 0 }}\n\t\t}}\n')
         trig.append(f'pmr_has_{p} = {{\n' + (f'\tOR = {{\n{"".join(alts)}\t}}\n' if alts else '\talways = no\n') + '}\n\n')
     for p in sorted(used & set(alias)):
         trig.append(f'pmr_has_{p} = {{\n\tOR = {{\n'
@@ -9404,6 +10144,29 @@ def obs_budget():
                 'building_construction_sector } add = this.level } }\n}\n'
               + 'pmr_obs_v_subs = {\n\tvalue = { every_company = { limit = { has_variable = pmr_sub } add = 1 } }\n}\n')
     return effect, values
+
+
+def obs_rungs():
+    """pmr_obs_rungs (effect), from pmr_obs_army (test builds, RAILS; automation SPEC v4 row 10): the RUNGS line once a
+    year, levels of the country's step types on each rung, rung 0 the none, summed over every track of a kind (eq: New
+    Equipment, rc: Rail Connection; a type with two tracks of a kind counts a level once a track)."""
+    deep = {vp: max(len(tr.rungs) for rt in RAILS_TYPES.values() for tr in rt.kinds.get(vp, [])) for vp in ('eq', 'rc')}
+    keys = [f'{vp}{r}' for vp in ('eq', 'rc') for r in range(deep[vp] + 1)]
+    per = []
+    for rt in RAILS_TYPES.values():
+        al = rails_names(rt)[0]
+        for tr in rt.tracks:
+            for r in range(tr.R):
+                per.append(f'\t\tif = {{ limit = {{ has_variable = {al(tr.t, r)} }} scope:pmr_rg_c = {{ change_variable = '
+                           f'{{ name = pmr_obs_{tr.kind}{r} add = scope:pmr_rg_st.var:{al(tr.t, r)} }} }} }}\n')
+    log = ('\tdebug_log = "PMR;rec=RUNGS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+           + ';'.join(f'{vp}=' + '/'.join(f"[THIS.Var('pmr_obs_{vp}{r}').GetValue|0]" for r in range(deep[vp] + 1))
+                      for vp in ('eq', 'rc')) + '"\n')
+    return (''.join(f'# {ln.strip()}\n' for ln in obs_rungs.__doc__.splitlines())
+            + 'pmr_obs_rungs = {\n\tsave_scope_as = pmr_rg_c\n'
+            + ''.join(f'\tset_variable = {{ name = pmr_obs_{k} value = 0 }}\n' for k in keys)
+            + '\tevery_scope_state = {\n\t\tsave_scope_as = pmr_rg_st\n' + ''.join(per) + '\t}\n' + log
+            + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '}\n\n')
 
 
 OBS_ARMY_VALUES = """# Country scope, for the ARMY line (pmr_obs_army, test builds).

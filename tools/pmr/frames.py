@@ -113,6 +113,48 @@ GATES = {}   # {(building key, method key): Gate} of the locked frames; generate
 # Job lines stay share methods (generate.py treat_jobs): no modifier moves jobs (q99, q100).
 TREAT_MOD = False
 
+# Automation on rails (fundamentals review, automation/SPEC.md v4, sections 3.3 and 3.4; Pat 2026-11-12 13:40Z "Shared
+# laborers method", 14:29Z go; generate.py RAILS). A step type's automation is no axis of its targets: each rung is a
+# step member with no target (Member.pairs empty), its share the levels working on it (pmr_n_<j>_<b>). Its goods ride
+# the union frames at the most any rung of the track asks, cut by the "less" modifiers; its laborers are one method of
+# the shared group pmg_pmr_laborers, which pmr_frame_<b> switches to the one nearest the blend's laborers a level less
+# the frame's own, in steps of LAB_GRAIN from LAB_DOWN fewer to LAB_UP more. The union frames of a step type come in
+# no job versions; a type whose steps move a skilled post (Building.skilled) has one more union a target,
+# pm_pmr_union_<b>_<p>_s, run while more than half the levels work on such a rung.
+LAB_GROUP = 'pmg_pmr_laborers'
+LAB_GRAIN = 125
+LAB_DOWN = 48     # 6,000 fewer
+LAB_UP = 12       # 1,500 more
+# Rules review item G, one frame a recipe (Pat 2026-11-12 14:29Z, rules-review/HANDOFF.md G; generate.py --one-frame):
+# on a step type with no processing axis the vanilla recipe method carries its union frame's lines and is the frame
+# in every blend (Building.one_frame), so pm_pmr_union_<b>_<p> goes; the skilled-post unions (_s) stay, and so do the
+# processing types' pairs and unions. Its "less" modifiers then apply from a building's first tick, at rest too.
+ONE_FRAME = False
+
+
+def lab_key(n):
+    """the shared laborers method n x LAB_GRAIN a level (n < 0 fewer)"""
+    return 'pm_pmr_lab_0' if n == 0 else f'pm_pmr_lab_{"m" if n < 0 else "p"}{abs(n) * LAB_GRAIN}'
+
+
+def lab_methods(texture):
+    """(group text, methods text, loc lines) of pmg_pmr_laborers: none first (the game's default, open to all, as a
+    group's first method must be), then each amount, which unlocks only while it runs"""
+    ns = [0] + list(range(-1, -LAB_DOWN - 1, -1)) + list(range(1, LAB_UP + 1))
+    group = (f'{LAB_GROUP} = {{\n\ttexture = "{texture}"\n\tproduction_methods = {{\n'
+             + ''.join(f'\t\t{lab_key(n)}\n' for n in ns) + '\t}\n}\n')
+    methods = ''.join(f'{lab_key(n)} = {{\n\ttexture = "{texture}"\n'
+                      + ('' if n == 0 else f'\tunlocking_production_methods = {{ {lab_key(n)} }}\n'
+                         '\tbuilding_modifiers = {\n\t\tlevel_scaled = {\n'
+                         f'\t\t\tbuilding_employment_{JOB_POP}_add = {n * LAB_GRAIN}\n\t\t}}\n\t}}\n')
+                      + '}\n\n' for n in ns)
+    loc = [f' {lab_key(n)}:0 "{n * LAB_GRAIN:+,}"' if n else f' {lab_key(n)}:0 "0"' for n in ns]
+    return group, methods, loc
+
+
+def skilled_key(bld, p):
+    return f'pm_pmr_union_{bld.b}_{p}_s'
+
 
 class Gate:
     """What vanilla's unlock keys ask of one locked frame, as a trigger of PMR's own (state scope).
@@ -271,7 +313,13 @@ class Building:
         self.members, self.option_groups = list(members), list(option_groups)
         self.own_mods, self.live = own_mods or {}, list(live)
         self.recipes = [m for m in self.members if m.axis == 'recipe']
-        self.auto_axes = list(dict.fromkeys(m.axis for m in self.members if m.axis != 'recipe'))
+        self.auto_axes = list(dict.fromkeys(m.axis for m in self.members if m.axis != 'recipe' and m.pairs))
+        # rails: the step members (no target), their tracks, and the skilled posts their steps move ({pop: a level},
+        # the members that move them); generate.py sets skilled
+        self.steps = [m for m in self.members if m.axis != 'recipe' and not m.pairs]
+        self.step_axes = list(dict.fromkeys(m.axis for m in self.steps))
+        self.skilled, self.skilled_js = {}, []
+        self.one_frame = ONE_FRAME and bool(self.steps) and not self.auto_axes
         for p in range(1, len(self.pair_keys) + 1):
             if sum(1 for m in self.recipes if p in m.pairs) != 1:
                 raise SystemExit(f'{bk}: target {p} is in {sum(1 for m in self.recipes if p in m.pairs)} recipe members')
@@ -375,7 +423,7 @@ def recipe_union(bld):
         tot = {}
         for k in sorted(keys):   # sorted: a set's order moves between runs and churns the generated file
             x = max(s[side].get(k, 0) for s in rec) + max([0] + [s[side].get(k, 0) for s in own])
-            for ax in bld.auto_axes:
+            for ax in bld.auto_axes + bld.step_axes:
                 x += max([0] + [mem[m.j][side].get(k, 0) for m in bld.members if m.axis == ax])
             tot[k] = x
         out.append(nonneg(tot))
@@ -408,11 +456,15 @@ def frame_goods(bld):
         for o in [None] + og.options:
             oi, oo, oj, _ = option_full(og, o)
             gin |= set(nonzero(oi)); gout |= set(nonzero(oo)); pops |= set(nonzero(oj))
+    for m in bld.steps:
+        si, so, _sj, _ = split(m.mods)
+        gin |= set(nonzero(si)); gout |= set(nonzero(so))
     return sorted(gin), sorted(gout), sorted(pops) if JOB_LESS else []
 
 
 def union_key(bld, p):
-    return f'pm_pmr_union_{bld.b}_{p}'
+    # ONE_FRAME: the recipe method is its own union frame
+    return bld.pair_keys[p - 1] if bld.one_frame else f'pm_pmr_union_{bld.b}_{p}'
 
 
 def option_union_key(bld, og):
@@ -509,7 +561,14 @@ def union_frames(bld):
     """{key: (owner target, JOB_POP a level)} every recipe union frame of the building: a plain union a target, then
     the job versions by owner and size"""
     if getattr(bld, '_union_frames', None) is None:
-        bld._union_frames = _frames_at(bld, job_step(bld))
+        if bld.steps:   # rails: no job versions; a skilled-post type's _s union a target besides
+            pairs = range(1, len(bld.pair_keys) + 1)
+            out = collections.OrderedDict((union_key(bld, p), (p, max(0, pair_jobs(bld, p)))) for p in pairs)
+            if bld.skilled:
+                out.update((skilled_key(bld, p), (p, max(0, pair_jobs(bld, p)))) for p in pairs)
+            bld._union_frames = out
+        else:
+            bld._union_frames = _frames_at(bld, job_step(bld))
     return bld._union_frames
 
 
@@ -521,6 +580,8 @@ def union_versions(bld, p):
     target of the set whose own figure is nearest (version_owner) and is that target's plain union where it is the
     figure itself. So a recipe's automation levels overlap in no frame, and a blend reads as the automation level its
     laborers are nearest."""
+    if bld.steps:
+        return [(0, union_key(bld, p), max(0, pair_jobs(bld, p)))]
     return _versions(bld, p, job_step(bld))
 
 
@@ -630,11 +691,11 @@ def union_methods(bld, texture):
     version's own, an option union's below 0 where an option's are (rayon's laborers), as vanilla writes them. A recipe
     union is the target's it belongs to (union_frames) in everything else."""
     out = collections.OrderedDict()
-    ui, uo, _ = recipe_union(bld)
     for uk, (p, lab) in union_frames(bld).items():
-        _, _, pj, rest = pair_amounts(bld, p)
+        if uk == bld.pair_keys[p - 1]:   # ONE_FRAME: the recipe method itself carries it (one_frame_body)
+            continue
         out[uk] = (f'{uk} = {{\n\ttexture = "{texture(bld.pair_keys[p - 1])}"\n\tunlocking_production_methods = {{ {uk} }}\n'
-                   + sections(join(ui, uo, nonneg({**pj, JOB_POP: lab}), rest)) + '}\n')
+                   + union_body(bld, uk, p, lab) + '}\n')
     for og in bld.option_groups:
         ui2, uo2, _ = option_union(og)
         _, _, _, nrest = option_full(og, None)
@@ -644,9 +705,24 @@ def union_methods(bld, texture):
     return out
 
 
+def union_body(bld, uk, p, lab):
+    """the modifier blocks of recipe union uk (target p, JOB_POP a level lab)"""
+    ui, uo, _ = recipe_union(bld)
+    _, _, pj, rest = pair_amounts(bld, p)
+    jobs = {**pj, JOB_POP: lab}
+    if bld.steps and uk == skilled_key(bld, p):
+        jobs = {k: jobs.get(k, 0) + bld.skilled.get(k, 0) for k in set(jobs) | set(bld.skilled)}
+    return sections(join(ui, uo, nonneg(jobs), rest))
+
+
+def one_frame_body(bld, p):
+    """ONE_FRAME: the body of target p's recipe method, its union frame's"""
+    return union_body(bld, union_key(bld, p), p, union_frames(bld)[union_key(bld, p)][1])
+
+
 def frame_loc(bld):
     """English names of the new methods: a union frame reads as the target it belongs to, in every job version"""
-    return ([f' {uk}:0 "${bld.pair_keys[p - 1]}$"' for uk, (p, _) in union_frames(bld).items()]
+    return ([f' {uk}:0 "${bld.pair_keys[p - 1]}$"' for uk, (p, _) in union_frames(bld).items() if uk != bld.pair_keys[p - 1]]
             + [f' {uk}:0 "{OPTION_UNION_NAME}"' for og in bld.option_groups for _, uk, _ in option_versions(bld, og)])
 
 
@@ -843,7 +919,8 @@ def state_vars(bld):
     return ([f'pmr_lxi_{g}_{bld.b}' for g in gin] + [f'pmr_lxo_{g}_{bld.b}' for g in gout]
             + [f'pmr_lj_{p}_{bld.b}' for p in pops]
             + [f'pmr_fz_{bld.b}', f'pmr_fok_{bld.b}', f'pmr_fu_{bld.b}', f'pmr_fq_{bld.b}', f'pmr_fpl_{bld.b}']
-            + (treat_vars(bld) if TREAT_MOD else []))
+            + (treat_vars(bld) if TREAT_MOD else [])
+            + ([f'pmr_lbm_{bld.b}'] if bld.steps else []) + ([f'pmr_fsk_{bld.b}'] if bld.skilled else []))
 
 
 def clear_vars(bld, ind='\t'):
@@ -932,9 +1009,19 @@ def frame_effect(bld, log=True, count=False):
                  + ' '.join(f'subtract = {n(m.j)}' for m in ms) + ' } }\n'
                  + ''.join(f'\tif = {{ limit = {{ {n(m.j)} > var:pmr_fm_gs{k} }} {setv(f"pmr_fm_g{k}", m.j)} '
                            f'{setv(f"pmr_fm_gs{k}", n(m.j))} }}\n' for m in ms))
-    o.append(f'\t{setv("pmr_fm_pr", 0)}\n'
+    if bld.steps:
+        # rails: the levels working on a step (pmr_fm_st), and on a step that moves a skilled post (pmr_fm_sk); a
+        # building with any step runs its union frame, whose step goods the "less" modifiers cut
+        o.append('\t# rails: shares of the levels working on a step\n'
+                 '\tset_variable = { name = pmr_fm_st value = { value = 0 '
+                 + ' '.join(f'add = {n(m.j)}' for m in bld.steps) + ' } }\n'
+                 + ('\tset_variable = { name = pmr_fm_sk value = { value = 0 '
+                    + ' '.join(f'add = {n(j)}' for j in bld.skilled_js) + ' } }\n' if bld.skilled else ''))
+    o.append(f'\t{setv("pmr_fm_pr", 0)}\n' + ('\t# ONE_FRAME: the recipe method is the union, so the "less" sizes always apply\n'
+                                                if bld.one_frame else
              f'\tif = {{ limit = {{ var:pmr_fm_rs = {SHARE_STEPS} '
-             + ''.join(f'var:pmr_fm_gs{k} = {SHARE_STEPS} ' for k, _ in axes) + f'}} {setv("pmr_fm_pr", 1)} }}\n')
+             + ''.join(f'var:pmr_fm_gs{k} = {SHARE_STEPS} ' for k, _ in axes)
+             + ('var:pmr_fm_st = 0 ' if bld.steps else '') + f'}} {setv("pmr_fm_pr", 1)} }}\n'))
 
     # 2. the target those make; a combination that is no target falls back to the recipe's first one
     def pair_of(rj):
@@ -955,7 +1042,7 @@ def frame_effect(bld, log=True, count=False):
     # those of the target with the larger share. Test builds, for the JOBS line: pmr_fq_<b>, the JOB_POP a level of
     # the frame set, pure or union, and pmr_fpl_<b>, about its place in the group's list (union_places).
     pairs = list(range(1, P + 1))
-    step = job_step(bld)
+    step = JOB_STEP if bld.steps else job_step(bld)
     vers = {p: union_versions(bld, p) for p in pairs}
     fq, place = v('pmr_fq'), union_places(bld)
     fqset = lambda lab, at: f' {setv(fq, fmt(lab))} {setv(v("pmr_fpl"), at)}' if log else ''   # noqa: E731
@@ -963,6 +1050,11 @@ def frame_effect(bld, log=True, count=False):
 
     def union_pick(p, ind):
         leaf = {q: act(uk, bld.first) + fqset(lab, place[uk]) for q, uk, lab in vers[p]}
+        if bld.skilled:   # rails: the _s union while more than half the levels work on a skilled-post step
+            sk, uk = skilled_key(bld, p), union_key(bld, p)
+            lab = max(0, pair_jobs(bld, p))
+            return (f'{ind}if = {{ limit = {{ var:pmr_fm_sk > {SHARE_STEPS // 2} }} {act(sk, bld.first)}{fqset(lab, place[sk])} }}\n'
+                    f'{ind}else = {{ {act(uk, bld.first)}{fqset(lab, place[uk])} }}\n')
         if len(leaf) == 1:
             return f'{ind}{next(iter(leaf.values()))}\n'
         # steps from the target's own figure, within its versions
@@ -1094,6 +1186,35 @@ def frame_effect(bld, log=True, count=False):
 
     if TREAT_MOD and bld.live:
         o.append(treat_sizes(bld, size, xs, setv))
+    if bld.steps:
+        # rails (SPEC 3.3): the shared laborers method nearest the blend's laborers a level less the frame's own.
+        # Wanted = each recipe's share x its laborers less the steps' cut (never below 0), plus the processing members';
+        # the cut = each step's share x the laborers it removes. Switched only when it moves (act).
+        lab = lambda m: split(m.mods)[2].get(JOB_POP, 0)   # noqa: E731
+        cuts = [(m.j, -lab(m)) for m in bld.steps if lab(m) < -EPS]
+        procs = [(m.j, lab(m)) for m in bld.members if m.axis in bld.auto_axes and abs(lab(m)) > EPS]
+        o.append('\t# rails: the shared laborers method (pmg_pmr_laborers)\n'
+                 '\tset_variable = { name = pmr_fm_cut value = { value = 0'
+                 + ''.join(f' add = {{ value = {n(j)} multiply = {fmt(c / SHARE_STEPS)} }}' for j, c in cuts) + ' } }\n'
+                 '\tset_variable = { name = pmr_fm_lw value = 0 }\n'
+                 + ''.join(f'\tset_variable = {{ name = pmr_fm_lt value = {{ value = {fmt(lab(m))} subtract = var:pmr_fm_cut '
+                           f'min = 0 multiply = {n(m.j)} }} }}\n'
+                           '\tchange_variable = { name = pmr_fm_lw add = var:pmr_fm_lt }\n'
+                           for m in bld.recipes if lab(m) > EPS)
+                 + ''.join(f'\tset_variable = {{ name = pmr_fm_lt value = {{ value = {n(j)} multiply = {fmt(a)} }} }}\n'
+                           '\tchange_variable = { name = pmr_fm_lw add = var:pmr_fm_lt }\n' for j, a in procs)
+                 + '\t# the frame\'s own laborers a level (its target\'s, pure or union)\n'
+                 '\tset_variable = { name = pmr_fm_fl value = 0 }\n'
+                 + lookup('var:pmr_fm_pair', [p for p in pairs if pair_jobs(bld, p) > EPS],
+                          lambda p: setv('pmr_fm_fl', fmt(max(0, pair_jobs(bld, p)))))
+                 + '\tset_variable = { name = pmr_fm_lb value = { value = var:pmr_fm_lw divide = '
+                 f'{SHARE_STEPS} subtract = var:pmr_fm_fl divide = {LAB_GRAIN} min = -{LAB_DOWN} max = {LAB_UP} }} }}\n'
+                 '\tround_variable = { name = pmr_fm_lb nearest = 1 }\n'
+                 + lookup('var:pmr_fm_lb', list(range(-LAB_DOWN, LAB_UP + 1)), lambda x: act(lab_key(x), lab_key(0)))
+                 + f'\t{setv(v("pmr_lbm"), "var:pmr_fm_lb")}\n'
+                 # the wage read's nominal crew (generate.py wage_effect): the skilled post the _s union moves, 1 while it runs
+                 + (f'\tif = {{ limit = {{ var:pmr_fm_pr = 0 var:pmr_fm_sk > {SHARE_STEPS // 2} }} {setv(v("pmr_fsk"), 1)} }}\n'
+                    f'\telse = {{ {setv(v("pmr_fsk"), 0)} }}\n' if bld.skilled else ''))
 
     # SHORT (PLAN.md 8.6): a union frame with an input it carries at nothing; the tick asks the building for a shortage
     o.append(f'\tif = {{ limit = {{ has_variable = {v("pmr_fz")} }} remove_variable = {v("pmr_fz")} }}\n')
@@ -1109,7 +1230,7 @@ def frame_effect(bld, log=True, count=False):
                 f'state=[THIS.GetState.GetNameNoFormatting];building={bk};pair={f("pmr_fm_pair")};pure={f("pmr_fm_pr")}'
                 + (';opt=' + '/'.join(f'{f(f"pmr_fm_o{og.gi}")}:{f(f"pmr_fm_po{og.gi}")}' for og in bld.option_groups)
                    if bld.option_groups else '')
-                + f';x={sizes};lab={f(fq)}'
+                + f';x={sizes};lab={f(fq)}' + (f';lbm={f(v("pmr_lbm"))}' if bld.steps else '')
                 + (';oj=' + '/'.join(f(f'pmr_fm_oj{og.gi}') for og in bld.option_groups) if bld.option_groups else ''))
         o.append(f'\tif = {{ limit = {{ var:pmr_fm_ch = 1 owner = {{ is_player = yes }} }} debug_log = "{line}" }}\n')
     o.append(f'\tset_variable = {v("pmr_fok")}\n}}\n')
@@ -1172,14 +1293,19 @@ def jobs_check_files(blds):
                 f'place={f(f"pmr_fpl_{b}")};frame={f(f"pmr_fq_{b}")};'
                 f'want={f("pmr_fj_want")};cap={f("pmr_fj_c0")};{JOB_POP}={f("pmr_fj_emp")};occ={f("pmr_fj_occ", 2)}'
                 + ''.join(f';cap_{pop}={f(f"pmr_fj_c{i}")}' for i, pop in enumerate(pops) if i))
+        # rails: the frame's JOB_POP plus the shared laborers method's (lbm=, in LAB_GRAIN steps)
+        lbm = f' add = {{ value = var:pmr_lbm_{b} multiply = {LAB_GRAIN} }}' if bld.steps else ''
+        if bld.steps:
+            line += f';lbm={f(f"pmr_lbm_{b}")}'
         effects.append(f'# State scope, a state with a {bk} on a union frame.\n'
                        f'pmr_jobs_log_{b} = {{\n'
                        f'\tset_variable = {{ name = pmr_fj_lvl value = b:{bk}.level }}\n'
-                       f'\tset_variable = {{ name = pmr_fj_want value = {{ value = var:pmr_fq_{b} multiply = var:pmr_fj_lvl }} }}\n'
+                       f'\tset_variable = {{ name = pmr_fj_want value = {{ value = var:pmr_fq_{b}{lbm} multiply = var:pmr_fj_lvl }} }}\n'
                        f'\tset_variable = {{ name = pmr_fj_emp value = pmr_jobs_{b} }}\n'
                        '\tset_variable = { name = pmr_fj_occ value = 0 }\n' + occ + reads
                        + f'\tdebug_log = "{line}"\n}}\n\n')
-        monthly.append(f'\t\tif = {{ limit = {{ has_variable = pmr_fu_{b} has_variable = pmr_fq_{b} has_building = {bk} }} '
+        monthly.append(f'\t\tif = {{ limit = {{ has_variable = pmr_fu_{b} has_variable = pmr_fq_{b} '
+                       + (f'has_variable = pmr_lbm_{b} ' if bld.steps else '') + f'has_building = {bk} }} '
                        f'pmr_jobs_log_{b} = yes }}\n')
     return [('common/script_values/pmr_jobs_values.txt', JOBS_DOC + ''.join(values)),
             ('common/scripted_effects/pmr_jobs_effects.txt', JOBS_DOC + ''.join(effects)
