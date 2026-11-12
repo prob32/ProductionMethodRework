@@ -711,7 +711,7 @@ def union_body(bld, uk, p, lab):
     _, _, pj, rest = pair_amounts(bld, p)
     jobs = {**pj, JOB_POP: lab}
     if bld.steps and uk == skilled_key(bld, p):
-        jobs = {k: jobs.get(k, 0) + bld.skilled.get(k, 0) for k in set(jobs) | set(bld.skilled)}
+        jobs = {k: jobs.get(k, 0) + bld.skilled.get(k, 0) for k in [*jobs, *(k for k in bld.skilled if k not in jobs)]}
     return sections(join(ui, uo, nonneg(jobs), rest))
 
 
