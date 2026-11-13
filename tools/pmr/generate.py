@@ -3331,7 +3331,7 @@ def main():
     report['frame_lock']['history'] = hist_n
     on_actions = (ON_ACTIONS.replace('STATE_TURN', state_turn()).replace('CC_STATE', CC_STATE_LINE())
                   .replace('CC_COUNTRY', '\t\tpmr_cc_weigh = yes   # CENTER: the AI weight a size (PLAN 6)\n'
-                           '\t\tif = { limit = { is_player = yes } pmr_cc_chance = yes pmr_cc_cp_cost = yes }   # CENTER: the card\'s chance and cost\n'
+                           '\t\tif = { limit = { OR = { is_player = yes country_rank >= rank_value:great_power } } pmr_cc_chance = yes pmr_cc_cp_cost = yes }   # CENTER: the card\'s chance and cost (players and great powers, for observer runs)\n'
                            if CENTER else ''))
     if RESEARCH_MAP or PF_SUMS:
         old = 'OBS_ON_ACTION\n'
@@ -5352,36 +5352,37 @@ def cc_card_effects():
              f'\telse = {{ set_variable = {{ name = pmr_cc_cp value = pmr_cc_pmc_{next(iter(CC_CONSTRUCTION))} }} }}\n'
              '\tremove_variable = pmr_cc_cpl\n\tremove_variable = pmr_cc_cps\n}\n\n')
     # the state row's chips
+    sides = dict(CC_CHIP_SIDES)
     cands = [(b, f, n) for b in sorted({b for b, _vp in CC_JOB}) for f, n, _c, _l in CC_CHIP_PAYERS
-             if any(pr[6] == f for pr, bb, _vp in cc_card_rows() if bb == b)]
-    shift = lambda a, z: (f'if = {{ limit = {{ has_variable = pmr_cc_c{a} }} set_variable = {{ name = pmr_cc_c{z} value = var:pmr_cc_c{a} }} '   # noqa: E731
-                          f'set_variable = {{ name = pmr_cc_c{z}_n value = var:pmr_cc_c{a}_n }} '
-                          f'set_variable = {{ name = pmr_cc_c{z}_p value = var:pmr_cc_c{a}_p }} }}')
-    put = lambda z: (f'set_variable = {{ name = pmr_cc_c{z} value = bt:$B$ }} set_variable = {{ name = pmr_cc_c{z}_n value = var:pmr_cc_x }} '   # noqa: E731
-                     f'set_variable = {{ name = pmr_cc_c{z}_p value = $P$ }}')
-    spill = 'if = { limit = { has_variable = pmr_cc_c3 } change_variable = { name = pmr_cc_more add = 1 } }'
+             if any(pr[6] in sides[f] for pr, bb, _vp in cc_card_rows() if bb == b)]
+    shift = lambda a, z: (f'if = {{ limit = {{ has_variable = pmr_cc_k{a} }} set_variable = {{ name = pmr_cc_k{z} value = var:pmr_cc_k{a} }} '   # noqa: E731
+                          f'set_variable = {{ name = pmr_cc_k{z}_n value = var:pmr_cc_k{a}_n }} '
+                          f'set_variable = {{ name = pmr_cc_k{z}_p value = var:pmr_cc_k{a}_p }} }}')
+    put = lambda z: (f'set_variable = {{ name = pmr_cc_k{z} value = bt:$B$ }} set_variable = {{ name = pmr_cc_k{z}_n value = var:pmr_cc_x }} '   # noqa: E731
+                     f'set_variable = {{ name = pmr_cc_k{z}_p value = $P$ }}')
+    spill = 'if = { limit = { has_variable = pmr_cc_k3 } change_variable = { name = pmr_cc_more add = 1 } }'
     o.append('# State scope: one ask (var:pmr_cc_x levels of building $B$ on payer $P$) into the three largest.\npmr_cc_chip_in = {\n'
-             f'\tif = {{ limit = {{ var:pmr_cc_x > var:pmr_cc_c1_n }} {spill} {shift(2, 3)} {shift(1, 2)} {put(1)} }}\n'
-             f'\telse_if = {{ limit = {{ var:pmr_cc_x > var:pmr_cc_c2_n }} {spill} {shift(2, 3)} {put(2)} }}\n'
-             f'\telse_if = {{ limit = {{ var:pmr_cc_x > var:pmr_cc_c3_n }} {spill} {put(3)} }}\n'
+             f'\tif = {{ limit = {{ var:pmr_cc_x > var:pmr_cc_k1_n }} {spill} {shift(2, 3)} {shift(1, 2)} {put(1)} }}\n'
+             f'\telse_if = {{ limit = {{ var:pmr_cc_x > var:pmr_cc_k2_n }} {spill} {shift(2, 3)} {put(2)} }}\n'
+             f'\telse_if = {{ limit = {{ var:pmr_cc_x > var:pmr_cc_k3_n }} {spill} {put(3)} }}\n'
              '\telse = { change_variable = { name = pmr_cc_more add = 1 } }\n}\n\n'
              'pmr_cc_chips_clear = {\n'
-             + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_cc_c{k}{x} }} remove_variable = pmr_cc_c{k}{x} }}\n'
+             + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_cc_k{k}{x} }} remove_variable = pmr_cc_k{k}{x} }}\n'
                        for k in range(1, CC_CHIPS + 1) for x in ('', '_n', '_p'))
              + '\tif = { limit = { has_variable = pmr_cc_more } remove_variable = pmr_cc_more }\n}\n\n'
              '# State scope, the player\'s: the state row\'s chips (pmr_cc_lv_<payer>_<b>, levels still asked for).\npmr_cc_chips = {\n'
              '\tpmr_cc_chips_clear = yes\n'
-             + ''.join(f'\tset_variable = {{ name = pmr_cc_c{k}_n value = 0 }}\n' for k in range(1, CC_CHIPS + 1))
+             + ''.join(f'\tset_variable = {{ name = pmr_cc_k{k}_n value = 0 }}\n' for k in range(1, CC_CHIPS + 1))
              + '\tset_variable = { name = pmr_cc_more value = 0 }\n'
              + ''.join(f'\tif = {{ limit = {{ exists = b:{CC_BK[b]} }} set_variable = {{ name = pmr_cc_x value = pmr_cc_lv_{f}_{b} }} '
                        f'if = {{ limit = {{ var:pmr_cc_x > 0 }} pmr_cc_chip_in = {{ B = {CC_BK[b]} P = {n} }} }} }}\n'
                        for b, f, n in cands)
-             + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_cc_c{k} }} }} remove_variable = pmr_cc_c{k}_n }}\n'
+             + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_cc_k{k} }} }} remove_variable = pmr_cc_k{k}_n }}\n'
                        for k in range(1, CC_CHIPS + 1))
              + '}\n\n'
              '# State scope: the chips, in the player\'s states only (monthly, a press, a level landing).\npmr_cc_chips_if = {\n'
-             '\tif = { limit = { owner = { is_player = yes } } pmr_cc_chips = yes }\n'
-             '\telse_if = { limit = { has_variable = pmr_cc_c1_n } pmr_cc_chips_clear = yes }\n}\n\n')
+             '\tif = { limit = { owner = { OR = { is_player = yes country_rank >= rank_value:great_power } } } pmr_cc_chips = yes }   # q120: great powers too, for observer runs\n'
+             '\telse_if = { limit = { has_variable = pmr_cc_k1_n } pmr_cc_chips_clear = yes }\n}\n\n')
     return ''.join(o)
 
 
@@ -5684,8 +5685,8 @@ def cc_card_values():
     # the state row's chips (round 2, 6): levels still asked for, a building and payer, all its jobs together; the
     # player's own states only (pmr_cc_chips), so the player's two payers
     for b in sorted({b for b, _vp in CC_JOB}):
-        for f in ('pg', 'pi'):
-            mine = [(pr, vp) for pr, bb, vp in rows if bb == b and pr[6] == f]
+        for f, side in CC_CHIP_SIDES:
+            mine = [(pr, vp) for pr, bb, vp in rows if bb == b and pr[6] in side]
             if mine:
                 out.append(f'pmr_cc_lv_{f}_{b} = {{\n\tvalue = 0\n'
                            + ''.join(f'\tif = {{ limit = {{ {cc_row_open_script(pr, b, vp)} }} '
@@ -5782,7 +5783,9 @@ def cc_row_gui(pr, b, vp, ind):
             f'{i}\t\t\t\t\t\ttext = "PMR_CC_NAME_{b}_{vp}"\n{i}\t\t\t\t\t}}\n'
             # its weekly gain a level
             f'{i}\t\t\t\t\ttextbox = {{\n'
-            f"{i}\t\t\t\t\t\tvisible = \"[Building.GetState.MakeScope.Var('{J(b, vp, 'gain')}').IsSet]\"\n"
+            f"{i}\t\t\t\t\t\tvisible = \"[And(Building.GetState.MakeScope.Var('{J(b, vp, 'gain')}').IsSet, "
+            f"Or(GreaterThanOrEqualTo_CFixedPoint(Building.GetState.MakeScope.Var('{J(b, vp, 'gain')}').GetValue, '(CFixedPoint)0.5'), "
+            f"LessThan_CFixedPoint(Building.GetState.MakeScope.Var('{J(b, vp, 'gain')}').GetValue, '(CFixedPoint)-0.5')))]\"\n"
             f'{i}\t\t\t\t\t\tposition = {{ -96 0 }}\n{i}\t\t\t\t\t\tparentanchor = right|vcenter\n'
             f'{i}\t\t\t\t\t\tautoresize = yes\n{i}\t\t\t\t\t\talign = right|nobaseline\n'
             f'{i}\t\t\t\t\t\ttext = "PMR_CC_GAIN_{b}_{vp}"\n{i}\t\t\t\t\t}}\n'
@@ -5821,8 +5824,8 @@ def cc_card_gui(ind):
     standing), Funding and the Order Book, built only for the Center and on whichever tab is selected (it has no tab
     row)"""
     some, slices = CC_SOME, cc_funding_slices('0.08')
-    chance = ("And(Building.GetState.GetOwner.IsLocalPlayer, And(Building.GetState.MakeScope.Var('pmr_cc_sc').IsSet, "
-              f"GreaterThan_CFixedPoint({cc_gsv('pmr_cc_inv')}, '(CFixedPoint)0')))")
+    chance = ("And(Building.GetState.MakeScope.Var('pmr_cc_sc').IsSet, "
+              f"GreaterThan_CFixedPoint({cc_gsv('pmr_cc_inv')}, '(CFixedPoint)0'))")
     i = ind + '\t\t'
     return (f'{ind}# PMR: the Chamber of Commerce\'s card (generate.py cc_card_gui), built for the Center only\n'
             f'{ind}flowcontainer = {{\n'
@@ -5856,14 +5859,18 @@ def cc_card_gui(ind):
             f'{i}\t\t\ttextbox = {{\n{i}\t\t\t\tvisible = "[Building.GetState.GetOwner.MakeScope.Var(\'pmr_cc_cp\').IsSet]"\n'
             f'{i}\t\t\t\tparentanchor = right|vcenter\n{i}\t\t\t\tposition = {{ -12 0 }}\n'
             f'{i}\t\t\t\tautoresize = yes\n{i}\t\t\t\talign = right|nobaseline\n'
+            f'{i}\t\t\t\tusing = fontsize_mega\n'   # FUNDING-BAR.md 1: big and red (Pat 22:27Z)
             f'{i}\t\t\t\ttext = "PMR_CC_ESTIMATE"\n{i}\t\t\t\ttooltip = "PMR_CC_ESTIMATE_TT"\n{i}\t\t\t\tusing = tooltip_above\n{i}\t\t\t}}\n'
             f'{i}\t\t}}\n'
-            f'{i}\t\twidget = {{\n{i}\t\t\tsize = {{ 520 30 }}\n{i}\t\t\tparentanchor = hcenter\n'
-            + slice_bar(slices, ('100%', '100%'), 22, i + '\t\t\t', [(None, 'PMR_CC_FUNDING_TT')])
-            + f'{i}\t\t\ttextbox = {{\n{i}\t\t\t\tposition = {{ -10 0 }}\n{i}\t\t\t\tparentanchor = right|vcenter\n'
-            f'{i}\t\t\t\tautoresize = yes\n{i}\t\t\t\talign = right|nobaseline\n{i}\t\t\t\talwaystransparent = yes\n'
-            f'{i}\t\t\t\ttext = "PMR_CC_FUNDING_BAR"\n{i}\t\t\t}}\n'
-            f'{i}\t\t}}\n{i}\t}}\n\n'
+            # FUNDING-BAR.md 2: framed as the Order Book's bars, 44 tall, 12 above and below
+            f'{i}\t\twidget = {{\n{i}\t\t\tsize = {{ 520 68 }}\n{i}\t\t\tparentanchor = hcenter\n'
+            f'{i}\t\t\twidget = {{\n{i}\t\t\t\tsize = {{ 520 44 }}\n{i}\t\t\t\tparentanchor = center\n'
+            + slice_bar(slices, ('100%', '100%'), 26, i + '\t\t\t\t', [(None, 'PMR_CC_FUNDING_TT')], frame=True)
+            + f'{i}\t\t\t\ttextbox = {{\n{i}\t\t\t\t\tposition = {{ -12 0 }}\n{i}\t\t\t\t\tparentanchor = right|vcenter\n'
+            f'{i}\t\t\t\t\tautoresize = yes\n{i}\t\t\t\t\talign = right|nobaseline\n{i}\t\t\t\t\talwaystransparent = yes\n'
+            f'{i}\t\t\t\t\tusing = fontsize_large\n'
+            f'{i}\t\t\t\t\ttext = "PMR_CC_FUNDING_BAR"\n{i}\t\t\t\t}}\n'
+            f'{i}\t\t\t}}\n{i}\t\t}}\n{i}\t}}\n\n'
             # the Order Book
             f'{i}\tdefault_header = {{\n{i}\t\tblockoverride "text" {{\n{i}\t\t\ttext = "PMR_CC_ORDER_BOOK"\n{i}\t\t}}\n{i}\t}}\n'
             f'{i}\tempty_state = {{\n{i}\t\tblockoverride "visible" {{\n{i}\t\t\tvisible = "[Not({some})]"\n{i}\t\t}}\n'
@@ -5908,6 +5915,7 @@ CC_TAB_AT = ("\t\t\t\tdivider_clean = {\n\t\t\t\t\tvisible = \"[GreaterThan_int3
 
 
 CC_CHIPS = 3   # the state row's chips: the largest asks, a building and payer each (ui/CENTER-CARD.md round 2, 6)
+CC_CHIP_SIDES = (('pg', ('pg', 'og')), ('pi', ('pi', 'oi')))   # a chip's side: the government's slices, the investors'
 CC_CHIP_PAYERS = (('pg', 1, 'PLAYER_GOVERNMENT', 'PMR_CC_GOV'), ('pi', 2, 'PLAYER_POPS', 'PMR_CC_INV'))   # the player's states'
 
 
@@ -5915,13 +5923,13 @@ def cc_chip_gui(k, i):
     """CENTER: chip k of the state row: a slice in its payer's ownership colour, as wide as its levels, the building's
     icon and the levels over it, as the Manor Houses bar draws one (property_portfolio_stacked_bar_chart_base)"""
     v = lambda n: f"Building.GetState.MakeScope.Var('{n}')"   # noqa: E731
-    bt = f"{v(f'pmr_cc_c{k}')}.GetBuildingType.GetKey"
-    return (f'{i}widget = {{\n{i}\tvisible = "[{v(f"pmr_cc_c{k}")}.IsSet]"\n'
+    bt = f"{v(f'pmr_cc_k{k}')}.GetBuildingType.GetKey"
+    return (f'{i}widget = {{\n{i}\tvisible = "[{v(f"pmr_cc_k{k}")}.IsSet]"\n'
             f'{i}\tlayoutpolicy_horizontal = expanding\n{i}\tlayoutpolicy_vertical = expanding\n'
-            f'{i}\tlayoutstretchfactor_horizontal = "[FixedPointToInt({v(f"pmr_cc_c{k}_n")}.GetValue)]"\n'
+            f'{i}\tlayoutstretchfactor_horizontal = "[FixedPointToInt({v(f"pmr_cc_k{k}_n")}.GetValue)]"\n'
             f'{i}\tminimumsize = {{ 30 -1 }}\n{i}\ttooltip = "PMR_CC_CHIP_{k}"\n{i}\tusing = tooltip_above\n'
             + ''.join(f'{i}\twidget = {{\n'
-                      f"{i}\t\tvisible = \"[EqualTo_CFixedPoint({v(f'pmr_cc_c{k}_p')}.GetValue, '(CFixedPoint){n}')]\"\n"
+                      f"{i}\t\tvisible = \"[EqualTo_CFixedPoint({v(f'pmr_cc_k{k}_p')}.GetValue, '(CFixedPoint){n}')]\"\n"
                       f'{i}\t\tsize = {{ 100% 100% }}\n{i}\t\talwaystransparent = yes\n'
                       f'{i}\t\tbackground = {{\n{i}\t\t\ttexture = "gfx/interface/tooltip/stacked_barchart_small_item.dds"\n'
                       f'{i}\t\t\tcolor = {{ {" ".join(fmt(c) for c in CC_OWN_COLOURS[col])} 1 }}\n'
@@ -5932,7 +5940,7 @@ def cc_chip_gui(k, i):
             f'{i}\t\ttexture = "[Building.GetState.GetBuilding({bt}).GetIcon]"\n'
             f'{i}\t\ttextbox = {{\n{i}\t\t\tautoresize = yes\n{i}\t\t\talign = nobaseline\n{i}\t\t\tusing = fontsize_small\n'
             f'{i}\t\t\tmargin_left = 2\n{i}\t\t\tmargin_top = 1\n'
-            f'{i}\t\t\traw_text = "[{v(f"pmr_cc_c{k}_n")}.GetValue|0v]"\n{i}\t\t}}\n{i}\t}}\n'
+            f'{i}\t\t\traw_text = "[{v(f"pmr_cc_k{k}_n")}.GetValue|0v]"\n{i}\t\t}}\n{i}\t}}\n'
             f'{i}}}\n')
 
 
@@ -5967,7 +5975,7 @@ def cc_tab_row(text):
            f'{i}\tflowcontainer = {{\n{i}\t\tvisible = "[{CC_SOME}]"\n{i}\t\tparentanchor = right|vcenter\n'
            f'{i}\t\tposition = {{ -10 0 }}\n{i}\t\tspacing = 8\n{i}\t\tignoreinvisible = yes\n\n'
            # a flowcontainer cannot hold an hbox directly (q118 crashed on load): the chips' hbox sits in a widget
-           f'{i}\t\twidget = {{\n{i}\t\t\tvisible = "[Building.GetState.MakeScope.Var(\'pmr_cc_c1\').IsSet]"\n'
+           f'{i}\t\twidget = {{\n{i}\t\t\tvisible = "[Building.GetState.MakeScope.Var(\'pmr_cc_k1\').IsSet]"\n'
            f'{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tsize = {{ 190 30 }}\n'
            f'{i}\t\t\thbox = {{\n{i}\t\t\t\tsize = {{ 100% 100% }}\n{i}\t\t\t\tspacing = 3\n'
            + ''.join(cc_chip_gui(k, i + '\t\t\t\t') for k in range(1, CC_CHIPS + 1))
@@ -6074,7 +6082,13 @@ def cc_card_loc(froms):
     cvar = lambda n, f='0': f"[Building.GetState.GetOwner.MakeScope.Var('{n}').GetValue|{f}]"   # noqa: E731
     gt0 = lambda e: f"GreaterThan_CFixedPoint({e}, '(CFixedPoint)0')"   # noqa: E731
     gsv = lambda n: f"Building.GetState.MakeScope.ScriptValue('{n}')"   # noqa: E731
-    loc = [' PMR_CC_ORDERS:0 "#v ' + sv('pmr_cc_orders') + '#! Orders"',
+    # FUNDING-BAR.md 2: whole numbers under 1,000, one decimal of a thousand or a million above (never "0.00K")
+    num = lambda n: (f"[SelectLocalization(GreaterThanOrEqualTo_CFixedPoint({gsv(n)}, '(CFixedPoint)1000'), "   # noqa: E731
+                     f"'PMR_CC_NUM_{n}_L', 'PMR_CC_NUM_{n}_S')]")
+    loc = [' PMR_CC_ORDERS:0 "#v ' + sv('pmr_cc_orders') + '#! [SelectLocalization(EqualTo_CFixedPoint(' + gsv('pmr_cc_orders')
+           + ", '(CFixedPoint)1'), 'PMR_CC_ORDER_ONE', 'PMR_CC_ORDER_MANY')]" + '"',
+           ' PMR_CC_ORDER_ONE:0 "Order"', ' PMR_CC_ORDER_MANY:0 "Orders"',
+           ' PMR_CC_LEVEL_ONE:0 "Level"', ' PMR_CC_LEVEL_MANY:0 "Levels"',
            ' PMR_CC_LEVELS:0 "#v ' + sv('pmr_cc_ldone') + '#! / #v ' + sv('pmr_cc_lord') + '#! Levels"',
            ' PMR_CC_TAB_LEVELS:0 "#v ' + sv('pmr_cc_ldone') + '#! / ' + sv('pmr_cc_lord') + '"',
            f' PMR_CC_ROW_NAME:0 "[GetBuildingType(\'{CENTER_BUILDING}\').GetName]"',
@@ -6082,8 +6096,10 @@ def cc_card_loc(froms):
            ' PMR_CC_GOV:0 "Government"', ' PMR_CC_INV:0 "Investors"',
            ' PMR_CC_SIZE_TT:0 "#header [Building.GetNameNoFormatting]#!"',
            ' PMR_CC_CHANCE:0 "#v ' + sv('pmr_cc_chance_v', '0%') + '#! Investment Chance"',
-           ' PMR_CC_FUNDING_BAR:0 "@construction! #v ' + sv('pmr_cc_fund', 'K') + '#! / ' + sv('pmr_cc_ask', 'K') + '"',
-           ' PMR_CC_ESTIMATE:0 "@money! #v ' + sv('pmr_cc_estimate', 'K') + '#!"',
+           ' PMR_CC_FUNDING_BAR:0 "@construction! #v ' + num('pmr_cc_fund') + '#! / ' + num('pmr_cc_ask') + '"',
+           ' PMR_CC_ESTIMATE:0 "@money! #N ' + sv('pmr_cc_estimate', 'K') + '#!"',
+           ' PMR_CC_NUM_pmr_cc_fund_S:0 "' + sv('pmr_cc_fund') + '"', ' PMR_CC_NUM_pmr_cc_fund_L:0 "' + sv('pmr_cc_fund', '*1') + '"',
+           ' PMR_CC_NUM_pmr_cc_ask_S:0 "' + sv('pmr_cc_ask') + '"', ' PMR_CC_NUM_pmr_cc_ask_L:0 "' + sv('pmr_cc_ask', '*1') + '"',
            ' PMR_CC_ESTIMATE_TT:0 "#header Estimated Cost#!\\n@money! #v ' + sv('pmr_cc_estimate', 'D') + '#!' + TT_DELIM
            + '\\n@construction! #v ' + sv('pmr_cc_ask', 'D') + '#! at @money! #v ' + cvar('pmr_cc_cp', 'D') + '#! each"']
     # the Investment Chance: the share, its two figures, the best order and the score's parts
@@ -6106,18 +6122,19 @@ def cc_card_loc(froms):
         name = (f"[Building.GetState.GetCustom('pmr_sw_now_{b}')]" if vp == 'retool'
                 else f"[Building.GetState.GetCustom('pmr_ccname_{vp}_{b}')]")
         loc.append(f' PMR_CC_NAME_{b}_{vp}:0 "{name}"')
-        loc.append(f' PMR_CC_GAIN_{b}_{vp}:0 "@money!#P +{var(J(b, vp, "gain"))}#!"')
+        loc.append(f' PMR_CC_GAIN_{b}_{vp}:0 "@money! {var(J(b, vp, "gain"), "+=0")}"')
         tt = (f'#header {cc_kind(vp)[1]}: ${CC_BK[b]}$#!\\n[Building.GetState.GetCustom(\'pmr_ccfrom_{vp}_{b}\')]#v {name}#!{TT_DELIM}'
-              f'\\n@money! #P +{var(J(b, vp, "gain"))}#! Weekly [concept_building_balance] a level'
+              f'\\n@money! {var(J(b, vp, "gain"), "+=0")} Weekly [concept_building_balance] a level'
               f'\\n@construction! #v {fmt(S * u)}#! a level')
         loc.append(f' PMR_CC_TT_{b}_{vp}:0 "{tt}"')
         loc.append(f' PMR_CC_TTI_{b}_{vp}:0 "{tt}\\n#v {sv(f"pmr_cc_js_{vp}_{b}", "D")}#! Score"')
     loc += [f' PMR_CC_FROM_{key}:0 "${key}$ to "' for key in froms]
     # the state row's chips
     for k in range(1, CC_CHIPS + 1):
-        p = f"Building.GetState.MakeScope.Var('pmr_cc_c{k}_p').GetValue"
-        loc.append(f' PMR_CC_CHIP_{k}:0 "#header [Building.GetState.MakeScope.Var(\'pmr_cc_c{k}\').GetBuildingType.GetName]#!{TT_DELIM}'
-                   f'\\n#v {var(f"pmr_cc_c{k}_n")}#! Levels'
+        p = f"Building.GetState.MakeScope.Var('pmr_cc_k{k}_p').GetValue"
+        loc.append(f' PMR_CC_CHIP_{k}:0 "#header [Building.GetState.MakeScope.Var(\'pmr_cc_k{k}\').GetBuildingType.GetName]#!{TT_DELIM}'
+                   f'\\n#v {var(f"pmr_cc_k{k}_n")}#! '
+                   f"[SelectLocalization(EqualTo_CFixedPoint(Building.GetState.MakeScope.Var('pmr_cc_k{k}_n').GetValue, '(CFixedPoint)1'), 'PMR_CC_LEVEL_ONE', 'PMR_CC_LEVEL_MANY')]"
                    f"\\n[SelectLocalization(EqualTo_CFixedPoint({p}, '(CFixedPoint)1'), 'PMR_CC_GOV', 'PMR_CC_INV')]\"")
     return loc
 
@@ -7481,17 +7498,18 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
                       f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
     thr = ''.join(f'\t\tchange_variable = {{ name = pmr_thr add = scope:pmr_bk.modifier:{m} }}\n'
                   for m in THROUGHPUT_KEYS.get(bk, []))
-    o = [f'pmr_profit_{b} = {{\n'
-         '\t# a good\'s price is read once a day per state (pmr_pxd_<good>), as for the trade-offs. During game setup\n'
-         '\t# (pmr_setup) the market has no prices yet, so the base price stands in until the first monthly pulse.\n'
-         + ''.join(f'\tif = {{ limit = {{ has_global_variable = pmr_setup }} set_variable = {{ name = pmr_px_{g} value = 1 }} }}\n'
+    head = (''.join(f'\tif = {{ limit = {{ has_global_variable = pmr_setup }} set_variable = {{ name = pmr_px_{g} value = 1 }} }}\n'
                    f'\telse_if = {{ limit = {{ NOT = {{ has_variable = pmr_pxd_{g} }} }} pmr_price_{g} = yes '
                    f'set_variable = {{ name = pmr_pxd_{g} value = yes days = 1 }} }}\n' for g in goods)
          + '\t# the state\'s own wage for the type (pmr_wage_<b>) and the building\'s throughput\n'
          f'\tpmr_wage_{b} = yes\n\tset_variable = {{ name = pmr_wage value = var:pmr_wg_{b} }}\n'
          '\tset_variable = { name = pmr_thr value = 1 }\n\tset_variable = { name = pmr_off value = 0 }\n'
          + (f'\tif = {{\n\t\tlimit = {{ exists = b:{bk} }}\n\t\tb:{bk} = {{ save_temporary_scope_as = pmr_bk }}\n{thr}'
-            '\t\tchange_variable = { name = pmr_thr max = 0.1 }\n\t}\n' if thr else '')]
+            '\t\tchange_variable = { name = pmr_thr max = 0.1 }\n\t}\n' if thr else ''))
+    o = [f'pmr_profit_{b} = {{\n'
+         '\t# a good\'s price is read once a day per state (pmr_pxd_<good>), as for the trade-offs. During game setup\n'
+         '\t# (pmr_setup) the market has no prices yet, so the base price stands in until the first monthly pulse.\n'
+         + head]
     # Pat 2026-10-19 13:09Z: "we should only evaluate unlocked items that are +/- from our current to save on calcs. If
     # our current is profitable we should never evaluate going back down." Each option's figures are a scripted effect of
     # their own (pmr_rmx_<i>_<b>), run for the reference (the default where it can run, else the last pick) and then only
@@ -7965,7 +7983,7 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     if PF_SUMS:
         PF_SYNC.add(b)
     if SOLO_GATE >= 2:
-        o.append(lite_effect(bk, b, econ, goods, goods_cost, setv, v))
+        o.append(lite_effect(bk, b, econ, goods, goods_cost, setv, v, cc_retool_gain(b, k, head) if CENTER else ''))
     return (switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + (rails_look(bk, b, rt, goods_cost) if rt else '')
             + ''.join(pre) + ''.join(o))
 
@@ -7980,23 +7998,52 @@ def pay_score(b):
             f'multiply = {fmt(VANILLA_PROFIT_W / RETOOL_SHARE)} min = 0 }} }}\n\t}}\n')
 
 
-def cc_retool_gain(b, k):
-    """CENTER, the end of pmr_profit_<b>: pmr_retool_gain_<b>, the Order Book's weekly gain a level of a Retool row
-    (ui/CENTER-CARD.md round 2, 4): the target's profit a level a week (pmr_best_now_<b>) less that of the recipe most
-    levels off it run (pmr_cc_from_<b>, pmr_mix_<b>), which this run prices if it is not the reference; never below 0"""
+def cc_retool_gain(b, k, head=None):
+    """CENTER: pmr_retool_gain_<b>, the Order Book's weekly gain a level of a Retool row (ui/CENTER-CARD.md round 2, 4):
+    the target's profit a level a week (pmr_best_now_<b>) less that of the recipe most of the other levels run
+    (pmr_cc_from_<b>, found here), signed. At the end of pmr_profit_<b> (head None) it prices the from recipe if it is
+    not the reference. The solo gate's pmr_lite_<b> runs instead of the full check most months (q119: retool rows showed
+    no gain), so with head (the full check's prices, wage and throughput) it prices both recipes itself, only while a
+    Retool row for the building is open in the state (cc_retool_open)."""
     frm, now = f'pmr_cc_from_{b}', f'pmr_best_now_{b}'
-    return ('\t# CENTER: the Order Book\'s weekly gain a level (cc_retool_gain)\n'
-            f'\tif = {{\n\t\tlimit = {{ has_variable = {frm} var:{frm} > 0 has_variable = {now} var:{now} > 0 '
-            f'NOT = {{ var:{frm} = var:{now} }} }}\n'
-            + lookup(f'var:{frm}', list(range(1, k + 1)),
-                     lambda i: f'if = {{ limit = {{ NOT = {{ var:pmr_ref = {i} }} }} pmr_rmx_{i}_{b} = yes }}', '\t\t')
-            + '\t\tset_variable = { name = pmr_cc_t value = 0 }\n'
-            + lookup(f'var:{now}', list(range(1, k + 1)),
-                     lambda i: f'set_variable = {{ name = pmr_cc_t value = var:pmr_rm_{i}_{b} }}', '\t\t')
-            + lookup(f'var:{frm}', list(range(1, k + 1)),
-                     lambda i: f'change_variable = {{ name = pmr_cc_t subtract = var:pmr_rm_{i}_{b} }}', '\t\t')
-            + f'\t\tset_variable = {{ name = pmr_retool_gain_{b} value = {{ value = var:pmr_cc_t min = 0 }} }}\n\t}}\n'
+    rng = list(range(1, k + 1))
+    find = ('\t\tset_variable = { name = pmr_cc_ft value = 0 }\n'
+            f'\t\tset_variable = {{ name = {frm} value = 0 }}\n'
+            + ''.join(f'\t\tif = {{ limit = {{ NOT = {{ var:{now} = {i} }} has_variable = pmr_lv_{i}_{b} var:pmr_lv_{i}_{b} > var:pmr_cc_ft }} '
+                      f'set_variable = {{ name = pmr_cc_ft value = var:pmr_lv_{i}_{b} }} set_variable = {{ name = {frm} value = {i} }} }}\n'
+                      for i in rng))
+    if head is None:
+        price = lookup(f'var:{frm}', rng, lambda i: f'if = {{ limit = {{ NOT = {{ var:pmr_ref = {i} }} }} pmr_rmx_{i}_{b} = yes }}', '\t\t\t')
+    else:
+        price = ('\t\t\t' + head.replace('\n\t', '\n\t\t\t').rstrip('\t')
+                 + lookup(f'var:{frm}', rng, lambda i: f'pmr_rmx_{i}_{b} = yes', '\t\t\t')
+                 + lookup(f'var:{now}', rng, lambda i: f'pmr_rmx_{i}_{b} = yes', '\t\t\t'))
+    body = ('\t# CENTER: the Order Book\'s weekly gain a level (cc_retool_gain)\n'
+            f'\tif = {{\n\t\tlimit = {{ has_variable = {now} var:{now} > 0 }}\n'
+            + find
+            + f'\t\tif = {{\n\t\t\tlimit = {{ var:{frm} > 0 }}\n'
+            + price
+            + '\t\t\tset_variable = { name = pmr_cc_t value = 0 }\n'
+            + lookup(f'var:{now}', rng, lambda i: f'if = {{ limit = {{ has_variable = pmr_rm_{i}_{b} }} set_variable = {{ name = pmr_cc_t value = var:pmr_rm_{i}_{b} }} }}', '\t\t\t')
+            + lookup(f'var:{frm}', rng, lambda i: f'if = {{ limit = {{ has_variable = pmr_rm_{i}_{b} }} change_variable = {{ name = pmr_cc_t subtract = var:pmr_rm_{i}_{b} }} }}', '\t\t\t')
+            + f'\t\t\tset_variable = {{ name = pmr_retool_gain_{b} value = var:pmr_cc_t }}\n\t\t}}\n'
+            f'\t\telse_if = {{ limit = {{ has_variable = pmr_retool_gain_{b} }} remove_variable = pmr_retool_gain_{b} }}\n\t}}\n'
             f'\telse_if = {{ limit = {{ has_variable = pmr_retool_gain_{b} }} remove_variable = pmr_retool_gain_{b} }}\n')
+    if head is None:
+        return body
+    return (f'\tif = {{\n\t\tlimit = {{ {cc_retool_open(b)} }}\n' + body.replace('\n\t', '\n\t\t').replace('\t', '\t\t', 1).rstrip('\t')
+            + '\t}\n')
+
+
+def cc_retool_open(b):
+    """CENTER, state scope: a Retool row for building b is open in the state, whoever pays"""
+    ors = set()
+    for pr, bb, vp in cc_card_rows():
+        if bb == b and vp == 'retool':
+            r = cc_row_vars(pr, b, vp)[1]
+            ors.add(f'has_variable = {r} var:{r} > 0' if pr[3] == 'ord' else f'has_variable = {r}')
+    ors = sorted(ors)
+    return 'OR = { ' + ' '.join(f'AND = {{ {t} }}' for t in ors) + ' }' if ors else 'always = no'
 
 
 def books_bounds(b, ind):
@@ -8011,7 +8058,7 @@ def books_bounds(b, ind):
             f'{ind}change_variable = {{ name = pmr_bxl_{b} subtract = var:pmr_t }}\n')
 
 
-def lite_effect(bk, b, econ, goods, goods_cost, setv, v):
+def lite_effect(bk, b, econ, goods, goods_cost, setv, v, ccg=''):
     """State scope, SOLO_GATE 2 and 3: pmr_lite_<b>, what pmr_profit_<b> would change for a building the solo gate
     holds (pmr_moved_<b> has just read the engine's books: not subsidised, BOOKS_OCC staffed, earning, no loss). Its
     pick is the default, and the default's figure is held to the books (profit_effect's calib), so the run comes to
@@ -8053,7 +8100,7 @@ def lite_effect(bk, b, econ, goods, goods_cost, setv, v):
             + bounds
             + (f'\tset_variable = {{ name = pmr_pay_{b} value = 0 }}   # PAY_SCORE: the pick is the default\n' if PAY_SCORE else '')
             + (f'\tpmr_rl_look_{b} = yes   # RAILS: the steps\' pay test, at its own prices (rails_look)\n' if bk in RAILS_TYPES else '')
-            + '}\n\n')
+            + ccg + '}\n\n')
 
 
 def switch_effect(b, bk, k, setv, v, var):
