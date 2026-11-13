@@ -17,7 +17,24 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Construction Center and four refit sizes (q116, test mod)
+## Latest: the Construction Center's row in the state's Buildings tab (q117, test mod)
+
+You did not find the Center in the Midlands' Buildings tab on q116 (2026-11-13 20:08Z). The tab's grid lists only the
+urban types a player can build, expand or downsize, and the Center is none of these, so q117 gives it a row of its own
+between Urban Center and Trade Center, as `ui/CENTER-CARD.md` drew it: the icon, "Construction Center" and the go-to
+arrow, then, while an order is open, a small Funding bar and levels done / ordered. q117 also stops the 140 "used but is
+never set" lines q116 wrote to `error.log` at load (a New Equipment or Rail Connection job read a side abroad it never
+has, and Minor Refit an abroad site that does not exist). No building type changed, so a q116 save loads. q116's rows
+below still stand.
+
+| # | Read | Pass | A null means |
+| --- | --- | --- | --- |
+| S1 | Any state's Buildings tab on 1 January 1836 | A "Construction Center" row under Urban Center: icon, name, arrow; no bar or figure | No row in any state, and S2 makes one appear: the Center is not created at the start. No row even after S2: the row does not find the Center |
+| S2 | Press Retool Government Levels on one building, then the state's tab | The Funding bar (blue, the flag) and `0 / N` at the right of the row | A bare row: the card's totals do not see the order (N1 fails too) |
+| S3 | Click the row's arrow | The Center's card opens | Nothing opens, or another building's panel |
+| S4 | `error.log` after loading | No `pmr_cc_*_gova_50`, `pmr_eq_*_gova_*` or `pmr_rc_*_gova_*` "used but is never set" lines | They remain: a project still reads a side abroad |
+
+## Earlier: the Construction Center and four refit sizes (q116, test mod)
 
 You planned it on 2026-11-13 and gave the go at 19:03Z (`retool-tiers/PLAN.md`, the interface thread's `ui/CENTER-CARD.md`
 and `ui/TIER-SITES-ROW.md`). q116 is q115 with the 192 per-building retool sites replaced by 15 shared ones: four sizes,

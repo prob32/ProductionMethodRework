@@ -3291,8 +3291,8 @@ def main():
           '# groups are administration, military and public works, which only a state\'s owner builds).\n'
           'bg_pmr_retool_gov_abroad = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
           '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n'
-          + ('\n# CENTER: the Construction Center, one in each state (retool-tiers/PLAN.md section 3). Urban, so the state\'s\n'
-             '# Buildings tab lists it; no investor scores it (nothing may build it).\n'
+          + ('\n# CENTER: the Construction Center, one in each state (retool-tiers/PLAN.md section 3). The state\'s Buildings\n'
+             '# tab gives it a row of its own under Urban Center; no investor scores it (nothing may build it).\n'
              'bg_pmr_construction = {\n\tcategory = urban\n\talways_possible = yes\n\tis_shown_in_outliner = no\n}\n'
              if CENTER else ''))
     write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers)
@@ -3507,10 +3507,9 @@ def main():
     write('gui/right_click_menu.gui', rcm_gui, bom=False)
     write('gui/lens_toolbar.gui', lens_gui, bom=False)
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
-    write('gui/states_panel_buildings.gui',
-          urban_list_gui(hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types)), bom=False)
-    # CENTER: the Construction Center's tile in the state's own list, in its group's name order (CENTER-CARD.md)
-    urb_order = urban_types(game, report, [(CENTER_BUILDING, 'bg_pmr_construction', 'Construction Center')] if CENTER else [])
+    states_gui = urban_list_gui(hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types))
+    write('gui/states_panel_buildings.gui', cc_tab_row(states_gui) if CENTER else states_gui, bom=False)
+    urb_order = urban_types(game, report)
     urb_trig, urb_value, urb_eff = urban_list_script(urb_order)
     write('common/scripted_triggers/pmr_urb_triggers.txt', header + urb_trig)
     write('common/script_values/pmr_urb_values.txt', header + urb_value)
@@ -4857,7 +4856,7 @@ def cc_read(b, vp, side, built, q):
             f'\tif = {{ limit = {{ has_variable = {d} }} set_variable = {{ name = {built} value = var:{d} }} '
             f'set_variable = {{ name = {q} value = var:{d} }} }}\n'
             + (f'\tif = {{ limit = {{ has_variable = {o} }} change_variable = {{ name = {q} add = var:{o} }} }}\n'
-               if x in ('gov', 'gova') else ''))
+               if x == 'gov' or (x == 'gova' and vp == 'retool') else ''))
 
 
 def cc_release(b, vp, side, built, q, seen, merged):
@@ -4894,11 +4893,12 @@ def cc_close(b, vp):
     for side, x in CC_SIDE_OF.items():
         d = J(b, vp, f'done_{x}')
         g = J(b, vp, f'got_{x}')
-        out += (f'\tif = {{ limit = {{ has_variable = {d} }} remove_variable = {d} }}\n'
-                f'\tif = {{ limit = {{ has_variable = {g} }} remove_variable = {g} }}\n'
-                f'\tset_variable = {{ name = {J(b, vp, "built_" + side)} value = 0 }}\n'
+        if x != 'gova' or vp == 'retool':   # a project has no side abroad on the Center (q116 error.log: never set)
+            out += (f'\tif = {{ limit = {{ has_variable = {d} }} remove_variable = {d} }}\n'
+                    f'\tif = {{ limit = {{ has_variable = {g} }} remove_variable = {g} }}\n')
+        out += (f'\tset_variable = {{ name = {J(b, vp, "built_" + side)} value = 0 }}\n'
                 f'\tset_variable = {{ name = {J(b, vp, "q_" + side)} value = 0 }}\n')
-    for x in ('gov', 'gova'):
+    for x in ('gov', 'gova') if vp == 'retool' else ('gov',):
         o, s = J(b, vp, f'ord_{x}'), J(b, vp, f'seq_{x}')
         out += (f'\tif = {{\n\t\tlimit = {{ has_variable = {o} }}\n'
                 f'\t\tif = {{ limit = {{ var:{o} > 0 has_variable = pmr_cc_ord_{x}_{fmt(S)} }} '
@@ -5230,6 +5230,8 @@ def cc_triggers():
     for S in cc_sizes():
         for x in CC_SIDES:
             site, cap, Sf = cc_site(S, x), f'pmr_cc_cap_{x}_{fmt(S)}', fmt(S)
+            if site not in cc_site_types():
+                continue   # no site abroad at this size
             out.append(f'pmr_cc_room_{x}_{Sf} = {{\n\thas_variable = {cap}\n'
                        f'\ttrigger_if = {{\n\t\tlimit = {{ exists = b:{site} }}\n'
                        f'\t\tb:{site} = {{ level_after_queued_constructions <= pmr_cc_room_value_{x}_{Sf} }}\n\t}}\n'
@@ -5244,6 +5246,8 @@ def cc_values():
         Sf = fmt(S)
         out.append(f'pmr_cc_cost_{Sf} = {Sf}')
         for x in CC_SIDES:
+            if cc_site(S, x) not in cc_site_types():
+                continue   # no site abroad at this size (q116 error.log: pmr_cc_cap_gova_50 never set)
             out.append(f'pmr_cc_room_value_{x}_{Sf} = {{\n\tvalue = state.var:pmr_cc_cap_{x}_{Sf}\n\tsubtract = scope:num_levels\n}}')
             if x != 'gova':
                 out.append(f'pmr_cc_wv_{x}_{Sf} = {{\n\tvalue = {fmt(CC_AI_MULT)}\n'
@@ -5552,15 +5556,26 @@ def cc_row_gui(pr, b, vp, ind):
             f'{ind}\t}}\n{ind}}}\n')
 
 
+def cc_gsv(n):
+    """CENTER, GUI (Building = the Center): a state script value of the card's"""
+    return f"Building.GetState.MakeScope.ScriptValue('{n}')"
+
+
+CC_SOME = f"GreaterThan_CFixedPoint({cc_gsv('pmr_cc_orders')}, '(CFixedPoint)0')"   # the Center has an open order
+
+
+def cc_funding_slices(share):
+    """CENTER: the Funding bar's slices (slice_bar), a payer's icon drawn on a slice over share of the whole"""
+    return [(f'{f}', f"GreaterThan_CFixedPoint({cc_gsv('pmr_cc_f_' + f)}, '(CFixedPoint)0')",
+             f"FixedPointToInt({cc_gsv('pmr_cc_f_' + f)})",
+             f"GreaterThan_CFixedPoint({cc_gsv('pmr_cc_f_' + f)}, Multiply_CFixedPoint({cc_gsv('pmr_cc_f_all')}, '(CFixedPoint){share}'))",
+             CC_OWN_COLOURS[c], CC_GOV_ICON if lk == 'PMR_CC_GOV' else CC_BADGE) for f, c, lk in CC_FUNDING]
+
+
 def cc_card_gui(ind):
     """CENTER: the Center's Information tab: the top block, Funding and the Order Book (CENTER-CARD.md), built only for
     the Center"""
-    sv = lambda n: f"Building.GetState.MakeScope.ScriptValue('{n}')"   # noqa: E731
-    some = f"GreaterThan_CFixedPoint({sv('pmr_cc_orders')}, '(CFixedPoint)0')"
-    slices = [(f'{f}', f"GreaterThan_CFixedPoint({sv('pmr_cc_f_' + f)}, '(CFixedPoint)0')",
-               f"FixedPointToInt({sv('pmr_cc_f_' + f)})",
-               f"GreaterThan_CFixedPoint({sv('pmr_cc_f_' + f)}, Multiply_CFixedPoint({sv('pmr_cc_f_all')}, '(CFixedPoint)0.08'))",
-               CC_OWN_COLOURS[c], CC_GOV_ICON if lk == 'PMR_CC_GOV' else CC_BADGE) for f, c, lk in CC_FUNDING]
+    some, slices = CC_SOME, cc_funding_slices('0.08')
     i = ind + '\t\t'
     return (f'{ind}# PMR: the Construction Center\'s card (generate.py cc_card_gui), built for the Center only\n'
             f'{ind}flowcontainer = {{\n'
@@ -5615,6 +5630,47 @@ def cc_card(text):
         + '\n' + cc_card_gui('\t\t\t\t'))
 
 
+CC_TAB_AT = ("\t\t\t\tdivider_clean = {\n\t\t\t\t\tvisible = \"[GreaterThan_int32(StatesPanel.AccessBuilding('building_trade_center')"
+             ".GetExpansionLevel, '(int32)0')]\"\n\t\t\t\t}\n")
+
+
+def cc_tab_row(text):
+    """CENTER, states_panel_buildings.gui: the Center's row between Urban Center and Trade Center (CENTER-CARD.md, the
+    row in the state's Buildings tab). The tab's grid lists only types a player can build, expand or downsize, so the
+    Center has a row of its own, laid out as vanilla's header_building_item: icon, name, the go-to arrow; at the right
+    the Funding bar (Manor Houses' slot) and levels done / ordered, both only while an order is open. Its own widget, so
+    no size, subsidy button or balance is drawn."""
+    if text.count(CC_TAB_AT) != 1:
+        raise SystemExit('states_panel_buildings.gui: the Trade Center\'s row moved; update cc_tab_row')
+    ctx = f"StatesPanel.AccessBuilding('{CENTER_BUILDING}')"
+    i = '\t\t\t\t'
+    row = (f'{i}# PMR: the Construction Center (generate.py cc_tab_row)\n'
+           f'{i}divider_clean = {{\n{i}\tvisible = "[GreaterThan_int32({ctx}.GetExpansionLevel, \'(int32)0\')]"\n{i}}}\n\n'
+           f'{i}widget = {{\n'
+           f'{i}\tvisible = "[GreaterThan_int32(Building.GetExpansionLevel, \'(int32)0\')]"\n'
+           f'{i}\tdatacontext = "[{ctx}]"\n'
+           f'{i}\tsize = {{ @panel_width 40 }}\n\n'
+           f'{i}\tflowcontainer = {{\n{i}\t\tparentanchor = vcenter\n{i}\t\tspacing = 10\n\n'
+           f'{i}\t\ticon = {{\n{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tsize = {{ 35 35 }}\n'
+           f'{i}\t\t\ttexture = "[Building.GetIcon]"\n{i}\t\t}}\n\n'
+           f'{i}\t\ttextbox = {{\n{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tautoresize = yes\n{i}\t\t\talign = nobaseline\n'
+           f'{i}\t\t\tdefault_format = "#title"\n{i}\t\t\tmax_width = 180\n{i}\t\t\tfontsize_min = 14\n{i}\t\t\telide = right\n'
+           f'{i}\t\t\ttext = "{CENTER_BUILDING}"\n{i}\t\t}}\n\n'
+           f'{i}\t\tbutton_icon_goto = {{\n{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tsize = {{ 30 30 }}\n'
+           f'{i}\t\t\tusing = tooltip_above\n{i}\t\t\ttooltip = "GO_TO_BUTTON_BUILDING"\n'
+           f'{i}\t\t\tonclick = "[InformationPanelBar.OpenBuildingDetailsPanel(Building.AccessSelf)]"\n{i}\t\t}}\n'
+           f'{i}\t}}\n\n'
+           f'{i}\tflowcontainer = {{\n{i}\t\tvisible = "[{CC_SOME}]"\n{i}\t\tparentanchor = right|vcenter\n'
+           f'{i}\t\tposition = {{ -10 0 }}\n{i}\t\tspacing = 10\n\n'
+           f'{i}\t\twidget = {{\n{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tsize = {{ 175 30 }}\n'
+           + slice_bar(cc_funding_slices('0.15'), ('100%', '100%'), 22, i + '\t\t\t', [(None, 'PMR_CC_FUNDING_TT')])
+           + f'{i}\t\t}}\n\n'
+           f'{i}\t\ttextbox = {{\n{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tminimumsize = {{ 60 -1 }}\n'
+           f'{i}\t\t\tautoresize = yes\n{i}\t\t\talign = right|nobaseline\n{i}\t\t\ttext = "PMR_CC_TAB_LEVELS"\n{i}\t\t}}\n'
+           f'{i}\t}}\n{i}}}\n\n')
+    return text.replace(CC_TAB_AT, row + CC_TAB_AT)
+
+
 CC_QUEUE_GOTO = ('\t\t\tconstruction_queue_goto_building = {\n\t\t\t\tname = "constructed_building"\n'
                  '\t\t\t\tdatacontext = "[ConstructionQueueElement.AccessBuilding]"\n'
                  '\t\t\t\ttooltip = "GO_TO_BUTTON_BUILDING"\n\t\t\t}\n')
@@ -5663,6 +5719,7 @@ def cc_card_loc():
     sv = lambda n, f='0': f"[Building.GetState.MakeScope.ScriptValue('{n}')|{f}]"   # noqa: E731
     loc = [' PMR_CC_ORDERS:0 "#v ' + sv('pmr_cc_orders') + '#! Orders"',
            ' PMR_CC_LEVELS:0 "#v ' + sv('pmr_cc_ldone') + '#! / #v ' + sv('pmr_cc_lord') + '#! Levels"',
+           ' PMR_CC_TAB_LEVELS:0 "#v ' + sv('pmr_cc_ldone') + '#! / ' + sv('pmr_cc_lord') + '"',
            ' PMR_CC_FUNDING:0 "Funding"', ' PMR_CC_ORDER_BOOK:0 "Order Book"',
            ' PMR_CC_GOV:0 "Government"', ' PMR_CC_INV:0 "Investors"',
            ' PMR_CC_SIZE_TT:0 "#header [Building.GetNameNoFormatting]#!"']
@@ -9257,7 +9314,7 @@ URB_ON = ("And(GreaterThan_CFixedPoint(State.MakeScope.Var('pmr_urb_on').GetValu
 URB_END = "GreaterThan_CFixedPoint(Scope.Var('pmr_urb_on').GetValue, '(CFixedPoint)0')"
 
 
-def urban_types(game, report, extra=()):
+def urban_types(game, report):
     """The building types the tab lists as urban (State.AccessUrbanBuildings, exe filter 0x141a8c560): category urban up
     the group chain, no land_usage = urban and no is_subsistence on it, and buildable, expandable or downsizeable unless
     a company or regional headquarters. In the tab's order among equal levels (comparator 0x141a53120): the group's
@@ -9296,7 +9353,6 @@ def urban_types(game, report, extra=()):
         if fixed and g not in URBAN_HQ_GROUPS:
             continue
         out.append((loc.get(g, g).lower(), loc.get(bk, bk).lower(), bk, g))
-    out += [(name.lower(), name.lower(), bk, g) for bk, g, name in extra]   # PMR's own (CENTER), named in English
     if not out:
         raise SystemExit('urban_types: no urban building types found; the building groups moved')
     return [(bk, g) for _g, _n, bk, g in sorted(out)]
