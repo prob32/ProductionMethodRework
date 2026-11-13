@@ -6110,9 +6110,9 @@ def cc_card_loc(froms):
     # 2026-11-13 23:00Z: the score's parts did not match the row)
     loc.append(' PMR_CC_CHANCE_TT:0 "#header Investment Chance#!\\n#v ' + sv('pmr_cc_chance_v', '0%') + '#!  (#v '
                + var('pmr_cc_sc', 'D') + '#! of #v ' + cvar('pmr_cc_sc_sum', 'D') + '#! in [Building.GetState.GetOwner.GetName])'
-               + TT_DELIM + "\\n#title [Building.GetState.GetCustom('pmr_cc_scm')]#!"
-               + " in [Building.GetState.MakeScope.Var('pmr_cc_sc_bt').GetBuildingType.GetName]"
-               + '\\n@money! ' + sv('pmr_cc_sc_gain', '+=0') + '"')
+               + TT_DELIM + '\\n#title Up for Investment:#!'
+               + "\\n[Building.GetState.GetCustom('pmr_cc_scm')] in [Building.GetState.MakeScope.Var('pmr_cc_sc_bt').GetBuildingType.GetName]"
+               + '\\n@money! ' + sv('pmr_cc_sc_gain', '+=0') + ' Weekly [concept_building_balance] a level"')
     # Funding: funded of asked, then each payer's funded and the unfunded rest
     rows = ''.join(zrow(loc, f'PMR_CC_FUNDING_{f}', f'@construction! #v {sv("pmr_cc_fund_" + f, "D")}#! ${lk}$', gt0(gsv(f'pmr_cc_fund_{f}')))
                    for f, _c, lk in CC_FUNDING)
