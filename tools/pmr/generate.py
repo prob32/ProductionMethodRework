@@ -3331,7 +3331,7 @@ def main():
     report['frame_lock']['history'] = hist_n
     on_actions = (ON_ACTIONS.replace('STATE_TURN', state_turn()).replace('CC_STATE', CC_STATE_LINE())
                   .replace('CC_COUNTRY', '\t\tpmr_cc_weigh = yes   # CENTER: the AI weight a size (PLAN 6)\n'
-                           '\t\tif = { limit = { OR = { is_player = yes country_rank >= rank_value:great_power } } pmr_cc_chance = yes pmr_cc_cp_cost = yes }   # CENTER: the card\'s chance and cost (players and great powers, for observer runs)\n'
+                           '\t\tpmr_cc_chance = yes pmr_cc_cp_cost = yes   # CENTER: the card\'s chance and cost, every country alike\n'
                            if CENTER else ''))
     if RESEARCH_MAP or PF_SUMS:
         old = 'OBS_ON_ACTION\n'
@@ -5329,14 +5329,14 @@ def cc_card_effects():
              + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_cc_sc{x} }} remove_variable = pmr_cc_sc{x} }}\n'
                        for x in ('', '_j', '_b', '_p', '_w', '_bt'))
              + '}\n\n'
-             '# Country scope, the player\'s, monthly (pmr_on_monthly_pulse_country).\npmr_cc_chance = {\n'
+             '# Country scope, every country, monthly (pmr_on_monthly_pulse_country).\npmr_cc_chance = {\n'
              '\tsave_temporary_scope_as = pmr_cc_ctry\n\tset_variable = { name = pmr_cc_sc_sum value = 0 }\n'
              '\tevery_scope_state = {\n\t\tif = {\n\t\t\tlimit = { pmr_cc_inv_order = yes }\n\t\t\tpmr_cc_score = yes\n'
              '\t\t\tsave_temporary_scope_as = pmr_cc_st\n'
              '\t\t\tscope:pmr_cc_ctry = { change_variable = { name = pmr_cc_sc_sum add = scope:pmr_cc_st.var:pmr_cc_sc } }\n'
              '\t\t}\n\t\telse_if = { limit = { has_variable = pmr_cc_sc } pmr_cc_score_clear = yes }\n\t}\n}\n\n')
     # the cost of a construction point
-    o.append('# Country scope, the player\'s, monthly: pmr_cc_cp, what a construction point costs the country in goods at its\n'
+    o.append('# Country scope, every country, monthly: pmr_cc_cp, what a construction point costs the country in goods at its\n'
              '# market\'s prices, its construction sectors\' methods weighed by their levels (pmr_cc_pmc_<method>).\npmr_cc_cp_cost = {\n'
              '\tsave_temporary_scope_as = pmr_cc_ctry\n\tset_variable = { name = pmr_cc_cpl value = 0 }\n'
              '\tset_variable = { name = pmr_cc_cps value = 0 }\n'
@@ -5370,7 +5370,7 @@ def cc_card_effects():
              + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_cc_k{k}{x} }} remove_variable = pmr_cc_k{k}{x} }}\n'
                        for k in range(1, CC_CHIPS + 1) for x in ('', '_n', '_p'))
              + '\tif = { limit = { has_variable = pmr_cc_more } remove_variable = pmr_cc_more }\n}\n\n'
-             '# State scope, the player\'s: the state row\'s chips (pmr_cc_lv_<payer>_<b>, levels still asked for).\npmr_cc_chips = {\n'
+             '# State scope, every state: the state row\'s chips (pmr_cc_lv_<payer>_<b>, levels still asked for).\npmr_cc_chips = {\n'
              '\tpmr_cc_chips_clear = yes\n'
              + ''.join(f'\tset_variable = {{ name = pmr_cc_k{k}_n value = 0 }}\n' for k in range(1, CC_CHIPS + 1))
              + '\tset_variable = { name = pmr_cc_more value = 0 }\n'
@@ -5380,9 +5380,8 @@ def cc_card_effects():
              + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_cc_k{k} }} }} remove_variable = pmr_cc_k{k}_n }}\n'
                        for k in range(1, CC_CHIPS + 1))
              + '}\n\n'
-             '# State scope: the chips, in the player\'s states only (monthly, a press, a level landing).\npmr_cc_chips_if = {\n'
-             '\tif = { limit = { owner = { OR = { is_player = yes country_rank >= rank_value:great_power } } } pmr_cc_chips = yes }   # q120: great powers too, for observer runs\n'
-             '\telse_if = { limit = { has_variable = pmr_cc_k1_n } pmr_cc_chips_clear = yes }\n}\n\n')
+             '# State scope: the chips, in every country\'s states alike (monthly, a press, a level landing).\npmr_cc_chips_if = {\n'
+             '\tpmr_cc_chips = yes\n}\n\n')
     return ''.join(o)
 
 
@@ -5845,7 +5844,7 @@ def cc_card_gui(ind):
             f'{i}\t\t\t\t\ttext = "PMR_CC_ORDERS"\n{i}\t\t\t\t}}\n'
             f'{i}\t\t\t\ttextbox = {{\n{i}\t\t\t\t\tvisible = "[{some}]"\n{i}\t\t\t\t\tautoresize = yes\n'
             f'{i}\t\t\t\t\tusing = fontsize_large\n{i}\t\t\t\t\ttext = "PMR_CC_LEVELS"\n{i}\t\t\t\t}}\n'
-            # the Investment Chance (the player's states with an investors' order)
+            # the Investment Chance (any state with an investors' order)
             f'{i}\t\t\t\ttextbox = {{\n{i}\t\t\t\t\tvisible = "[{chance}]"\n{i}\t\t\t\t\tautoresize = yes\n'
             f'{i}\t\t\t\t\tusing = fontsize_large\n'
             f'{i}\t\t\t\t\ttext = "PMR_CC_CHANCE"\n{i}\t\t\t\t\ttooltip = "PMR_CC_CHANCE_TT"\n{i}\t\t\t\t}}\n'
@@ -8547,7 +8546,7 @@ def pulse_state_effect():
 def CC_STATE_LINE():
     """CENTER: the Construction Center's monthly upkeep in pmr_on_monthly_pulse_state"""
     return ('\t\tpmr_cc_upkeep = yes   # CENTER: hand-out catch-up, cancels, crews, removals\n'
-            '\t\tpmr_cc_chips_if = yes   # CENTER: the state row\'s chips, the player\'s states\n' if CENTER else '')
+            '\t\tpmr_cc_chips_if = yes   # CENTER: the state row\'s chips, every state\n' if CENTER else '')
 PULSE_STATE_HOOK = 'on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }\n'
 
 

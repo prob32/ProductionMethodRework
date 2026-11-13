@@ -17,15 +17,26 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Chamber of Commerce's fixes from your q119 screens (q120, test mod)
+## Latest: the Chamber of Commerce card alike in every country (q121, test mod)
+
+Your note on q120 (2026-11-13 22:58Z): "Everything should be the same between players and ai". q120 filled in the
+Investment Chance, the Funding cost and the state row's chips only for the player and great powers; q121 fills them in
+for every country, every month. Nothing else changed, so a q120 save loads and the blanks fill in at the next monthly
+pass.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| A1 | A minor's state with Chamber orders (Piedmont), observer | Investment Chance on the card, the cost in red on the Funding header, chips on the Buildings tab row | Blank: the monthly country or state pass does not reach that country |
+| A2 | `dedicated_server.log` pace against q120-1 | Within about 0.2 s a game month | Slower: the card's monthly passes in every country cost more than expected; send to the perf review |
+
+## Earlier: the Chamber of Commerce's fixes from your q119 screens (q120, test mod)
 
 Your q119 screens and notes (2026-11-13 22:26Z to 22:28Z), with the Funding block drawn by the interface thread as
 `ui/FUNDING-BAR.md`. The state row's chips showed pink icons and "0 Levels" because their variables shared names with
 the Chamber's own working values; they have their own names now. A retool row had no gain because the gain only
 counted when a building's full profit pass ran, about twice a year; it now counts in every monthly pass while a retool
 order is open, and a negative gain shows in red. The Funding header's cost is big and red; the bar has vanilla's frame,
-is as wide as the Order Book's rows and reads `0 / 500` and `0 / 18.8K`. The chips, the Investment Chance and the cost
-now fill in for great powers too, so an observer game shows them. No building type changed, so a q119 save loads.
+is as wide as the Order Book's rows and reads `0 / 500` and `0 / 18.8K`. No building type changed, so a q119 save loads.
 
 The q119 observer game crashed on 21 Jan 1842 inside the game's own treaty naming ("Agreement Between Sintang and
 ..."), reading a country that no longer existed; no PMR line or error came before it.
@@ -40,7 +51,6 @@ The q119 observer game crashed on 21 Jan 1842 inside the game's own treaty namin
 | F2 | The bar with nothing funded | A framed empty track, the same look as an Order Book bar at 0 | A dark slab: the frame is not set |
 | F3 | The bar's figures on a small order and a large one | `0 / 500` and `0 / 18.8K` | `0.00K`: the old format is still used |
 | F4 | The bar after a government press and an investors' unit | Blue then teal slices from the left inside the frame, a mark on a slice over 8% | Slices outside the frame or doubled rims: the slice texture is wrong |
-| W1 | Observer, any great power's state with orders | Chips, Investment Chance and the cost show | Blank: the great power check is not reached |
 
 ## Earlier: the Chamber of Commerce, round 2 (q119, test mod)
 
