@@ -2119,6 +2119,8 @@ def main():
                     help='PAY_SCORE (rules review item A): the retool twin scored on its payoff')
     ap.add_argument('--fold-sites', action='store_true',
                     help='FOLD_SITES (Pat 2026-11-12 21:20Z): the projects build on the retool sites; needs --rails')
+    ap.add_argument('--cost-scale', type=float, default=1.0, metavar='X',
+                    help='COST_SCALE: retool and project levels cost X times their shares (RETOOL_SHARE, PROJECT_SHARE)')
     ap.add_argument('--one-frame', action='store_true',
                     help='ONE_FRAME (rules review item G): a step type\'s recipe method carries its union frame; needs --rails')
     ap.add_argument('--build', default='', metavar='qN',
@@ -2131,8 +2133,12 @@ def main():
     global PTERM_OFF
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD, TREAT_MOD
     global BAR_COUNT, BAR_CLOCK, PRICE_NEWEST, PROFIT_RULE
-    global RAILS, PAY_SCORE, FOLD_SITES
+    global RAILS, PAY_SCORE, FOLD_SITES, RETOOL_SHARE, PROJECT_SHARE
     RELEASE = args.release
+    if args.cost_scale <= 0:
+        raise SystemExit('--cost-scale must be above 0')
+    RETOOL_SHARE *= args.cost_scale   # same factor on both, so a retool stays a whole number of site levels
+    PROJECT_SHARE *= args.cost_scale
     if args.solo is not None:
         SOLO_GATE = args.solo
     SWITCH_QUICK = SWITCH_QUICK or args.quick_switch
