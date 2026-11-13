@@ -17,7 +17,11 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Chamber of Commerce, round 2 (q118, test mod)
+## Latest: the Chamber of Commerce, round 2 (q119, test mod)
+
+q118 crashed on load (2026-11-13 22:14Z): the state row put its chips' hbox straight into a flowcontainer
+(`error.log`: "can't have an hbox/vbox as a direct child"), the last line before the crash. q119 is q118 with the
+hbox inside a widget; nothing else changed.
 
 Your notes on q117 (2026-11-13 21:18Z to 21:42Z), drawn by the interface thread as `ui/CENTER-CARD.md` (round 2,
 revised 22:10Z) and `ui/CONSTRUCTION-TAB.md`. The Center is now called the Chamber of Commerce everywhere it is shown
@@ -52,6 +56,7 @@ now (`pmr_retool_gain_<b>`), not the pay score's pick less default, which is 0 o
 | C2 | Construction tab with private levels queued | Government rows, then the Private Construction header, the filter and the private rows | No private block: it left Investments but was not added to the page |
 | C3 | Investments tab | Pool line, charts, policies, priorities, Recent Investments; no queue rows | The queue drawn twice: the block is still in the old tab |
 | C4 | The filter on the Construction tab | All, Domestic and Abroad still filter the private rows | The buttons do nothing: the filter's state lived on the old tab |
+| L1 | Load a game, then open any state's Buildings tab | No crash; no `states_panel_buildings.gui` line in `error.log` | A crash again: something else in the row; send the logs |
 | T3 | Click a refit row's numeral in the queue | The Chamber's card opens; no `construction_queue.gui` line in `error.log` at load | The const `GetBuilding` line again: the old file is still installed |
 
 ## Earlier: the Construction Center's row in the state's Buildings tab (q117, test mod)

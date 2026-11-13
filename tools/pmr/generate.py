@@ -5966,10 +5966,12 @@ def cc_tab_row(text):
            f'{i}\t}}\n\n'
            f'{i}\tflowcontainer = {{\n{i}\t\tvisible = "[{CC_SOME}]"\n{i}\t\tparentanchor = right|vcenter\n'
            f'{i}\t\tposition = {{ -10 0 }}\n{i}\t\tspacing = 8\n{i}\t\tignoreinvisible = yes\n\n'
-           f'{i}\t\thbox = {{\n{i}\t\t\tvisible = "[Building.GetState.MakeScope.Var(\'pmr_cc_c1\').IsSet]"\n'
-           f'{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tsize = {{ 190 30 }}\n{i}\t\t\tspacing = 3\n'
-           + ''.join(cc_chip_gui(k, i + '\t\t\t') for k in range(1, CC_CHIPS + 1))
-           + f'{i}\t\t}}\n\n'
+           # a flowcontainer cannot hold an hbox directly (q118 crashed on load): the chips' hbox sits in a widget
+           f'{i}\t\twidget = {{\n{i}\t\t\tvisible = "[Building.GetState.MakeScope.Var(\'pmr_cc_c1\').IsSet]"\n'
+           f'{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tsize = {{ 190 30 }}\n'
+           f'{i}\t\t\thbox = {{\n{i}\t\t\t\tsize = {{ 100% 100% }}\n{i}\t\t\t\tspacing = 3\n'
+           + ''.join(cc_chip_gui(k, i + '\t\t\t\t') for k in range(1, CC_CHIPS + 1))
+           + f'{i}\t\t\t}}\n{i}\t\t}}\n\n'
            f'{i}\t\ttextbox = {{\n{i}\t\t\tvisible = "[GreaterThan_CFixedPoint({more}.GetValue, \'(CFixedPoint)0\')]"\n'
            f'{i}\t\t\tparentanchor = vcenter\n{i}\t\t\tautoresize = yes\n{i}\t\t\talign = nobaseline\n'
            f'{i}\t\t\traw_text = "+[{more}.GetValue|0]"\n{i}\t\t}}\n\n'
