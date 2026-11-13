@@ -1486,7 +1486,7 @@ def patch_panel(text):
                 '\t\t\t}\n\n'
                 '\t\t\t# FOREIGN QUEUE TAB CONTENTS\n', where)
 
-    # The domestic pager: government pages on the Government tab, private pages on the Private tab.
+    # The domestic pager: government and private pages both on the Construction tab, under their two lists.
     a = text.find('\t\t\t\tname = "construction_queue_pages"')
     b = text.find('\t\t\t# SHIP QUEUE PAGE BUTTONS')
     if a < 0 or b < a:
@@ -1500,7 +1500,7 @@ def patch_panel(text):
     if (n_gov, n_priv) != (2, 2):
         fail(where, f'expected the pager to test the funding filter twice each, found {n_gov} and {n_priv}')
     pager = pager.replace('ConstructionPanel.IsShowingGovernmentConstructions', "InformationPanel.IsTabSelected('default')")
-    pager = pager.replace('ConstructionPanel.IsShowingPrivateConstructions', f"InformationPanel.IsTabSelected('{TAB}')")
+    pager = pager.replace('ConstructionPanel.IsShowingPrivateConstructions', "InformationPanel.IsTabSelected('default')")
     return text[:a] + pager + text[b:]
 
 
@@ -1534,6 +1534,9 @@ def patch_queue(text):
     text = text[:a] + '\t\t# PMR: the private list moved to the Private tab\n\n' + text[b:]
     text = once(text, 'visible = "[And(ConstructionPanel.IsShowingGovernmentConstructions, Not(IsDataModelEmpty(',
                 'visible = "[And(\'(bool)yes\', Not(IsDataModelEmpty(', where)
+    gov_empty = '\t\t\t\ttext = "CONSTRUCTION_QUEUE_IS_EMPTY"\n\t\t\t}\n\t\t}\n'
+    text = once(text, gov_empty, gov_empty + '\n\t\t# PMR: the private queue under the government queue (pmr_private_queue)\n'
+                '\t\tpmr_private_queue = {}\n', where)
     text = once(text, 'visible = "[Not(Country.HasConstructionQueued)]"',
                 'visible = "[IsDataModelEmpty(Country.AccessPagedGovernmentConstructionQueue(ConstructionPanel.'
                 'AccessCurrentGovernmentConstructionQueuePage(GetMetaPlayer.GetPlayedOrObservedCountry), ConstructionPanel.GetFilter))]"',
@@ -2259,8 +2262,17 @@ def private_tab():
         + charts_row(i1) +
         # 3. contributors, as tree charts by group (Pat 13:05Z) and by owner (Pat 15:33Z)
         header('PMR_PI_SOURCES_HEADER', i1) + contributors_charts(i1) +
-        # 4. private construction, then recent investments (the law, policy and priorities moved to the Buildings
-        # panel's Owners' Methods tab, Pat 2026-10-18 18:40Z: policy_block)
+        # 4. recent investments (the law, policy and priorities moved to the Buildings panel's Owners' Methods tab, Pat
+        # 2026-10-18 18:40Z: policy_block; the private queue went back under the government queue, Pat 2026-11-13 21:18Z:
+        # pmr_private_queue)
+        header('PMR_PI_RECENT_HEADER', i1) + invest_charts(i1) +
+        f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 14 8 }}\n'
+        f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = nobaseline\n'
+        f'{i1}\traw_text = "[{COUNTRY}.GetPreviousAutonomousInvestmentsDesc]"\n{i1}}}\n'
+        '\t}\n\n'
+        # The private queue under the government queue on the Construction tab, as vanilla's one page had both (Pat
+        # 2026-11-13 21:18Z; ui/CONSTRUCTION-TAB.md)
+        '\ttype pmr_private_queue = flowcontainer {\n\t\tdirection = vertical\n\t\tparentanchor = hcenter\n\t\tmargin_top = 10\n\n'
         f'{i1}default_header_2texts = {{\n{i1}\tblockoverride "text1" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_HEADER"\n{i1}\t}}\n'
         f'{i1}\tblockoverride "text2" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_COUNT"\n{i1}\t}}\n{i1}}}\n'
         f'{i1}flowcontainer = {{\n{i1}\tparentanchor = hcenter\n{i1}\tmargin = {{ 0 8 }}\n{i1}\tspacing = 5\n'
@@ -2269,10 +2281,6 @@ def private_tab():
         f'{i1}\tparentanchor = hcenter\n{i1}\tdatamodel = "[{queue}]"\n{i1}\titem = {{\n{i1}\t\tconstruction_queue_item = {{}}\n{i1}\t}}\n{i1}}}\n'
         f'{i1}empty_state = {{\n{i1}\tblockoverride "visible" {{\n{i1}\t\tvisible = "[IsDataModelEmpty({queue})]"\n{i1}\t}}\n'
         f'{i1}\tblockoverride "text" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_EMPTY"\n{i1}\t}}\n{i1}}}\n'
-        + header('PMR_PI_RECENT_HEADER', i1) + invest_charts(i1) +
-        f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 14 8 }}\n'
-        f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = nobaseline\n'
-        f'{i1}\traw_text = "[{COUNTRY}.GetPreviousAutonomousInvestmentsDesc]"\n{i1}}}\n'
         '\t}\n}\n')
 
 
@@ -2619,8 +2627,8 @@ def localization(types, chart_types=None):
     # construction points and their share (gui review A4: the icon says what the number is)
     pts = lambda name, share: f'@construction! #v [{var(name)}|0]#! (#v [{var(share)}|0%]#!)'   # noqa: E731
     loc = [
-        ' PMR_TAB_GOVERNMENT:0 "Government"',
-        ' PMR_TAB_PRIVATE:0 "Private"',
+        ' PMR_TAB_GOVERNMENT:0 "Construction"',   # Pat 2026-11-13 21:18Z
+        ' PMR_TAB_PRIVATE:0 "Investments"',
         ' PMR_PI_POOL_HEADER:0 "Investment Pool"',
         # the pool tooltip's line (replace_loc), in the style of vanilla's Reinvestment line
         f' PMR_PI_GRANTS_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_gweek\').GetValue)|D+=]#! '

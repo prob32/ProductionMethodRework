@@ -17,7 +17,44 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Construction Center's row in the state's Buildings tab (q117, test mod)
+## Latest: the Chamber of Commerce, round 2 (q118, test mod)
+
+Your notes on q117 (2026-11-13 21:18Z to 21:42Z), drawn by the interface thread as `ui/CENTER-CARD.md` (round 2,
+revised 22:10Z) and `ui/CONSTRUCTION-TAB.md`. The Center is now called the Chamber of Commerce everywhere it is shown
+(the building and its group; the key and saves are unchanged), with its own icon, a building with gold. Its card has
+no tab row and no Workforce or Modifiers. The top block adds the state's Investment Chance (its share of the country's
+investor score; the tooltip gives the parts). The Funding header carries the estimated cost of everything asked
+(construction asked times what a construction point's goods cost at the market's prices). The bar shows funded of
+asked, with the unfunded part as an empty slice. Each Order Book row shows the vanilla icon of the method the order
+buys, "<from> to <to>" for a retool or the rung for Re-equip and Rail Connection, and the gain a level a week. The
+state's Buildings tab row shows up to three chips (the building's icon and levels, blue for the government, teal for
+investors, `+N` past three). The construction panel's tabs are Construction and Investments, and the private queue
+(header, filter, rows) sits under the government queue on Construction. The queue row's numeral click from q117's
+`error.log` is fixed. No building type changed, so a q117 save loads; the gains, chips, chance and cost fill in at the
+first monthly pass, and a new game reads cleanest.
+
+A retool row's gain is the target recipe's weekly balance a level less the recipe most of the building's levels run
+now (`pmr_retool_gain_<b>`), not the pay score's pick less default, which is 0 once the default is the pick.
+
+| # | Read | Pass | A null means |
+| --- | --- | --- | --- |
+| P1 | Open the Chamber in a state with an investors' order | No tab row; Orders, Levels and Investment Chance in the top block | Tabs still drawn: the gate is on the content, not on `tab_buttons` |
+| P2 | A Retool row's name and tooltip | "<from> to <to>", the to being the recipe the building card's switching bar names as the default; from and to differ | Blank name: the custom loc has no entry for that recipe. Same from and to: the row reads `pmr_best_now` twice |
+| P3 | A row's gain against the building card | About the gap between the two recipes' weekly balance a level; green, with the money icon | No figure on any row: the gain variable is never written. Huge figures: it is the score, not pounds |
+| P4 | Funding with nothing queued, then after a government press | An empty track and 0 of asked; then a blue slice the size of the order | A full bar with nothing queued: it still reads construction on order |
+| P5 | Funding as investors buy a unit | The teal slice grows by that unit's size when the row enters the country queue | Grows only when the level lands: queued units are not counted |
+| P6 | Investment Chance in two states, then against the run's log | The chances differ, the country's add to about 100%, and the tooltip's parts multiply out to the score; hidden in a state with only government orders. Over a run, a state's share of investors' units is near its chance | Same chance everywhere: the walk writes one value. Never shown: the monthly pass does not run for the player. The top states take far more than their chance: the game's pick is sharper than a plain share (back to the interface thread) |
+| P7 | The state's Buildings tab | Up to three chips, icon and levels, blue for the government and teal for investors, `+N` when there are more | Chips with no icon: the building type variable does not resolve |
+| P8 | The rows' icons | Each row shows the vanilla icon of the method it names; Rail Connection rows the rail track | A blank slot: the texture does not resolve. One icon on every row of a building: it follows the building, not the order |
+| P9 | The Funding header's cost | Pounds, about asked construction times the price in its tooltip; moves with the market month by month | 0 or blank: `pmr_cc_cp` is never written for the player. Far from the construction panel's weekly goods bill a point: the wrong method's goods |
+| P10 | The Chamber's icon in the state list and on the card | The building with gold, framed like its neighbours | A dark square behind the corners: the icon lost its alpha |
+| C1 | Open the construction panel | Tabs read Construction, Investments, Foreign Queues, Ships | Old names: a later file overrides the tab keys |
+| C2 | Construction tab with private levels queued | Government rows, then the Private Construction header, the filter and the private rows | No private block: it left Investments but was not added to the page |
+| C3 | Investments tab | Pool line, charts, policies, priorities, Recent Investments; no queue rows | The queue drawn twice: the block is still in the old tab |
+| C4 | The filter on the Construction tab | All, Domestic and Abroad still filter the private rows | The buttons do nothing: the filter's state lived on the old tab |
+| T3 | Click a refit row's numeral in the queue | The Chamber's card opens; no `construction_queue.gui` line in `error.log` at load | The const `GetBuilding` line again: the old file is still installed |
+
+## Earlier: the Construction Center's row in the state's Buildings tab (q117, test mod)
 
 You did not find the Center in the Midlands' Buildings tab on q116 (2026-11-13 20:08Z). The tab's grid lists only the
 urban types a player can build, expand or downsize, and the Center is none of these, so q117 gives it a row of its own
