@@ -5679,6 +5679,11 @@ def cc_card_values():
     out.append('pmr_cc_inv = {\n\tvalue = 0\n\tif = { limit = { pmr_cc_inv_order = yes } value = 1 }\n}\n')
     out.append('pmr_cc_chance_v = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { has_variable = pmr_cc_sc owner = { has_variable = pmr_cc_sc_sum '
                'var:pmr_cc_sc_sum > 0 } }\n\t\tvalue = var:pmr_cc_sc\n\t\tdivide = owner.var:pmr_cc_sc_sum\n\t}\n}\n')
+    # the Investment Chance's order: its row's gain, read live (Pat 2026-11-13 23:00Z, the tooltip and the row must agree)
+    out.append('pmr_cc_sc_gain = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { has_variable = pmr_cc_sc_j }\n'
+               + ''.join(f'\t\tif = {{ limit = {{ var:pmr_cc_sc_j = {j} has_variable = {J(b, vp, "gain")} }} value = var:{J(b, vp, "gain")} }}\n'
+                         for j, (b, vp) in enumerate(cc_jobs(), 1))
+               + '\t}\n}\n')
     out.append('pmr_cc_estimate = {\n\tvalue = 0\n\tif = {\n\t\tlimit = { owner = { has_variable = pmr_cc_cp } }\n'
                '\t\tvalue = pmr_cc_ask\n\t\tmultiply = owner.var:pmr_cc_cp\n\t}\n}\n')
     # the state row's chips (round 2, 6): levels still asked for, a building and payer, all its jobs together; the
@@ -6101,14 +6106,13 @@ def cc_card_loc(froms):
            ' PMR_CC_NUM_pmr_cc_ask_S:0 "' + sv('pmr_cc_ask') + '"', ' PMR_CC_NUM_pmr_cc_ask_L:0 "' + sv('pmr_cc_ask', '*1') + '"',
            ' PMR_CC_ESTIMATE_TT:0 "#header Estimated Cost#!\\n@money! #v ' + sv('pmr_cc_estimate', 'D') + '#!' + TT_DELIM
            + '\\n@construction! #v ' + sv('pmr_cc_ask', 'D') + '#! at @money! #v ' + cvar('pmr_cc_cp', 'D') + '#! each"']
-    # the Investment Chance: the share, its two figures, the best order and the score's parts
-    w = zrow(loc, 'PMR_CC_CHANCE_W', f'#v ×{var("pmr_cc_sc_w", "1")}#! from Priority',
-             f"Not(EqualTo_CFixedPoint(Building.GetState.MakeScope.Var('pmr_cc_sc_w').GetValue, '(CFixedPoint)1'))")
+    # the Investment Chance: the share, its two figures, and the order up for investment with its row's gain (Pat
+    # 2026-11-13 23:00Z: the score's parts did not match the row)
     loc.append(' PMR_CC_CHANCE_TT:0 "#header Investment Chance#!\\n#v ' + sv('pmr_cc_chance_v', '0%') + '#!  (#v '
                + var('pmr_cc_sc', 'D') + '#! of #v ' + cvar('pmr_cc_sc_sum', 'D') + '#! in [Building.GetState.GetOwner.GetName])'
-               + TT_DELIM + "\\n#title [Building.GetState.GetCustom('pmr_cc_scm')]:#!"
-               + '\\n#v ' + var('pmr_cc_sc_b', 'D') + "#! from [Building.GetState.MakeScope.Var('pmr_cc_sc_bt').GetBuildingType.GetName]"
-               + '\\n#v +' + var('pmr_cc_sc_p', 'D') + '#! from Weekly [concept_building_balance]' + w + '"')
+               + TT_DELIM + "\\n#title [Building.GetState.GetCustom('pmr_cc_scm')]#!"
+               + " in [Building.GetState.MakeScope.Var('pmr_cc_sc_bt').GetBuildingType.GetName]"
+               + '\\n@money! ' + sv('pmr_cc_sc_gain', '+=0') + '"')
     # Funding: funded of asked, then each payer's funded and the unfunded rest
     rows = ''.join(zrow(loc, f'PMR_CC_FUNDING_{f}', f'@construction! #v {sv("pmr_cc_fund_" + f, "D")}#! ${lk}$', gt0(gsv(f'pmr_cc_fund_{f}')))
                    for f, _c, lk in CC_FUNDING)
