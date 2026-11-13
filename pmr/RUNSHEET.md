@@ -17,7 +17,53 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: New Equipment and Rail Connection built on the retool sites (q115, test mod)
+## Latest: the Construction Center and four refit sizes (q116, test mod)
+
+You planned it on 2026-11-13 and gave the go at 19:03Z (`retool-tiers/PLAN.md`, the interface thread's `ui/CENTER-CARD.md`
+and `ui/TIER-SITES-ROW.md`). q116 is q115 with the 192 per-building retool sites replaced by 15 shared ones: four sizes,
+Heavy, Medium, Light and Minor Refit (200, 150, 100 and 50 construction a row), for each payer (home investors,
+investors abroad, the government, the player's government abroad; Minor Refit has no abroad government site, as no
+retool costs 50). Every building in a state draws on its state's sites. Each state that has an order gets a
+Construction Center, one level owned by its government, which keeps the line: the player's government's orders fill
+in the order they were pressed, and a level investors or an AI government build goes to the best open job of its size.
+A major rebuild level (the 800 and 600 buildings) is two rows of its size. Switch `--center`; needs a new game, since a
+q115 save has sites whose types are gone.
+
+The Center's card shows and controls nothing: the orders in the top block, a Funding bar by payer, and an Order Book
+row per order (building, job, levels done of ordered, payer). Its rows are one static row per job and payer, each built
+only while its order is open. In the country queue a refit row starts with the building it is for (the Center while
+several orders share the site), then the size's numeral, which opens the Center.
+
+Known gaps in q116: the Private tab's Recent Investments bars do not count retooling, a building's private "queued"
+figure reads 0, and companies list no retooling (the shared sites belong to no one building).
+
+| # | Read | Pass | A null means |
+| --- | --- | --- | --- |
+| R1 | Midnight tick on ordinary days and pace, observer with no country, Feb 1837 to Feb 1839 (`dedicated_server.log`) | Below q115-1's (figures in the perf review, not here) | No gain: the retool types were cheap per type, or the Center's work costs what the types saved |
+| R2 | `RETOOL_LEVEL` and `PROJECT_LEVEL` lines by July 1844 | About q115-1's counts | Far fewer: the shared sites lose the AI's roll; raise `CC_AI_MULT`. Far more: lower it. None at all: a site's `potential` never holds (`pmr_cc_gate_*` not set) |
+| R3 | `CENTER_LEVEL` lines in an AI country | Each names a building and job with open levels; `rule=best` or `rule=half` | No lines: the sites are never built. A job with no open levels: the hand-out skips the room test |
+| R4 | One state, several government buildings of one size, one press of Retool Government Levels | `GOV_QUEUE` and `CENTER_ORDER` lines for each; every row in the queue at once; the card lists each order | Only one building queues: a hold is still in the push |
+| R5 | Two government orders of one size, watch the levels land | The first pressed fills first (`CENTER_LEVEL ... rule=line`); each row's bar moves by its own levels | The second fills first: the order's place in the line is not set. A bar jumps by two: a level was credited twice |
+| R6 | Cancel rows of a refit size in the country queue | A `CENTER_CANCEL ... why=cancel` line; the last order in the line drops by that many; the card agrees with the queue | The card shows more ordered than queued: the cancel check is not running |
+| R7 | A job closes with a row still building | The row lands on another order or open job of its size and payer; with none, a `CENTER_DROP` line, and the site goes once its queue is empty | A site left standing with nothing queued: a dropped row is not counted. A dead row in the queue: the site was removed under a queued row |
+| R8 | A building with its retool and New Equipment both open | Both move at once | Only one moves: the jobs still share a hold |
+| R9 | Move a Re-invest row on the Private tab | The refit site's score moves at once | It moves only after the building's tick: the weight is baked into a stored score |
+| R10 | A government Major Rebuild level | Two rows of its size, both building at once; the level switches when the second lands | Switches at the first: units a level are not applied. Never switches: the second row went to another job |
+| R11 | The Center's card and the state's Buildings tab | No demolish, privatise, nationalise or expand anywhere; the Center survives a conquest | A button shows: the type lets it change owner or size |
+| T1 | Queue one building's retool, then open the construction queue | The row shows that building's icon, then the numeral, then "<size> in <state>" ("Heavy Refit in Midlands") | The Center's icon although one order stands: `pmr_for_<site>` is not set, or `Var()` does not take a built name; `error.log` names which |
+| T2 | Queue a second building of the same size in that state | The first icon changes to the Center | Still the first building: `pmr_for_<site>` is not cleared when a second order joins |
+| T3 | Click the first icon, then the numeral | The building's (or the Center's) panel opens; the numeral opens the Center | The hidden site opens: vanilla's button is still drawn on refit rows |
+| T4 | A refit row under way in a state with a long name | The name shrinks or elides before it meets the construction figure | Overlap: the name's width needs cutting further |
+| T5 | The Private tab's list with a private refit row | The same two icons, then the investor's icon on the right | |
+| T6 | Rows of two sizes | The numerals differ and match the names | The same numeral: the sizes share an icon |
+| N1 | Open the Center in a state with a government and a private order | One row each, blue and teal, the flag and the private badge | No rows: the rows' variables are not set (`pmr_*_ord_gov_*`, `pmr_*_cc1_*`) |
+| N2 | Hover a row's bar; click its building icon | Job name, building, construction a level, payer; the building's panel opens | A blank building line: the row names a building the state lacks |
+| N3 | The Funding bar with both payers | Two slices in the share of construction on order, a mark on each wide one | One slice: a payer's total is not counted (`pmr_cc_f_*`) |
+| N4 | Look for anything to press on the card | Nothing but the tabs, the header's own buttons and the rows' building icons | Vanilla's top block shows: the card's swap for the Center did not apply |
+| N5 | A level lands | The row's bar and figures move; the row leaves when its order is filled | The row stays: the levels-done counter is not cleared (`pmr_*_got_*`) |
+| N6 | A state with no orders after its orders are done | "0 Orders", no Funding, "No Orders" under Order Book | Rows left over: a finished order keeps its variables |
+
+## Earlier: New Equipment and Rail Connection built on the retool sites (q115, test mod)
 
 q114 ran slower than q105 from the first day, all of it in the midnight tick, and the likeliest cost is the 184
 hidden building types New Equipment and Rail Connection had of their own. You chose to fold them into the retool

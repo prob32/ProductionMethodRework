@@ -474,6 +474,57 @@ PROJECT_NAMES = {'eq': 'New Equipment', 'rc': 'Rail Connection'}
 # RETOOL_SHARE / PROJECT_SHARE of them (pmr_retool_levels_per_level), so both keep their price.
 FOLD_SITES = False
 SITE_KIND = {'retool': 1, 'eq': 2, 'rc': 3}
+# The Construction Center (retool-tiers/PLAN.md, Pat 2026-11-13 15:06Z-19:03Z, go 19:03Z; CENTER, --center, needs --rails,
+# not with --fold-sites): no site types of a building's own. Every job (the retool twin, New Equipment, Rail Connection)
+# of every building in a state buys units of one of four shared sizes (CC_SIZES, construction a unit), for four payers
+# (CC_SIDES: investors at home, investors abroad, the government, the player's government abroad): 16 site types,
+# building_pmr_cc_<size>_<side>. A job's size is the largest that divides its price a level, its units a level the price
+# / the size (CC_JOB). The state's Center keeps the line: the player's government pushes orders (pmr_<vp>_ord_<side>_<b>,
+# in press order, pmr_<vp>_seq_<side>_<b>); investors and AI governments pull, the site offering the room and the best
+# open job's score. Each unit that lands is handed to an order, else (not on the player's government's sites) to a job
+# with half a level in, else to the best open job, else dropped (cc_effects). A job's credited units
+# (pmr_<vp>_done_<side>_<b>) stand where its own sites' levels stood (read_side), so its count, progress and split are
+# the unfolded layout's.
+CENTER = False
+CC_SIZES = (200, 150, 100, 50)   # construction a unit, largest first (x --cost-scale)
+CC_NAMES = ('Heavy Refit', 'Medium Refit', 'Light Refit', 'Minor Refit')   # Pat 19:02Z, in CC_SIZES order
+CC_SIDES = ('1', '2', 'gov', 'gova')   # the payers; '1' and '2' the private slots (ABROAD_SLOT = 2)
+CC_SIDE_OF = {'priv1': '1', 'priv2': '2', 'gov': 'gov', 'gova': 'gova'}   # a building's side -> its size site's
+CC_JOB = {}        # (b, vp) -> (size, units a level), filled by main()
+CC_BASE = {}       # b -> the building's construction cost a level (its jobs' names, CC_JOB_NAMES)
+CC_AI_MULT = 1     # the size site's score x CC_AI_MULT x (the country's open jobs of that size) ^ CC_AI_POW (PLAN 6)
+CC_AI_POW = 0.5
+CC_JOB_NAMES = {   # the Center card's order rows (PLAN 2): (job, building cost a level) -> name
+    ('retool', 800): 'Major Rebuild, Heavy', ('retool', 600): 'Major Rebuild, Light',
+    ('retool', 400): 'Rebuild, Heavy', ('retool', 200): 'Rebuild, Light',
+    ('eq', 800): 'Major Re-equip, Heavy', ('eq', 600): 'Major Re-equip, Light',
+    ('eq', 400): 'Re-equip, Heavy', ('eq', 200): 'Re-equip, Light',
+    ('rc', 400): 'Rail Connection, Heavy', ('rc', 200): 'Rail Connection, Light'}
+
+
+def cc_site(size, x):
+    """CENTER: the site type of one size for payer x (CC_SIDES)"""
+    return f'building_pmr_cc_{fmt(size)}_{x}'
+
+
+def cc_members(size):
+    """CENTER: [(b, vp, units)] of the jobs that buy units of size, in a fixed order"""
+    return sorted((b, vp, u) for (b, vp), (s, u) in CC_JOB.items() if s == size)
+
+
+def cc_sizes():
+    """CENTER: the sizes some job uses, largest first"""
+    used = {s for s, _u in CC_JOB.values()}
+    return [s for s in sorted(used, reverse=True)]
+
+
+def lpl(b, vp):
+    """site levels (CENTER: units) a level of job vp of b: the script value, or with CENTER the job's own number"""
+    if CENTER:
+        return str(N * CC_JOB[b, vp][1])
+    return 'pmr_retool_levels_per_level' if vp == 'retool' else 'pmr_project_levels_per_level'
+
+
 RAILS_TYPES = {}        # building type -> RailsType, filled by main() (rails_type)
 # Rules review item A (Pat 2026-11-12 14:29Z, rules-review/HANDOFF.md A): PAY_SCORE (--pay-score). The retool twin
 # scores on its own payoff, as the projects do: pmr_pay_<b> = (the pick's profit a level a week less the reference's)
@@ -633,6 +684,8 @@ def rails_effects(bk, b, rt, goods_cost):
 
     # ---- the projects' sites, as the retool twin's (read, totals, crew, count, release, split, close) ----
     def read_side(vp, rbx, side):
+        if CENTER:   # the units the Center credited and, the player's government's, ordered (cc_read)
+            return cc_read(b, vp, side, K(vp, 'built_' + side), K(vp, 'q_' + side))
         return (f'\t{S(K(vp, "built_" + side), 0)}\n\t{S(K(vp, "q_" + side), 0)}\n'
                 f'\tif = {{\n\t\tlimit = {{ {holds(b, vp)}OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
                 f'\t\t{S(K(vp, "built_" + side), f"b:{rbx}.level")}\n'
@@ -674,6 +727,8 @@ def rails_effects(bk, b, rt, goods_cost):
         crumb = '' if side.startswith('gov') else f"\t\t{flush_log('RELEASE', rbx, f';built=[THIS.Var({built!r}).GetValue|0]', mine)}\n"
         merged = (f'\t\t{C(K(vp, "built_gov"), "subtract", "var:" + built)}\n'
                   f'\t\t{C(K(vp, "q_gov"), "subtract", "var:" + K(vp, "q_gova"))}\n' if side == 'gova' else '')
+        if CENTER:   # no site of its own (cc_release)
+            return cc_release(b, vp, side, built, q, seen, merged)
         return (f'\tif = {{\n\t\tlimit = {{ var:{built} > 0 var:{q} <= var:{built} {keep}'
                 f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
                 + crumb + f'\t\tremove_building = {rbx}\n' + crumb.replace('RELEASE', 'RELEASED')
@@ -696,12 +751,12 @@ def rails_effects(bk, b, rt, goods_cost):
                  + f'\t{C(n("built_gov"), "add", "var:" + n("built_gova"))}\n\t{C(n("q_gov"), "add", "var:" + n("q_gova"))}\n'
                  + totals(vp) + '}\n\n')
         o.append(f'pmr_{vp}_count_{b} = {{\n\tpmr_{vp}_read_{b} = yes\n'
-                 + (''.join(crew(vp, j, rbx) for _s, rbx, j in privs) if RETOOL_CREW else '')
+                 + (''.join(crew(vp, j, rbx) for _s, rbx, j in privs) if RETOOL_CREW and not CENTER else '')
                  + count(vp, 'gov') + count(vp, 'priv') + '}\n\n')
         keep = lambda j, vp=vp: (f'NOT = {{ has_variable = {K(vp, f"grace_priv{j}")} }} '   # noqa: E731
                                  f'var:{K(vp, f"staff_priv{j}")} < 2 ')
         o.append(f'pmr_{vp}_release_{b} = {{\n'
-                 + ''.join(release(vp, rbx, side, keep(j) if RETOOL_CREW else '') for side, rbx, j in privs)
+                 + ''.join(release(vp, rbx, side, keep(j) if RETOOL_CREW and not CENTER else '') for side, rbx, j in privs)
                  + release(vp, rbg, 'gov')
                  + release(vp, rbga, 'gova', f'NOT = {{ AND = {{ has_variable = pmr_abroad_{b} has_variable = pmr_{vp}_open_gov_{b} }} }} ')
                  + totals(vp) + '}\n\n')
@@ -748,14 +803,16 @@ def rails_effects(bk, b, rt, goods_cost):
                            for _s, _r, j in privs)
                  + site_claim(b, vp, n('room'), n('pending'), f'pmr_{vp}_read_{b}',
                               [(n('seen_gov'), n('built_gov')), (n('seen_priv'), n('built_priv'))])
+                 + (f'\tpmr_cc_post_{vp}_{b} = yes   # CENTER: the rooms to the size\'s figures\n' if CENTER else '')
                  + '}\n\n')
         flags = [f'pmr_{vp}_open_priv_{b}_{j}' for _s, _r, j in privs] + [f'pmr_{vp}_open_gov_{b}']
         o.append(f'pmr_{vp}_close_{b} = {{\n'
                  + ''.join(f'\tif = {{ limit = {{ has_variable = {fl} }} remove_variable = {fl} }}\n' for fl in flags)
                  + f'\t{S(n("room_priv"), 0)}\n\t{S(n("room_gov"), 0)}\n\t{S(n("cap_gov"), "var:" + n("q_gov"))}\n'
-                 + ''.join(f'\tif = {{ limit = {{ {holds(b, vp)}var:{n("q_" + side)} <= var:{n("built_" + side)} '
-                           f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }} remove_building = {rbx} }}\n'
-                           for side, rbx, _j in sites)
+                 + (cc_close(b, vp) if CENTER else
+                    ''.join(f'\tif = {{ limit = {{ {holds(b, vp)}var:{n("q_" + side)} <= var:{n("built_" + side)} '
+                            f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }} remove_building = {rbx} }}\n'
+                            for side, rbx, _j in sites))
                  + f'\tif = {{\n\t\tlimit = {{ var:{n("pending")} <= 0 }}\n'
                  f'\t\t{S(n("seen_gov"), 0)}\n\t\t{S(n("seen_priv"), 0)}\n'
                  + (f'\t\tif = {{ limit = {{ {holds(b, vp)}}} remove_variable = pmr_sk_{b} }}\n' if FOLD_SITES else '')
@@ -2119,6 +2176,12 @@ def main():
                     help='PAY_SCORE (rules review item A): the retool twin scored on its payoff')
     ap.add_argument('--fold-sites', action='store_true',
                     help='FOLD_SITES (Pat 2026-11-12 21:20Z): the projects build on the retool sites; needs --rails')
+    ap.add_argument('--center', action='store_true',
+                    help='CENTER (retool-tiers/PLAN.md, Pat 2026-11-13): four shared site sizes and the Construction Center; '
+                         'needs --rails, not with --fold-sites')
+    ap.add_argument('--center-art', metavar='DIR', default='/mnt/project-files/pmr/ui/tier-logos',
+                    help='CENTER: the interface thread\'s logos (pmr_size_<n>.png, pmr_tier_<job>.png, center_standin*.png), '
+                         'made from game art, so kept out of the repository')
     ap.add_argument('--cost-scale', type=float, default=1.0, metavar='X',
                     help='COST_SCALE: retool and project levels cost X times their shares (RETOOL_SHARE, PROJECT_SHARE)')
     ap.add_argument('--one-frame', action='store_true',
@@ -2133,12 +2196,16 @@ def main():
     global PTERM_OFF
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD, TREAT_MOD
     global BAR_COUNT, BAR_CLOCK, PRICE_NEWEST, PROFIT_RULE
-    global RAILS, PAY_SCORE, FOLD_SITES, RETOOL_SHARE, PROJECT_SHARE
+    global RAILS, PAY_SCORE, FOLD_SITES, RETOOL_SHARE, PROJECT_SHARE, CENTER, CC_SIZES
     RELEASE = args.release
     if args.cost_scale <= 0:
         raise SystemExit('--cost-scale must be above 0')
     RETOOL_SHARE *= args.cost_scale   # same factor on both, so a retool stays a whole number of site levels
     PROJECT_SHARE *= args.cost_scale
+    CC_SIZES = tuple(s * args.cost_scale for s in CC_SIZES)
+    if any(abs(s - round(s)) > 1e-9 for s in CC_SIZES):
+        raise SystemExit('--cost-scale: the Center\'s sizes must stay whole numbers')
+    CC_SIZES = tuple(int(round(s)) for s in CC_SIZES)
     if args.solo is not None:
         SOLO_GATE = args.solo
     SWITCH_QUICK = SWITCH_QUICK or args.quick_switch
@@ -2180,6 +2247,15 @@ def main():
         raise SystemExit('--fold-sites needs --rails: it folds the projects\' sites into the retool twin\'s')
     if FOLD_SITES and abs(RETOOL_SHARE / PROJECT_SHARE - round(RETOOL_SHARE / PROJECT_SHARE)) > 1e-9:
         raise SystemExit('--fold-sites: RETOOL_SHARE must be a whole number of PROJECT_SHAREs')
+    CENTER = CENTER or args.center
+    if CENTER and not RAILS:
+        raise SystemExit('--center needs --rails: its sites serve the retool twin and the projects')
+    if CENTER and FOLD_SITES:
+        raise SystemExit('--center replaces --fold-sites')
+    if CENTER and RELEASE:
+        raise SystemExit('--center is for test builds (retool-tiers/PLAN.md, needs a new game)')
+    if CENTER and not PAY_SCORE:
+        raise SystemExit('--center needs --pay-score: the hand-out\'s best open job is the best payoff (PLAN 4, 6)')
     if frames.ONE_FRAME and not RAILS:
         raise SystemExit('--one-frame needs --rails: it folds the step types\' union frames')
     SHARE_DIGITS = args.digit_shares
@@ -2701,16 +2777,27 @@ def main():
         else:
             costs.append(f'pmr_retool_cost_{b} = {fmt(retool_cost)}  # {rc.value} = {fmt(base_cost)} x {RETOOL_SHARE} / {N}')
         icon = pdx.get(bn.value, 'icon').value
-        retools.append(retool_buildings(b, bk, icon))
-        site_types += priv_slots(b) + [gov_site(b), gov_site(b, abroad=True)]
+        if CENTER:   # the job's size and units a level (PLAN 8.1); its sites are the shared ones (cc_buildings)
+            for vp, price in [('retool', retool_cost)] + [(vp, base_cost * PROJECT_SHARE / N) for vp in (rt.kinds if rt else {})]:
+                size = next((s for s in CC_SIZES if abs(price / s - round(price / s)) < 1e-9 and round(price / s) >= 1), None)
+                if size is None:
+                    raise SystemExit(f'--center: {bk} {vp} costs {fmt(price)} a level, which no size in {CC_SIZES} divides')
+                CC_JOB[b, vp] = (size, int(round(price / size)))
+                CC_BASE[b] = base_cost
+                CC_BK[b] = bk
+        else:
+            retools.append(retool_buildings(b, bk, icon))
+            site_types += priv_slots(b) + [gov_site(b), gov_site(b, abroad=True)]
         triggers.append(retool_triggers(b, bk))
-        costs.append(retool_values(b))
+        if not CENTER:   # CENTER: the shared sites' rooms and caps are the size's (cc_buildings)
+            costs.append(retool_values(b))
         for vp in (rt.kinds if rt else {}):   # RAILS: the New Equipment and Rail Connection projects (SPEC 5)
             PROJECT_COST[vp, b] = base_cost * PROJECT_SHARE / N
             costs.append(f'pmr_{vp}_cost_{b} = {fmt(base_cost * PROJECT_SHARE / N)}  # {rc.value} = {fmt(base_cost)} x {PROJECT_SHARE} / {N}')
-            triggers.append(retool_triggers(b, bk, vp))
-            costs.append(retool_values(b, vp))
-            if FOLD_SITES:   # on the retool twin's sites (retool_buildings)
+            if not CENTER:
+                triggers.append(retool_triggers(b, bk, vp))
+                costs.append(retool_values(b, vp))
+            if FOLD_SITES or CENTER:   # on the retool twin's sites (retool_buildings), or the shared ones (cc_buildings)
                 continue
             retools.append(retool_buildings(b, bk, icon, vp))
             for _side, site, _j in project_sites(b, vp):
@@ -2719,14 +2806,14 @@ def main():
 
         # FOLD_SITES: a site that also buys equipment or a rail connection says no more than its name
         folded = FOLD_SITES and rt and rt.kinds
-        for rbx in priv_slots(b):
+        for rbx in ([] if CENTER else priv_slots(b)):
             loc += [f' {rbx}:0 "Retool: ${bk}$"',
                     f' {rbx}_desc:0 ""' if folded else
                     f' {rbx}_desc:0 "Switches one level of ${bk}$ to its newest [concept_production_method]."']
         for r in recipes:
             if isinstance(r, (ElectricRecipe, PairRecipe)):
                 loc.append(f' {r.key}:0 "' + ' + '.join(f'${x.key}$' for x in [r.base] + r.autos) + '"')
-        loc += [f' building_pmr_retool_gov_{b}:0 "Retool: ${bk}$"',
+        loc += [] if CENTER else [f' building_pmr_retool_gov_{b}:0 "Retool: ${bk}$"',
                 f' building_pmr_retool_gov_{b}_desc:0 ""' if folded else
                 f' building_pmr_retool_gov_{b}_desc:0 "Switches the government\'s levels of ${bk}$ to the new [concept_production_method]."',
                 f' building_pmr_retool_gova_{b}:0 "Retool: ${bk}$"',
@@ -3045,7 +3132,8 @@ def main():
     # In extension_building_types they would be offered as additional industries of their own instead.
     report['company_types'] = []
     if COMPANY_RETOOL:
-        retool_of = {t[0]: priv_slots(short(t[0]))[:COMPANY_RETOOL_SLOTS]
+        # CENTER: a size site serves every industry, so no company lists one (retool-tiers/PLAN.md section 5)
+        retool_of = {t[0]: [] if CENTER else priv_slots(short(t[0]))[:COMPANY_RETOOL_SLOTS]
                      + (priv_slots(short(t[0]))[ABROAD_SLOT - 1:ABROAD_SLOT] if COMPANY_RETOOL_ABROAD else [])
                      for t in treated}
         for csrc in load_dir(game, 'company_types'):
@@ -3125,6 +3213,14 @@ def main():
         company_panel.RETOOL_TYPES = sorted(set(company_panel.RETOOL_TYPES)
                                             | {r for rs in subsidiaries.RETOOL_OF.values() for r in rs})
 
+    if CENTER:   # the 16 size sites and the Center (cc_buildings); every site type the hide lists name
+        cc_icons(args.center_art, args.out)
+        retools.append(cc_buildings())
+        site_types = cc_site_types()
+        triggers.append(cc_triggers())
+        costs.append(cc_values())
+        costs.append(cc_card_values())
+        private_investment.QUEUE_EXTRA = cc_queue_row   # the queue row's building and size logo
     write('common/buildings/pmr_retool_buildings.txt', header + '\n'.join(retools))
     if RAILS_TYPES:
         # RAILS: the shared laborers group (frames.lab_methods, SPEC 3.3; its icon the laborers pop type's) and each step
@@ -3163,6 +3259,12 @@ def main():
           'pmg_pmr_retool = {\n'
           f'\ttexture = "{RETOOL_CREW_ICON}"\n'
           '\tproduction_methods = {\n\t\tpm_pmr_retool\n\t}\n}\n')
+    if CENTER:   # the sizes' names (Pat 17:14Z, 19:02Z: Heavy, Medium, Light, Minor Refit), the Center's
+        loc += [f' {cc_site(S, x)}:0 "{CC_NAMES[CC_SIZES.index(S)]}"' for S in cc_sizes() for x in CC_SIDES]
+        loc += [f' {cc_site(S, x)}_desc:0 ""' for S in cc_sizes() for x in CC_SIDES]
+        loc += [f' {CENTER_BUILDING}:0 "Construction Center"', f' {CENTER_BUILDING}_desc:0 ""',
+                ' bg_pmr_construction:0 "Construction Center"']
+        loc += cc_card_loc()
     loc += [' pmg_pmr_retool_crew:0 "Crew"', ' pm_pmr_retool_crew:0 "Retooling Crew"',
             ' pmg_pmr_retool:0 "Retooling"', ' pm_pmr_retool:0 "Retooling"']
     write('common/building_groups/pmr_building_groups.txt', header +
@@ -3188,7 +3290,11 @@ def main():
           '# like any building a government builds in another country\'s state (inferred: vanilla\'s government-funded\n'
           '# groups are administration, military and public works, which only a state\'s owner builds).\n'
           'bg_pmr_retool_gov_abroad = {\n\tparent_group = bg_manufacturing\n\tcategory = urban\n\tis_government_funded = no\n'
-          '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n')
+          '\talways_possible = yes\n\tis_shown_in_outliner = no\n\tforeign_investment_ai_factor = 0\n}\n'
+          + ('\n# CENTER: the Construction Center, one in each state (retool-tiers/PLAN.md section 3). Urban, so the state\'s\n'
+             '# Buildings tab lists it; no investor scores it (nothing may build it).\n'
+             'bg_pmr_construction = {\n\tcategory = urban\n\talways_possible = yes\n\tis_shown_in_outliner = no\n}\n'
+             if CENTER else ''))
     write('common/scripted_triggers/pmr_triggers.txt', header + RETOOL_TRIGGERS_DOC + '\n'.join(triggers)
           + '\n' + LOGGED_TRIGGER + '\n' + VIEWER_TRIGGER)
     write('common/script_values/pmr_values.txt', header +
@@ -3210,8 +3316,9 @@ def main():
     check_price_defines(game)
     write('common/script_values/pmr_market_values.txt', header + market_values(traded, sorted(spare))
           + (blend_fill_values() if BLEND_INFO else ''))
+    cc_head, cc_tail = cc_effects() if CENTER else ('', '')
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(price_goods)
-          + ''.join(market_read(g, g in spare) for g in traded) + '\n'.join(tick_effects)
+          + ''.join(market_read(g, g in spare) for g in traded) + cc_head + '\n'.join(tick_effects) + cc_tail
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto)
           + (research_map_effects(dispatch, auto) if RESEARCH_MAP else '') + own_effects()
           + (QUIET_COUNT if QUIET_TICK and not RELEASE else '')
@@ -3220,7 +3327,8 @@ def main():
     if hist_n:
         write('common/scripted_effects/pmr_history_effects.txt', header + hist_text)
     report['frame_lock']['history'] = hist_n
-    on_actions = ON_ACTIONS.replace('STATE_TURN', state_turn())
+    on_actions = (ON_ACTIONS.replace('STATE_TURN', state_turn()).replace('CC_STATE', CC_STATE_LINE())
+                  .replace('CC_COUNTRY', '\t\tpmr_cc_weigh = yes   # CENTER: the AI weight a size (PLAN 6)\n' if CENTER else ''))
     if RESEARCH_MAP or PF_SUMS:
         old = 'OBS_ON_ACTION\n'
         if on_actions.count(old) != 1:
@@ -3361,9 +3469,10 @@ def main():
     TYPE_FLAGS[:] = [('pmr_t_', set(dispatch) | set(recipe_tex)), ('pmr_a_', set(also))]
     def vanilla_gui(name):
         return open(os.path.join(game, 'gui', name), encoding='utf-8-sig').read()
-    write('gui/building_details_panel.gui', gate_type_copies(patch_building_panel(
+    panel = gate_type_copies(patch_building_panel(
         recipe_tex, vanilla_gui('building_details_panel.gui'), opt_ui, also, auto_ui, pick_ui,
-        vanilla_gui('modifiers_panel.gui'), less_all[:2])), bom=False)
+        vanilla_gui('modifiers_panel.gui'), less_all[:2]))
+    write('gui/building_details_panel.gui', cc_card(panel) if CENTER else panel, bom=False)   # CENTER: the Center's card
     # The same icon row in the building tooltip and the map list (hide_less_icons): two more vanilla files carried
     # whole, each with one line added.
     for name in LESS_ICON_FILES:
@@ -3400,7 +3509,9 @@ def main():
     # The state's Buildings tab without the retool sites (Pat 2026-10-14 01:54Z).
     write('gui/states_panel_buildings.gui',
           urban_list_gui(hide_retool_sites(vanilla_gui('states_panel_buildings.gui'), site_types)), bom=False)
-    urb_trig, urb_value, urb_eff = urban_list_script(urban_types(game, report))
+    # CENTER: the Construction Center's tile in the state's own list, in its group's name order (CENTER-CARD.md)
+    urb_order = urban_types(game, report, [(CENTER_BUILDING, 'bg_pmr_construction', 'Construction Center')] if CENTER else [])
+    urb_trig, urb_value, urb_eff = urban_list_script(urb_order)
     write('common/scripted_triggers/pmr_urb_triggers.txt', header + urb_trig)
     write('common/script_values/pmr_urb_values.txt', header + urb_value)
     write('common/scripted_effects/pmr_urb_effects.txt', header + urb_eff)
@@ -4701,6 +4812,874 @@ def ai_base(b, vp):
             f'\t\t\tmultiply = {PAY_TILT}\n')
 
 
+# ===== CENTER: the Construction Center (retool-tiers/PLAN.md section 8, Pat's go 2026-11-13 19:03Z)
+# Each building's jobs keep the unfolded layout's own steps (read, count, release, split, close). Where they read their
+# own sites' levels they read the units the Center credited them (pmr_<vp>_done_<x>_<b>) and, on the player's
+# government's side, the units ordered for them (pmr_<vp>_ord_<x>_<b>, in press order pmr_<vp>_seq_<x>_<b>). What each
+# job wants on each payer side (its contribution, pmr_<vp>_cc<x>_<b> while above 0) is summed per size and side, state
+# scope: pmr_cc_room_<x>_<S> units wanted (ordered included), pmr_cc_cap_<x>_<S> that plus the site's level (what the
+# site's can_build_* tests), pmr_cc_seen_<x>_<S> site levels handed out or dropped, pmr_cc_n_<x>_<S> open jobs,
+# pmr_cc_ord_<x>_<S> units ordered (push sides), pmr_cc_gate_<x>_<S> the site's potential, pmr_for_<site> the one
+# building an open site serves (the queue row's first icon). The owner keeps pmr_cc_w_<x>_<S>, the AI weight.
+CENTER_BUILDING = 'building_pmr_construction_center'
+CC_BK = {}   # b -> its building type key, filled by main()
+
+
+def J(b, vp, name):
+    """CENTER: the state variable of job vp of b that the unfolded layout names name (built_<side>, q_<side>, built_gov,
+    seen_gov, pending_gov, room_gov, alloc<j>, need, open_gov, gate, pay) or the Center adds (done_<x>, ord_<x>,
+    seq_<x>, cc<x>, got_<x>: the card's levels done)"""
+    if vp != 'retool':
+        return f'pmr_{vp}_{name}_{b}'
+    if name.startswith('alloc') or name in ('room', 'room_gov', 'room_priv', 'pending', 'pending_gov', 'pending_priv',
+                                            'seen_gov', 'seen_priv', 'need', 'cap_gov'):
+        return f'pmr_{name}_{b}'
+    if name == 'pay':
+        return f'pmr_pay_{b}'
+    return f'pmr_retool_{name}_{b}'
+
+
+def cc_want(b, vp):
+    """CENTER: the units the government side of job vp of b still wants, as its split works them out"""
+    return f'pmr_retool_gov_{b}' if vp == 'retool' else f'pmr_{vp}_gneed_{b}'
+
+
+def cc_grp(x):
+    return 'gov' if x in ('gov', 'gova') else 'priv'
+
+
+def cc_read(b, vp, side, built, q):
+    """CENTER, state scope: a job's side read as the unfolded layout read its site: built = the units credited, queued =
+    that plus the units ordered (the player's government's sides)"""
+    x = CC_SIDE_OF[side]
+    d, o = J(b, vp, f'done_{x}'), J(b, vp, f'ord_{x}')
+    return (f'\tset_variable = {{ name = {built} value = 0 }}\n\tset_variable = {{ name = {q} value = 0 }}\n'
+            f'\tif = {{ limit = {{ has_variable = {d} }} set_variable = {{ name = {built} value = var:{d} }} '
+            f'set_variable = {{ name = {q} value = var:{d} }} }}\n'
+            + (f'\tif = {{ limit = {{ has_variable = {o} }} change_variable = {{ name = {q} add = var:{o} }} }}\n'
+               if x in ('gov', 'gova') else ''))
+
+
+def cc_release(b, vp, side, built, q, seen, merged):
+    """CENTER: the release with no site to remove. Credited units counted in whole levels start again from 0; a unit
+    short of a level stays as a negative seen, as FOLD_SITES carried it to the next site."""
+    x = CC_SIDE_OF[side]
+    return (f'\tif = {{\n\t\tlimit = {{ var:{built} > 0 var:{q} <= var:{built} }}\n'
+            f'\t\tchange_variable = {{ name = {seen} subtract = var:{built} }}\n' + merged
+            + f'\t\tset_variable = {{ name = {J(b, vp, "done_" + x)} value = 0 }}\n'
+            f'\t\tset_variable = {{ name = {built} value = 0 }}\n\t\tset_variable = {{ name = {q} value = 0 }}\n\t}}\n')
+
+
+def cc_adjust(b, vp, ind='\t'):
+    """CENTER, the start of a two-unit job's split: units landed short of a whole level (built above seen) are no
+    longer room, so they count as pending on their side"""
+    if CC_JOB[b, vp][1] < 2:
+        return ''
+    out = ''
+    for grp in ('gov', 'priv'):
+        built, seen = J(b, vp, f'built_{grp}'), J(b, vp, f'seen_{grp}')
+        out += (f'{ind}if = {{\n{ind}\tlimit = {{ has_variable = {built} has_variable = {seen} var:{built} > var:{seen} }}\n'
+                f'{ind}\tset_variable = {{ name = pmr_cc_lo value = {{ value = var:{built} subtract = var:{seen} }} }}\n'
+                + (f'{ind}\tchange_variable = {{ name = {J(b, vp, "pending_gov")} add = var:pmr_cc_lo }}\n' if grp == 'gov' else '')
+                + f'{ind}\tchange_variable = {{ name = {J(b, vp, "pending")} add = var:pmr_cc_lo }}\n{ind}}}\n')
+    return out
+
+
+def cc_close(b, vp):
+    """CENTER, a job's close: its credited units go (a unit short of a level is lost), its orders come off the line (the
+    rows already queued land and go to the next order or open job of their size, PLAN 8.7), and its contributions
+    leave the size's figures"""
+    S = CC_JOB[b, vp][0]
+    out = ''
+    for side, x in CC_SIDE_OF.items():
+        d = J(b, vp, f'done_{x}')
+        g = J(b, vp, f'got_{x}')
+        out += (f'\tif = {{ limit = {{ has_variable = {d} }} remove_variable = {d} }}\n'
+                f'\tif = {{ limit = {{ has_variable = {g} }} remove_variable = {g} }}\n'
+                f'\tset_variable = {{ name = {J(b, vp, "built_" + side)} value = 0 }}\n'
+                f'\tset_variable = {{ name = {J(b, vp, "q_" + side)} value = 0 }}\n')
+    for x in ('gov', 'gova'):
+        o, s = J(b, vp, f'ord_{x}'), J(b, vp, f'seq_{x}')
+        out += (f'\tif = {{\n\t\tlimit = {{ has_variable = {o} }}\n'
+                f'\t\tif = {{ limit = {{ var:{o} > 0 has_variable = pmr_cc_ord_{x}_{fmt(S)} }} '
+                f'change_variable = {{ name = pmr_cc_ord_{x}_{fmt(S)} subtract = var:{o} }} }}\n'
+                f'\t\tremove_variable = {o}\n\t}}\n'
+                f'\tif = {{ limit = {{ has_variable = {s} }} remove_variable = {s} }}\n')
+    out += ''.join(f'\tset_variable = {{ name = {J(b, vp, f"alloc{j}")} value = 0 }}\n' for j in range(1, RETOOL_SLOTS + 1))
+    out += ''.join(f'\tset_variable = {{ name = {J(b, vp, n)} value = 0 }}\n' for n in ('pending', 'pending_gov', 'pending_priv'))
+    return out + f'\tpmr_cc_post_{vp}_{b} = yes   # its contributions leave the size\'s figures\n'
+
+
+def cc_line(rec, b, vp, x, extra=''):
+    """CENTER: a plain log line (no padding), state scope"""
+    S = CC_JOB[b, vp][0]
+    return (f'debug_log = "PMR;rec={rec};date=[TimeKeeper.GetCurrentDate.GetString];'
+            f'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+            f'building={CC_BK[b]};job={vp};site={cc_site(S, x)};side={x}{extra}"')
+
+
+def cc_seq(b, vp, x):
+    """CENTER: the order's place in the line, from the state's counter, when it opens"""
+    o, s = J(b, vp, f'ord_{x}'), J(b, vp, f'seq_{x}')
+    return (f'if = {{ limit = {{ OR = {{ NOT = {{ has_variable = {o} }} var:{o} <= 0 NOT = {{ has_variable = {s} }} }} }} '
+            'if = { limit = { NOT = { has_variable = pmr_cc_seqn } } set_variable = { name = pmr_cc_seqn value = 0 } } '
+            'change_variable = { name = pmr_cc_seqn add = 1 } '
+            f'set_variable = {{ name = {s} value = var:pmr_cc_seqn }} }}')
+
+
+def cc_order(b, vp, x, n):
+    """CENTER: var:n units onto the order of job vp of b on side x, and the line's total"""
+    S = fmt(CC_JOB[b, vp][0])
+    o = J(b, vp, f'ord_{x}')
+    return (f'{cc_seq(b, vp, x)} '
+            f'if = {{ limit = {{ NOT = {{ has_variable = {o} }} }} set_variable = {{ name = {o} value = 0 }} }} '
+            f'change_variable = {{ name = {o} add = var:{n} }} '
+            f'if = {{ limit = {{ NOT = {{ has_variable = pmr_cc_ord_{x}_{S} }} }} set_variable = {{ name = pmr_cc_ord_{x}_{S} value = 0 }} }} '
+            f'change_variable = {{ name = pmr_cc_ord_{x}_{S} add = var:{n} }} '
+            + cc_line('CENTER_ORDER', b, vp, x, f";units=[THIS.Var('{n}').GetValue|0]"))
+
+
+def cc_post(b, vp):
+    """CENTER, state scope, the end of a job's split and its close: the job's contributions to its size's figures
+    (PLAN 8.8: a size's figures move only when a job's do)"""
+    S, _u = CC_JOB[b, vp]
+    Sf = fmt(S)
+    bk = CC_BK[b]
+    ab = f'has_variable = pmr_abroad_{b}'
+    rg, pg = J(b, vp, 'room_gov'), J(b, vp, 'pending_gov')
+    og, oga = J(b, vp, 'ord_gov'), J(b, vp, 'ord_gova')
+    want = cc_want(b, vp)
+    o = [f'pmr_cc_post_{vp}_{b} = {{\n'
+         # PLAN 8.7: units ordered past what the government side still wants come off its order
+         f'\tif = {{\n\t\tlimit = {{ NOT = {{ {ab} }} has_variable = {og} var:{og} > 0 has_variable = {want} has_variable = {pg} }}\n'
+         f'\t\tset_variable = {{ name = pmr_cc_cut2 value = {{ value = var:{pg} subtract = var:{want} }} }}\n'
+         f'\t\tif = {{ limit = {{ var:pmr_cc_cut2 > var:{og} }} set_variable = {{ name = pmr_cc_cut2 value = var:{og} }} }}\n'
+         f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_cut2 > 0 }}\n'
+         f'\t\t\tchange_variable = {{ name = {og} subtract = var:pmr_cc_cut2 }}\n'
+         f'\t\t\tif = {{ limit = {{ has_variable = pmr_cc_ord_gov_{Sf} }} change_variable = {{ name = pmr_cc_ord_gov_{Sf} subtract = var:pmr_cc_cut2 }} }}\n'
+         f'\t\t\tchange_variable = {{ name = {pg} subtract = var:pmr_cc_cut2 }}\n'
+         f"\t\t\t{cc_line('CENTER_CANCEL', b, vp, 'gov', ';why=shrink;units=[THIS.Var(' + repr('pmr_cc_cut2') + ').GetValue|0]')}\n"
+         '\t\t}\n\t}\n']
+    if vp == 'retool':
+        site = cc_site(S, 'gova')
+        # PLAN 8.6: the abroad button expands the size's standing site (Building.QueueConstruction) and ticks the
+        # building; the site's queued units no order holds yet become this job's order
+        o.append(f'\tif = {{\n\t\tlimit = {{ {ab} exists = b:{site} has_variable = {rg} var:{rg} > 0 }}\n'
+                 f'\t\tset_variable = {{ name = pmr_cc_new value = b:{site}.level_after_queued_constructions }}\n'
+                 f'\t\tchange_variable = {{ name = pmr_cc_new subtract = b:{site}.level }}\n'
+                 f'\t\tif = {{ limit = {{ has_variable = pmr_cc_ord_gova_{Sf} }} change_variable = {{ name = pmr_cc_new subtract = var:pmr_cc_ord_gova_{Sf} }} }}\n'
+                 f'\t\tif = {{ limit = {{ var:pmr_cc_new > var:{rg} }} set_variable = {{ name = pmr_cc_new value = var:{rg} }} }}\n'
+                 f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_new > 0 }}\n'
+                 f'\t\t\t{cc_order(b, vp, "gova", "pmr_cc_new")}\n'
+                 f'\t\t\tchange_variable = {{ name = {rg} subtract = var:pmr_cc_new }}\n'
+                 f'\t\t\tchange_variable = {{ name = {pg} add = var:pmr_cc_new }}\n'
+                 f'\t\t\tif = {{ limit = {{ var:{rg} <= 0 has_variable = pmr_retool_open_gov_{b} }} remove_variable = pmr_retool_open_gov_{b} }}\n'
+                 '\t\t}\n\t}\n')
+    # the contributions now
+    o.append(''.join(f'\tset_variable = {{ name = pmr_cc_c{x} value = 0 }}\n' for x in CC_SIDES)
+             + ''.join(f'\tif = {{ limit = {{ has_variable = {J(b, vp, f"alloc{j}")} }} '
+                       f'set_variable = {{ name = pmr_cc_c{j} value = var:{J(b, vp, f"alloc{j}")} }} }}\n'
+                       for j in range(1, RETOOL_SLOTS + 1))
+             + f'\tif = {{\n\t\tlimit = {{ has_variable = {rg} }}\n'
+             f'\t\tif = {{ limit = {{ NOT = {{ {ab} }} }} set_variable = {{ name = pmr_cc_cgov value = var:{rg} }} }}\n'
+             + (f'\t\telse = {{ set_variable = {{ name = pmr_cc_cgova value = var:{rg} }} }}\n' if vp == 'retool' else '')
+             + '\t}\n'
+             f'\tif = {{ limit = {{ has_variable = {og} }} change_variable = {{ name = pmr_cc_cgov add = var:{og} }} }}\n'
+             + (f'\tif = {{ limit = {{ has_variable = {oga} }} change_variable = {{ name = pmr_cc_cgova add = var:{oga} }} }}\n'
+                if vp == 'retool' else ''))
+    for x in CC_SIDES:
+        if x == 'gova' and vp != 'retool':
+            continue   # no standing site abroad for a project: the abroad button expands the retool twin's alone
+        prev, site = J(b, vp, f'cc{x}'), cc_site(S, x)
+        room, n = f'pmr_cc_room_{x}_{Sf}', f'pmr_cc_n_{x}_{Sf}'
+        o.append(f'\t# {x}\n\tset_variable = {{ name = pmr_cc_p value = 0 }}\n'
+                 f'\tif = {{ limit = {{ has_variable = {prev} }} set_variable = {{ name = pmr_cc_p value = var:{prev} }} }}\n'
+                 f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_c{x} = var:pmr_cc_p }} }}\n'
+                 f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {room} }} }} set_variable = {{ name = {room} value = 0 }} }}\n'
+                 f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {n} }} }} set_variable = {{ name = {n} value = 0 }} }}\n'
+                 f'\t\tchange_variable = {{ name = {room} add = var:pmr_cc_c{x} }}\n'
+                 f'\t\tchange_variable = {{ name = {room} subtract = var:pmr_cc_p }}\n'
+                 f'\t\tif = {{ limit = {{ var:pmr_cc_p <= 0 var:pmr_cc_c{x} > 0 }} change_variable = {{ name = {n} add = 1 }} }}\n'
+                 f'\t\telse_if = {{ limit = {{ var:pmr_cc_p > 0 var:pmr_cc_c{x} <= 0 }} change_variable = {{ name = {n} subtract = 1 }} }}\n'
+                 f'\t\tif = {{ limit = {{ var:pmr_cc_c{x} > 0 }} set_variable = {{ name = {prev} value = var:pmr_cc_c{x} }} }}\n'
+                 f'\t\telse_if = {{ limit = {{ has_variable = {prev} }} remove_variable = {prev} }}\n'
+                 f'\t\tpmr_cc_cap_{x}_{Sf} = yes\n'
+                 f'\t\tif = {{ limit = {{ var:{n} = 1 var:pmr_cc_c{x} > 0 exists = b:{bk} }} set_variable = {{ name = pmr_for_{site} value = bt:{bk} }} }}\n'
+                 f'\t\telse_if = {{ limit = {{ var:{n} = 1 }} pmr_cc_for_{x}_{Sf} = yes }}\n'
+                 f'\t\telse_if = {{ limit = {{ has_variable = pmr_for_{site} }} remove_variable = pmr_for_{site} }}\n'
+                 '\t}\n')
+        # the Center card's levels done (pmr_<..>_got_<x>_<b>) end with the row: nothing open on this side, or the
+        # player's government's order filled
+        g, ox = J(b, vp, f'got_{x}'), J(b, vp, f'ord_{x}')
+        o.append(f'\tif = {{ limit = {{ has_variable = {g} var:pmr_cc_c{x} <= 0 }} remove_variable = {g} }}\n'
+                 + (f'\tif = {{ limit = {{ has_variable = {g} NOT = {{ AND = {{ has_variable = {ox} var:{ox} > 0 }} }} '
+                    + ('' if x == 'gova' else 'owner = { is_player = yes } ') + f'}} remove_variable = {g} }}\n'
+                    if x in ('gov', 'gova') else ''))
+    o.append('\tif = {\n\t\tlimit = { OR = { ' + ' '.join(f'var:pmr_cc_c{x} > 0' for x in CC_SIDES) + ' } '
+             f'NOT = {{ has_building = {CENTER_BUILDING} }} }}\n\t\tpmr_cc_center = yes\n\t}}\n')
+    if vp == 'retool':
+        site = cc_site(S, 'gova')
+        # PLAN 8.6: the standing site abroad, one free level owned by the player's government that the hand-out never
+        # gives anyone (counted as seen at creation)
+        o.append(f'\tif = {{\n\t\tlimit = {{ var:pmr_cc_cgova > 0 has_global_variable = pmr_player NOT = {{ has_building = {site} }} '
+                 f'NOT = {{ exists = b:{site} }} }}\n'
+                 f'\t\tcreate_building = {{\n\t\t\tbuilding = {site}\n'
+                 '\t\t\tadd_ownership = { country = { country = global_var:pmr_player levels = 1 } }\n\t\t}\n'
+                 f'\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_cc_seen_gova_{Sf} }} }} set_variable = {{ name = pmr_cc_seen_gova_{Sf} value = 0 }} }}\n'
+                 f'\t\tchange_variable = {{ name = pmr_cc_seen_gova_{Sf} add = 1 }}\n'
+                 f'\t\tpmr_cc_cap_gova_{Sf} = yes\n'
+                 '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n\t}\n')
+    o.append('}\n\n')
+    return ''.join(o)
+
+
+def cc_credit(b, vp, x, rule):
+    """CENTER, one line: a landed unit credited to job vp of b on side x (rule: line, half, best), logged, the building
+    ticked so its count, progress and split take it at once"""
+    S = fmt(CC_JOB[b, vp][0])
+    d, o, bk = J(b, vp, f'done_{x}'), J(b, vp, f'ord_{x}'), CC_BK[b]
+    mine = f'OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}'
+    rec, extra = ('RETOOL_LEVEL', '') if vp == 'retool' else ('PROJECT_LEVEL', f';project={vp}')
+    g = J(b, vp, f'got_{x}')
+    return (f'if = {{ limit = {{ NOT = {{ has_variable = {d} }} }} set_variable = {{ name = {d} value = 0 }} }} '
+            f'change_variable = {{ name = {d} add = 1 }} '
+            f'if = {{ limit = {{ NOT = {{ has_variable = {g} }} }} set_variable = {{ name = {g} value = 0 }} }} '
+            f'change_variable = {{ name = {g} add = 1 }} '
+            + (f'change_variable = {{ name = {o} subtract = 1 }} '
+               f'change_variable = {{ name = pmr_cc_ord_{x}_{S} subtract = 1 }} ' if rule == 'line' else '')
+            + cc_line('CENTER_LEVEL', b, vp, x, f';rule={rule}') + ' '
+            + flush_log(rec, bk, extra, mine) + ' '
+            + 'set_variable = { name = pmr_cc_got value = 1 } '
+            + f'if = {{ limit = {{ exists = b:{bk} b:{bk} = {{ level >= 1 }} }} pmr_tick_{b} = yes }}')
+
+
+def cc_effects():
+    """CENTER, state scope unless said, as (head, tail). The head, ahead of the buildings' ticks (their posts call
+    it): the Center, each size and payer's cap and gate, the queue row's building. The tail, after them (it ticks the
+    buildings): the hand-out (pmr_cc_hand_<x>_<S>: each landed unit to an order, a half level, the best open job, or
+    dropped), the cancel check, the crew, the site's removal, the monthly upkeep, the owner's AI weight."""
+    head = ['# ===== CENTER: the Construction Center (retool-tiers/PLAN.md section 8; generate.py cc_effects)\n\n'
+            '# State scope: the state\'s Construction Center, one level owned by its government.\n'
+            f'pmr_cc_center = {{\n\tcreate_building = {{\n\t\tbuilding = {CENTER_BUILDING}\n'
+            '\t\tadd_ownership = { country = { country = owner levels = 1 } }\n\t}\n'
+            '\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n}\n\n']
+    o = ['# ===== CENTER: the hand-out, cancels, crews, removals, upkeep and weight (generate.py cc_effects)\n\n']
+    for S in cc_sizes():
+        Sf = fmt(S)
+        mem = cc_members(S)
+        for x in CC_SIDES:
+            site = cc_site(S, x)
+            room, cap, seen, ordsum, n, gate = (f'pmr_cc_{k}_{x}_{Sf}' for k in ('room', 'cap', 'seen', 'ord', 'n', 'gate'))
+            push = x in ('gov', 'gova')
+            jobs = [(b, vp, u) for b, vp, u in mem if x != 'gova' or vp == 'retool']
+            if not jobs:
+                continue
+            # the cap and the gate
+            head.append(f'pmr_cc_cap_{x}_{Sf} = {{\n'
+                     f'\tif = {{ limit = {{ NOT = {{ has_variable = {room} }} }} set_variable = {{ name = {room} value = 0 }} }}\n'
+                     f'\tset_variable = {{ name = {cap} value = var:{room} }}\n'
+                     f'\tif = {{ limit = {{ exists = b:{site} }} change_variable = {{ name = {cap} add = b:{site}.level }} }}\n'
+                     f'\tif = {{ limit = {{ OR = {{ var:{room} > 0 exists = b:{site} }} }} set_variable = {gate} }}\n'
+                     f'\telse_if = {{ limit = {{ has_variable = {gate} }} remove_variable = {gate} }}\n}}\n\n')
+            # the queue row's building: the one open job's, found by a walk when the count falls to one
+            head.append(f'pmr_cc_for_{x}_{Sf} = {{\n'
+                     f'\tif = {{ limit = {{ has_variable = pmr_for_{site} }} remove_variable = pmr_for_{site} }}\n'
+                     + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_for_{site} }} has_variable = {J(b, vp, "cc" + x)} '
+                               f'exists = b:{CC_BK[b]} }} set_variable = {{ name = pmr_for_{site} value = bt:{CC_BK[b]} }} }}\n'
+                               for b, vp, _u in jobs) + '}\n\n')
+            # one landed unit: the line (push), else a half level, else the best open job (pull), else dropped
+            give = [f'pmr_cc_give_{x}_{Sf} = {{\n\tset_variable = {{ name = pmr_cc_got value = 0 }}\n']
+            line = ('\tset_variable = { name = pmr_cc_best value = 0 }\n\tset_variable = { name = pmr_cc_bs value = 999999 }\n'
+                    + ''.join(f'\tif = {{ limit = {{ has_variable = {J(b, vp, "ord_" + x)} has_variable = {J(b, vp, "seq_" + x)} '
+                              f'var:{J(b, vp, "ord_" + x)} > 0 var:{J(b, vp, "seq_" + x)} < var:pmr_cc_bs }} '
+                              f'set_variable = {{ name = pmr_cc_bs value = var:{J(b, vp, "seq_" + x)} }} '
+                              f'set_variable = {{ name = pmr_cc_best value = {i} }} }}\n' for i, (b, vp, _u) in enumerate(jobs, 1))
+                    + lookup('var:pmr_cc_best', list(range(1, len(jobs) + 1)), lambda i: cc_credit(jobs[i - 1][0], jobs[i - 1][1], x, 'line')))
+            g = cc_grp(x)
+            half = ''.join(f'\tif = {{ limit = {{ var:pmr_cc_got = 0 has_variable = {J(b, vp, "cc" + x)} '
+                           f'has_variable = {J(b, vp, "built_" + g)} has_variable = {J(b, vp, "seen_" + g)} '
+                           f'var:{J(b, vp, "built_" + g)} > var:{J(b, vp, "seen_" + g)} }} {cc_credit(b, vp, x, "half")} }}\n'
+                           for b, vp, u in jobs if u >= 2)
+            best = ('\tif = {\n\t\tlimit = { var:pmr_cc_got = 0 }\n'
+                    '\t\tset_variable = { name = pmr_cc_best value = 0 }\n\t\tset_variable = { name = pmr_cc_bp value = -999999 }\n'
+                    + ''.join(f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = {J(b, vp, "cc" + x)} }}\n'
+                              '\t\t\tset_variable = { name = pmr_cc_t value = 0 }\n'
+                              f'\t\t\tif = {{ limit = {{ has_variable = {J(b, vp, "pay")} }} set_variable = {{ name = pmr_cc_t value = var:{J(b, vp, "pay")} }} }}\n'
+                              f'\t\t\tif = {{ limit = {{ var:pmr_cc_t > var:pmr_cc_bp }} set_variable = {{ name = pmr_cc_bp value = var:pmr_cc_t }} '
+                              f'set_variable = {{ name = pmr_cc_best value = {i} }} }}\n\t\t}}\n'
+                              for i, (b, vp, _u) in enumerate(jobs, 1))
+                    + lookup('var:pmr_cc_best', list(range(1, len(jobs) + 1)),
+                             lambda i: cc_credit(jobs[i - 1][0], jobs[i - 1][1], x, 'best'), '\t\t')
+                    + '\t}\n')
+            if x == 'gova':
+                give.append(line)
+            elif x == 'gov':
+                give.append('\tif = {\n\t\tlimit = { owner = { is_player = yes } }\n'
+                            + ''.join('\t' + ln for ln in line.splitlines(True)) + '\t}\n\telse = {\n'
+                            + ''.join('\t' + ln for ln in (half + best).splitlines(True)) + '\t}\n')
+            else:
+                give.append(half + best)
+            give.append('\tif = {\n\t\tlimit = { var:pmr_cc_got = 0 }\n'
+                        '\t\tdebug_log = "PMR;rec=CENTER_DROP;date=[TimeKeeper.GetCurrentDate.GetString];'
+                        'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                        f'site={site};side={x};units=1"\n\t}}\n}}\n\n')
+            o.append(''.join(give))
+            # the player's cancelled rows (the X in the queue): the last order in the line loses them (PLAN 4)
+            if push:
+                take = lambda i: (f'set_variable = {{ name = pmr_cc_tk value = var:{J(jobs[i - 1][0], jobs[i - 1][1], "ord_" + x)} }} '   # noqa: E731
+                                  'if = { limit = { var:pmr_cc_tk > var:pmr_cc_cut } set_variable = { name = pmr_cc_tk value = var:pmr_cc_cut } } '
+                                  f'change_variable = {{ name = {J(jobs[i - 1][0], jobs[i - 1][1], "ord_" + x)} subtract = var:pmr_cc_tk }} '
+                                  f'change_variable = {{ name = {ordsum} subtract = var:pmr_cc_tk }} '
+                                  'change_variable = { name = pmr_cc_cut subtract = var:pmr_cc_tk } '
+                                  + cc_line('CENTER_CANCEL', jobs[i - 1][0], jobs[i - 1][1], x,
+                                            ";why=cancel;units=[THIS.Var('pmr_cc_tk').GetValue|0]")
+                                  + f' if = {{ limit = {{ exists = b:{CC_BK[jobs[i - 1][0]]} b:{CC_BK[jobs[i - 1][0]]} = {{ level >= 1 }} }} '
+                                  f'pmr_tick_{jobs[i - 1][0]} = yes }}')
+                o.append(f'pmr_cc_cancel_{x}_{Sf} = {{\n'
+                         f'\tif = {{\n\t\tlimit = {{ has_variable = {ordsum} var:{ordsum} > 0 }}\n'
+                         '\t\tset_variable = { name = pmr_cc_cq value = 0 }\n'
+                         f'\t\tif = {{ limit = {{ exists = b:{site} }} set_variable = {{ name = pmr_cc_cq value = b:{site}.level_after_queued_constructions }} '
+                         f'change_variable = {{ name = pmr_cc_cq subtract = b:{site}.level }} }}\n'
+                         f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_cq < var:{ordsum} }}\n'
+                         f'\t\t\tset_variable = {{ name = pmr_cc_cut value = {{ value = var:{ordsum} subtract = var:pmr_cc_cq }} }}\n'
+                         '\t\t\twhile = {\n\t\t\t\tlimit = { var:pmr_cc_cut > 0 }\n'
+                         '\t\t\t\tset_variable = { name = pmr_cc_hi value = 0 }\n\t\t\t\tset_variable = { name = pmr_cc_hs value = -1 }\n'
+                         + ''.join(f'\t\t\t\tif = {{ limit = {{ has_variable = {J(b, vp, "ord_" + x)} has_variable = {J(b, vp, "seq_" + x)} '
+                                   f'var:{J(b, vp, "ord_" + x)} > 0 var:{J(b, vp, "seq_" + x)} > var:pmr_cc_hs }} '
+                                   f'set_variable = {{ name = pmr_cc_hs value = var:{J(b, vp, "seq_" + x)} }} '
+                                   f'set_variable = {{ name = pmr_cc_hi value = {i} }} }}\n' for i, (b, vp, _u) in enumerate(jobs, 1))
+                         + f'\t\t\t\tif = {{ limit = {{ var:pmr_cc_hi = 0 }} set_variable = {{ name = {ordsum} value = var:pmr_cc_cq }} '
+                         'set_variable = { name = pmr_cc_cut value = 0 } }\n'
+                         + lookup('var:pmr_cc_hi', list(range(1, len(jobs) + 1)), take, '\t\t\t\t')
+                         + '\t\t\t}\n\t\t}\n\t}\n}\n\n')
+            # the crew of a private site (RETOOL_CREW): it stands while staffed, or within its grace after a level
+            if not push and RETOOL_CREW:
+                staff, prev, grace = (f'pmr_cc_{k}_{x}_{Sf}' for k in ('staff', 'prev', 'grace'))
+                o.append(f'pmr_cc_crew_{x}_{Sf} = {{\n\tset_variable = {{ name = {staff} value = -1 }}\n'
+                         f'\tif = {{\n\t\tlimit = {{ exists = b:{site} b:{site} = {{ level >= 1 }} }}\n'
+                         f'\t\tif = {{ limit = {{ b:{site} = {{ occupancy >= {RETOOL_CREW_STAFFED} }} }} set_variable = {{ name = {staff} value = 2 }} }}\n'
+                         f'\t\telse_if = {{ limit = {{ b:{site} = {{ occupancy > 0 }} }} set_variable = {{ name = {staff} value = 1 }} }}\n'
+                         f'\t\telse = {{ set_variable = {{ name = {staff} value = 0 }} }}\n'
+                         f'\t\tset_variable = {{ name = pmr_cc_cl value = b:{site}.level }}\n'
+                         f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {prev} }} }} set_variable = {{ name = {prev} value = 0 }} }}\n'
+                         f'\t\tif = {{ limit = {{ var:pmr_cc_cl > var:{prev} }} set_variable = {{ name = {grace} value = yes days = {RETOOL_CREW_GRACE_DAYS} }} }}\n'
+                         f'\t\tset_variable = {{ name = {prev} value = var:pmr_cc_cl }}\n\t}}\n}}\n\n')
+            # the site goes once nothing is queued on it and every level is handed out or dropped (a removal under
+            # a queued row leaves a dead row): a private one with a crew stands while a job is open and the crew is
+            # staffed or in its grace, the standing one abroad while the player's government has room
+            keep = ''
+            if not push and RETOOL_CREW:
+                keep = (f' OR = {{ var:{room} <= 0 AND = {{ NOT = {{ has_variable = pmr_cc_grace_{x}_{Sf} }} '
+                        f'var:pmr_cc_staff_{x}_{Sf} < 2 }} }}')
+            elif x == 'gova':
+                keep = f' var:{room} <= 0'
+            o.append(f'pmr_cc_end_{x}_{Sf} = {{\n'
+                     f'\tif = {{\n\t\tlimit = {{ exists = b:{site} }}\n'
+                     f'\t\tset_variable = {{ name = pmr_cc_el value = b:{site}.level }}\n'
+                     f'\t\tset_variable = {{ name = pmr_cc_eq value = b:{site}.level_after_queued_constructions }}\n'
+                     '\t\tchange_variable = { name = pmr_cc_eq subtract = var:pmr_cc_el }\n'
+                     f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {seen} }} }} set_variable = {{ name = {seen} value = 0 }} }}\n'
+                     f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {room} }} }} set_variable = {{ name = {room} value = 0 }} }}\n'
+                     f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_eq <= 0 var:{seen} >= var:pmr_cc_el{keep} }}\n'
+                     f'\t\t\tremove_building = {site}\n'
+                     f'\t\t\tset_variable = {{ name = {seen} value = 0 }}\n'
+                     + (''.join(f'\t\t\tif = {{ limit = {{ has_variable = pmr_cc_{k}_{x}_{Sf} }} remove_variable = pmr_cc_{k}_{x}_{Sf} }}\n'
+                                for k in ('prev', 'staff')) if not push and RETOOL_CREW else '')
+                     + f'\t\t\tpmr_cc_cap_{x}_{Sf} = yes\n'
+                     '\t\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n\t\t}\n\t}\n}\n\n')
+            # the hand-out (pmr_tick_parent_of_retool, as a level lands; and monthly, pmr_cc_upkeep)
+            o.append(f'pmr_cc_hand_{x}_{Sf} = {{\n'
+                     f'\tif = {{ limit = {{ NOT = {{ has_variable = {seen} }} }} set_variable = {{ name = {seen} value = 0 }} }}\n'
+                     f'\tif = {{\n\t\tlimit = {{ exists = b:{site} }}\n'
+                     f'\t\tset_variable = {{ name = pmr_cc_lvl_{x}_{Sf} value = b:{site}.level }}\n'
+                     f'\t\twhile = {{\n\t\t\tlimit = {{ var:pmr_cc_lvl_{x}_{Sf} > var:{seen} }}\n'
+                     f'\t\t\tchange_variable = {{ name = {seen} add = 1 }}\n\t\t\tpmr_cc_give_{x}_{Sf} = yes\n\t\t}}\n'
+                     f'\t\tremove_variable = pmr_cc_lvl_{x}_{Sf}\n'
+                     + (f'\t\tpmr_cc_crew_{x}_{Sf} = yes\n' if not push and RETOOL_CREW else '')
+                     + '\t}\n'
+                     + (f'\tpmr_cc_cancel_{x}_{Sf} = yes\n' if push else '')
+                     + f'\tpmr_cc_cap_{x}_{Sf} = yes\n\tpmr_cc_end_{x}_{Sf} = yes\n}}\n\n')
+    # the monthly upkeep: hand-out catch-up, cancels, crews, removals
+    o.append('# State scope, monthly (pmr_on_monthly_pulse_state): each size and payer in use here.\npmr_cc_upkeep = {\n'
+             + ''.join(f'\tif = {{ limit = {{ OR = {{ has_variable = pmr_cc_gate_{x}_{fmt(S)} exists = b:{cc_site(S, x)} }} }} '
+                       f'pmr_cc_hand_{x}_{fmt(S)} = yes }}\n'
+                       for S in cc_sizes() for x in CC_SIDES if x != 'gova' or any(vp == 'retool' for _b, vp, _u in cc_members(S)))
+             + '}\n\n')
+    # the owner's AI weight a size and payer: CC_AI_MULT x (its open jobs of that size) ^ CC_AI_POW (PLAN 6)
+    ks = list(range(1, 17)) + [20, 25, 30, 40, 50, 64, 80, 100, 128, 160, 200, 256, 320, 400]
+    pairs = [(x, fmt(S)) for S in cc_sizes() for x in ('1', '2', 'gov')]
+    o.append('# Country scope, monthly (pmr_on_monthly_pulse_country): the open jobs of each size and payer in its states,\n'
+             '# and the weight on the size site\'s score.\npmr_cc_weigh = {\n\tsave_temporary_scope_as = pmr_cc_ctry\n'
+             + ''.join(f'\tset_variable = {{ name = pmr_cc_k_{x}_{Sf} value = 0 }}\n' for x, Sf in pairs)
+             + '\tevery_scope_state = {\n\t\tsave_temporary_scope_as = pmr_cc_st\n'
+             + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_cc_n_{x}_{Sf} var:pmr_cc_n_{x}_{Sf} > 0 }} '
+                       f'scope:pmr_cc_ctry = {{ change_variable = {{ name = pmr_cc_k_{x}_{Sf} add = scope:pmr_cc_st.var:pmr_cc_n_{x}_{Sf} }} }} }}\n'
+                       for x, Sf in pairs)
+             + '\t}\n'
+             + ''.join(highest(ks, lambda k, x=x, Sf=Sf: f'var:pmr_cc_k_{x}_{Sf} >= {k}',
+                               lambda k, x=x, Sf=Sf: f'set_variable = {{ name = pmr_cc_w_{x}_{Sf} value = '
+                                                     f'{fmt(CC_AI_MULT * (k or 1) ** CC_AI_POW)} }}')
+                       + f'\tremove_variable = pmr_cc_k_{x}_{Sf}\n' for x, Sf in pairs)
+             + '}\n\n')
+    return ''.join(head), ''.join(o)
+
+
+def cc_triggers():
+    """CENTER: each size site's room (scope:num_levels more fits under its cap), as the unfolded sites' were"""
+    out = []
+    for S in cc_sizes():
+        for x in CC_SIDES:
+            site, cap, Sf = cc_site(S, x), f'pmr_cc_cap_{x}_{fmt(S)}', fmt(S)
+            out.append(f'pmr_cc_room_{x}_{Sf} = {{\n\thas_variable = {cap}\n'
+                       f'\ttrigger_if = {{\n\t\tlimit = {{ exists = b:{site} }}\n'
+                       f'\t\tb:{site} = {{ level_after_queued_constructions <= pmr_cc_room_value_{x}_{Sf} }}\n\t}}\n'
+                       f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n}}\n')
+    return '\n'.join(out)
+
+
+def cc_values():
+    """CENTER: the size sites' room values (building scope), costs and AI weights (state scope)"""
+    out = []
+    for S in cc_sizes():
+        Sf = fmt(S)
+        out.append(f'pmr_cc_cost_{Sf} = {Sf}')
+        for x in CC_SIDES:
+            out.append(f'pmr_cc_room_value_{x}_{Sf} = {{\n\tvalue = state.var:pmr_cc_cap_{x}_{Sf}\n\tsubtract = scope:num_levels\n}}')
+            if x != 'gova':
+                out.append(f'pmr_cc_wv_{x}_{Sf} = {{\n\tvalue = {fmt(CC_AI_MULT)}\n'
+                           f'\tif = {{ limit = {{ owner ?= {{ has_variable = pmr_cc_w_{x}_{Sf} }} }} value = owner.var:pmr_cc_w_{x}_{Sf} }}\n}}')
+    return '\n'.join(out) + '\n'
+
+
+CC_SIDE_GROUP = {'1': 'bg_pmr_retool', '2': 'bg_pmr_retool_abroad', 'gov': 'bg_pmr_retool_gov', 'gova': 'bg_pmr_retool_gov_abroad'}
+
+
+def cc_buildings():
+    """CENTER: the 16 size sites (PLAN 8.2), building_pmr_cc_<S>_<x>, in today's four groups, and the Center"""
+    out = []
+    for i, S in enumerate(CC_SIZES):
+        if S not in cc_sizes():
+            continue
+        Sf = fmt(S)
+        mem = cc_members(S)
+        for x in CC_SIDES:
+            site = cc_site(S, x)
+            jobs = [(b, vp, u) for b, vp, u in mem if x != 'gova' or vp == 'retool']
+            if not jobs:
+                continue
+            open_ = lambda b, vp: f'has_variable = {J(b, vp, "cc" + x)}'   # noqa: E731
+            if x in ('1', '2'):
+                inv = 'pmr_retool_investor_abroad' if x == '2' else 'pmr_retool_investor'
+                who = ('\townership_type = self\n\tcan_build_government = { always = no }\n'
+                       f'\tcan_build_private = {{\n\t\tpmr_cc_room_{x}_{Sf} = yes\n\t\tOR = {{\n'
+                       + ''.join(f'\t\t\tAND = {{ {open_(b, vp)} {inv}_{b} = yes }}\n' for b, vp, _u in jobs)
+                       + '\t\t}\n\t}\n')
+                pmgs = 'pmg_pmr_retool_crew' if RETOOL_CREW else 'pmg_pmr_retool'
+            else:
+                who = (f'\tcan_build_government = {{ pmr_cc_room_{x}_{Sf} = yes }}\n'
+                       '\tcan_build_private = { always = no }\n')
+                pmgs = 'pmg_pmr_retool'
+            if x == 'gova':
+                ai = '\t# Only ever the player\'s click: no AI scores it.\n\tai_value = 0\n'
+            else:
+                ai = ('\t# The best open job\'s score (each its payoff on a new level\'s scale), x the country\'s weight for\n'
+                      '\t# this size (PLAN 6)\n\tai_value = {\n\t\tvalue = 0\n'
+                      + ''.join(f'\t\tmin = {{   # PMR member {b} {vp}\n\t\t\tvalue = 0\n\t\t\tif = {{\n\t\t\t\tlimit = {{ {open_(b, vp)} }}\n'
+                                + ''.join('\t' + ln for ln in ai_base(b, vp).splitlines(True))
+                                + f'\t\t\t}}\n\t\t\t# PMR member end {b}\n\t\t}}\n' for b, vp, _u in jobs)
+                      + f'\t\tmultiply = pmr_cc_wv_{x}_{Sf}\n\t}}\n')
+            out.append(f'{site} = {{\n\tbuilding_group = {CC_SIDE_GROUP[x]}\n'
+                       f'\ticon = "gfx/interface/icons/building_icons/pmr_size_{4 - i}.dds"\n'
+                       '\tcity_type = none\n\tdownsizeable = no\n'
+                       '\t# Levels come only from the funders below, never from auto-expansion.\n'
+                       '\tshould_auto_expand = { always = no }\n'
+                       f'\t# Open while a job of size {Sf} is open in this state on this payer\'s side (the Construction Center)\n'
+                       f'\tpotential = {{ has_variable = pmr_cc_gate_{x}_{Sf} }}\n'
+                       + who + ai +
+                       f'\trequired_construction = pmr_cc_cost_{Sf}\n'
+                       f'\tproduction_method_groups = {{\n\t\t{pmgs}\n\t}}\n'
+                       f'\tbackground = "{RETOOL_BACKGROUND}"\n}}\n')
+    out.append(f'# The Construction Center (PLAN 3): one level in each state, owned by its government, with no jobs and no\n'
+               f'# button; its card shows the state\'s orders.\n'
+               f'{CENTER_BUILDING} = {{\n\tbuilding_group = bg_pmr_construction\n'
+               '\ticon = "gfx/interface/icons/building_icons/pmr_construction_center.dds"\n'
+               '\tcity_type = none\n\tbuildable = no\n\texpandable = no\n\tdownsizeable = no\n\tcan_switch_owner = no\n'
+               '\tshould_auto_expand = { always = no }\n'
+               '\tcan_build_government = { always = no }\n\tcan_build_private = { always = no }\n'
+               '\townership_type = self\n\tai_value = 0\n'
+               '\tproduction_method_groups = {\n\t\tpmg_pmr_retool\n\t}\n'
+               f'\tbackground = "{RETOOL_BACKGROUND}"\n}}\n')
+    return '\n'.join(out)
+
+
+def cc_site_types():
+    """CENTER: every size site type written (the hide lists)"""
+    return [cc_site(S, x) for S in cc_sizes() for x in CC_SIDES
+            if x != 'gova' or any(vp == 'retool' for _b, vp, _u in cc_members(S))]
+
+
+def cc_icon(src, size, path):
+    """CENTER: a logo PNG as a building icon DDS of size x size, its corners outside the frame's radius clear"""
+    from PIL import Image, ImageDraw
+    im = Image.open(src).convert('RGBA').resize((size, size), Image.LANCZOS)
+    mask = Image.new('L', (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=round(size * 17 / 236), fill=255)
+    im.putalpha(mask)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    icons.write_dds(im, path)
+
+
+CC_TIER_FILES = {   # CC_JOB_NAMES key -> the interface thread's job logo (tier-logos/)
+    ('retool', 800): 'major_rebuild_heavy', ('retool', 600): 'major_rebuild_light', ('retool', 400): 'rebuild_heavy',
+    ('retool', 200): 'rebuild_light', ('eq', 800): 'major_reequip_heavy', ('eq', 600): 'major_reequip_light',
+    ('eq', 400): 'reequip_heavy', ('eq', 200): 'reequip_light', ('rc', 400): 'rail_connection_heavy',
+    ('rc', 200): 'rail_connection_light'}
+
+
+def cc_icons(art, out):
+    """CENTER: the size logos (the sites' icons, I Minor to IV Heavy), the Center's stand-in icon and the job logos (the
+    Center's card), from the interface thread's PNGs"""
+    if not os.path.isdir(art):
+        raise SystemExit(f'--center: no logos folder {art} (--center-art)')
+    for n in range(1, 5):
+        cc_icon(os.path.join(art, f'pmr_size_{n}.png'), 128, os.path.join(out, f'gfx/interface/icons/building_icons/pmr_size_{n}.dds'))
+    cc_icon(os.path.join(art, 'center_standin_236.png'), 256,
+            os.path.join(out, 'gfx/interface/icons/building_icons/pmr_construction_center.dds'))
+    for name in CC_TIER_FILES.values():
+        cc_icon(os.path.join(art, f'pmr_tier_{name}.png'), 128, os.path.join(out, f'gfx/interface/icons/pmr/pmr_tier_{name}.dds'))
+
+
+def cc_parent_dispatch():
+    """CENTER, building scope: a size site that completed a level hands it out (pmr_cc_hand_<x>_<S>)"""
+    o = ['# Building scope, for a size site that just completed a level: the Center hands it out (CENTER).\n'
+         'pmr_tick_parent_of_retool = {\n']
+    for g, x in enumerate(CC_SIDES):
+        sites = [S for S in cc_sizes() if cc_site(S, x) in cc_site_types()]
+        o.append(f'\t{"if" if g == 0 else "else_if"} = {{\n\t\tlimit = {{ is_building_group = {CC_SIDE_GROUP[x]} }}\n'
+                 + ''.join(f'\t\t{"if" if i == 0 else "else_if"} = {{ limit = {{ is_building_type = {cc_site(S, x)} }} '
+                           f'state = {{ pmr_cc_hand_{x}_{fmt(S)} = yes }} }}\n' for i, S in enumerate(sites))
+                 + '\t}\n')
+    return ''.join(o)   # closed by dispatch_effects
+
+
+def cc_push(bk, b, rt):
+    """CENTER: pmr_queue_gov_<b>'s body (PLAN 8.6), the building's button and the bulk effects: each job with
+    government room puts that room on its order and queues every unit at once on its size's government site"""
+    out = ''
+    for vp in ['retool'] + list(rt.kinds if rt else {}):
+        S = CC_JOB[b, vp][0]
+        rg, q = J(b, vp, 'room_gov'), f'pmr_q_{b}'
+        rec = (f'debug_log = "PMR;rec=GOV_QUEUE;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+               f"state=[THIS.GetState.GetNameNoFormatting];building={bk};queueing=[THIS.Var('{q}').GetValue|0]\"" if vp == 'retool' else
+               f'debug_log = "PMR;rec=PROJECT_QUEUE;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
+               f"state=[THIS.GetState.GetNameNoFormatting];building={bk};project={vp};queueing=[THIS.Var('{q}').GetValue|0]\"")
+        out += (f'\t\tif = {{\n\t\t\tlimit = {{ has_variable = {J(b, vp, "open_gov")} has_variable = {rg} var:{rg} > 0 }}\n'
+                f'\t\t\tset_variable = {{ name = {q} value = var:{rg} }}\n'
+                f'\t\t\t{rec}\n'
+                f'\t\t\t{cc_order(b, vp, "gov", q)}\n'
+                f'\t\t\twhile = {{\n\t\t\t\tlimit = {{ var:{q} > 0 }}\n'
+                f'\t\t\t\tstart_building_construction = {cc_site(S, "gov")}\n'
+                f'\t\t\t\tchange_variable = {{ name = {q} subtract = 1 }}\n\t\t\t}}\n'
+                f'\t\t\tremove_variable = {q}\n\t\t}}\n')
+    return out
+
+
+# ---------------------------------------------------------------------------------------------
+# CENTER: the Construction Center's card and the queue row (pmr/ui/CENTER-CARD.md, TIER-SITES-ROW.md). The card only
+# shows (Pat 2026-11-13 19:02Z: "we shouldn't control anything from here"): no button on it queues, moves or cancels.
+# Its Order Book is one static row per job and payer, each built only while its order is open (a DataModelRepeatedItem
+# gate, as gate_type_copies), since the GUI cannot list a script list's buildings (CENTER-CARD.md, the fallback).
+
+# The payer rows: (key, side, the state's owner is the player (None: either), the remaining units (ord: the order,
+# cc: the open contribution), vanilla's ownership colour, the payer mark, the Funding slice). A government is a flag,
+# investors the private badge; the player's investors abroad their flag with the badge (CENTER-CARD.md, a row).
+CC_PAYERS = (('pg', 'gov', True, 'ord', 'PLAYER_GOVERNMENT', 'flag_player', 'pg'),
+             ('pga', 'gova', None, 'ord', 'PLAYER_GOVERNMENT', 'flag_player', 'pg'),
+             ('pi', '1', True, 'cc', 'PLAYER_POPS', 'badge', 'pi'),
+             ('pia', '2', None, 'cc', 'PLAYER_POPS', 'flag_player_badge', 'pi'),
+             ('og', 'gov', False, 'cc', 'OTHER_COUNTRIES_GOVERNMENT', 'flag_owner', 'og'),
+             ('oi', '1', False, 'cc', 'OTHER_COUNTRIES_POPS', 'badge', 'oi'))
+CC_FUNDING = (('pg', 'PLAYER_GOVERNMENT', 'PMR_CC_GOV'), ('pi', 'PLAYER_POPS', 'PMR_CC_INV'),
+              ('og', 'OTHER_COUNTRIES_GOVERNMENT', 'PMR_CC_GOV'), ('oi', 'OTHER_COUNTRIES_POPS', 'PMR_CC_INV'))
+CC_OWN_COLOURS = {'PLAYER_GOVERNMENT': (0.20, 0.40, 0.90), 'PLAYER_POPS': (0.41, 0.67, 0.74),   # 00_interfaces.txt
+                  'OTHER_COUNTRIES_GOVERNMENT': (0.9, 0.50, 0.2), 'OTHER_COUNTRIES_POPS': (1, 0.674, 0.454)}
+CC_BADGE = 'gfx/interface/icons/generic_icons/privately_owned_building_icon.dds'
+CC_GOV_ICON = 'gfx/interface/icons/generic_icons/government_building_icon.dds'
+
+
+def cc_job_key(b, vp):
+    """CENTER: the job's name key (CC_JOB_NAMES, CC_TIER_FILES)"""
+    key = (vp, int(round(CC_BASE[b])))
+    if key not in CC_TIER_FILES:
+        raise SystemExit(f'--center: {CC_BK[b]} {vp} costs {fmt(CC_BASE[b])} a building level; no job name for it '
+                         '(CC_JOB_NAMES)')
+    return key
+
+
+def cc_card_rows():
+    """CENTER: the card's rows, payer by payer in CC_PAYERS' order, then by job name and building:
+    [(payer row, b, vp)]"""
+    order = list(CC_JOB_NAMES)
+    rows = []
+    for pr in CC_PAYERS:
+        jobs = [(b, vp) for (b, vp) in CC_JOB if pr[1] != 'gova' or vp == 'retool']
+        rows += [(pr, b, vp) for b, vp in sorted(jobs, key=lambda j: (order.index(cc_job_key(*j)), CC_BK[j[0]]))]
+    return rows
+
+
+def cc_row_vars(pr, b, vp):
+    """CENTER: a row's variables: (levels done, remaining units)"""
+    _k, x, _p, rem = pr[:4]
+    return J(b, vp, f'got_{x}'), J(b, vp, f'ord_{x}' if rem == 'ord' else f'cc{x}')
+
+
+def cc_row_open_script(pr, b, vp):
+    """CENTER, state scope: the row is open (the script values' twin of cc_row_open_gui)"""
+    _k, _x, player, rem = pr[:4]
+    _g, r = cc_row_vars(pr, b, vp)
+    t = f'has_variable = {r} var:{r} > 0' if rem == 'ord' else f'has_variable = {r}'
+    if player is True:
+        t += ' owner = { is_player = yes }'
+    elif player is False:
+        t += ' NOT = { owner = { is_player = yes } }'
+    return t
+
+
+def cc_sv(name):
+    return f"Building.GetState.MakeScope.Var('{name}').GetValue"
+
+
+def cc_row_open_gui(pr, b, vp):
+    """CENTER, the Center's card (Building = the Center): the row is open"""
+    _k, _x, player, rem = pr[:4]
+    _g, r = cc_row_vars(pr, b, vp)
+    t = (f"GreaterThan_CFixedPoint({cc_sv(r)}, '(CFixedPoint)0')" if rem == 'ord'
+         else f"Building.GetState.MakeScope.Var('{r}').IsSet")
+    if player is True:
+        return f'And(Building.GetState.GetOwner.IsLocalPlayer, {t})'
+    if player is False:
+        return f'And(Not(Building.GetState.GetOwner.IsLocalPlayer), {t})'
+    return t
+
+
+def cc_card_values():
+    """CENTER, state scope: the card's totals, each from the same rows the card draws: open orders, levels done (whole
+    levels) and ordered, and the construction still on order by payer (CC_FUNDING)"""
+    rows = cc_card_rows()
+
+    def total(name, add):
+        return (f'{name} = {{\n\tvalue = 0\n'
+                + ''.join(f'\tif = {{ limit = {{ {cc_row_open_script(pr, b, vp)} }} {add(pr, b, vp)} }}\n'
+                          for pr, b, vp in rows if add(pr, b, vp)) + '}\n')
+
+    def done(pr, b, vp):
+        g, _r = cc_row_vars(pr, b, vp)
+        u = CC_JOB[b, vp][1]
+        return (f'if = {{ limit = {{ has_variable = {g} }} add = {{ value = var:{g} divide = {u} floor = yes }} }}'
+                if u > 1 else f'if = {{ limit = {{ has_variable = {g} }} add = var:{g} }}')
+
+    def ordered(pr, b, vp):
+        g, r = cc_row_vars(pr, b, vp)
+        u = CC_JOB[b, vp][1]
+        return (f'add = {{ value = var:{r} divide = {u} }} '
+                f'if = {{ limit = {{ has_variable = {g} }} add = {{ value = var:{g} divide = {u} }} }}')
+
+    out = ['# ===== CENTER: the Construction Center card\'s totals (generate.py cc_card_values), state scope\n',
+           total('pmr_cc_orders', lambda pr, b, vp: 'add = 1'), total('pmr_cc_ldone', done),
+           total('pmr_cc_lord', ordered)]
+    for f, _c, _l in CC_FUNDING:
+        out.append(total(f'pmr_cc_f_{f}', lambda pr, b, vp, f=f: (
+            f'add = {{ value = var:{cc_row_vars(pr, b, vp)[1]} multiply = {fmt(CC_JOB[b, vp][0])} }}' if pr[6] == f else '')))
+    out.append('pmr_cc_f_all = {\n\tvalue = 0\n' + ''.join(f'\tadd = pmr_cc_f_{f}\n' for f, _c, _l in CC_FUNDING) + '}\n')
+    return '\n'.join(out)
+
+
+def cc_mark(mark, ind):
+    """CENTER: the payer mark, 35 x 35"""
+    flag = lambda who: (f'{ind}\ttiny_flag = {{\n{ind}\t\tdatacontext = "[{who}]"\n{ind}\t\tparentanchor = center\n'   # noqa: E731
+                        f'{ind}\t}}\n')
+    badge = lambda size, corner: (f'{ind}\ticon = {{\n{ind}\t\ttexture = "{CC_BADGE}"\n{ind}\t\tsize = {{ {size} {size} }}\n'  # noqa: E731
+                                  + (f'{ind}\t\tparentanchor = bottom|right\n{ind}\t\tposition = {{ 5 5 }}\n' if corner else
+                                     f'{ind}\t\tparentanchor = center\n')
+                                  + f'{ind}\t\talwaystransparent = yes\n{ind}\t}}\n')
+    body = {'flag_player': flag('GetPlayer'), 'flag_owner': flag('Building.GetState.GetOwner'),
+            'badge': badge(30, False), 'flag_player_badge': flag('GetPlayer') + badge(22, True)}[mark]
+    return f'{ind}widget = {{\n{ind}\tsize = {{ 35 35 }}\n{body}{ind}}}\n'
+
+
+def cc_row_gui(pr, b, vp, ind):
+    """CENTER: one Order Book row: building, job logo, bar (job name, levels done / ordered), payer mark, in vanilla's
+    queue row tint"""
+    k, x, _p, _r, colour, mark, _f = pr
+    name = CC_TIER_FILES[cc_job_key(b, vp)]
+    g, r = cc_row_vars(pr, b, vp)
+    u = CC_JOB[b, vp][1]
+    half = (lambda e: f"Multiply_CFixedPoint({e}, '(CFixedPoint){fmt(1 / u)}')") if u > 1 else (lambda e: e)
+    done, total = half(cc_sv(g)), half(add_fp(cc_sv(g), cc_sv(r)))
+    i = ind + '\t\t'
+    return (f'{ind}# {CC_BK[b]} {vp} {k}\n'
+            f'{ind}flowcontainer = {{\n'
+            f"{ind}\tdatamodel = \"[DataModelRepeatedItem(Select_int32({cc_row_open_gui(pr, b, vp)}, '(int32)1', '(int32)0'))]\"\n"
+            f'{ind}\titem = {{\n'
+            f'{i}widget = {{\n{i}\tsize = {{ 520 44 }}\n'
+            f'{i}\twidget = {{\n{i}\t\tsize = {{ 520 41 }}\n'
+            f'{i}\t\tbackground = {{\n{i}\t\t\tusing = fade_right_entry_header_colored\n'
+            f"{i}\t\t\tcolor = \"[GetDefine('NGUI','BUILDING_OWNERSHIP_COLOR_{colour}')]\"\n{i}\t\t}}\n"
+            f'{i}\t\thbox = {{\n{i}\t\t\tlayoutpolicy_horizontal = expanding\n{i}\t\t\tlayoutpolicy_vertical = expanding\n'
+            f'{i}\t\t\tmargin = {{ 3 3 }}\n{i}\t\t\tspacing = 5\n'
+            f'{i}\t\t\tconstruction_queue_goto_building = {{\n'
+            f"{i}\t\t\t\tdatacontext = \"[Building.GetState.GetBuilding('{CC_BK[b]}')]\"\n"
+            f'{i}\t\t\t\ttooltipwidget = {{\n{i}\t\t\t\t\tFancyTooltip_Building = {{}}\n{i}\t\t\t\t}}\n{i}\t\t\t}}\n'
+            f'{i}\t\t\ticon = {{\n{i}\t\t\t\tsize = {{ 35 35 }}\n'
+            f'{i}\t\t\t\ttexture = "gfx/interface/icons/pmr/pmr_tier_{name}.dds"\n{i}\t\t\t}}\n'
+            f'{i}\t\t\tmargin_widget = {{\n{i}\t\t\t\tlayoutpolicy_horizontal = expanding\n'
+            f'{i}\t\t\t\tlayoutpolicy_vertical = expanding\n{i}\t\t\t\tmargin = {{ 0 5 }}\n'
+            f'{i}\t\t\t\tdefault_progressbar_horizontal = {{\n{i}\t\t\t\t\tsize = {{ 100% 100% }}\n'
+            f'{i}\t\t\t\t\ttooltip = "PMR_CC_ROW_{b}_{vp}_{k}"\n'
+            f'{i}\t\t\t\t\tblockoverride "values" {{\n{i}\t\t\t\t\t\tmin = 0\n'
+            f'{i}\t\t\t\t\t\tmax = "[FixedPointToFloat({total})]"\n'
+            f'{i}\t\t\t\t\t\tvalue = "[FixedPointToFloat({done})]"\n{i}\t\t\t\t\t}}\n'
+            f'{i}\t\t\t\t\ttextbox = {{\n{i}\t\t\t\t\t\tposition = {{ 8 0 }}\n{i}\t\t\t\t\t\tparentanchor = left|vcenter\n'
+            f'{i}\t\t\t\t\t\tautoresize = yes\n{i}\t\t\t\t\t\talign = left|nobaseline\n'
+            f'{i}\t\t\t\t\t\tmax_width = 260\n{i}\t\t\t\t\t\telide = right\n'
+            f'{i}\t\t\t\t\t\ttext = "PMR_CC_JOB_{name}"\n{i}\t\t\t\t\t}}\n'
+            f'{i}\t\t\t\t\ttextbox = {{\n{i}\t\t\t\t\t\tposition = {{ -8 0 }}\n{i}\t\t\t\t\t\tparentanchor = right|vcenter\n'
+            f'{i}\t\t\t\t\t\tautoresize = yes\n{i}\t\t\t\t\t\talign = right|nobaseline\n'
+            f'{i}\t\t\t\t\t\traw_text = "#v [FixedPointToInt({done})]#! / [{total}|0]"\n{i}\t\t\t\t\t}}\n'
+            f'{i}\t\t\t\t}}\n{i}\t\t\t}}\n'
+            + cc_mark(mark, i + '\t\t\t')
+            + f'{i}\t\t}}\n{i}\t}}\n{i}}}\n'
+            f'{ind}\t}}\n{ind}}}\n')
+
+
+def cc_card_gui(ind):
+    """CENTER: the Center's Information tab: the top block, Funding and the Order Book (CENTER-CARD.md), built only for
+    the Center"""
+    sv = lambda n: f"Building.GetState.MakeScope.ScriptValue('{n}')"   # noqa: E731
+    some = f"GreaterThan_CFixedPoint({sv('pmr_cc_orders')}, '(CFixedPoint)0')"
+    slices = [(f'{f}', f"GreaterThan_CFixedPoint({sv('pmr_cc_f_' + f)}, '(CFixedPoint)0')",
+               f"FixedPointToInt({sv('pmr_cc_f_' + f)})",
+               f"GreaterThan_CFixedPoint({sv('pmr_cc_f_' + f)}, Multiply_CFixedPoint({sv('pmr_cc_f_all')}, '(CFixedPoint)0.08'))",
+               CC_OWN_COLOURS[c], CC_GOV_ICON if lk == 'PMR_CC_GOV' else CC_BADGE) for f, c, lk in CC_FUNDING]
+    i = ind + '\t\t'
+    return (f'{ind}# PMR: the Construction Center\'s card (generate.py cc_card_gui), built for the Center only\n'
+            f'{ind}flowcontainer = {{\n'
+            f"{ind}\tvisible = \"[InformationPanel.IsTabSelected('default')]\"\n"
+            f"{ind}\tdatamodel = \"[DataModelRepeatedItem(Select_int32(Building.IsBuildingType('{CENTER_BUILDING}'), '(int32)1', '(int32)0'))]\"\n"
+            f'{ind}\titem = {{\n'
+            f'{i}flowcontainer = {{\n{i}\tdirection = vertical\n{i}\tusing = default_list_position\n'
+            f'{i}\tusing = default_content_fade\n{i}\tmargin_top = 5\n{i}\tmargin_bottom = 10\n{i}\tspacing = 5\n\n'
+            # the top block: icon, orders, levels
+            f'{i}\ttop_illu = {{\n{i}\t\tblockoverride "illu" {{\n{i}\t\t\ttexture = "[Building.GetBuildingType.GetBackground]"\n'
+            f'{i}\t\t\tfittype = centercrop\n{i}\t\t\talpha = 0.5\n{i}\t\t}}\n'
+            f'{i}\t\tminimumsize = {{ @panel_width_plus_14 -1 }}\n'
+            f'{i}\t\tflowcontainer = {{\n{i}\t\t\tresizeparent = yes\n{i}\t\t\tparentanchor = hcenter\n'
+            f'{i}\t\t\tmargin_top = 15\n{i}\t\t\tmargin_bottom = 15\n{i}\t\t\tminimumsize = {{ 540 147 }}\n{i}\t\t\tspacing = 20\n'
+            f'{i}\t\t\ticon = {{\n{i}\t\t\t\tsize = {{ 115 115 }}\n{i}\t\t\t\ttexture = "[Building.GetIcon]"\n{i}\t\t\t}}\n'
+            f'{i}\t\t\tflowcontainer = {{\n{i}\t\t\t\tdirection = vertical\n{i}\t\t\t\tparentanchor = vcenter\n{i}\t\t\t\tspacing = 10\n'
+            f'{i}\t\t\t\ttextbox = {{\n{i}\t\t\t\t\tautoresize = yes\n{i}\t\t\t\t\tusing = fontsize_large\n'
+            f'{i}\t\t\t\t\ttext = "PMR_CC_ORDERS"\n{i}\t\t\t\t}}\n'
+            f'{i}\t\t\t\ttextbox = {{\n{i}\t\t\t\t\tvisible = "[{some}]"\n{i}\t\t\t\t\tautoresize = yes\n'
+            f'{i}\t\t\t\t\tusing = fontsize_large\n{i}\t\t\t\t\ttext = "PMR_CC_LEVELS"\n{i}\t\t\t\t}}\n'
+            f'{i}\t\t\t}}\n{i}\t\t}}\n{i}\t}}\n\n'
+            # Funding
+            f'{i}\tflowcontainer = {{\n{i}\t\tvisible = "[{some}]"\n{i}\t\tdirection = vertical\n'
+            f'{i}\t\tparentanchor = hcenter\n{i}\t\tspacing = 5\n'
+            f'{i}\t\tdefault_header = {{\n{i}\t\t\tblockoverride "text" {{\n{i}\t\t\t\ttext = "PMR_CC_FUNDING"\n{i}\t\t\t}}\n{i}\t\t}}\n'
+            f'{i}\t\twidget = {{\n{i}\t\t\tsize = {{ 520 30 }}\n{i}\t\t\tparentanchor = hcenter\n'
+            + slice_bar(slices, ('100%', '100%'), 22, i + '\t\t\t', [(None, 'PMR_CC_FUNDING_TT')])
+            + f'{i}\t\t}}\n{i}\t}}\n\n'
+            # the Order Book
+            f'{i}\tdefault_header = {{\n{i}\t\tblockoverride "text" {{\n{i}\t\t\ttext = "PMR_CC_ORDER_BOOK"\n{i}\t\t}}\n{i}\t}}\n'
+            f'{i}\tempty_state = {{\n{i}\t\tblockoverride "visible" {{\n{i}\t\t\tvisible = "[Not({some})]"\n{i}\t\t}}\n'
+            f'{i}\t\tblockoverride "text" {{\n{i}\t\t\ttext = "NO_ORDERS"\n{i}\t\t}}\n{i}\t}}\n'
+            f'{i}\tflowcontainer = {{\n{i}\t\tdirection = vertical\n{i}\t\tparentanchor = hcenter\n{i}\t\tspacing = 0\n'
+            + ''.join(cc_row_gui(pr, b, vp, i + '\t\t') for pr, b, vp in cc_card_rows())
+            + f'{i}\t}}\n{i}}}\n'
+            f'{ind}\t}}\n{ind}}}\n')
+
+
+CC_OVERVIEW = ("\t\t\t\tbuilding_details_panel_overview_content = {\n"
+               "\t\t\t\t\tvisible = \"[InformationPanel.IsTabSelected('default')]\"\n"
+               "\t\t\t\t\tusing = default_content_fade\n\t\t\t\t}\n")
+
+
+def cc_card(text):
+    """CENTER, building_details_panel.gui: the Center's card in place of the Information tab's content for the Center
+    alone, so its price graph, level stepper and button row are never drawn"""
+    if text.count(CC_OVERVIEW) != 1:
+        raise SystemExit('building_details_panel.gui: the Information tab\'s content moved; update cc_card')
+    return text.replace(CC_OVERVIEW, CC_OVERVIEW.replace(
+        "visible = \"[InformationPanel.IsTabSelected('default')]\"",
+        f"visible = \"[And(InformationPanel.IsTabSelected('default'), Not(Building.IsBuildingType('{CENTER_BUILDING}')))]\"")
+        + '\n' + cc_card_gui('\t\t\t\t'))
+
+
+CC_QUEUE_GOTO = ('\t\t\tconstruction_queue_goto_building = {\n\t\t\t\tname = "constructed_building"\n'
+                 '\t\t\t\tdatacontext = "[ConstructionQueueElement.AccessBuilding]"\n'
+                 '\t\t\t\ttooltip = "GO_TO_BUTTON_BUILDING"\n\t\t\t}\n')
+CC_QUEUE_NAME = ('\t\t\t\t\ttextbox = {\n\t\t\t\t\t\tautoresize = yes\n\t\t\t\t\t\talign = left|nobaseline\n'
+                 '\t\t\t\t\t\tparentanchor = vcenter\n\t\t\t\t\t\tmax_width = 200\n\t\t\t\t\t\telide = right\n'
+                 '\t\t\t\t\t\tfontsize_min = 14\n\t\t\t\t\t\ttext = "CONSTRUCTION_QUEUE_BUILDING_IN_STATE"\n\t\t\t\t\t}\n')
+
+
+def cc_queue_row(text):
+    """CENTER, construction_queue.gui (both queue lists draw construction_queue_item): on a size site's row, the
+    building its level is for (pmr_for_<site>, while one order stands on that site), else the state's Center; then the
+    size logo, which opens the Center; the name 10 px narrower (TIER-SITES-ROW.md)"""
+    site = 'GetVariableSystem.Exists(Building.GetBuildingType.GetKey)'   # the HUD marks every site type
+    var = "Building.GetState.MakeScope.Var(Concatenate('pmr_for_', Building.GetBuildingType.GetKey))"
+    center = f"Building.GetState.GetBuilding('{CENTER_BUILDING}')"
+    if text.count(CC_QUEUE_GOTO) != 1 or text.count(CC_QUEUE_NAME) != 1:
+        raise SystemExit('construction_queue.gui: the queue row\'s building button or name moved; update cc_queue_row')
+    i = '\t\t\t'
+    first = (f'{i}# PMR: a size site\'s row: the building the level is for, else the Construction Center\n'
+             f'{i}widget = {{\n{i}\tvisible = "[{site}]"\n{i}\tsize = {{ 35 35 }}\n'
+             f'{i}\tconstruction_queue_goto_building = {{\n{i}\t\tvisible = "[{var}.IsSet]"\n'
+             f'{i}\t\tdatacontext = "[Building.GetState.GetBuilding({var}.GetBuildingType.GetKey)]"\n'
+             f'{i}\t\ttooltipwidget = {{\n{i}\t\t\tFancyTooltip_Building = {{}}\n{i}\t\t}}\n{i}\t}}\n'
+             f'{i}\tconstruction_queue_goto_building = {{\n{i}\t\tvisible = "[Not({var}.IsSet)]"\n'
+             f'{i}\t\tdatacontext = "[{center}]"\n'
+             f'{i}\t\ttooltipwidget = {{\n{i}\t\t\tFancyTooltip_Building = {{}}\n{i}\t\t}}\n{i}\t}}\n{i}}}\n')
+    vanilla = CC_QUEUE_GOTO.replace('\t\t\t\tname = "constructed_building"\n',
+                                    f'\t\t\t\tname = "constructed_building"\n\t\t\t\tvisible = "[Not({site})]"  # PMR\n')
+    twin = (f'{i}# PMR: a size site\'s own icon (its numeral); opens the Construction Center, not the hidden site\n'
+            f'{i}button = {{\n{i}\tvisible = "[{site}]"\n{i}\tsize = {{ 35 35 }}\n{i}\ttexture = "[Building.GetIcon]"\n'
+            f'{i}\tusing = tooltip_above\n{i}\ttooltip = "PMR_CC_SIZE_TT"\n'
+            f'{i}\tonclick = "[InformationPanelBar.OpenBuildingDetailsPanel({center}.AccessSelf)]"\n{i}}}\n')
+    text = text.replace(CC_QUEUE_GOTO, first + vanilla + twin)
+    narrow = CC_QUEUE_NAME.replace('\t\t\t\t\t\tautoresize = yes\n', f'\t\t\t\t\t\tvisible = "[{site}]"  # PMR\n\t\t\t\t\t\tautoresize = yes\n', 1)
+    narrow = narrow.replace('max_width = 200', 'max_width = 190')
+    wide = CC_QUEUE_NAME.replace('\t\t\t\t\t\tautoresize = yes\n', f'\t\t\t\t\t\tvisible = "[Not({site})]"  # PMR\n\t\t\t\t\t\tautoresize = yes\n', 1)
+    flow = '\t\t\t\tflowcontainer = {\n\t\t\t\t\tposition = { 8 0 }\n\t\t\t\t\tparentanchor = vcenter\n\t\t\t\t\tspacing = 8\n'
+    if text.count(flow) != 1:
+        raise SystemExit('construction_queue.gui: the queue row\'s name box moved; update cc_queue_row')
+    text = text.replace(flow, flow + '\t\t\t\t\tignoreinvisible = yes  # PMR: one of two names\n')
+    return text.replace(CC_QUEUE_NAME, wide + narrow)
+
+
+def cc_card_loc():
+    """CENTER: the card's and the queue row's text (English until finalization)"""
+    sv = lambda n, f='0': f"[Building.GetState.MakeScope.ScriptValue('{n}')|{f}]"   # noqa: E731
+    loc = [' PMR_CC_ORDERS:0 "#v ' + sv('pmr_cc_orders') + '#! Orders"',
+           ' PMR_CC_LEVELS:0 "#v ' + sv('pmr_cc_ldone') + '#! / #v ' + sv('pmr_cc_lord') + '#! Levels"',
+           ' PMR_CC_FUNDING:0 "Funding"', ' PMR_CC_ORDER_BOOK:0 "Order Book"',
+           ' PMR_CC_GOV:0 "Government"', ' PMR_CC_INV:0 "Investors"',
+           ' PMR_CC_SIZE_TT:0 "#header [Building.GetNameNoFormatting]#!"']
+    rows = ''.join(zrow(loc, f'PMR_CC_FUNDING_{f}', f'@construction! #v {sv("pmr_cc_f_" + f, "D")}#! ${lk}$',
+                        f"GreaterThan_CFixedPoint(Building.GetState.MakeScope.ScriptValue('pmr_cc_f_{f}'), '(CFixedPoint)0')")
+                   for f, _c, lk in CC_FUNDING)
+    loc.append(f' PMR_CC_FUNDING_TT:0 "#header $PMR_CC_FUNDING$#!{TT_DELIM}{rows}"')
+    for key, name in CC_JOB_NAMES.items():
+        loc.append(f' PMR_CC_JOB_{CC_TIER_FILES[key]}:0 "{name}"')
+    for pr, b, vp in cc_card_rows():
+        S, u = CC_JOB[b, vp]
+        who = 'PMR_CC_GOV' if pr[1] in ('gov', 'gova') else 'PMR_CC_INV'
+        loc.append(f' PMR_CC_ROW_{b}_{vp}_{pr[0]}:0 "#header $PMR_CC_JOB_{CC_TIER_FILES[cc_job_key(b, vp)]}$#!{TT_DELIM}'
+                   f'\\n${CC_BK[b]}$\\n@construction! #v {fmt(S * u)}#! a level\\n${who}$"')
+    return loc
+
+
 def retool_buildings(b, bk, icon, vp='retool'):
     out = []
     rt = RAILS_TYPES.get(bk)
@@ -4783,7 +5762,7 @@ def retool_triggers(b, bk, vp='retool'):
     pre = '' if vp == 'retool' else f'{vp}_'   # RAILS: a project's caps and values are named pmr_<vp>_...
     rbg, rbga = gov_site(b, vp), gov_site(b, vp, True)
     cap = f'pmr_{pre}cap_gov_{b}'
-    out = [
+    out = [] if CENTER else [   # CENTER: the rooms are the shared sizes' (cc_buildings); the investors stay the building's
         f'pmr_{vp}_room_gova_{b} = {{\n'
         f'\thas_variable = pmr_abroad_{b}\n'
         f'\thas_variable = {cap}\n'
@@ -4804,7 +5783,7 @@ def retool_triggers(b, bk, vp='retool'):
         f'\ttrigger_else = {{ var:{cap} >= scope:num_levels }}\n'
         '}\n']
     # A private retool building takes levels up to the cap the tick gives it (pmr_cap_priv<j>_<b>).
-    for j, rbx in enumerate(priv_slots(b, vp), 1):
+    for j, rbx in ([] if CENTER else enumerate(priv_slots(b, vp), 1)):
         cap = f'pmr_{pre}cap_priv{j}_{b}'
         plain = (f'\thas_variable = {cap}\n'
                  '\ttrigger_if = {\n'
@@ -4890,12 +5869,15 @@ def gov_retool_all_sgui(buildings):
     count = ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ {open_(bk)} NOT = {{ has_variable = pmr_abroad_{short(bk)} }} '
                     f'has_variable = pmr_room_gov_{short(bk)} }}\n'
                     f'\t\t\t\troot = {{ change_variable = {{ name = pmr_gall_l add = '
-                    + (f'scope:pmr_st.var:pmr_room_gov_{short(bk)} ' if not FOLD_SITES else   # FOLD_SITES: in building levels
+                    + (f'{{ value = scope:pmr_st.var:pmr_room_gov_{short(bk)} divide = {lpl(short(bk), "retool")} }} ' if CENTER else
+                       f'scope:pmr_st.var:pmr_room_gov_{short(bk)} ' if not FOLD_SITES else   # FOLD_SITES: in building levels
                        f'{{ value = scope:pmr_st.var:pmr_room_gov_{short(bk)} divide = pmr_retool_levels_per_level }} ')
                     + '} '
                     'change_variable = { name = pmr_gall_b add = 1 } '
                     f'change_variable = {{ name = pmr_gall_c add = {{ value = scope:pmr_st.var:pmr_room_gov_{short(bk)} '
-                    f'multiply = pmr_retool_cost_{short(bk)} }} }} }}\n\t\t\t}}\n' for bk in buildings)
+                    + (f'multiply = {fmt(CC_JOB[short(bk), "retool"][0])} ' if CENTER else   # CENTER: units x the size
+                       f'multiply = pmr_retool_cost_{short(bk)} ')
+                    + '} } }\n\t\t\t}\n' for bk in buildings)
     # RAILS: and each project's government room, at its own cost
     count += ''.join(f'\t\t\tif = {{\n\t\t\t\tlimit = {{ has_variable = pmr_{vp}_open_gov_{short(bk)} b:{bk} ?= {{ level >= 1 }} '
                      f'NOT = {{ has_variable = pmr_abroad_{short(bk)} }} has_variable = pmr_{vp}_room_gov_{short(bk)} }}\n'
@@ -5067,6 +6049,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
     o = [f'# ===== {bk}: ' + ', '.join(f'{i} = {r.key}' for i, r in enumerate(recipes, 1)) + '\n'
          '# State scope throughout; the building is b:' + bk + '.\n\n']
     rt = RAILS_TYPES.get(bk)   # RAILS: its step tallies and projects (rails_effects), ahead of everything that calls them
+    if CENTER:   # each job's report to the Construction Center, ahead of the splits and closes that call it
+        o.append(''.join(cc_post(b, vp) for vp in ['retool'] + list(rt.kinds if rt else {})))
     if rt:
         o.append(rails_effects(bk, b, rt, goods_cost or {}))
 
@@ -5227,6 +6211,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + '\t}\n}\n\n')
 
     def read_side(rbx, side):
+        if CENTER:   # the units the Center credited (done) and, the player's government's, ordered
+            return cc_read(b, 'retool', side, v('pmr_retool_built_' + side), v('pmr_retool_q_' + side))
         return (f'\t{setv("pmr_retool_built_" + side, 0)}\n'
                 f'\t{setv("pmr_retool_q_" + side, 0)}\n'
                 f'\tif = {{\n\t\tlimit = {{ {holds(b, "retool")}OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
@@ -5271,6 +6257,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         # the abroad site's levels are also in the government side's totals
         merged = (f'\t\t{chg("pmr_retool_built_gov", "subtract", "var:" + built)}\n'
                   f'\t\t{chg("pmr_retool_q_gov", "subtract", "var:" + v("pmr_retool_q_gova"))}\n' if side == 'gova' else '')
+        if CENTER:   # no site of its own: the credited units start again from 0 (cc_release)
+            return cc_release(b, 'retool', side, v('pmr_retool_built_' + side), v('pmr_retool_q_' + side), v(seen), merged)
         return (f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_retool_built_" + side)} > 0 '
                 f'var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} {keep}'
                 f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }}\n'
@@ -5323,11 +6311,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                 f'\t{chg(conv, "subtract", "var:" + v(seen))}\n'
                 f'\tif = {{ limit = {{ var:{v(conv)} < 0 }} {setv(conv, 0)} }}\n'
                 + (f'\t{setv(seen, "var:" + v(built))}\n'
-                   f'\t{chg(conv, "divide", "pmr_retool_levels_per_level")}\n' if not FOLD_SITES else
+                   f'\t{chg(conv, "divide", "pmr_retool_levels_per_level")}\n' if not (FOLD_SITES or CENTER) else
                    # FOLD_SITES: whole retool levels only; a site level short of one stays uncounted (seen), and a
-                   # release that removes it carries it as a negative seen to the next site
-                   f'\tset_variable = {{ name = {v(conv)} value = {{ value = var:{v(conv)} divide = pmr_retool_levels_per_level floor = yes }} }}\n'
-                   f'\tchange_variable = {{ name = {v(seen)} add = {{ value = var:{v(conv)} multiply = pmr_retool_levels_per_level }} }}\n'))
+                   # release that removes it carries it as a negative seen to the next site. CENTER: the same in units.
+                   f'\tset_variable = {{ name = {v(conv)} value = {{ value = var:{v(conv)} divide = {lpl(b, "retool")} floor = yes }} }}\n'
+                   f'\tchange_variable = {{ name = {v(seen)} add = {{ value = var:{v(conv)} multiply = {lpl(b, "retool")} }} }}\n'))
 
     # Completed retool levels not yet counted move levels onto the target, oldest recipe first: a
     # government retool level moves one of the government's own levels (pmr_lvg_*), a private one a
@@ -5344,7 +6332,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                 + ''.join('\t' + x for x in ''.join(convert(conv, i, gov) for i in range(1, k + 1)).splitlines(True))
                 + '\t}\n')
     o.append(f'pmr_count_retool_{b} = {{\n\tpmr_read_retool_{b} = yes\n'
-             + (''.join(crew(j, rbx) for j, rbx in slots) if RETOOL_CREW else '')
+             + (''.join(crew(j, rbx) for j, rbx in slots) if RETOOL_CREW and not CENTER else '')
              + count('gov') + count('priv') + '}\n\n')
     o.append(f'pmr_progress_{b} = {{\n'
              + f'\t{setv("pmr_gain", 0)}\n\t{setv("pmr_ggain", 0)}\n'
@@ -5357,7 +6345,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                                             f'change_variable = {{ name = {lvg(i)} add = var:{v("pmr_ggain")} }}')
              + '}\n\n')
     o.append(f'pmr_release_retool_{b} = {{\n'
-             + ''.join(release(rbx, f'priv{j}', keep_crew(j) if RETOOL_CREW else '') for j, rbx in slots)
+             + ''.join(release(rbx, f'priv{j}', keep_crew(j) if RETOOL_CREW and not CENTER else '') for j, rbx in slots)
              + release(rbg, 'gov')
              # the abroad site stands while the player's government still has room (pmr_split_retool_<b>)
              + release(rbga, 'gova', f'NOT = {{ AND = {{ has_variable = pmr_abroad_{b} has_variable = pmr_retool_open_gov_{b} }} }} ')
@@ -5373,7 +6361,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + f'\t{setv("pmr_need", "var:" + v("pmr_level"))}\n'
              f'\t{chg("pmr_need", "subtract", "var:" + v("pmr_lv_to"))}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_need")} < 0 }} {setv("pmr_need", 0)} }}\n'
-             f'\t{chg("pmr_need", "multiply", "pmr_retool_levels_per_level")}\n'
+             f'\t{chg("pmr_need", "multiply", lpl(b, "retool"))}\n'
              f'\t{setv("pmr_p", "var:" + v("pmr_lv_to"))}\n'
              f'\t{chg("pmr_p", "divide", "var:" + v("pmr_level"))}\n'
              + ''.join(f'\t{setv(f"pmr_sh_{i}", "var:" + lv(i))}\n'
@@ -5404,6 +6392,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
         return (f'\tif = {{ limit = {{ var:{v(name)} > var:{v(other)} }} '
                 f'{setv(name, "var:" + v(other))} }}\n')
     o.append(f'pmr_split_retool_{b} = {{\n'
+             + (cc_adjust(b, 'retool') if CENTER else '') +
              '\t# The government retools its own levels not yet on the target (pmr_sync_gov_<b>), the\n'
              '\t# private owners the rest.\n'
              + f'\t{setv("pmr_gov_on_to", 0)}\n'
@@ -5411,7 +6400,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + f'\t{setv("pmr_retool_gov", "var:" + v("pmr_gov_levels"))}\n'
              f'\t{chg("pmr_retool_gov", "subtract", "var:" + v("pmr_gov_on_to"))}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_retool_gov")} < 0 }} {setv("pmr_retool_gov", 0)} }}\n'
-             f'\t{chg("pmr_retool_gov", "multiply", "pmr_retool_levels_per_level")}\n'
+             f'\t{chg("pmr_retool_gov", "multiply", lpl(b, "retool"))}\n'
              + clamp_to("pmr_retool_gov", "pmr_need") +
              f'\t{setv("pmr_retool_priv", "var:" + v("pmr_need"))}\n'
              f'\t{chg("pmr_retool_priv", "subtract", "var:" + v("pmr_retool_gov"))}\n'
@@ -5441,7 +6430,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_abroad_{b} }}\n'
              f'\t\t{setv("pmr_gm_room", "var:" + v("pmr_gov_mine"))}\n'
              f'\t\t{chg("pmr_gm_room", "subtract", "var:" + v("pmr_gov_on_to"))}\n'
-             f'\t\t{chg("pmr_gm_room", "multiply", "pmr_retool_levels_per_level")}\n'
+             f'\t\t{chg("pmr_gm_room", "multiply", lpl(b, "retool"))}\n'
              f'\t\t{chg("pmr_gm_room", "subtract", "var:" + v("pmr_pending_gov"))}\n'
              f'\t\tif = {{ limit = {{ var:{v("pmr_gm_room")} < 0 }} {setv("pmr_gm_room", 0)} }}\n'
              f'\t\tif = {{ limit = {{ var:{v("pmr_room_gov")} > var:{v("pmr_gm_room")} }} {setv("pmr_room_gov", "var:" + v("pmr_gm_room"))} }}\n'
@@ -5452,6 +6441,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              f'\tif = {{ limit = {{ has_variable = pmr_rq_{b} }} remove_variable = pmr_rq_{b} }}\n'
              f'\tif = {{ limit = {{ var:{v("pmr_room_gov")} > 0 }} set_variable = pmr_retool_open_gov_{b} }}\n'
              f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_gov_{b} }} remove_variable = pmr_retool_open_gov_{b} }}\n'
+             + ('' if CENTER else   # CENTER: the size's standing site abroad is the Center's (cc_upkeep)
              '\t# Abroad no script effect queues a construction for the player\'s government: the upgrade button\n'
              '\t# expands a site that stands (Building.QueueConstruction). So while its government has room the\n'
              '\t# tick keeps one, a level owned by the player\'s government that counts as used (pmr_seen_gov).\n'
@@ -5462,7 +6452,7 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n'
              f'\t\tif = {{ limit = {{ NOT = {{ has_variable = {v("pmr_seen_gov")} }} }} {setv("pmr_seen_gov", 0)} }}\n'
              f'\t\t{chg("pmr_seen_gov", "add", 1)}\n'
-             f'\t\t{chg("pmr_cap_gov", "add", 1)}\n\t}}\n'
+             f'\t\t{chg("pmr_cap_gov", "add", 1)}\n\t}}\n')
              + ('\t# Private: the retool building takes the whole room (RETOOL_STACK), so investors may queue\n'
                 '\t# several levels on it at once. Its cap (pmr_cap_priv<j>_<b>) is what it has plus the room.\n'
                 if RETOOL_STACK else
@@ -5493,7 +6483,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                        + f'\telse_if = {{ limit = {{ has_variable = pmr_retool_open_priv_{b}_{j} }} remove_variable = pmr_retool_open_priv_{b}_{j} }}\n'
                        for j, _ in slots)
              + site_claim(b, 'retool', v('pmr_room'), v('pmr_pending'), f'pmr_read_retool_{b}',
-                          [(v('pmr_seen_gov'), v('pmr_retool_built_gov')), (v('pmr_seen_priv'), v('pmr_retool_built_priv'))]) +
+                          [(v('pmr_seen_gov'), v('pmr_retool_built_gov')), (v('pmr_seen_priv'), v('pmr_retool_built_priv'))])
+             + (f'\tpmr_cc_post_retool_{b} = yes   # CENTER: the rooms to the size\'s figures\n' if CENTER else '') +
              '}\n\n')
 
     # Nothing left to retool. A retool building with levels still queued is never removed: that
@@ -5504,9 +6495,11 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + ''.join(f'\tif = {{ limit = {{ has_variable = {fl} }} remove_variable = {fl} }}\n' for fl in flags)
              + f'\t{setv("pmr_room_priv", 0)}\n\t{setv("pmr_room_gov", 0)}\n'
              f'\t{setv("pmr_cap_gov", "var:" + v("pmr_retool_q_gov"))}\n'
-             + ''.join(f'\tif = {{ limit = {{ {holds(b, "retool")}var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} '
-                       f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }} remove_building = {rbx} }}\n'
-                       for rbx, side in [(rbx, f'priv{j}') for j, rbx in slots] + [(rbg, 'gov'), (rbga, 'gova')])
+             + (cc_close(b, 'retool')
+                if CENTER else
+                ''.join(f'\tif = {{ limit = {{ {holds(b, "retool")}var:{v("pmr_retool_q_" + side)} <= var:{v("pmr_retool_built_" + side)} '
+                        f'OR = {{ has_building = {rbx} exists = b:{rbx} }} }} remove_building = {rbx} }}\n'
+                        for rbx, side in [(rbx, f'priv{j}') for j, rbx in slots] + [(rbg, 'gov'), (rbga, 'gova')]))
              + f'\tif = {{\n\t\tlimit = {{ var:{v("pmr_pending")} <= 0 }}\n'
              f'\t\t{setv("pmr_seen_gov", 0)}\n\t\t{setv("pmr_seen_priv", 0)}\n'
              + (f'\t\tif = {{ limit = {{ {holds(b, "retool")}}} remove_variable = pmr_sk_{b} }}\n' if FOLD_SITES else '')
@@ -5949,6 +6942,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
                            f'\t\t\t\tstart_building_construction = {gov_site(b, vp)}\n'
                            f'\t\t\t\tchange_variable = {{ name = pmr_q_{b} subtract = 1 }}\n\t\t\t}}\n'
                            f'\t\t\tremove_variable = pmr_q_{b}\n\t\t}}\n' for vp in rt.kinds))
+    if CENTER:   # each job's room onto its order, every unit queued on its size's government site (cc_push)
+        queue = cc_push(bk, b, rt)
     o.append(f'pmr_queue_gov_{b} = {{\n'
              f'\tif = {{\n\t\tlimit = {{ {gov_open(bk)} {here} }}\n' + queue
              + f'\t\tpmr_tick_{b} = yes\n\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n\t}}\n}}\n\n')
@@ -7032,7 +8027,12 @@ def every_other(effect, t, monthly=''):
 def pulse_state_effect():
     """pmr_on_monthly_pulse_state's effect, as written (checked by --script-profile)"""
     return (state_turn() + '\t\tpmr_auto_best = yes\n\t\tpmr_principle_bonus = yes\n\t\tpmr_probe_state = yes\n'
-            '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n')
+            '\t\tpmr_urb_check = yes   # the state Buildings tab\'s own list\n' + CC_STATE_LINE())
+
+
+def CC_STATE_LINE():
+    """CENTER: the Construction Center's monthly upkeep in pmr_on_monthly_pulse_state"""
+    return '\t\tpmr_cc_upkeep = yes   # CENTER: hand-out catch-up, cancels, crews, removals\n' if CENTER else ''
 PULSE_STATE_HOOK = 'on_monthly_pulse_state = { on_actions = { pmr_on_monthly_pulse_state } }\n'
 
 
@@ -7228,7 +8228,7 @@ def dispatch_effects(buildings):
                  '\t\t}\n\t}\n')
     o.append('}\n\n')
     # perf review S-2: a site searches only its own group's 45 types, any other building leaves after the group checks
-    for bk in buildings:
+    for bk in ([] if CENTER else buildings):   # CENTER: the size sites hand their levels out (cc_parent_dispatch)
         b = short(bk)
         mine = f"OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} }}"
         kinds = list(RAILS_TYPES[bk].kinds) if bk in RAILS_TYPES else []
@@ -7249,9 +8249,10 @@ def dispatch_effects(buildings):
              'bg_pmr_retool_abroad': lambda b: [priv_slots(b)[ABROAD_SLOT - 1]],
              'bg_pmr_retool_gov': lambda b: [f'building_pmr_retool_gov_{b}'],
              'bg_pmr_retool_gov_abroad': lambda b: [f'building_pmr_retool_gova_{b}']}
-    o.append('# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n'
+    o.append(cc_parent_dispatch() if CENTER else
+             '# Building scope, for a retool pseudo-building that just completed a level: tick its parent.\n'
              'pmr_tick_parent_of_retool = {\n')
-    for g, (grp, types) in enumerate(sites.items()):
+    for g, (grp, types) in enumerate([] if CENTER else sites.items()):
         o.append(f'\t{"if" if g == 0 else "else_if"} = {{\n\t\tlimit = {{ is_building_group = {grp} }}\n')
         for i, bk in enumerate(buildings):
             b = short(bk)
@@ -7274,6 +8275,10 @@ def dispatch_effects(buildings):
     # as it removes pmr_mix_<b>.
     for bk in tick_order(buildings):
         o.append(state_tick_type(bk))
+    if CENTER:   # the Construction Center wherever a PMR building stands at the start (PLAN 8.10)
+        o.append(f'\tif = {{\n\t\tlimit = {{ has_global_variable = pmr_setup NOT = {{ has_building = {CENTER_BUILDING} }} OR = {{\n'
+                 + ''.join(f'\t\t\thas_variable = pmr_mix_{short(bk)}\n' for bk in buildings)
+                 + '\t\t} }\n\t\tpmr_cc_center = yes\n\t}\n')
     o.append('\tremove_variable = pmr_bulk\n}\n\n'
              '# State scope (on_acquired_technology): tick only the buildings whose best recipe the research\n'
              '# changed, and any not seen yet. The rest wait for the month; until then a newly unlocked\n'
@@ -8252,7 +9257,7 @@ URB_ON = ("And(GreaterThan_CFixedPoint(State.MakeScope.Var('pmr_urb_on').GetValu
 URB_END = "GreaterThan_CFixedPoint(Scope.Var('pmr_urb_on').GetValue, '(CFixedPoint)0')"
 
 
-def urban_types(game, report):
+def urban_types(game, report, extra=()):
     """The building types the tab lists as urban (State.AccessUrbanBuildings, exe filter 0x141a8c560): category urban up
     the group chain, no land_usage = urban and no is_subsistence on it, and buildable, expandable or downsizeable unless
     a company or regional headquarters. In the tab's order among equal levels (comparator 0x141a53120): the group's
@@ -8291,6 +9296,7 @@ def urban_types(game, report):
         if fixed and g not in URBAN_HQ_GROUPS:
             continue
         out.append((loc.get(g, g).lower(), loc.get(bk, bk).lower(), bk, g))
+    out += [(name.lower(), name.lower(), bk, g) for bk, g, name in extra]   # PMR's own (CENTER), named in English
     if not out:
         raise SystemExit('urban_types: no urban building types found; the building groups moved')
     return [(bk, g) for _g, _n, bk, g in sorted(out)]
@@ -8657,7 +9663,7 @@ def gov_button(b, size, ind, place='', tip='tooltip_ne', icon='80%'):
     tick = f"GetScriptedGui('pmr_gov_retool_tick_{b}_sgui')"
     scope = 'GuiScope.SetRoot(Building.GetState.MakeScope).End'
     abroad = f"GreaterThan_CFixedPoint({state_var(b, 'pmr_abroad')}, '(CFixedPoint)0')"
-    site = f"Building.GetState.GetBuilding('building_pmr_retool_gova_{b}')"
+    site = f"Building.GetState.GetBuilding('{cc_site(CC_JOB[b, 'retool'][0], 'gova') if CENTER else 'building_pmr_retool_gova_' + b}')"
     room = state_var(b, 'pmr_room_gov')
 
     pending = state_var(b, 'pmr_pending_gov')
@@ -10451,9 +11457,15 @@ SITE_COUNTS = ('pmr_need', 'pmr_room_gov', 'pmr_room_priv', 'pmr_pending_gov', '
                'pmr_c_room_gov')   # the retool twin's counts in site levels (pmr_retool_levels_per_level a level)
 
 
-def site_levels(name, expr):
-    """FOLD_SITES: a retool count shown in building levels: its site levels / pmr_retool_levels_per_level"""
-    if not FOLD_SITES or name not in SITE_COUNTS:
+def site_levels(name, expr, b=None):
+    """FOLD_SITES: a retool count shown in building levels: its site levels / pmr_retool_levels_per_level. CENTER: its
+    units / the units a level of b's retool"""
+    if name not in SITE_COUNTS:
+        return expr
+    if CENTER:
+        u = CC_JOB[b, 'retool'][1]
+        return expr if u == 1 else f"Multiply_CFixedPoint({expr}, '(CFixedPoint){fmt(1 / u)}')"
+    if not FOLD_SITES:
         return expr
     return f"Multiply_CFixedPoint({expr}, '(CFixedPoint){fmt(PROJECT_SHARE / RETOOL_SHARE)}')"
 
@@ -10474,7 +11486,7 @@ def panel_loc(recipe_keys):
         b = short(bk)
 
         def ex(name):
-            return site_levels(name, f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue")
+            return site_levels(name, f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue", b)
 
         def var(name, f):
             return f"[{ex(name)}|{f}]"
@@ -10542,7 +11554,7 @@ def panel_loc(recipe_keys):
         ]
 
         def cex(name):
-            return site_levels(name, f"GetPlayer.MakeScope.Var('{name}_{b}').GetValue")
+            return site_levels(name, f"GetPlayer.MakeScope.Var('{name}_{b}').GetValue", b)
 
         def cvar(name, f):
             return f"[{cex(name)}|{f}]"
@@ -10571,7 +11583,7 @@ def option_loc(opt_ui):
         b = short(bk)
 
         def ex(name):
-            return site_levels(name, f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue")
+            return site_levels(name, f"Building.GetState.MakeScope.Var('{name}_{b}').GetValue", b)
 
         def var(name, f='0'):
             return f"[{ex(name)}|{f}]"
@@ -11093,7 +12105,7 @@ STATE_TURN		pmr_auto_best = yes
 		pmr_principle_bonus = yes
 		pmr_probe_state = yes
 		pmr_urb_check = yes   # the state Buildings tab's own list
-	}
+CC_STATE	}
 }
 
 # Root = country. The player's totals for the Buildings tab rows, once the month's state ticks are in
@@ -11103,7 +12115,7 @@ pmr_on_monthly_pulse_country = {
 	effect = {
 		pmr_c_sum_all = yes
 SKIP_REPORT
-	}
+CC_COUNTRY	}
 }
 '''
 
