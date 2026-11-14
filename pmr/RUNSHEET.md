@@ -29,11 +29,11 @@ logs as before. The PC backup now collects PMR lines every 3 minutes, so the lar
 
 | # | Check | Pass | Null means |
 | --- | --- | --- | --- |
-| E1 | Observer game, `PMR;rec=OBS` lines in a month | One per country, about 200-290 | About 8: an older pmr_on_actions.txt is installed |
+| E1 | Observer game, `PMR;rec=OBS` lines in a month | One per country holding a state, about 200-360 (OBS has no filter for decentralized countries; ARMY has) | About 8: an older pmr_on_actions.txt is installed |
 | E2 | `PMR;rec=OBSPM` lines | One per country in each country's first month, then once a year | Monthly, or 8 a month: an older pmr_obs_effects.txt |
 | E3 | `PMR;rec=SWITCH_START` / `DEFAULT` lines | From many countries | One country only: pmr_logged still names the largest economy |
-| E4 | `pmr_dev_files\runs\push.log` | `watching for victoria3 (collect 3 min, push 10 min)` after the backup task restarts, then `run_logs=1` once (q120-1's logs to the VPS) | Old wording: the old watcher still runs; re-run `register_task.ps1` |
-| E5 | Pace against q120-1 from Aug 1842 | Within A3's allowance plus the logging's (the perf review prices it) | Slower: send to the perf review |
+| E4 | `pmr_dev_files\runs\push.log` | `watching for victoria3 (collect 1 min, push 10 min)` after the backup task restarts, then `run_logs=1` once (q120-1's logs to the VPS) | Old wording: the old watcher still runs; re-run `register_task.ps1` |
+| E5 | Pace against q120-1 from Aug 1842 | Within A3's allowance plus the logging's (perf review-20, section 8) | Slower: send to the perf review |
 | V4 | Construction tab, top | Pool line and `N Previous Investments` above `Construction Queue`, the next private construction under them, as vanilla | No block: an older construction_queue.gui is installed |
 | V5 | Hover the pool figure on the Construction tab | Vanilla's tooltip with the graph, plus PMR's `Expansion` and `Research Grants` lines while a grant runs | No PMR lines: the `replace` loc did not load |
 | V6 | Investments tab, top | `Investment Pool`, the pool line, then the two charts; no sentence under the line | The next-construction text is still there: an older pmr_private_investment.gui is installed |
