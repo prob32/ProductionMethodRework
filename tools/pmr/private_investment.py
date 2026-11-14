@@ -1491,19 +1491,12 @@ def patch_panel(text):
 
 
 def patch_queue(text):
-    """construction_queue.gui: the Construction tab's queue, as vanilla's but for the investment pool block, which
-    lives on the Investments tab (pmr_private_investment.gui). The Filters section, its Government / Private funding
-    choice and the two lists it switches between stay vanilla's (Pat 2026-11-14 04:07Z: "reference how it works with
-    the either or filters and move it back to that default")."""
+    """construction_queue.gui: the Construction tab's queue, vanilla's whole (Pat 2026-11-14 04:07Z: "reference how it
+    works with the either or filters and move it back to that default"; 04:24Z, Q123-REVIEW R1: the investment pool
+    block too). The checks stop the build if vanilla moves the parts PMR's own changes rely on."""
     where = QUEUE_GUI
-    # the investment pool block: the first child flowcontainer of construction_queue, ending before the header
-    a = text.find('\t\tflowcontainer = {\n\t\t\tparentanchor = hcenter\n\t\t\tdirection = vertical\n\n\t\t\tbackground = {\n\t\t\t\tusing = dark_area')
-    if a < 0 or 'CURRENT_INVESTMENT_POOL' not in text[a:block_end(text, text.index('{', a))]:
-        fail(where, 'the investment pool block moved')
-    e = block_end(text, text.index('{', a))
-    text = text[:a] + '\t\t# PMR: the investment pool moved to the Investments tab (pmr_private_investment.gui)\n' + text[e + 2:]
-    for key in ('CONSTRUCTION_QUEUE_FILTER_FUNDING_NATIONAL', 'CONSTRUCTION_QUEUE_FILTER_FUNDING_PRIVATE',
-                '# PRIVATE CONSTRUCTION QUEUE', '# GOVERNMENT CONSTRUCTION QUEUE'):
+    for key in ('CURRENT_INVESTMENT_POOL', 'NEXT_PRIVATE_CONSTRUCTION', 'CONSTRUCTION_QUEUE_FILTER_FUNDING_NATIONAL',
+                'CONSTRUCTION_QUEUE_FILTER_FUNDING_PRIVATE', '# PRIVATE CONSTRUCTION QUEUE', '# GOVERNMENT CONSTRUCTION QUEUE'):
         if key not in text:
             fail(where, f'vanilla no longer has {key}')
     return text
@@ -2196,7 +2189,7 @@ def private_tab():
         + policy_block() +
         '\ttype pmr_private_tab = flowcontainer {\n'
         '\t\tusing = default_list_position\n\t\tdirection = vertical\n\t\tminimumsize = { 540 -1 }\n\t\tmargin_bottom = 10\n\n'
-        # 1. the pool: the budget panel's own Investment Pool line (Pat 13:05Z), then the next private construction
+        # 1. the pool: the budget panel's own Investment Pool line (Pat 13:05Z)
         + header('PMR_PI_POOL_HEADER', i1) +
         f'{i1}widget = {{\n{i1}\tsize = {{ 540 60 }}\n{i1}\tparentanchor = hcenter\n{i1}\tbackground = {{\n{i1}\t\tusing = entry_bg\n{i1}\t}}\n'
         f'{i1}\ttextbox = {{\n{i1}\t\tusing = fontsize_large\n{i1}\t\tautoresize = yes\n{i1}\t\traw_text = "[concept_investment_pool]:"\n'
@@ -2205,10 +2198,7 @@ def private_tab():
         f'{i1}\t\traw_text = "#v @money![{COUNTRY}.GetInvestmentPool|D+]#! ([{COUNTRY}.GetInvestmentPoolChange|=+D])"\n'
         f'{i1}\t\tparentanchor = right|vcenter\n{i1}\t\talign = right|nobaseline\n{i1}\t\tmargin_right = 20\n'
         f'{i1}\t\tusing = investment_pool_tooltip_with_graph\n{i1}\t}}\n{i1}}}\n'
-        f'{i1}textbox = {{\n{i1}\tvisible = "[{COUNTRY}.ShowInvestmentPoolPredictedNextBuilding]"\n{i1}\tparentanchor = hcenter\n'
-        f'{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 10 10 }}\n'
-        f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = hcenter|nobaseline\n{i1}\ttext = "NEXT_PRIVATE_CONSTRUCTION"\n'
-        f'{i1}\tbackground = {{\n{i1}\t\tusing = dark_area\n{i1}\t}}\n{i1}}}\n'
+        # (the next private construction is on the Construction tab, above its queue: Q123-REVIEW R1, Pat 2026-11-14 04:24Z)
         # 2. the pool's weekly payout beside the pool (Pat 14:28Z, 2026-11-11), titled inside their frames like vanilla's
         + charts_row(i1) +
         # 3. contributors, as tree charts by group (Pat 13:05Z) and by owner (Pat 15:33Z)

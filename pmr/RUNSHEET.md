@@ -17,9 +17,11 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: observer lines for every country; "Research Grants" (q124, test mod)
+## Latest: vanilla's investment pool block back on the Construction tab; observer lines for every country (q124, test mod)
 
-Your note on 2026-11-14 04:15Z: "log for everyone". In an observer game every country now writes the monthly OBS line
+Your pick at 04:24Z ("Put it back, as vanilla"): the Construction tab is vanilla's whole again, the investment pool
+block on top included, and the Investments tab no longer repeats the next private construction. Your note on
+2026-11-14 04:15Z: "log for everyone". In an observer game every country now writes the monthly OBS line
 (GDP, standard of living, its building types and those losing money), once a year the OBSPM line (each row's
 methods), and its SWITCH_START, DEFAULT and FLOOR lines. Before, only the 8 largest economies wrote OBS and OBSPM, and
 only the largest wrote the rest. The pool tooltip's line reads "Research Grants" (interface review S1). A played game
@@ -32,6 +34,9 @@ logs as before. The PC backup now collects PMR lines every 3 minutes, so the lar
 | E3 | `PMR;rec=SWITCH_START` / `DEFAULT` lines | From many countries | One country only: pmr_logged still names the largest economy |
 | E4 | `pmr_dev_files\runs\push.log` | `watching for victoria3 (collect 3 min, push 10 min)` after the backup task restarts, then `run_logs=1` once (q120-1's logs to the VPS) | Old wording: the old watcher still runs; re-run `register_task.ps1` |
 | E5 | Pace against q120-1 from Aug 1842 | Within A3's allowance plus the logging's (the perf review prices it) | Slower: send to the perf review |
+| V4 | Construction tab, top | Pool line and `N Previous Investments` above `Construction Queue`, the next private construction under them, as vanilla | No block: an older construction_queue.gui is installed |
+| V5 | Hover the pool figure on the Construction tab | Vanilla's tooltip with the graph, plus PMR's `Expansion` and `Research Grants` lines while a grant runs | No PMR lines: the `replace` loc did not load |
+| V6 | Investments tab, top | `Investment Pool`, the pool line, then the two charts; no sentence under the line | The next-construction text is still there: an older pmr_private_investment.gui is installed |
 
 ## Earlier: the Construction tab's private construction is vanilla's again (q123, test mod)
 
