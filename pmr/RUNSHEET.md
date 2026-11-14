@@ -17,7 +17,24 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: your buildings and companies on the AI's rules (q126, test mod)
+## Latest: company boards count every year again (q127, test mod)
+
+Found in your q126 France game (1837-1840): the boards never counted again after their first count. Every BL_COUNT
+line for your companies carried the same figures for 26 months, and no BL_PRIVATE line came at all. The yearly count
+and the half-year hold on a company's industries were timers kept on the company, and the game never ends a timer kept
+there. AI companies have counted only once since performance review 6; q126 put your companies on the same rule.
+q127 keeps the months on the company as counters instead: every board counts once a year (monthly while a bylaw change
+is under way) and reads its industries' profit twice a year, for your companies and every AI company alike. No text
+changes. Everything from q126 stands. A save from before works: each company counts in the first month after loading.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| B1 | Any game, `PMR;rec=BL_PRIVATE` lines | About one a year for each country, from the first month on | None after the first month: the boards still don't count, an older pmr_cc_effects.txt is installed |
+| B2 | Played game, `PMR;rec=BL_COUNT` lines for your companies | The chair, shareholders and council figures change at least once in any 13 months; `profit=` is above 0 for a company that owns buildings with profit | The same figures for more than 13 months with no bylaw change under way: an older pmr_cc_effects.txt is installed |
+| B3 | Played game, the Bylaws section of one of your company windows, a year in | The seats' shares differ from the first month's | The same shares a year on: send a screenshot to the build thread |
+| B4 | `logs\error.log` | Names no `pmr_` key | A line there: send it to the build thread before reading anything else |
+
+## Earlier: your buildings and companies on the AI's rules (q126, test mod)
 
 Your pick on 2026-11-14 15:51Z ("Player on the AI's rules"): the last two places where your country ran on other rules
 than an AI country are gone. Your buildings now use the investment window and the solo gate like every AI building, so

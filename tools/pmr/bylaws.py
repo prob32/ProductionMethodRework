@@ -461,11 +461,13 @@ def effects(log_line):
                 + highest(list(PROFIT_STEPS), lambda x: f'var:{src} >= {x}',
                           lambda x: '' if x is None else f'set_variable = {{ name = {out} value = {PROFIT_STEPS.index(x) + 1} }}',
                           ind))
-    o.append('# Company scope: pmr_bl_wealth, held half a year (pmr_bl_wm), the player\'s companies too.\n'
+    # q127: a timed variable on a company (days = 182 here, 365 for the yearly count) never expired, so every board
+    # counted once and read its industries once; month counters kept on the parent instead (pmr_bl_mo, pmr_bl_wmo)
+    o.append('# Company scope, in pmr_bl_count (scope:pmr_bl_co the parent): pmr_bl_wealth when the parent\'s half year is\n'
+             '# up (pmr_bl_wnow) or it was never read, the player\'s companies too.\n'
              'pmr_bl_wealth_held = {\n'
-             '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_bl_wm } }\n'
+             '\tif = {\n\t\tlimit = { OR = { scope:pmr_bl_co = { has_variable = pmr_bl_wnow } NOT = { has_variable = pmr_bl_pl } } }\n'
              '\t\tpmr_bl_wealth = yes\n'
-             '\t\tset_variable = { name = pmr_bl_wm value = yes days = 182 }\n'
              '\t}\n}\n\n')
     o.append('# The board counts: each seat\'s votes (Pat 19:23Z: the chairmen a base and a vote for each PROFIT_STEPS step\n'
              '# their company\'s week\'s profit reaches, pmr_bl_wealth; the shareholders SH_SCALE x the private owners\' share of\n'
@@ -476,7 +478,10 @@ def effects(log_line):
              + ''.join(f'\tset_variable = {{ name = pmr_bl_{k}_{c} value = 0 }}\n' for k in SEATS for c in VOTED)
              + '\tset_variable = { name = pmr_bl_ns value = 0 }\n'
              '\t# the company\'s week\'s profit: its own levels at its industries\' profit per level\n'
-             # performance review 6, S-13: an AI company's industries are read twice a year (pmr_bl_wm), a player's at each count
+             # performance review 6, S-13: a company's industries are read twice a year (pmr_bl_wmo, months since)
+             '\tif = { limit = { NOT = { has_variable = pmr_bl_wmo } } set_variable = { name = pmr_bl_wmo value = 6 } }\n'
+             '\tif = {\n\t\tlimit = { var:pmr_bl_wmo >= 6 }\n\t\tset_variable = pmr_bl_wnow\n'
+             '\t\tset_variable = { name = pmr_bl_wmo value = 0 }\n\t}\n'
              '\tpmr_bl_wealth_held = yes\n'
              '\tset_variable = { name = pmr_bl_wl_x value = var:pmr_bl_cl }\n'
              '\tchange_variable = { name = pmr_bl_wl_x multiply = var:pmr_bl_pl }\n'
@@ -518,6 +523,7 @@ def effects(log_line):
              '\t\t\tpmr_bl_seat = { W = var:pmr_bl_w_b K = b }\n\t\t\tchange_variable = { name = pmr_bl_ns add = 1 }\n\t\t}\n'
              '\t\tset_variable = { name = pmr_bl_v value = scope:pmr_bl_co.var:pmr_bl_vt }\n'
              '\t\tset_variable = { name = pmr_bl_pm value = scope:pmr_bl_co.var:pmr_bl_pm }\n\t}\n'
+             '\tif = { limit = { has_variable = pmr_bl_wnow } remove_variable = pmr_bl_wnow }\n'
              f'\t# the shareholders: the Industrialists\' leader, else their view; {SH_SCALE} x the private owners\' share\n'
              '\tset_variable = { name = pmr_bl_pm value = 1 }\n'
              '\tif = {\n\t\tlimit = { owner ?= { ig:ig_industrialists ?= { exists = leader } } }\n'
@@ -622,12 +628,17 @@ def effects(log_line):
              '# otherwise yearly, the player\'s companies too), the change gains, an AI company proposes one once a year, the\n'
              '# harsh bylaws are counted.\n'
              'pmr_bl_month = {\n\tpmr_bl_init = yes\n\tpmr_bl_focus = yes\n\tset_variable = pmr_bl_step\n'
+             # q127: months since the last yearly count (pmr_bl_mo, 12 at first sight: count now) and since the last read of
+             # the industries (pmr_bl_wmo, pmr_bl_count)
+             '\tif = { limit = { NOT = { has_variable = pmr_bl_mo } } set_variable = { name = pmr_bl_mo value = 11 } }\n'
+             '\tchange_variable = { name = pmr_bl_mo add = 1 }\n'
+             '\tif = { limit = { has_variable = pmr_bl_wmo } change_variable = { name = pmr_bl_wmo add = 1 } }\n'
              # bug review q51, P3-1: the step serves the month's first count only, not the count a pass or a start adds
              '\tif = {\n\t\tlimit = { var:pmr_bl_pg > 0 }\n\t\tpmr_bl_count = yes\n\t\tremove_variable = pmr_bl_step\n'
              '\t\tchange_variable = { name = pmr_bl_pp add = var:pmr_bl_rt }\n'
              '\t\tif = { limit = { var:pmr_bl_pp >= 100 } pmr_bl_pass = yes }\n\t}\n'
-             '\telse_if = {\n\t\tlimit = { NOT = { has_variable = pmr_bl_ai_t } }\n'
-             '\t\tset_variable = { name = pmr_bl_ai_t days = 365 }\n\t\tpmr_bl_count = yes\n\t\tremove_variable = pmr_bl_step\n'
+             '\telse_if = {\n\t\tlimit = { var:pmr_bl_mo >= 12 }\n'
+             '\t\tset_variable = { name = pmr_bl_mo value = 0 }\n\t\tpmr_bl_count = yes\n\t\tremove_variable = pmr_bl_step\n'
              '\t\tif = { limit = { NOT = { owner ?= { is_player = yes } } } pmr_bl_ai_pick = yes }\n\t}\n'
              '\tif = { limit = { has_variable = pmr_bl_step } remove_variable = pmr_bl_step }\n'
              f'\t{log_line("BL_COUNT", count_log)}\n'
