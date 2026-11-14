@@ -17,7 +17,25 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Chamber of Commerce skips states with nothing on order (q125, test mod)
+## Latest: your buildings and companies on the AI's rules (q126, test mod)
+
+Your pick on 2026-11-14 15:51Z ("Player on the AI's rules"): the last two places where your country ran on other rules
+than an AI country are gone. Your buildings now use the investment window and the solo gate like every AI building, so
+they look again on news, on their books or after 182 days, not at every update. Your companies' boards read the
+shareholders' share once a year (was every 28 days), hold the company's wealth for 182 days (was read at every count),
+and count once a year unless a bylaw change is under way (was monthly). Only the AI still proposes bylaws by itself;
+your companies wait for you. Your building cards' recipe figures now refresh when the building looks, as an AI
+building's do. No text changes. Everything from q125 stands. A save from before works.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| W1 | Played game, `PMR;rec=BL_PRIVATE` lines for your country | About one a year, not one a month | Monthly: an older pmr_cc_effects.txt is installed |
+| W2 | `PMR;rec=BL_COUNT` lines for your companies | The chair, shareholders and council figures change once a year, or monthly only while a bylaw change is under way | Figures moving every month with no change under way: an older pmr_cc_effects.txt |
+| W3 | `PMR;rec=PROFIT` lines with `why=price` for your buildings | Far fewer than in a q125 game; `why=bar` and `why=recompute` lines still come | As many as before: an older pmr_effects.txt is installed |
+| W4 | `logs\error.log` | Names no `pmr_` key | A line there: send it to the build thread before reading anything else |
+| W5 | One of your building cards, the recipe rows | Every row shows its figures, as on an AI building's card in the same state | Blank rows: the card reads a figure only the old watch set; send a screenshot to the build thread |
+
+## Earlier: the Chamber of Commerce skips states with nothing on order (q125, test mod)
 
 Your question on 2026-11-14 04:40Z ("centralize the chamber of commerce into a national record keeping pool?") and
 your pick at 04:47Z ("Build it now", performance review 21): the Chamber's monthly passes (the state row's chips,

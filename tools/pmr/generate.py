@@ -325,7 +325,8 @@ WATCH_DIRECT = False
 #   0  off: the watch at every update
 #   1  AI buildings; a player's building and one the player owns levels in abroad keep the watch (their cards
 #      show every figure), so nothing changes on screen
-#   2  every building; pmr_wl_<b> counts a player's building's months to its next look, for the panel
+#   2  every building alike, the player's and its levels abroad too, and so does the solo gate (Pat 2026-11-13 22:58Z:
+#      everything the same between players and AI)
 # Between looks a building whose bar is not filling reads its books at each update: their profit per level at full
 # staffing (pmr_bx, as pmr_bpl_<b>) against the figure last noted (pmr_bxh/bxl_<b>: PRICE_MOVE either side, and
 # BOOKS_MOVE_ABS for a figure near nothing). A solo building whose books moved refreshes its investment score
@@ -7635,8 +7636,9 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         f'\tif = {{\n\t\tlimit = {{ var:pmr_ref > 0 var:pmr_pk = var:pmr_ref var:pmr_nrv = 0 var:pmr_ok = 1 '
         f'has_variable = {now} var:{now} = var:pmr_ref has_variable = {v("pmr_new_now")} var:{v("pmr_new_now")} = var:pmr_ref '
         f'has_variable = pmr_bpl_{b} var:pmr_bpl_{b} >= 0 '
-        f'NOR = {{ has_global_variable = pmr_setup has_variable = pmr_abroad_{b} owner = {{ is_player = yes }} }} }}\n'
-        f'\t\tset_variable = {solo}\n\t}}\n')
+        + (f'NOT = {{ has_global_variable = pmr_setup }} }}\n' if INVEST_WINDOW >= 2 else   # 2: the player's buildings too
+           f'NOR = {{ has_global_variable = pmr_setup has_variable = pmr_abroad_{b} owner = {{ is_player = yes }} }} }}\n')
+        + f'\t\tset_variable = {solo}\n\t}}\n')
     put = lambda name: lambda i: ' '.join(f'set_variable = {{ name = {name}_{d} value = {axes[i][d - 1]} }}'   # noqa: E731
                                           for d in range(1, nd + 1))
     o.append('\t# the floor and the raise (Pat 19:30Z)\n'
@@ -7930,8 +7932,9 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
             f'\t\t\t\trandom_list = {{ {spread} }}\n\t\t\t}}\n'
             f'\t\t\telse = {{ remove_variable = {solo} }}\n\t\t}}\n')
         solo_watch = (f'\telse_if = {{\n\t\tlimit = {{ has_variable = {solo} }}\n'
-                      f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} '
-                      f'NOT = {{ exists = b:{bk} }} var:{v("pmr_level")} <= 0 b:{bk} = {{ OR = {{ is_subsidized = yes '
+                      f'\t\tif = {{\n\t\t\tlimit = {{ OR = {{ '
+                      + ('' if INVEST_WINDOW >= 2 else f'owner = {{ is_player = yes }} has_variable = pmr_abroad_{b} ')   # 2: alike
+                      + f'NOT = {{ exists = b:{bk} }} var:{v("pmr_level")} <= 0 b:{bk} = {{ OR = {{ is_subsidized = yes '
                       f'occupancy < {fmt(BOOKS_OCC)} weekly_profit <= {fmt(-BOOKS_PROFIT[0])} NOT = {{ earnings >= {fmt(BOOKS_EARN[0])} }} }} }} }} }}\n'
                       f'\t\t\tremove_variable = {solo}\n\t\t\tset_variable = pmr_pmv\n'
                       + (f'\t\t\t{sgc("end")}\n' if sgc('end') else '') + '\t\t}\n'
@@ -8032,8 +8035,6 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + f'\t\t{setv("pmr_new", "var:" + v("pmr_new_now"))}\n'
              f'\t\tif = {{ limit = {{ has_variable = pmr_pchk_{b} }} remove_variable = pmr_pchk_{b} }}\n'
              f'\t\trandom_list = {{ {spread} }}\n'
-             + (f'\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} '
-                f'set_variable = {{ name = pmr_wl_{b} value = {round(PROFIT_RECHECK_DAYS / 30.4)} }} }}\n' if INVEST_WINDOW >= 2 else '')
              + f'\t\tif = {{\n\t\t\tlimit = {{ {first} }}\n\t\t\tset_variable = pmr_pmkt_{b}\n'
              '\t\t\tset_variable = pmr_sw_inst  # the first pick at market prices stands at once (pmr_switch)\n'
              f'\t\t\tif = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=first_month" }}\n\t\t}}\n'
@@ -8042,9 +8043,6 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
              + f'\t\telse_if = {{ limit = {{ has_variable = pmr_pmv owner = {{ is_player = yes }} }} debug_log = "{line};why=price" }}\n'
              f'\t\telse_if = {{ limit = {{ owner = {{ is_player = yes }} }} debug_log = "{line};why=recompute" }}\n\t}}\n'
              '\tif = { limit = { has_variable = pmr_pmv } remove_variable = pmr_pmv }\n'
-             + (f'\tif = {{ limit = {{ has_variable = pmr_month has_variable = pmr_wl_{b} owner = {{ is_player = yes }} }} '
-                f'change_variable = {{ name = pmr_wl_{b} subtract = {TICK_EVERY} }} '
-                f'change_variable = {{ name = pmr_wl_{b} max = 0 }} }}\n' if INVEST_WINDOW >= 2 else '')
              + f'\tpmr_switch_{b} = yes\n'
              + (f'\tif = {{ limit = {{ NOT = {{ AND = {{ has_variable = pmr_pfx_l_{b} var:pmr_pfx_l_{b} = var:{v("pmr_level")} '
                 f'var:pmr_pfx_v_{b} = var:{v("pmr_pvs")} }} }} }} pmr_pf_sync_{b} = yes }}'
