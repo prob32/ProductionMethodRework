@@ -17,7 +17,21 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Chamber of Commerce card alike in every country; the chance names its order (q122, test mod)
+## Latest: the Construction tab's private construction is vanilla's again (q123, test mod)
+
+Your note on 2026-11-14 04:07Z: the private construction on the Construction tab looks and works like vanilla's again.
+Open Filters on the Construction tab and the Funding row picks Government or Private, one at a time, and the list and
+its pages show that queue only. The Private Construction list q118 drew under the government queue is gone. The
+Investment Pool line stays on the Investments tab, so it is not drawn twice. The tab names stay Construction and
+Investments. Nothing else changed, so a q122 save loads.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| V1 | Construction tab, open Filters | Location (All / Domestic / Abroad) and Funding (`Government (N)` / `Private (N)`), one Funding button selected | No Funding row: an older construction_queue.gui still hides it |
+| V2 | Pick Private, then Government | Private shows only the private rows (the Chamber's sites with their building and size logo), Government only the government rows; the page buttons page the list shown | Both lists at once: q122's Private Construction block is still drawn |
+| V3 | Investments tab | Pool line, charts, Recent Investments; no queue rows | Queue rows here: the old tab file is still installed |
+
+## Earlier: the Chamber of Commerce card alike in every country; the chance names its order (q122, test mod)
 
 Your notes on q120 (2026-11-13 22:58Z and 23:00Z). "Everything should be the same between players and ai": q120
 filled in the Investment Chance, the Funding cost and the state row's chips only for the player and great powers; they

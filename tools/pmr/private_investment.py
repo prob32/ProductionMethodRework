@@ -1442,8 +1442,8 @@ VANILLA_TABS_2_3 = (
 
 
 def patch_panel(text):
-    """construction_panel.gui: tabs become Government | Private | Foreign | Ships; the Private tab's contents go
-    beside the domestic queue; the domestic pager follows the tab instead of the funding filter."""
+    """construction_panel.gui: tabs become Construction | Investments | Foreign | Ships (Pat 2026-11-13 21:18Z); the
+    Investments tab's contents go beside the domestic queue."""
     where = PANEL_GUI
     start = text.find('\t\t\ttab_buttons = {')
     if start < 0 or text.count('\t\t\ttab_buttons = {') != 1:
@@ -1486,63 +1486,27 @@ def patch_panel(text):
                 '\t\t\t}\n\n'
                 '\t\t\t# FOREIGN QUEUE TAB CONTENTS\n', where)
 
-    # The domestic pager: government and private pages both on the Construction tab, under their two lists.
-    a = text.find('\t\t\t\tname = "construction_queue_pages"')
-    b = text.find('\t\t\t# SHIP QUEUE PAGE BUTTONS')
-    if a < 0 or b < a:
-        fail(where, 'the domestic pager (construction_queue_pages) moved')
-    pager = text[a:b]
-    pager = once(pager, 'visible = "[InformationPanel.IsTabSelected(\'default\')]"',
-                 f'visible = "[Or(InformationPanel.IsTabSelected(\'default\'), InformationPanel.IsTabSelected(\'{TAB}\'))]"',
-                 where)
-    n_gov = pager.count('ConstructionPanel.IsShowingGovernmentConstructions')
-    n_priv = pager.count('ConstructionPanel.IsShowingPrivateConstructions')
-    if (n_gov, n_priv) != (2, 2):
-        fail(where, f'expected the pager to test the funding filter twice each, found {n_gov} and {n_priv}')
-    pager = pager.replace('ConstructionPanel.IsShowingGovernmentConstructions', "InformationPanel.IsTabSelected('default')")
-    pager = pager.replace('ConstructionPanel.IsShowingPrivateConstructions', "InformationPanel.IsTabSelected('default')")
-    return text[:a] + pager + text[b:]
+    # The domestic pager stays vanilla's: it follows the Government / Private funding filter (Pat 2026-11-14 04:07Z).
+    return text
 
 
 def patch_queue(text):
-    """construction_queue.gui: the Government tab's queue. The investment pool section, the funding filter and the
-    private list go (they live on the Private tab); the government list no longer waits for the funding filter."""
+    """construction_queue.gui: the Construction tab's queue, as vanilla's but for the investment pool block, which
+    lives on the Investments tab (pmr_private_investment.gui). The Filters section, its Government / Private funding
+    choice and the two lists it switches between stay vanilla's (Pat 2026-11-14 04:07Z: "reference how it works with
+    the either or filters and move it back to that default")."""
     where = QUEUE_GUI
-    # 1. the investment pool block: the first child flowcontainer of construction_queue, ending before the header
+    # the investment pool block: the first child flowcontainer of construction_queue, ending before the header
     a = text.find('\t\tflowcontainer = {\n\t\t\tparentanchor = hcenter\n\t\t\tdirection = vertical\n\n\t\t\tbackground = {\n\t\t\t\tusing = dark_area')
     if a < 0 or 'CURRENT_INVESTMENT_POOL' not in text[a:block_end(text, text.index('{', a))]:
         fail(where, 'the investment pool block moved')
     e = block_end(text, text.index('{', a))
-    text = text[:a] + '\t\t# PMR: the investment pool moved to the Private tab (pmr_private_investment.gui)\n' + text[e + 2:]
-    # 2. the funding filter: its label and its button row
-    label = list(re.finditer(r'textbox = \{(\s*)size = \{ 95 60 \}\s*text = "CONSTRUCTION_QUEUE_FILTER_FUNDING"', text))
-    if len(label) != 1:
-        fail(where, f'expected one funding filter label, found {len(label)}')
-    m = label[0]
-    text = text[:m.start()] + 'textbox = {' + m.group(1) + 'visible = no  # PMR: funding is a tab now' + text[m.start() + len('textbox = {'):]
-    m = text.find('text = "CONSTRUCTION_QUEUE_FILTER_FUNDING_NATIONAL"')
-    rows = [r for r in re.finditer(r'flowcontainer = \{(\s*)', text[:m])]
-    if m < 0 or not rows:
-        fail(where, 'the funding filter buttons moved')
-    r = rows[-1]
-    text = text[:r.start()] + 'flowcontainer = {' + r.group(1) + 'visible = no  # PMR: funding is a tab now' + r.group(1) + text[r.end():]
-    # 3. the private list goes; the government list shows without the funding filter
-    a = text.find('\t\t# PRIVATE CONSTRUCTION QUEUE\n')
-    b = text.find('\t\t# GOVERNMENT CONSTRUCTION QUEUE\n')
-    if a < 0 or b < a:
-        fail(where, 'the private and government lists moved')
-    text = text[:a] + '\t\t# PMR: the private list moved to the Private tab\n\n' + text[b:]
-    text = once(text, 'visible = "[And(ConstructionPanel.IsShowingGovernmentConstructions, Not(IsDataModelEmpty(',
-                'visible = "[And(\'(bool)yes\', Not(IsDataModelEmpty(', where)
-    gov_empty = '\t\t\t\ttext = "CONSTRUCTION_QUEUE_IS_EMPTY"\n\t\t\t}\n\t\t}\n'
-    text = once(text, gov_empty, gov_empty + '\n\t\t# PMR: the private queue under the government queue (pmr_private_queue)\n'
-                '\t\tpmr_private_queue = {}\n', where)
-    text = once(text, 'visible = "[Not(Country.HasConstructionQueued)]"',
-                'visible = "[IsDataModelEmpty(Country.AccessPagedGovernmentConstructionQueue(ConstructionPanel.'
-                'AccessCurrentGovernmentConstructionQueuePage(GetMetaPlayer.GetPlayedOrObservedCountry), ConstructionPanel.GetFilter))]"',
-                where)
+    text = text[:a] + '\t\t# PMR: the investment pool moved to the Investments tab (pmr_private_investment.gui)\n' + text[e + 2:]
+    for key in ('CONSTRUCTION_QUEUE_FILTER_FUNDING_NATIONAL', 'CONSTRUCTION_QUEUE_FILTER_FUNDING_PRIVATE',
+                '# PRIVATE CONSTRUCTION QUEUE', '# GOVERNMENT CONSTRUCTION QUEUE'):
+        if key not in text:
+            fail(where, f'vanilla no longer has {key}')
     return text
-
 
 # ---------------------------------------------------------------------------------------------------------------
 # GUI: the Private tab (own file)
@@ -2225,19 +2189,6 @@ def replace_loc():
 
 def private_tab():
     i1, i2, i3 = '\t\t', '\t\t\t', '\t\t\t\t'
-    filt = []
-    for mode, key, tt in (('off', 'ALL', 'LOCATION_FILTER_ALL'), ('yes', 'DOMESTIC', 'LOCATION_FILTER_DOMESTIC'),
-                          ('no', 'ABROAD', 'LOCATION_FILTER_ABROAD')):
-        on = {'off': "Not(ConstructionPanel.IsFiltered('is_domestic'))", 'yes': "ConstructionPanel.IsFilterYes('is_domestic')",
-              'no': "ConstructionPanel.IsFilterNo('is_domestic')"}[mode]
-        filt.append(f'{i3}filter_button = {{\n{i3}\tvisible = "[Not({on})]"\n{i3}\tsize = {{ 132 40 }}\n'
-                    f'{i3}\ttooltip = "{tt}"\n{i3}\tusing = tooltip_above\n'
-                    f'{i3}\tblockoverride "text" {{\n{i3}\t\ttext = "{key}"\n{i3}\t}}\n'
-                    f'{i3}\tblockoverride "onclick" {{\n{i3}\t\tonclick = "[ConstructionPanel.SetFilterMode(\'is_domestic\', \'{mode}\')]"\n{i3}\t}}\n{i3}}}\n'
-                    f'{i3}filter_background_selected = {{\n{i3}\tvisible = "[{on}]"\n{i3}\tsize = {{ 132 40 }}\n'
-                    f'{i3}\tblockoverride "text" {{\n{i3}\t\ttext = "{key}"\n{i3}\t}}\n{i3}}}\n')
-    queue = ('Country.AccessPagedPrivateConstructionQueue(ConstructionPanel.AccessCurrentPrivateConstructionQueuePage('
-             'GetMetaPlayer.GetPlayedOrObservedCountry), ConstructionPanel.GetFilter)')
     return (
         '@pmr_w = 554\n\n'
         'types pmr_private_investment {\n'
@@ -2263,24 +2214,12 @@ def private_tab():
         # 3. contributors, as tree charts by group (Pat 13:05Z) and by owner (Pat 15:33Z)
         header('PMR_PI_SOURCES_HEADER', i1) + contributors_charts(i1) +
         # 4. recent investments (the law, policy and priorities moved to the Buildings panel's Owners' Methods tab, Pat
-        # 2026-10-18 18:40Z: policy_block; the private queue went back under the government queue, Pat 2026-11-13 21:18Z:
-        # pmr_private_queue)
+        # 2026-10-18 18:40Z: policy_block; the private queue is vanilla's again on the Construction tab, Pat 2026-11-14
+        # 04:07Z)
         header('PMR_PI_RECENT_HEADER', i1) + invest_charts(i1) +
         f'{i1}textbox = {{\n{i1}\tminimumsize = {{ @pmr_w -1 }}\n{i1}\tmaximumsize = {{ @pmr_w -1 }}\n{i1}\tmargin = {{ 14 8 }}\n'
         f'{i1}\tautoresize = yes\n{i1}\tmultiline = yes\n{i1}\talign = nobaseline\n'
         f'{i1}\traw_text = "[{COUNTRY}.GetPreviousAutonomousInvestmentsDesc]"\n{i1}}}\n'
-        '\t}\n\n'
-        # The private queue under the government queue on the Construction tab, as vanilla's one page had both (Pat
-        # 2026-11-13 21:18Z; ui/CONSTRUCTION-TAB.md)
-        '\ttype pmr_private_queue = flowcontainer {\n\t\tdirection = vertical\n\t\tparentanchor = hcenter\n\t\tmargin_top = 10\n\n'
-        f'{i1}default_header_2texts = {{\n{i1}\tblockoverride "text1" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_HEADER"\n{i1}\t}}\n'
-        f'{i1}\tblockoverride "text2" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_COUNT"\n{i1}\t}}\n{i1}}}\n'
-        f'{i1}flowcontainer = {{\n{i1}\tparentanchor = hcenter\n{i1}\tmargin = {{ 0 8 }}\n{i1}\tspacing = 5\n'
-        + ''.join(filt) + f'{i1}}}\n'
-        f'{i1}fixedgridbox = {{\n{i1}\tvisible = "[Not(IsDataModelEmpty({queue}))]"\n{i1}\taddcolumn = 540\n{i1}\taddrow = 40\n'
-        f'{i1}\tparentanchor = hcenter\n{i1}\tdatamodel = "[{queue}]"\n{i1}\titem = {{\n{i1}\t\tconstruction_queue_item = {{}}\n{i1}\t}}\n{i1}}}\n'
-        f'{i1}empty_state = {{\n{i1}\tblockoverride "visible" {{\n{i1}\t\tvisible = "[IsDataModelEmpty({queue})]"\n{i1}\t}}\n'
-        f'{i1}\tblockoverride "text" {{\n{i1}\t\ttext = "PMR_PI_QUEUE_EMPTY"\n{i1}\t}}\n{i1}}}\n'
         '\t}\n}\n')
 
 
@@ -2640,9 +2579,6 @@ def localization(types, chart_types=None):
         ' PMR_PC_CAPTION:0 "Private Levels"',
         ' PMR_PC_EMPTY:0 "$GRAPH_NOT_INITIALIZED$"',
         ' PMR_PC_TT:0 "[GetPlayer.GetInvestmentPoolChangeFromInvestmentBreakdown]"',
-        ' PMR_PI_QUEUE_HEADER:0 "Private Construction"',
-        ' PMR_PI_QUEUE_COUNT:0 ""',
-        ' PMR_PI_QUEUE_EMPTY:0 "No Private Construction queued"',
         ' PMR_PI_RECENT_HEADER:0 "Recent Investments and Privatizations"',
         ' PMR_IV_EMPTY:0 "$GRAPH_NOT_INITIALIZED$"',
         ' PMR_IV_HOME:0 "Domestic"',
