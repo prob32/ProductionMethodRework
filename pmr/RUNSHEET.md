@@ -17,7 +17,22 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: vanilla's investment pool block back on the Construction tab; observer lines for every country (q124, test mod)
+## Latest: the Chamber of Commerce skips states with nothing on order (q125, test mod)
+
+Your question on 2026-11-14 04:40Z ("centralize the chamber of commerce into a national record keeping pool?") and
+your pick at 04:47Z ("Build it now", performance review 21): the Chamber's monthly passes (the state row's chips,
+the Investment Chance, the AI weights) now leave out states that have never had anything on order, read from a mark
+the state sets once and the size counters it already keeps. No figure, rule, timing, screen or text changes, and it
+is the same for every country. Everything from q124 stands. Start a new game: a save from before gets its marks
+within two months.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| H1 | `PMR;rec=CC_SKIP` lines | One a country a year (states, ever, open, missed), every one with `missed=0` | No lines: an older pmr_effects.txt is installed. `missed` above 0: the skip left a state out; send the lines to the performance review |
+| H2 | `logs\error.log` | Names none of `pmr_cc_any`, `pmr_cc_asks`, `pmr_cc_inv_order`, `pmr_cc_skip_audit` | A line there: the skip's script failed; the next build goes without it |
+| H3 | Pace on the A3/E5 stretch (from Aug 1842) | A little faster than q124, or level (one run cannot tell the difference apart; level is not a failure) | Clearly slower: send to the performance review |
+
+## Earlier: vanilla's investment pool block back on the Construction tab; observer lines for every country (q124, test mod)
 
 Your pick at 04:24Z ("Put it back, as vanilla"): the Construction tab is vanilla's whole again, the investment pool
 block on top included, and the Investments tab no longer repeats the next private construction. Your note on
@@ -25,7 +40,7 @@ block on top included, and the Investments tab no longer repeats the next privat
 (GDP, standard of living, its building types and those losing money), once a year the OBSPM line (each row's
 methods), and its SWITCH_START, DEFAULT and FLOOR lines. Before, only the 8 largest economies wrote OBS and OBSPM, and
 only the largest wrote the rest. The pool tooltip's line reads "Research Grants" (interface review S1). A played game
-logs as before. The PC backup now collects PMR lines every 3 minutes, so the larger log is kept whole.
+logs as before. The PC backup now collects PMR lines every minute, so the larger log is kept whole.
 
 | # | Check | Pass | Null means |
 | --- | --- | --- | --- |
