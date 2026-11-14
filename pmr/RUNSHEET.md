@@ -30,7 +30,7 @@ and the blanks fill in at the next monthly pass.
 | --- | --- | --- | --- |
 | A1 | A minor's state with Chamber orders (Piedmont), observer | Investment Chance on the card, the cost in red on the Funding header, chips on the Buildings tab row | Blank: the monthly country or state pass does not reach that country |
 | A2 | Hover the Investment Chance on a card with an investors' order | `<method> in <building>` and the same `£ +N` as that order's row | Another figure: the tooltip reads another order than the row |
-| A3 | `dedicated_server.log` pace against q120-1 | Within about 0.2 s a game month | Slower: the card's monthly passes in every country cost more than expected; send to the perf review |
+| A3 | `dedicated_server.log` pace against q120-1 from Aug 1842 on (not the timed stretch: q120-1's card was open then) | Within about 0.2 s a game month | Slower: the card's monthly passes in every country cost more than expected; send to the perf review. No reading: the card open or the PC in use through 1842-1845 |
 
 ## Earlier: the Chamber of Commerce's fixes from your q119 screens (q120, test mod)
 
