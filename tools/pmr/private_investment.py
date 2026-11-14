@@ -2573,7 +2573,7 @@ def localization(types, chart_types=None):
         f' PMR_PI_GRANTS_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_gweek\').GetValue)|D+=]#! '
         'Expansion"',
         f' PMR_PI_RESEARCH_TT:0 "\\n#v @money![Negate_CFixedPoint({COUNTRY}.MakeScope.Var(\'pmr_cc_rweek\').GetValue)|D+=]#! '
-        'Research grants"',
+        'Research Grants"',
         ' PMR_PI_POLICY_HEADER:0 "Economic Policy"',
         ' PMR_PI_SOURCES_HEADER:0 "Buildings Adding to the Pool"',
         ' PMR_PC_CAPTION:0 "Private Levels"',

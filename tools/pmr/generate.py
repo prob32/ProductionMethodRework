@@ -12125,8 +12125,8 @@ def option_loc(opt_ui):
     return loc
 
 
-OBS_TOP = 8           # an observer game's OBS lines: the largest economies by GDP
-OBS_LOGGED = 1        # ... and its SWITCH_START, DEFAULT and FLOOR lines: the largest
+# An observer game logs every country alike (Pat 2026-11-14 04:15Z: "log for everyone"): the OBS line monthly, the
+# OBSPM line yearly, and every country's SWITCH_START, DEFAULT and FLOOR lines.
 VIEWER_TRIGGER = """# Country scope: its Buildings tab totals count its buildings abroad (pmr_c_sum_<b>, pmr_c_sum_all): a player's,
 # or one whose Buildings panel has been opened (pmr_c_view_sgui).
 pmr_c_viewer = {
@@ -12137,19 +12137,19 @@ pmr_c_viewer = {
 }
 """
 LOGGED_TRIGGER = f"""# Country scope: its buildings' SWITCH_START, DEFAULT and FLOOR lines are logged: the player's, or in an
-# observer game (pmr_obs, pmr.1) the largest economy's.
+# observer game (pmr_obs, pmr.1) every country's.
 pmr_logged = {{
 \tOR = {{
 \t\tis_player = yes
-\t\tAND = {{ has_global_variable = pmr_obs gdp_ranking <= {OBS_LOGGED} }}
+\t\thas_global_variable = pmr_obs
 \t}}
 }}
 """
 
 
 def obs_report(dispatch):
-    """Country scope, monthly in an observer game (test builds): one OBS line for each of the OBS_TOP largest
-    economies. types = building types it has in a state (pmr_mix_<b>), loss = those whose books show a loss (pmr_bpl_<b>
+    """Country scope, monthly in an observer game (test builds): one OBS line for every country, and once a year its
+    OBSPM line (pmr_obs_pm_chk). types = building types it has in a state (pmr_mix_<b>), loss = those whose books show a loss (pmr_bpl_<b>
     < 0) or can't be read as it is subsidised or nearly empty (pmr_bsx_<b>),
     up / down = switching bars filling toward a newer / older default, lowered = defaults a loss lowered (pmr_dn_<b>)."""
     keys = ('types', 'loss', 'up', 'down', 'lowered')
@@ -12168,7 +12168,9 @@ def obs_report(dispatch):
             + '\tevery_scope_state = {\n' + per + '\t}\n'
             '\tdebug_log = "PMR;rec=OBS;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
             'gdp=[THIS.GetCountry.GetGDP|0];sol=[THIS.GetCountry.GetAverageSoLByPopulation|1];' + fields + '"\n'
-            + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys) + '\tpmr_obs_methods = yes\n}\n\n')
+            + ''.join(f'\tremove_variable = pmr_obs_{k}\n' for k in keys)
+            + '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_obs_pm_chk } }\n'
+            '\t\tset_variable = { name = pmr_obs_pm_chk value = yes days = 350 }\n\t\tpmr_obs_methods = yes\n\t}\n}\n\n')
 
 
 # Issue #12 (2026-10-29, Pat's "Run it" card at 22:35Z): players say the AI deletes its army, two of them with PMR as
@@ -12683,12 +12685,12 @@ START_LEFT = ''.join(
 OBS_ON_ACTIONS = f'''
 # Root = country, an observer game's monthly pulse (test builds): PMR's script off in alternate years with
 # --obs-script-off (pmr_obs_ab), and
-# the OBS lines of the largest economies.
+# every country's OBS line.
 pmr_obs_monthly_country = {{
 	trigger = {{ has_global_variable = pmr_obs }}
 	effect = {{
 		pmr_obs_ab = yes
-		if = {{ limit = {{ gdp_ranking <= {OBS_TOP} }} pmr_obs_report = yes }}
+		pmr_obs_report = yes
 		pmr_obs_army = yes
 	}}
 }}

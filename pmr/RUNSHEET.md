@@ -17,7 +17,23 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: the Construction tab's private construction is vanilla's again (q123, test mod)
+## Latest: observer lines for every country; "Research Grants" (q124, test mod)
+
+Your note on 2026-11-14 04:15Z: "log for everyone". In an observer game every country now writes the monthly OBS line
+(GDP, standard of living, its building types and those losing money), once a year the OBSPM line (each row's
+methods), and its SWITCH_START, DEFAULT and FLOOR lines. Before, only the 8 largest economies wrote OBS and OBSPM, and
+only the largest wrote the rest. The pool tooltip's line reads "Research Grants" (interface review S1). A played game
+logs as before. The PC backup now collects PMR lines every 3 minutes, so the larger log is kept whole.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| E1 | Observer game, `PMR;rec=OBS` lines in a month | One per country, about 200-290 | About 8: an older pmr_on_actions.txt is installed |
+| E2 | `PMR;rec=OBSPM` lines | One per country in each country's first month, then once a year | Monthly, or 8 a month: an older pmr_obs_effects.txt |
+| E3 | `PMR;rec=SWITCH_START` / `DEFAULT` lines | From many countries | One country only: pmr_logged still names the largest economy |
+| E4 | `pmr_dev_files\runs\push.log` | `watching for victoria3 (collect 3 min, push 10 min)` after the backup task restarts, then `run_logs=1` once (q120-1's logs to the VPS) | Old wording: the old watcher still runs; re-run `register_task.ps1` |
+| E5 | Pace against q120-1 from Aug 1842 | Within A3's allowance plus the logging's (the perf review prices it) | Slower: send to the perf review |
+
+## Earlier: the Construction tab's private construction is vanilla's again (q123, test mod)
 
 Your note on 2026-11-14 04:07Z: the private construction on the Construction tab looks and works like vanilla's again.
 Open Filters on the Construction tab and the Funding row picks Government or Private, one at a time, and the list and
