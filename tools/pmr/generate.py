@@ -456,7 +456,7 @@ def rails(goods):
 
 
 # Automation on rails (fundamentals review, automation/SPEC.md v4; Pat 2026-11-12 13:24Z "Level by level", 13:40Z "Shared
-# laborers method", 13:41Z the price, 14:29Z go). RAILS (--rails, test builds only): a step type's automation groups,
+# laborers method", 13:41Z the price, 14:29Z go). RAILS (--rails; the open beta since 0.5.1): a step type's automation groups,
 # all but the processing ones (PROCESSING_GROUPS), leave its retool targets. Each method of such a group is a rung of a
 # track (Rung, Track), a frames step member whose share is the levels working on it. The state tallies the levels on
 # each rung, all and the government's (pmr_al_<t>_<r>_<b>, pmr_alg_<t>_<r>_<b>; rung 0 the group's none); the pay test
@@ -1260,7 +1260,7 @@ GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
 MOD_NAME = 'ProductionMethodRework'
-MOD_VERSION = '0.5.0'
+MOD_VERSION = '0.5.1'
 SUPPORTED_VERSION = '1.15.*'
 
 # Building files whose buildings make goods from goods. Government, military, monuments, canals,
@@ -2173,14 +2173,14 @@ def main():
                          'modifiers, without their ladders')
     ap.add_argument('--rails', action='store_true',
                     help='RAILS (automation/SPEC.md v4): steps as tallies, the shared laborers group and the New '
-                         'Equipment and Rail Connection projects; test builds only, needs a new game')
+                         'Equipment and Rail Connection projects; needs a new game (in the open beta since 0.5.1, Pat 2026-11-14 16:19Z)')
     ap.add_argument('--pay-score', action='store_true',
                     help='PAY_SCORE (rules review item A): the retool twin scored on its payoff')
     ap.add_argument('--fold-sites', action='store_true',
                     help='FOLD_SITES (Pat 2026-11-12 21:20Z): the projects build on the retool sites; needs --rails')
     ap.add_argument('--center', action='store_true',
                     help='CENTER (retool-tiers/PLAN.md, Pat 2026-11-13): four shared site sizes and the Construction Center; '
-                         'needs --rails, not with --fold-sites')
+                         'needs --rails, not with --fold-sites; needs a new game')
     ap.add_argument('--center-skip', action='store_true',
                     help='CC_SKIP (perf review 21, Pat 2026-11-14 04:47Z): the Center\'s monthly passes (chips, chance, '
                          'weights) skip states with nothing on order; the figures are unchanged. Needs --center')
@@ -2242,8 +2242,6 @@ def main():
     PRICE_NEWEST = PRICE_NEWEST or args.price_newest
     if BAR_CLOCK or PRICE_NEWEST:
         PROFIT_RULE = 108   # rules review D and E: saves recompute once
-    if args.rails and RELEASE:
-        raise SystemExit('--rails is for test builds (automation/SPEC.md v4, needs a new game)')
     RAILS = frames.RAILS = RAILS or args.rails
     PAY_SCORE = PAY_SCORE or args.pay_score
     frames.ONE_FRAME = frames.ONE_FRAME or args.one_frame
@@ -2260,8 +2258,6 @@ def main():
         raise SystemExit('--center needs --rails: its sites serve the retool twin and the projects')
     if CENTER and FOLD_SITES:
         raise SystemExit('--center replaces --fold-sites')
-    if CENTER and RELEASE:
-        raise SystemExit('--center is for test builds (retool-tiers/PLAN.md, needs a new game)')
     if CENTER and not PAY_SCORE:
         raise SystemExit('--center needs --pay-score: the hand-out\'s best open job is the best payoff (PLAN 4, 6)')
     if frames.ONE_FRAME and not RAILS:
@@ -3327,7 +3323,7 @@ def main():
     cc_head, cc_tail = cc_effects() if CENTER else ('', '')
     if CENTER:   # the Chamber of Commerce card's monthly figures and a construction point's goods (round 2)
         write('common/script_values/pmr_cc_card_values.txt', header + cc_cost_values(game, goods_cost, set(traded)))
-        cc_tail += cc_card_effects() + (cc_skip_audit() if CC_SKIP else '')
+        cc_tail += cc_card_effects() + (cc_skip_audit() if CC_SKIP and not RELEASE else '')
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(price_goods)
           + ''.join(market_read(g, g in spare) for g in traded) + cc_head + '\n'.join(tick_effects) + cc_tail
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto)
@@ -3341,7 +3337,7 @@ def main():
     on_actions = (ON_ACTIONS.replace('STATE_TURN', state_turn()).replace('CC_STATE', CC_STATE_LINE())
                   .replace('CC_COUNTRY', '\t\tpmr_cc_weigh = yes   # CENTER: the AI weight a size (PLAN 6)\n'
                            '\t\tpmr_cc_chance = yes pmr_cc_cp_cost = yes   # CENTER: the card\'s chance and cost, every country alike\n'
-                           + ('\t\tpmr_cc_skip_audit = yes   # CC_SKIP: the year\'s CC_SKIP line (test builds)\n' if CC_SKIP else '')
+                           + ('\t\tpmr_cc_skip_audit = yes   # CC_SKIP: the year\'s CC_SKIP line (test builds)\n' if CC_SKIP and not RELEASE else '')
                            if CENTER else ''))
     if RESEARCH_MAP or PF_SUMS:
         old = 'OBS_ON_ACTION\n'
@@ -5327,13 +5323,14 @@ def cc_card_triggers():
                 f'pmr_cc_asks = {{\n\thas_variable = {CC_ANY}\n\tOR = {{\n' + open_n('1') + open_n('gov')
                 + ''.join(f'\t\tAND = {{ has_variable = pmr_cc_ord_gov_{Sf} var:pmr_cc_ord_gov_{Sf} > 0 }}\n' for Sf in sizes)
                 + '\t}\n}\n'
+                + ('' if RELEASE else   # the audit's own questions, test builds only (cc_skip_audit)
                 '# State scope, the CC_SKIP line\'s checks: the same two questions asked of each job\'s own variables.\n'
                 'pmr_cc_inv_order_jobs = {\n\tOR = {\n'
                 + ''.join(f'\t\thas_variable = {J(b, vp, "cc1")}\n' for b, vp in cc_jobs()) + '\t}\n}\n'
                 'pmr_cc_asks_jobs = {\n\tOR = {\n'
                 + ''.join(f'\t\thas_variable = {J(b, vp, "cc1")}\n\t\thas_variable = {J(b, vp, "ccgov")}\n'
                           f'\t\tAND = {{ has_variable = {J(b, vp, "ord_gov")} var:{J(b, vp, "ord_gov")} > 0 }}\n'
-                          for b, vp in cc_jobs()) + '\t}\n}\n')
+                          for b, vp in cc_jobs()) + '\t}\n}\n'))
     return ('pmr_cc_inv_order = {\n\tOR = {\n'
             + ''.join(f'\t\thas_variable = {J(b, vp, "cc1")}\n' for b, vp in cc_jobs()) + '\t}\n}\n')
 
