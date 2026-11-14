@@ -493,6 +493,8 @@ CC_SIDE_OF = {'priv1': '1', 'priv2': '2', 'gov': 'gov', 'gova': 'gova'}   # a bu
 CC_JOB = {}        # (b, vp) -> (size, units a level), filled by main()
 CC_AI_MULT = 1     # the size site's score x CC_AI_MULT x (the country's open jobs of that size) ^ CC_AI_POW (PLAN 6)
 CC_AI_POW = 0.5
+CC_SKIP = False    # --center-skip: the monthly passes leave out states with nothing on order (perf review 21)
+CC_ANY = 'pmr_cc_any'   # CC_SKIP, state: a job here has had a contribution or an order (set once, never removed)
 CC_KINDS = (('retool', 'Retool'), ('eq', 'Re-equip'), ('rc', 'Rail Connection'))   # the Order Book's kinds, in its order
 
 
@@ -2178,6 +2180,9 @@ def main():
     ap.add_argument('--center', action='store_true',
                     help='CENTER (retool-tiers/PLAN.md, Pat 2026-11-13): four shared site sizes and the Construction Center; '
                          'needs --rails, not with --fold-sites')
+    ap.add_argument('--center-skip', action='store_true',
+                    help='CC_SKIP (perf review 21, Pat 2026-11-14 04:47Z): the Center\'s monthly passes (chips, chance, '
+                         'weights) skip states with nothing on order; the figures are unchanged. Needs --center')
     ap.add_argument('--center-art', metavar='DIR', default='/mnt/project-files/pmr/ui/tier-logos',
                     help='CENTER: the interface thread\'s logos (pmr_size_<n>.png, pmr_tier_<job>.png, center_standin*.png), '
                          'made from game art, so kept out of the repository')
@@ -2195,7 +2200,7 @@ def main():
     global PTERM_OFF
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD, TREAT_MOD
     global BAR_COUNT, BAR_CLOCK, PRICE_NEWEST, PROFIT_RULE
-    global RAILS, PAY_SCORE, FOLD_SITES, RETOOL_SHARE, PROJECT_SHARE, CENTER, CC_SIZES
+    global RAILS, PAY_SCORE, FOLD_SITES, RETOOL_SHARE, PROJECT_SHARE, CENTER, CC_SIZES, CC_SKIP
     RELEASE = args.release
     if args.cost_scale <= 0:
         raise SystemExit('--cost-scale must be above 0')
@@ -2247,6 +2252,9 @@ def main():
     if FOLD_SITES and abs(RETOOL_SHARE / PROJECT_SHARE - round(RETOOL_SHARE / PROJECT_SHARE)) > 1e-9:
         raise SystemExit('--fold-sites: RETOOL_SHARE must be a whole number of PROJECT_SHAREs')
     CENTER = CENTER or args.center
+    CC_SKIP = CC_SKIP or args.center_skip
+    if CC_SKIP and not CENTER:
+        raise SystemExit('--center-skip needs --center: it gates the Center\'s monthly passes')
     if CENTER and not RAILS:
         raise SystemExit('--center needs --rails: its sites serve the retool twin and the projects')
     if CENTER and FOLD_SITES:
@@ -3318,7 +3326,7 @@ def main():
     cc_head, cc_tail = cc_effects() if CENTER else ('', '')
     if CENTER:   # the Chamber of Commerce card's monthly figures and a construction point's goods (round 2)
         write('common/script_values/pmr_cc_card_values.txt', header + cc_cost_values(game, goods_cost, set(traded)))
-        cc_tail += cc_card_effects()
+        cc_tail += cc_card_effects() + (cc_skip_audit() if CC_SKIP else '')
     write('common/scripted_effects/pmr_effects.txt', header + shared_effects(price_goods)
           + ''.join(market_read(g, g in spare) for g in traded) + cc_head + '\n'.join(tick_effects) + cc_tail
           + dispatch_effects(dispatch) + '\n' + auto_best_effects(auto)
@@ -3332,6 +3340,7 @@ def main():
     on_actions = (ON_ACTIONS.replace('STATE_TURN', state_turn()).replace('CC_STATE', CC_STATE_LINE())
                   .replace('CC_COUNTRY', '\t\tpmr_cc_weigh = yes   # CENTER: the AI weight a size (PLAN 6)\n'
                            '\t\tpmr_cc_chance = yes pmr_cc_cp_cost = yes   # CENTER: the card\'s chance and cost, every country alike\n'
+                           + ('\t\tpmr_cc_skip_audit = yes   # CC_SKIP: the year\'s CC_SKIP line (test builds)\n' if CC_SKIP else '')
                            if CENTER else ''))
     if RESEARCH_MAP or PF_SUMS:
         old = 'OBS_ON_ACTION\n'
@@ -4948,6 +4957,7 @@ def cc_order(b, vp, x, n):
             f'change_variable = {{ name = {o} add = var:{n} }} '
             f'if = {{ limit = {{ NOT = {{ has_variable = pmr_cc_ord_{x}_{S} }} }} set_variable = {{ name = pmr_cc_ord_{x}_{S} value = 0 }} }} '
             f'change_variable = {{ name = pmr_cc_ord_{x}_{S} add = var:{n} }} '
+            + (f'if = {{ limit = {{ NOT = {{ has_variable = {CC_ANY} }} }} set_variable = {CC_ANY} }} ' if CC_SKIP else '')
             + cc_line('CENTER_ORDER', b, vp, x, f";units=[THIS.Var('{n}').GetValue|0]"))
 
 
@@ -5027,6 +5037,9 @@ def cc_post(b, vp):
                  + (f'\tif = {{ limit = {{ has_variable = {g} NOT = {{ AND = {{ has_variable = {ox} var:{ox} > 0 }} }} '
                     + ('' if x == 'gova' else 'owner = { is_player = yes } ') + f'}} remove_variable = {g} }}\n'
                     if x in ('gov', 'gova') else ''))
+    if CC_SKIP:   # the state has something on order: from here on the monthly passes look at it
+        o.append(f'\tif = {{ limit = {{ NOT = {{ has_variable = {CC_ANY} }} OR = {{ '
+                 + ' '.join(f'var:pmr_cc_c{x} > 0' for x in CC_SIDES) + f' }} }} set_variable = {CC_ANY} }}\n')
     o.append('\tif = {\n\t\tlimit = { OR = { ' + ' '.join(f'var:pmr_cc_c{x} > 0' for x in CC_SIDES) + ' } '
              f'NOT = {{ has_building = {CENTER_BUILDING} }} }}\n\t\tpmr_cc_center = yes\n\t}}\n')
     if vp == 'retool':
@@ -5223,7 +5236,8 @@ def cc_effects():
     o.append('# Country scope, monthly (pmr_on_monthly_pulse_country): the open jobs of each size and payer in its states,\n'
              '# and the weight on the size site\'s score.\npmr_cc_weigh = {\n\tsave_temporary_scope_as = pmr_cc_ctry\n'
              + ''.join(f'\tset_variable = {{ name = pmr_cc_k_{x}_{Sf} value = 0 }}\n' for x, Sf in pairs)
-             + '\tevery_scope_state = {\n\t\tsave_temporary_scope_as = pmr_cc_st\n'
+             + '\tevery_scope_state = {\n' + (f'\t\tlimit = {{ has_variable = {CC_ANY} }}\n' if CC_SKIP else '')
+             + '\t\tsave_temporary_scope_as = pmr_cc_st\n'
              + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_cc_n_{x}_{Sf} var:pmr_cc_n_{x}_{Sf} > 0 }} '
                        f'scope:pmr_cc_ctry = {{ change_variable = {{ name = pmr_cc_k_{x}_{Sf} add = scope:pmr_cc_st.var:pmr_cc_n_{x}_{Sf} }} }} }}\n'
                        for x, Sf in pairs)
@@ -5300,6 +5314,25 @@ def cc_jobs():
 def cc_card_triggers():
     """CENTER, state scope: the state has an investors' order at home (an open contribution on the home investors'
     side), the Investment Chance's states"""
+    if CC_SKIP:
+        # pmr_cc_n_<x>_<S> counts the jobs of size S whose contribution on side x is open (pmr_<vp>_cc<x>_<b> set), and
+        # both move only in pmr_cc_post_<vp>_<b>: so a few counters stand for the jobs' own variables.
+        sizes = [fmt(S) for S in cc_sizes()]
+        open_n = lambda x: ''.join(f'\t\tAND = {{ has_variable = pmr_cc_n_{x}_{Sf} var:pmr_cc_n_{x}_{Sf} > 0 }}\n'   # noqa: E731
+                                   for Sf in sizes)
+        return (f'pmr_cc_inv_order = {{\n\thas_variable = {CC_ANY}\n\tOR = {{\n' + open_n('1') + '\t}\n}\n'
+                '# State scope: something the state row\'s chips count is open here: an investors\' or a government\'s\n'
+                '# contribution at home, or units the government ordered.\n'
+                f'pmr_cc_asks = {{\n\thas_variable = {CC_ANY}\n\tOR = {{\n' + open_n('1') + open_n('gov')
+                + ''.join(f'\t\tAND = {{ has_variable = pmr_cc_ord_gov_{Sf} var:pmr_cc_ord_gov_{Sf} > 0 }}\n' for Sf in sizes)
+                + '\t}\n}\n'
+                '# State scope, the CC_SKIP line\'s checks: the same two questions asked of each job\'s own variables.\n'
+                'pmr_cc_inv_order_jobs = {\n\tOR = {\n'
+                + ''.join(f'\t\thas_variable = {J(b, vp, "cc1")}\n' for b, vp in cc_jobs()) + '\t}\n}\n'
+                'pmr_cc_asks_jobs = {\n\tOR = {\n'
+                + ''.join(f'\t\thas_variable = {J(b, vp, "cc1")}\n\t\thas_variable = {J(b, vp, "ccgov")}\n'
+                          f'\t\tAND = {{ has_variable = {J(b, vp, "ord_gov")} var:{J(b, vp, "ord_gov")} > 0 }}\n'
+                          for b, vp in cc_jobs()) + '\t}\n}\n')
     return ('pmr_cc_inv_order = {\n\tOR = {\n'
             + ''.join(f'\t\thas_variable = {J(b, vp, "cc1")}\n' for b, vp in cc_jobs()) + '\t}\n}\n')
 
@@ -5331,7 +5364,8 @@ def cc_card_effects():
              + '}\n\n'
              '# Country scope, every country, monthly (pmr_on_monthly_pulse_country).\npmr_cc_chance = {\n'
              '\tsave_temporary_scope_as = pmr_cc_ctry\n\tset_variable = { name = pmr_cc_sc_sum value = 0 }\n'
-             '\tevery_scope_state = {\n\t\tif = {\n\t\t\tlimit = { pmr_cc_inv_order = yes }\n\t\t\tpmr_cc_score = yes\n'
+             '\tevery_scope_state = {\n' + (f'\t\tlimit = {{ has_variable = {CC_ANY} }}\n' if CC_SKIP else '')
+             + '\t\tif = {\n\t\t\tlimit = { pmr_cc_inv_order = yes }\n\t\t\tpmr_cc_score = yes\n'
              '\t\t\tsave_temporary_scope_as = pmr_cc_st\n'
              '\t\t\tscope:pmr_cc_ctry = { change_variable = { name = pmr_cc_sc_sum add = scope:pmr_cc_st.var:pmr_cc_sc } }\n'
              '\t\t}\n\t\telse_if = { limit = { has_variable = pmr_cc_sc } pmr_cc_score_clear = yes }\n\t}\n}\n\n')
@@ -5374,15 +5408,47 @@ def cc_card_effects():
              '\tpmr_cc_chips_clear = yes\n'
              + ''.join(f'\tset_variable = {{ name = pmr_cc_k{k}_n value = 0 }}\n' for k in range(1, CC_CHIPS + 1))
              + '\tset_variable = { name = pmr_cc_more value = 0 }\n'
-             + ''.join(f'\tif = {{ limit = {{ exists = b:{CC_BK[b]} }} set_variable = {{ name = pmr_cc_x value = pmr_cc_lv_{f}_{b} }} '
-                       f'if = {{ limit = {{ var:pmr_cc_x > 0 }} pmr_cc_chip_in = {{ B = {CC_BK[b]} P = {n} }} }} }}\n'
-                       for b, f, n in cands)
+             + (''.join(f'\tif = {{ limit = {{ exists = b:{CC_BK[b]} }} '
+                        + ' '.join(f'set_variable = {{ name = pmr_cc_x value = pmr_cc_lv_{f}_{b} }} '
+                                   f'if = {{ limit = {{ var:pmr_cc_x > 0 }} pmr_cc_chip_in = {{ B = {CC_BK[b]} P = {n} }} }}'
+                                   for bb, f, n in cands if bb == b) + ' }\n'
+                        for b in dict.fromkeys(b for b, _f, _n in cands)) if CC_SKIP else
+                ''.join(f'\tif = {{ limit = {{ exists = b:{CC_BK[b]} }} set_variable = {{ name = pmr_cc_x value = pmr_cc_lv_{f}_{b} }} '
+                        f'if = {{ limit = {{ var:pmr_cc_x > 0 }} pmr_cc_chip_in = {{ B = {CC_BK[b]} P = {n} }} }} }}\n'
+                        for b, f, n in cands))
              + ''.join(f'\tif = {{ limit = {{ NOT = {{ has_variable = pmr_cc_k{k} }} }} remove_variable = pmr_cc_k{k}_n }}\n'
                        for k in range(1, CC_CHIPS + 1))
              + '}\n\n'
              '# State scope: the chips, in every country\'s states alike (monthly, a press, a level landing).\npmr_cc_chips_if = {\n'
-             '\tpmr_cc_chips = yes\n}\n\n')
+             + ('\tif = { limit = { OR = { has_variable = pmr_cc_k1 pmr_cc_asks = yes } } pmr_cc_chips = yes }\n'
+                '\telse_if = { limit = { NOT = { has_variable = pmr_cc_more } } set_variable = { name = pmr_cc_more value = 0 } }\n'
+                if CC_SKIP else '\tpmr_cc_chips = yes\n') + '}\n\n')
     return ''.join(o)
+
+
+def cc_skip_audit():
+    """CC_SKIP, country scope, once a year (test builds): the CC_SKIP line. states = its states, ever = those that have
+    had an order (pmr_cc_any), open = those the monthly passes look at now (pmr_cc_asks), missed = those where the size
+    counters and the jobs' own variables disagree (0, or the skip leaves out a state it should not)"""
+    tick = lambda v: f'scope:pmr_cc_ctry = {{ change_variable = {{ name = pmr_cc_aud_{v} add = 1 }} }}'   # noqa: E731
+    val = lambda v: f"[THIS.Var('pmr_cc_aud_{v}').GetValue|0]"   # noqa: E731
+    return ('# Country scope, once a year (test builds): the CC_SKIP line (generate.py cc_skip_audit).\npmr_cc_skip_audit = {\n'
+            '\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_cc_aud_chk } }\n'
+            '\t\tset_variable = { name = pmr_cc_aud_chk value = yes days = 350 }\n'
+            '\t\tsave_temporary_scope_as = pmr_cc_ctry\n'
+            + ''.join(f'\t\tset_variable = {{ name = pmr_cc_aud_{v} value = 0 }}\n' for v in 'neom')
+            + '\t\tevery_scope_state = {\n'
+            f'\t\t\t{tick("n")}\n'
+            f'\t\t\tif = {{ limit = {{ has_variable = {CC_ANY} }} {tick("e")} }}\n'
+            f'\t\t\tif = {{\n\t\t\t\tlimit = {{ pmr_cc_asks = yes }}\n\t\t\t\t{tick("o")}\n'
+            f'\t\t\t\tif = {{ limit = {{ pmr_cc_inv_order = yes NOT = {{ pmr_cc_inv_order_jobs = yes }} }} {tick("m")} }}\n'
+            f'\t\t\t\telse_if = {{ limit = {{ NOT = {{ pmr_cc_inv_order = yes }} pmr_cc_inv_order_jobs = yes }} {tick("m")} }}\n'
+            '\t\t\t}\n'
+            f'\t\t\telse_if = {{ limit = {{ pmr_cc_asks_jobs = yes }} {tick("m")} }}\n'
+            '\t\t}\n'
+            '\t\tdebug_log = "PMR;rec=CC_SKIP;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetCountry.GetNameNoFormatting];'
+            f'states={val("n")};ever={val("e")};open={val("o")};missed={val("m")}"\n'
+            + ''.join(f'\t\tremove_variable = pmr_cc_aud_{v}\n' for v in 'neom') + '\t}\n}\n\n')
 
 
 def cc_score_values(buildings):
