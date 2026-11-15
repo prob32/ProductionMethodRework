@@ -12,9 +12,10 @@ file. A type is defined once either way, so without CMF nothing changes: the sam
 
 CMF's two state-panel hooks (com_owner_building_header_list, com_owner_building_list) go into PMR's copy of
 state_panel_buildings_content, where CMF's copy has them, so mods that list buildings through CMF still show in the
-Buildings tab. Without CMF those types are taken from pmr_cmf_fallback_types.gui, an exact copy of CMF's, which sorts
+Buildings tab. Without CMF those types are taken from pmr_cmf_fallback_types.gui, a copy of CMF's, which sorts
 after CMF's file: with CMF on, CMF's own definition is the one used. Their global list is empty without CMF, so they
-stay hidden.
+stay hidden. The copy's one CMF text key (com_gui_total_building, localised only by CMF) is a raw building name, so PMR
+alone logs no unlocalised text (q130-1's error.log, run sheet row X6).
 
 Call apply(out_dir) once every gui file has been written. It raises SystemExit if a type or an anchor moved.
 """
@@ -40,7 +41,7 @@ FIRST_TYPES = (
 PREFIX = '00_00_pmr_'
 FALLBACK = 'pmr_cmf_fallback_types.gui'
 
-# CMF 1.67.6, gui/00_com_gui_state_buildings.gui, verbatim (indentation only)
+# CMF 1.67.6, gui/00_com_gui_state_buildings.gui, verbatim (indentation only) but for the header's text, a raw name
 FALLBACK_TEXT = '''# PMR: Community Mod Framework's state Buildings tab hooks, copied from its gui/00_com_gui_state_buildings.gui
 # (1.67.6) for when CMF is not loaded. This file sorts after CMF's, so with CMF on its own definitions are used.
 # The list they read is CMF's and is empty without it, so they stay hidden.
@@ -65,7 +66,7 @@ types pmr_cmf_fallback_types {
 					}
 
 					blockoverride "text" {
-						text = com_gui_total_building
+						raw_text = "[Building.GetName]"
 					}
 				}
 			}
