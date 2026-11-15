@@ -17,7 +17,31 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: company boards count every year again (q127, test mod)
+## Latest: new buildings start on vanilla's recipe again (q128, test mod)
+
+From the world balance review of your beta051-1 run (2026-11-15): the AI hardly built steel mills (18 levels in 1867;
+q120-1 had 32 in 1882, vanilla 153 in 1878), and too few tooling workshops, food industries and textile mills, while
+it built too many sulfur mines and paper mills. Iron and coal were no scarcer than in vanilla. The cause was the
+one-frame switch (rules review G, in the test line since q109): a new building's first method carried the goods of
+every rung it could ever climb, so the AI weighed a new steel mill on 100 iron, 31 coal and 30 electricity for 150
+steel, a recipe no mill runs and electricity nobody makes in the 1840s. 32 building types were weighed that way. A
+pre-frames observer game (1880) built 278 steel mills, 549 tooling workshops and 117 sulfur mines; q120-1 built 32,
+269 and 238.
+
+q128 builds without one-frame. A new building, and the AI's look at one, uses vanilla's first recipe again; a building
+runs the wider frame only while the monthly pass gives it a blend. The card of a building at rest shows only its
+recipe's goods (your q99 complaint). No text changes. Everything else from q127 stands. **Needs a new game.** Run the
+observer game to 1878 or later so its last autosaves fall on the dates of your vanilla run's (1876.7 to 1878.7).
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| S1 | Observer game, the autosaves (the build thread reads them) | Steel mill levels worldwide at least 54 by 1867 (three times beta051-1's) and within a third of vanilla's 153 by 1878 | Under 30 in 1867: the first recipe was not the cause; the AI's weights for steel mills are next |
+| S2 | Same saves, 1876-78 | Tooling workshops, food industries and textile mills each within a third of vanilla's (548, 317, 476); sulfur mines and paper mills no more than a third above vanilla's (91, 406) | Still near q120-1's (269, 123, 294; 238, 759): an older production_methods folder is installed |
+| S3 | Any game, a steel mill built after 1836, its card | Blister steel: iron and coal in, steel out, no electricity or tools line | An electricity line: an older production_methods folder is installed |
+| S4 | Any game, a coal mine at rest with no step, its card | Only the recipe's goods | Zeroed step goods or -100% lines: send a screenshot to the build thread |
+| S5 | `logs\error.log` | Names no `pmr_` key | A line there: send it to the build thread before reading anything else |
+
+## Earlier: company boards count every year again (q127, test mod)
 
 Found in your q126 France game (1837-1840): the boards never counted again after their first count. Every BL_COUNT
 line for your companies carried the same figures for 26 months, and no BL_PRIVATE line came at all. The yearly count

@@ -130,6 +130,9 @@ LAB_UP = 12       # 1,500 more
 # on a step type with no processing axis the vanilla recipe method carries its union frame's lines and is the frame
 # in every blend (Building.one_frame), so pm_pmr_union_<b>_<p> goes; the skilled-post unions (_s) stay, and so do the
 # processing types' pairs and unions. Its "less" modifiers then apply from a building's first tick, at rest too.
+# Off in the test line since q128 (world balance review 2026-11-15): the group's first recipe then carries every rung's
+# goods, and the AI weighs a building it might build on that body before any modifier exists (a steel mill on 100 iron,
+# 31 coal and 30 electricity for 150 steel); 32 types were built too little or too much.
 ONE_FRAME = False
 
 

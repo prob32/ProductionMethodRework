@@ -2190,7 +2190,7 @@ def main():
     ap.add_argument('--cost-scale', type=float, default=1.0, metavar='X',
                     help='COST_SCALE: retool and project levels cost X times their shares (RETOOL_SHARE, PROJECT_SHARE)')
     ap.add_argument('--one-frame', action='store_true',
-                    help='ONE_FRAME (rules review item G): a step type\'s recipe method carries its union frame; needs --rails')
+                    help='ONE_FRAME (rules review item G): a step type\'s recipe method carries its union frame; needs --rails. The AI then weighs new buildings on the union\'s goods: off in the test line since q128')
     ap.add_argument('--build', default='', metavar='qN',
                     help='test build: its tag (q91), stamped into a BUILD log line and the saves (pmr_build)')
     ap.add_argument('--trace-from', default=None, metavar='Y.M.D',
