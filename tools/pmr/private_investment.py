@@ -144,6 +144,30 @@ CHART_EXCLUDE = ('bg_subsistence_agriculture', 'bg_subsistence_ranching')
 # much more profitable new build must still win, so x3.
 REINVEST_MAX = 3
 REINVEST_PER_POINT = (REINVEST_MAX - 1) / 100
+# Pat 2026-11-15 23:35Z (card): the card gives at least x2 at a group's 0% priority, up to x3 at 100%: REINVEST_MIN 2 with
+# generate.py's --reinvest-floor 2 (set_reinvest_floor); 1 keeps the old x1 to x3.
+REINVEST_MIN = 1
+
+
+def reinvest_body(open_, close, src, v, ind):
+    """script value body: under Focus on Infrastructure (has_modifier in the scope open_ names), REINVEST_MIN plus
+    REINVEST_PER_POINT x the group's slider src (x1 to x3 before Pat's 23:35Z card; with the floor, x2 to x3, the floor
+    standing even before the slider is first read)"""
+    lim = (f'{open_} has_modifier = pmr_policy_reinvest {close}' if open_ else 'has_modifier = pmr_policy_reinvest')
+    vlim = (f'{open_} has_variable = {v} {close}' if open_ else f'has_variable = {v}')
+    return (f'{ind}if = {{\n{ind}\tlimit = {{ {lim} }}\n{ind}\tvalue = {fmt_num(REINVEST_MIN)}\n'
+            f'{ind}\tif = {{ limit = {{ {vlim} }} add = {{ value = {src} multiply = {fmt_num(REINVEST_PER_POINT)} }} }}\n{ind}}}\n')
+
+
+def fmt_num(x):
+    return ('%.6f' % x).rstrip('0').rstrip('.')
+
+
+def set_reinvest_floor(x):
+    """the Focus on Infrastructure multiplier runs from x at a group's 0% priority to REINVEST_MAX at 100%"""
+    global REINVEST_MIN, REINVEST_PER_POINT
+    REINVEST_MIN = x
+    REINVEST_PER_POINT = (REINVEST_MAX - x) / 100
 # Vanilla's profit term is 5000 x 1.5 a pound of predicted WEEKLY profit per employee (00_ai.txt); the
 # earnings PMR reads (pmr_ai_earn_<b>) are a YEAR's, so a pound of them weighs 7500 / 52. Until 20:12Z PMR
 # weighed it at 7,500, which made every weight below about 50 times too strong (Pat's 1838 autosave: new
@@ -175,7 +199,7 @@ POLICIES = [
      'As if each worker earned #P @money!10#! more'),
     ('reinvest', 'Focus on Infrastructure', 'gfx/interface/icons/ai_strategy_icons/unused/infrastructure_expansion.dds',
      {'building_railway_throughput_add': 0.1, 'building_port_throughput_add': 0.1},
-     f'#P Up to {REINVEST_MAX}×#! Investment Weight for Retooling',
+     '#P REINVEST_RANGE#! Investment Weight for Retooling',
      'Scales with the group\'s priority'),
     ('small', 'Favour Small Businesses', 'gfx/interface/icons/law_icons/cooperative_ownership.dds',
      {'state_shopkeepers_investment_pool_efficiency_mult': 0.25, 'building_self_investment_chance_add': 0.1},
@@ -317,6 +341,9 @@ WHOLE = ('country_free_charters_add', 'country_max_companies_add', 'interest_gro
 
 def benefit_lines(core, mods):
     """A policy's benefits, one per line: what PMR's script does, then each modifier."""
+    if core and 'REINVEST_RANGE' in core:   # Focus on Infrastructure's range, set by the switch (set_reinvest_floor)
+        core = core.replace('REINVEST_RANGE', f'Up to {REINVEST_MAX}×' if REINVEST_MIN == 1
+                            else f'{fmt_num(REINVEST_MIN)}× to {REINVEST_MAX}×')
     out = [core] if core else []
     for m, v in mods.items():
         c = 'N' if m in BAD else 'v' if m in NEUTRAL else 'P'
@@ -501,12 +528,13 @@ def script_values():
         v = VAR.format(g)
         out += (f'{v}_pct = {{\n\tvalue = pmr_ipw_now_{g}\n\tmultiply = pmr_ipw_cap\n\tdivide = 100\n}}\n\n')
     out += ('# State scope, multiplied into private retool buildings\' ai_value (pmr_retool_buildings.txt): while the\n'
-            f'# owner holds Re-invest, 1 + {REINVEST_PER_POINT} x the slider of the retooled building\'s group (x{REINVEST_MAX} at 100%).\n')
+            f'# owner holds Re-invest, {fmt_num(REINVEST_MIN)} + {REINVEST_PER_POINT} x the slider of the retooled building\'s group (x{REINVEST_MAX} at 100%).\n')
     for g in keys:
         v = VAR.format(g)
-        out += (f'pmr_reinvest_mult_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
-                f'\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
-                f'\t\tvalue = owner.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n')
+        out += ((f'pmr_reinvest_mult_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\towner ?= {{\n'
+                 f'\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
+                 f'\t\tvalue = owner.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n') if REINVEST_MIN == 1 else
+                (f'pmr_reinvest_mult_{g} = {{\n\tvalue = 1\n' + reinvest_body('owner ?= {', '}', 'owner.var:' + v, v, '\t') + '}\n\n'))
     # Pat, 2026-10-13 22:37Z: the player's investors, on Focus on Infrastructure with Resources at the top, retooled
     # only at home, x100 there and x1 abroad, as the host's card was read. The abroad slot reads the investors' own
     # card where the game names them (scope:investor_country) and the player's otherwise (pmr_reinvest_<g>, a global
@@ -514,16 +542,19 @@ def script_values():
     out += ('# Country scope: the country\'s own Focus on Infrastructure multiplier for a group (as pmr_reinvest_mult_<g>).\n')
     for g in keys:
         v = VAR.format(g)
-        out += (f'pmr_reinvest_own_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\thas_modifier = pmr_policy_reinvest\n'
-                f'\t\t\thas_variable = {v}\n\t\t}}\n\t\tvalue = var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n')
+        out += ((f'pmr_reinvest_own_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\thas_modifier = pmr_policy_reinvest\n'
+                 f'\t\t\thas_variable = {v}\n\t\t}}\n\t\tvalue = var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n}}\n\n') if REINVEST_MIN == 1 else
+                (f'pmr_reinvest_own_{g} = {{\n\tvalue = 1\n' + reinvest_body('', '', 'var:' + v, v, '\t') + '}\n\n'))
     out += ('# State scope, multiplied into the abroad retool slot\'s ai_value: the investors\' own multiplier where the game\n'
             '# names them, else the player\'s (pmr_reinvest_<g>, set by pmr_reinvest_publish).\n')
     for g in keys:
         v = VAR.format(g)
-        out += (f'pmr_reinvest_mult_abroad_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\texists = scope:investor_country\n'
-                f'\t\t\tscope:investor_country = {{\n\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
-                f'\t\tvalue = scope:investor_country.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n'
-                f'\telse_if = {{\n\t\tlimit = {{\n\t\t\tNOT = {{ exists = scope:investor_country }}\n'
+        out += ((f'pmr_reinvest_mult_abroad_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{\n\t\t\texists = scope:investor_country\n'
+                 f'\t\t\tscope:investor_country = {{\n\t\t\t\thas_modifier = pmr_policy_reinvest\n\t\t\t\thas_variable = {v}\n\t\t\t}}\n\t\t}}\n'
+                 f'\t\tvalue = scope:investor_country.var:{v}\n\t\tmultiply = {REINVEST_PER_POINT}\n\t\tadd = 1\n\t}}\n') if REINVEST_MIN == 1 else
+                (f'pmr_reinvest_mult_abroad_{g} = {{\n\tvalue = 1\n\tif = {{\n\t\tlimit = {{ exists = scope:investor_country }}\n'
+                 + reinvest_body('scope:investor_country = {', '}', 'scope:investor_country.var:' + v, v, '\t\t') + '\t}\n'))
+        out += (f'\telse_if = {{\n\t\tlimit = {{\n\t\t\tNOT = {{ exists = scope:investor_country }}\n'
                 f'\t\t\thas_global_variable = pmr_reinvest_{g}\n\t\t}}\n\t\tvalue = global_var:pmr_reinvest_{g}\n\t}}\n}}\n\n')
     # The contributors chart: privately owned levels per priority group (the game's per-building amounts exist only
     # as text). private_ownership_fraction is a comparison, so a building's private share is read to the nearest

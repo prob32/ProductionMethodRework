@@ -17,7 +17,37 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: Banks, fixed, with a lighter monthly pass (q133, test mod)
+## Latest: Banks book by profit, Focus on Infrastructure ×2 to ×3 (q134, test mod)
+
+q133 with three changes from your Banks card in Lancashire (2026-11-15 23:29Z to 23:35Z). A q133 game carries on; the
+policy line on the Investment Chance tooltip appears once the state's package is next drawn (a month at most). Same
+switch list as q133 plus `--reinvest-floor 2`.
+
+- **A new order's profit.** An investors' Retool order now prices its row's weekly gain a level the day it joins the
+  book. Before, the row showed nothing until the building's next price check, and the book sorted it as if it earned
+  nothing.
+- **Investment Banking sorts by profit.** Places follow the row's weekly gain a level, a gain times the company's
+  weight, highest first (an order with a part paid level still goes first). Before, they followed the investors'
+  Score, which moves with how investors rate the building type, so Harvesting Tools (+53) sat over Sewing Machines
+  (+238). The method's tooltip reads "Highest Profit First".
+- **Focus on Infrastructure** weighs every retool order ×2 at a group's 0% priority, rising to ×3 at 100% (your card,
+  23:35Z; before, ×1 to ×3). The card reads "2× to 3×". An order's tooltip shows its "×N from Focus on
+  Infrastructure" while the policy lifts it, and the Investment Chance tooltip shows the package's average. The
+  chance itself is the state's share of the country's Banks, so a policy that lifts every Bank alike does not move it.
+
+| Row | Check | Expected | A null means |
+| --- | --- | --- | --- |
+| K1 | `BANK_JOIN` lines (your country's orders as they join) with `job=retool` | `gain=` a figure other than -1000 on almost every line, with `from=` and `to=` both above 0 | `gain=-1000` with `to=` above 0: the join's pricing never ran (no `pmr_cc_gain_` effect for that building). `to=0`: the building had no pick yet; the row waits for its first check, as before |
+| K2 | A Banks card the month an investors' order appears | The row shows its £ at once | Blank for a month or more: the row reads another variable than the join sets; send the `BANK_JOIN` line for it |
+| K3 | An Investment Banking state (the technology by console in a test game) with three or more orders | Numerals 1, 2, 3 down the rows follow the £ on the rows, a company's row by its £ times its ×N; a part paid order first | Numerals follow Score instead: the sort still reads the score. Rows with no £ on top: the gain is missing (K1) |
+| K4 | The Focus on Infrastructure card; then a retool order's tooltip with the policy held and its group's priority at 0% | Card: "2× to 3× Investment Weight for Retooling". Tooltip: "×2.0 from Focus on Infrastructure", rising as the group's slider rises | Card says "Up to 3×": built without `--reinvest-floor 2`. No tooltip line: the order's weights have no Focus on Infrastructure part |
+| K5 | The Investment Chance tooltip of a state offering a package, with the policy held | A "×N from Focus on Infrastructure" line under the average gain | No line after a month: the package's policy average (`pmr_bank_pm`) is not drawn |
+| K6 | `logs\error.log`, lines with `pmr_bank` or `pmr_cc_gain` | None | Any: a new variable read before it is set |
+
+New log line: `BANK_JOIN` (test build, your country only: place, the row's gain, and for a Retool order the recipe it
+retools from and to).
+
+## Earlier: Banks, fixed, with a lighter monthly pass (q133, test mod)
 
 q132 with its book's job numbers fixed and three cuts in the Banks' monthly script, both from the performance thread's
 replays of q132. **Start a new game**: a q132 game's books hold the wrong numbers. The rows of q132 below all hold for

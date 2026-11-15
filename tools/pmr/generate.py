@@ -2244,6 +2244,9 @@ def main():
                          '--center-skip and a new game')
     ap.add_argument('--banks-map', action='store_true',
                     help='BANKS_MAP (banks/UI.md 7): Banks stand in the city with the Financial District\'s model; needs --banks')
+    ap.add_argument('--reinvest-floor', metavar='X', type=float, default=1,
+                    help='Focus on Infrastructure (Pat 2026-11-15 23:35Z card): a retool weight of X at a group\'s 0%% priority, '
+                         'rising to x3 at 100%%; 1 keeps x1 to x3')
     ap.add_argument('--banks-art', metavar='DIR', default='/mnt/project-files/pmr/banks/ui/icons',
                     help='BANKS: the interface thread\'s icons (banks_256.png, pmr_size_5-7.png, pmr_bank_method_3.png, '
                          'pmr_bank_package.png), made from game art, so kept out of the repository')
@@ -2333,6 +2336,10 @@ def main():
         raise SystemExit('--banks needs --center and --center-skip: the book replaces the investors\' size counters')
     if BANKS_MAP and not BANKS:
         raise SystemExit('--banks-map needs --banks: it gives the Banks building its city model')
+    if not 1 <= args.reinvest_floor <= private_investment.REINVEST_MAX:
+        raise SystemExit(f'--reinvest-floor takes 1 to {private_investment.REINVEST_MAX}')
+    if args.reinvest_floor != 1:
+        private_investment.set_reinvest_floor(args.reinvest_floor)
     if frames.ONE_FRAME and not RAILS:
         raise SystemExit('--one-frame needs --rails: it folds the step types\' union frames')
     SHARE_DIGITS = args.digit_shares
@@ -2773,6 +2780,8 @@ def main():
     def write(rel, text, bom=True):
         if '@PMR_BANK_NO:' in text:   # the posts' job numbers, now that CC_JOB is whole
             text = BANK_NO_TOKEN.sub(lambda m: str(bank_no(m[1], m[2])), text)
+        if '@PMR_CC_GAIN:' in text:   # a joining Retool order's gain, where its building has one (CC_GAIN)
+            text = CC_GAIN_TOKEN.sub(lambda m: f'pmr_cc_gain_{m[1]} = yes' if m[1] in CC_GAIN else '', text)
         if args.release and rel.endswith('.txt'):
             text = drop_empty(unlogged.sub('', text))
         if args.trace_from and rel.endswith('.txt'):
@@ -5216,6 +5225,10 @@ def bank_no(b, vp):
 
 
 BANK_NO_TOKEN = re.compile(r'@PMR_BANK_NO:(\w+):(\w+)@')
+# BANKS: the buildings whose pmr_cc_gain_<b> profit_effect wrote; a join (bank_post, written before it) names it by
+# CC_GAIN_TOKEN, which write() resolves
+CC_GAIN = set()
+CC_GAIN_TOKEN = re.compile(r'@PMR_CC_GAIN:(\w+)@')
 
 
 def bank_no_token(b, vp):
@@ -5295,6 +5308,18 @@ def bank_post(b, vp):
     again; a rise marks the book for the month's start; a fall draws the package again"""
     prev, pos = J(b, vp, 'cc1'), J(b, vp, 'pos_1')
     pk, pt = J(b, vp, 'pk_1'), J(b, vp, 'pt_1')
+    # a Retool order joins with its gain priced today (cc_retool_gain; q133: rows showed no gain until the next check)
+    gain = f'\t\t\t@PMR_CC_GAIN:{b}@\n' if vp == 'retool' else ''
+    if not RELEASE:   # test build: the player's joins, with the gain the row shows (-1000: none) (q134 run sheet)
+        g = J(b, vp, 'gain')
+        gain += ('\t\t\tif = { limit = { owner = { is_player = yes } } set_variable = { name = pmr_bank_lg value = -1000 } '
+                 f'if = {{ limit = {{ has_variable = {g} }} set_variable = {{ name = pmr_bank_lg value = var:{g} }} }} '
+                 'debug_log = "PMR;rec=BANK_JOIN;date=[TimeKeeper.GetCurrentDate.GetString];'
+                 'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                 f"building={CC_BK[b]};job={vp};place=[THIS.Var('pmr_bank_qk').GetValue|0];"
+                 "gain=[THIS.Var('pmr_bank_lg').GetValue|2]"
+                 + (f";from=[THIS.Var('pmr_cc_from_{b}').GetValue|0];to=[THIS.Var('pmr_best_now_{b}').GetValue|0]" if vp == 'retool' else '')
+                 + '" remove_variable = pmr_bank_lg }\n')
     return (f'\t# 1: the Banks\' book (bank_post)\n\tset_variable = {{ name = pmr_cc_p value = 0 }}\n'
             f'\tif = {{ limit = {{ has_variable = {prev} }} set_variable = {{ name = pmr_cc_p value = var:{prev} }} }}\n'
             f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_c1 = var:pmr_cc_p }} }}\n'
@@ -5303,7 +5328,8 @@ def bank_post(b, vp):
             f'\t\telse_if = {{ limit = {{ has_variable = {prev} }} remove_variable = {prev} }}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_p <= 0 var:pmr_cc_c1 > 0 }}\n'
             f'\t\t\tset_variable = {{ name = pmr_bank_q value = {bank_no_token(b, vp)} }}\n\t\t\tpmr_bank_join = yes\n'
-            f'\t\t\tif = {{ limit = {{ var:pmr_bank_qk > 0 }} set_variable = {{ name = {pos} value = var:pmr_bank_qk }} }}\n\t\t}}\n'
+            f'\t\t\tif = {{ limit = {{ var:pmr_bank_qk > 0 }} set_variable = {{ name = {pos} value = var:pmr_bank_qk }} }}\n'
+            + gain + '\t\t}\n'
             f'\t\telse_if = {{\n\t\t\tlimit = {{ var:pmr_cc_c1 <= 0 }}\n'
             f'\t\t\tif = {{ limit = {{ has_variable = {pos} }} set_variable = {{ name = pmr_bank_lk value = var:{pos} }} '
             f'remove_variable = {pos} pmr_bank_leave = yes }}\n'
@@ -5330,6 +5356,16 @@ def bank_score_of(b, vp):
     return (f'set_variable = {{ name = pmr_bank_js value = pmr_cc_js_{vp}_{b} }} '
             f'if = {{ limit = {{ owner = {{ has_variable = pmr_bank_cw_{b} }} }} '
             f'change_variable = {{ name = pmr_bank_js multiply = owner.var:pmr_bank_cw_{b} }} }}')
+
+
+def bank_profit_of(b, vp):
+    """BANKS, one line: pmr_bank_jv, the order's place under Investment Banking: its row's weekly gain a level (pmr_<vp>_gain_<b>,
+    0 without one), a gain x its company weight (Pat 2026-11-15 23:35Z: the book reads top-down by the row's pounds)"""
+    g = J(b, vp, 'gain')
+    return (f'set_variable = {{ name = pmr_bank_jv value = 0 }} '
+            f'if = {{ limit = {{ has_variable = {g} }} set_variable = {{ name = pmr_bank_jv value = var:{g} }} }} '
+            f'if = {{ limit = {{ var:pmr_bank_jv > 0 owner = {{ has_variable = pmr_bank_cw_{b} }} }} '
+            f'change_variable = {{ name = pmr_bank_jv multiply = owner.var:pmr_bank_cw_{b} }} }}')
 
 
 def bank_take(b, vp):
@@ -5423,21 +5459,23 @@ def bank_effects():
                            + f' set_variable = {{ name = pmr_bank_jg value = 0 }} '
                            f'if = {{ limit = {{ has_variable = {J(b, vp, "gain")} }} set_variable = {{ name = pmr_bank_jg value = var:{J(b, vp, "gain")} }} }} '
                            f'set_variable = {{ name = pmr_bank_jl value = {fmt(CC_JOB[b, vp][0] * CC_JOB[b, vp][1])} }} '
-                           f'set_variable = {{ name = pmr_bank_jb value = bt:{CC_BK[b]} }} pmr_bank_fill = yes '
+                           f'set_variable = {{ name = pmr_bank_jb value = bt:{CC_BK[b]} }} '
+                           f'set_variable = {{ name = pmr_bank_jm value = pmr_cc_jm_{vp}_{b} }} pmr_bank_fill = yes '
                            f'if = {{ limit = {{ var:pmr_bank_t > 0 }} set_variable = {{ name = {J(b, vp, "pk_1")} value = var:pmr_bank_t }} }}',
                            'The job\'s part of the package on offer, after what is already queued (pmr_bank_skip).'))
     o.append(bank_dispatch('pmr_bank_rescore', lambda b, vp: f'if = {{ limit = {{ has_variable = {J(b, vp, "pk_1")} }} '
                            + bank_score_of(b, vp) + ' set_variable = { name = pmr_bank_jg value = 0 } '
                            f'if = {{ limit = {{ has_variable = {J(b, vp, "gain")} }} set_variable = {{ name = pmr_bank_jg value = var:{J(b, vp, "gain")} }} }} '
                            f'change_variable = {{ name = pmr_bank_sc add = {{ value = var:{J(b, vp, "pk_1")} divide = var:pmr_bank_P multiply = var:pmr_bank_js }} }} '
-                           f'change_variable = {{ name = pmr_bank_gain add = {{ value = var:{J(b, vp, "pk_1")} divide = var:pmr_bank_P multiply = var:pmr_bank_jg }} }} }}',
-                           'The job\'s part of the package as last drawn (pmr_<vp>_pk_1_<b>) adds its score and gain, as pmr_bank_fill.'))
+                           f'change_variable = {{ name = pmr_bank_gain add = {{ value = var:{J(b, vp, "pk_1")} divide = var:pmr_bank_P multiply = var:pmr_bank_jg }} }} '
+                           f'change_variable = {{ name = pmr_bank_pm add = {{ value = var:{J(b, vp, "pk_1")} divide = var:pmr_bank_P multiply = pmr_cc_jm_{vp}_{b} }} }} }}',
+                           'The job\'s part of the package as last drawn (pmr_<vp>_pk_1_<b>) adds its score, gain and policy weight, as pmr_bank_fill.'))
     o.append(bank_dispatch('pmr_bank_take', bank_take, 'The job\'s part of a package that landed (pmr_bank_left).'))
     o.append(bank_dispatch('pmr_bank_tick', lambda b, vp: f'if = {{ limit = {{ exists = b:{CC_BK[b]} b:{CC_BK[b]} = {{ level >= 1 }} }} '
                                                           f'pmr_tick_{b} = yes }}',
                            'The job\'s building takes its credited units (its count, progress and split).'))
     o.append(bank_dispatch('pmr_bank_part', bank_part, 'pmr_bank_f: the job has a part paid level.'))
-    o.append(bank_dispatch('pmr_bank_score', bank_score_of, 'pmr_bank_js: the job\'s score.'))
+    o.append(bank_dispatch('pmr_bank_profit', bank_profit_of, 'pmr_bank_jv: the job\'s sort key under Investment Banking.'))
     # seating and leaving
     o.append('# var:pmr_bank_q into place var:pmr_bank_n.\npmr_bank_put = {\n'
              + lookup('var:pmr_bank_n', places, lambda k: f'set_variable = {{ name = pmr_bank_j{k} value = var:pmr_bank_q }}') + '}\n\n')
@@ -5469,7 +5507,8 @@ def bank_effects():
              + seat + '\t}\n'
              '\tif = { limit = { has_variable = pmr_bank_n var:pmr_bank_n >= 2 } pmr_bank_order = yes }\n'
              '\tif = { limit = { has_variable = pmr_bank_d } remove_variable = pmr_bank_d set_variable = pmr_bank_pd }\n\tpmr_bank_pack_month = yes\n}\n\n')
-    # ordering: tier 1 shuffles when an order joined, tier 3 sorts by score; under both an order with a part paid level
+    # ordering: tier 1 shuffles when an order joined, tier 3 sorts by the row's gain x the company weight (Pat 2026-11-15
+    # 23:35Z: the book read by score put Harvesting Tools, +53, over Sewing Machines, +238); under both an order with a part paid level
     # moves to the front, keeping its order (a stable sort on pmr_bank_f, then pmr_bank_v)
     shuffle = ''
     for i in reversed(places[1:]):
@@ -5485,7 +5524,7 @@ def bank_effects():
                      f'AND = {{ var:pmr_bank_f{i + 1} = var:pmr_bank_f{i} var:pmr_bank_v{i + 1} > var:pmr_bank_v{i} }} }} }} '
                      + bank_swap(i, i + 1, ['j', 'f', 'v']) + ' set_variable = pmr_bank_mv }' + ('\n' if i < K - p else ' }\n'))
         sort += ''.join(f'\t\t{"\t" * (i - 1)}}}\n' for i in range(K - p - 1, 0, -1)) + '\t}\n'
-    o.append('# Places 1 to n by pmr_bank_f (a part paid level first), then pmr_bank_v (the score, tier 3), highest first;\n'
+    o.append('# Places 1 to n by pmr_bank_f (a part paid level first), then pmr_bank_v (the gain x company weight, tier 3), highest first;\n'
              '# a bubble sort, so equal orders keep their places.\npmr_bank_sort = {\n' + sort + '}\n\n')
     o.append('pmr_bank_order = {\n\tset_variable = { name = pmr_bank_rt value = 1 }\n'
              '\tif = { limit = { owner = { has_variable = pmr_bank_tier } } set_variable = { name = pmr_bank_rt value = owner.var:pmr_bank_tier } }\n'
@@ -5495,13 +5534,13 @@ def bank_effects():
                        f'pmr_bank_part = yes set_variable = {{ name = pmr_bank_f{k} value = var:pmr_bank_f }} '
                        'change_variable = { name = pmr_bank_nf add = var:pmr_bank_f } '
                        f'set_variable = {{ name = pmr_bank_v{k} value = 0 }} '
-                       f'if = {{ limit = {{ var:pmr_bank_rt = 3 }} pmr_bank_score = yes set_variable = {{ name = pmr_bank_v{k} value = var:pmr_bank_js }} }} }}\n'
+                       f'if = {{ limit = {{ var:pmr_bank_rt = 3 }} pmr_bank_profit = yes set_variable = {{ name = pmr_bank_v{k} value = var:pmr_bank_jv }} }} }}\n'
                        for k in places)
              + '\t\tif = { limit = { OR = { var:pmr_bank_rt = 3 var:pmr_bank_nf > 0 } } pmr_bank_sort = yes '
              'if = { limit = { has_variable = pmr_bank_mv } remove_variable = pmr_bank_mv set_variable = pmr_bank_re } }\n'
              + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_bank_f{k} }} remove_variable = pmr_bank_f{k} remove_variable = pmr_bank_v{k} }}\n'
                        for k in places)
-             + '\t\tremove_variable = pmr_bank_nf\n\t}\n'
+             + '\t\tremove_variable = pmr_bank_nf\n\t\tif = { limit = { has_variable = pmr_bank_jv } remove_variable = pmr_bank_jv }\n\t}\n'
              '\tif = {\n\t\tlimit = { has_variable = pmr_bank_re }\n\t\tset_variable = pmr_bank_pd\n'
              + ''.join(f'\t\tif = {{ limit = {{ var:pmr_bank_n >= {k} }} set_variable = {{ name = pmr_bank_q value = var:pmr_bank_j{k} }} '
                        f'set_variable = {{ name = pmr_bank_qk value = {k} }} pmr_bank_setpos = yes }}\n' for k in places)
@@ -5512,7 +5551,7 @@ def bank_effects():
                       f'set_variable = {{ name = pmr_bank_c{k}_n value = {{ value = var:pmr_bank_t divide = var:pmr_bank_jl }} }} '
                       'set_variable = { name = pmr_bank_x value = { value = var:pmr_bank_t divide = var:pmr_bank_jl floor = yes multiply = var:pmr_bank_jl } } '
                       f'if = {{ limit = {{ var:pmr_bank_x < var:pmr_bank_t }} set_variable = pmr_bank_c{k}_f }}')
-    o.append('# The order in hand (pmr_bank_o, _js, _jg, _jl, _jb) takes its part of the package: past the construction already\n'
+    o.append('# The order in hand (pmr_bank_o, _js, _jg, _jl, _jb, _jm) takes its part of the package: past the construction already\n'
              '# queued (pmr_bank_skip), up to what the package has room for (pmr_bank_room); pmr_bank_t its part.\npmr_bank_fill = {\n'
              '\tset_variable = { name = pmr_bank_t value = 0 }\n'
              '\tif = {\n\t\tlimit = { var:pmr_bank_skip > 0 var:pmr_bank_o > 0 }\n'
@@ -5526,6 +5565,7 @@ def bank_effects():
              '\t\tchange_variable = { name = pmr_bank_m add = 1 }\n'
              '\t\tchange_variable = { name = pmr_bank_sc add = { value = var:pmr_bank_t divide = var:pmr_bank_P multiply = var:pmr_bank_js } }\n'
              '\t\tchange_variable = { name = pmr_bank_gain add = { value = var:pmr_bank_t divide = var:pmr_bank_P multiply = var:pmr_bank_jg } }\n'
+             '\t\tchange_variable = { name = pmr_bank_pm add = { value = var:pmr_bank_t divide = var:pmr_bank_P multiply = var:pmr_bank_jm } }\n'
              f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_bank_m <= {BANK_CHIPS} }}\n'
              + lookup('var:pmr_bank_m', list(range(1, BANK_CHIPS + 1)), chip, '\t\t\t') + '\t\t}\n'
              '\t\telse = {\n\t\t\tif = { limit = { NOT = { has_variable = pmr_bank_cr } } set_variable = { name = pmr_bank_cr value = 0 } }\n'
@@ -5569,15 +5609,15 @@ def bank_effects():
              '\t\t\tset_variable = { name = pmr_bank_lv value = { value = var:pmr_bank_fr divide = var:pmr_bank_P floor = yes } }\n'
              '\t\t\tset_variable = { name = pmr_bank_skip value = var:pmr_bank_qd }\n'
              '\t\t\tset_variable = { name = pmr_bank_room value = var:pmr_bank_P }\n'
-             + ''.join(f'\t\t\tset_variable = {{ name = pmr_bank_{x} value = 0 }}\n' for x in ('m', 'sc', 'gain'))
+             + ''.join(f'\t\t\tset_variable = {{ name = pmr_bank_{x} value = 0 }}\n' for x in ('m', 'sc', 'gain', 'pm'))
              + ''.join(f'\t\t\tif = {{ limit = {{ var:pmr_bank_n >= {k} var:pmr_bank_room > 0 }} '
                        f'set_variable = {{ name = pmr_bank_q value = var:pmr_bank_j{k} }} pmr_bank_give = yes }}\n' for k in places)
              + f'\t\t\tif = {{ limit = {{ has_variable = pmr_bank_cr }} set_variable = {{ name = pmr_bank_mx value = {{ value = var:pmr_bank_m subtract = {BANK_CHIPS} }} }} }}\n'
              + ''.join(f'\t\t\tif = {{ limit = {{ has_variable = pmr_bank_{x} }} remove_variable = pmr_bank_{x} }}\n'
-                       for x in ('skip', 'room', 't', 'js', 'jg', 'jl', 'jb', 'x'))
+                       for x in ('skip', 'room', 't', 'js', 'jg', 'jl', 'jb', 'jm', 'x'))
              + '\t\t}\n\t\telse = {\n'
              + ''.join(f'\t\t\tif = {{ limit = {{ has_variable = pmr_bank_{x} }} remove_variable = pmr_bank_{x} }}\n'
-                       for x in ('lv', 'm', 'sc', 'gain'))
+                       for x in ('lv', 'm', 'sc', 'gain', 'pm'))
              + '\t\t}\n'
              + ''.join(f'\t\tpmr_cc_cap_1_{fmt(S)} = yes\n' for S in sizes)
              # the queue row names the building while the package holds one order (pmr_for_<site>)
@@ -5611,6 +5651,7 @@ def bank_effects():
              '\tif = { limit = { has_variable = pmr_bank_pd } pmr_bank_pack = yes }\n'
              '\telse_if = {\n\t\tlimit = { has_variable = pmr_bank_P has_variable = pmr_bank_n }\n'
              '\t\tset_variable = { name = pmr_bank_sc value = 0 }\n\t\tset_variable = { name = pmr_bank_gain value = 0 }\n'
+             '\t\tset_variable = { name = pmr_bank_pm value = 0 }\n'
              + walk
              + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_bank_{x} }} remove_variable = pmr_bank_{x} }}\n' for x in ('js', 'jg'))
              + '\t}\n}\n\n')
@@ -6166,6 +6207,9 @@ def cc_score_values(buildings):
                        f'pmr_cc_jp_{vp}_{b} = {{ value = 0 if = {{ limit = {{ has_variable = {pay.group(1)} }} value = var:{pay.group(1)} }} }}\n'
                        f'pmr_cc_jw_{vp}_{b} = {{ value = 1 {" ".join(mults)} }}\n'
                        f'pmr_cc_js_{vp}_{b} = {{ value = pmr_cc_jb_{vp}_{b} add = pmr_cc_jp_{vp}_{b} multiply = pmr_cc_jw_{vp}_{b} }}\n')
+            if BANKS:   # Focus on Infrastructure's part of the weights, for the row's tooltip and the package's (bank_row_loc)
+                jm = [x for x in mults if x.startswith('multiply = pmr_reinvest_mult_')]
+                out.append(f'pmr_cc_jm_{vp}_{b} = {{ value = 1 {" ".join(jm)} }}\n')
     return ''.join(out)
 
 
@@ -6791,15 +6835,19 @@ def bank_rows_types():
 
 
 def bank_row_loc(b, vp, tt):
-    """BANKS: an investors' home row's tooltip (UI.md 5) and its company weight mark"""
+    """BANKS: an investors' home row's tooltip (UI.md 5) and its company weight mark; Focus on Infrastructure's weight
+    while it lifts the order (Pat 2026-11-15 23:29Z: "show in the tool tip")"""
     O = 'Building.GetState.GetOwner.MakeScope'
     cw = f"{O}.Var('pmr_bank_cw_{b}')"
     js = f"Building.GetState.MakeScope.ScriptValue('pmr_cc_js_{vp}_{b}')"
+    jm = f"Building.GetState.MakeScope.ScriptValue('pmr_cc_jm_{vp}_{b}')"
     return [f' PMR_BANK_TTI_{b}_{vp}:0 "{tt}'
             f"[SelectLocalization({cw}.IsSet, 'PMR_BANK_CO_{b}', 'PMR_EMPTY')]"
+            f"[SelectLocalization(GreaterThan_CFixedPoint({jm}, '(CFixedPoint)1.001'), 'PMR_BANK_JM_{b}_{vp}', 'PMR_EMPTY')]"
             f"[SelectLocalization({cw}.IsSet, 'PMR_BANK_SCW_{b}_{vp}', 'PMR_BANK_SC_{b}_{vp}')]\"",
             f' PMR_BANK_SCW_{b}_{vp}:0 "\\n#v [Multiply_CFixedPoint({js}, {cw}.GetValue)|D]#! Score"',
-            f' PMR_BANK_SC_{b}_{vp}:0 "\\n#v [{js}|D]#! Score"']
+            f' PMR_BANK_SC_{b}_{vp}:0 "\\n#v [{js}|D]#! Score"',
+            f' PMR_BANK_JM_{b}_{vp}:0 "\\n#v ×[{jm}|1]#! from $PMR_POLICY_reinvest$"']
 
 
 def bank_card_loc():
@@ -6820,7 +6868,7 @@ def bank_card_loc():
             "'PMR_BANK_LOCK_1', 'PMR_BANK_LOCK_2')]\"",
             ' PMR_BANK_METHOD_TT_2:0 "#header $PMR_BANK_METHOD_2$#!\\nFirst In, First Out' + TT_DELIM
             + '\\n#title $PMR_BANK_METHOD_3$:#!$PMR_BANK_LOCK_3$"',
-            ' PMR_BANK_METHOD_TT_3:0 "#header $PMR_BANK_METHOD_3$#!\\nHighest Score First"',
+            ' PMR_BANK_METHOD_TT_3:0 "#header $PMR_BANK_METHOD_3$#!\\nHighest Profit First"',
             ' PMR_BANK_CAPLOCK_C:0 "\\n@red_cross! #N Requires more [concept_construction]#!"']
     caps = bank_caps()
     techs = dict(zip(BANK_SIZES, BANK_TECHS))
@@ -7181,7 +7229,10 @@ def cc_card_loc(froms):
     if BANKS:   # the package up for investment (UI.md 5), only while the state offers one
         loc.append(' PMR_BANK_CHANCE_PK:0 "' + TT_DELIM + '\\n#title Up for Investment:#!'
                    + '\\n@construction! #v ' + var('pmr_bank_P', 'D') + "#! [Building.GetState.GetCustom('pmr_bank_pname')]"
-                   + '\\n@money! ' + var('pmr_bank_gain', '+=0') + ' Average Weekly [concept_building_balance] a level"')
+                   + '\\n@money! ' + var('pmr_bank_gain', '+=0') + ' Average Weekly [concept_building_balance] a level'
+                   + "[SelectLocalization(GreaterThan_CFixedPoint(Building.GetState.MakeScope.Var('pmr_bank_pm').GetValue, '(CFixedPoint)1.001'), "
+                   "'PMR_BANK_CHANCE_PM', 'PMR_EMPTY')]\"")
+        loc.append(' PMR_BANK_CHANCE_PM:0 "\\n#v ×' + var('pmr_bank_pm', '1') + '#! from $PMR_POLICY_reinvest$"')
     # Funding: funded of asked, then each payer's funded and the unfunded rest
     rows = ''.join(zrow(loc, f'PMR_CC_FUNDING_{f}', f'@construction! #v {sv("pmr_cc_fund_" + f, "D")}#! ${lk}$', gt0(gsv(f'pmr_cc_fund_{f}')))
                    for f, _c, lk in CC_FUNDING)
@@ -9055,6 +9106,10 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
         PF_SYNC.add(b)
     if SOLO_GATE >= 2:
         o.append(lite_effect(bk, b, econ, goods, goods_cost, setv, v, cc_retool_gain(b, k, head) if CENTER else ''))
+    if BANKS and (b, 'retool') in CC_JOB:   # the gain of an order joining the book (bank_post), priced at today's prices
+        o.append(f'# BANKS: the Retool row\'s weekly gain a level, when the investors\' order joins the book (bank_post).\n'
+                 f'pmr_cc_gain_{b} = {{\n' + cc_retool_gain(b, k, head, gate=False) + '}\n\n')
+        CC_GAIN.add(b)
     return (switch_effect(b, bk, k, setv, v, var) + wage_effect(bk, b, econ) + (rails_look(bk, b, rt, goods_cost) if rt else '')
             + ''.join(pre) + ''.join(o))
 
@@ -9069,13 +9124,14 @@ def pay_score(b):
             f'multiply = {fmt(VANILLA_PROFIT_W / RETOOL_SHARE)} min = 0 }} }}\n\t}}\n')
 
 
-def cc_retool_gain(b, k, head=None):
+def cc_retool_gain(b, k, head=None, gate=True):
     """CENTER: pmr_retool_gain_<b>, the Order Book's weekly gain a level of a Retool row (ui/CENTER-CARD.md round 2, 4):
     the target's profit a level a week (pmr_best_now_<b>) less that of the recipe most of the other levels run
     (pmr_cc_from_<b>, found here), signed. At the end of pmr_profit_<b> (head None) it prices the from recipe if it is
     not the reference. The solo gate's pmr_lite_<b> runs instead of the full check most months (q119: retool rows showed
     no gain), so with head (the full check's prices, wage and throughput) it prices both recipes itself, only while a
-    Retool row for the building is open in the state (cc_retool_open)."""
+    Retool row for the building is open in the state (cc_retool_open). BANKS: without gate, as pmr_cc_gain_<b>, run when
+    the investors' order joins the book (q133: a new order showed no gain until the next check found it)."""
     frm, now = f'pmr_cc_from_{b}', f'pmr_best_now_{b}'
     rng = list(range(1, k + 1))
     find = ('\t\tset_variable = { name = pmr_cc_ft value = 0 }\n'
@@ -9100,7 +9156,7 @@ def cc_retool_gain(b, k, head=None):
             + f'\t\t\tset_variable = {{ name = pmr_retool_gain_{b} value = var:pmr_cc_t }}\n\t\t}}\n'
             f'\t\telse_if = {{ limit = {{ has_variable = pmr_retool_gain_{b} }} remove_variable = pmr_retool_gain_{b} }}\n\t}}\n'
             f'\telse_if = {{ limit = {{ has_variable = pmr_retool_gain_{b} }} remove_variable = pmr_retool_gain_{b} }}\n')
-    if head is None:
+    if head is None or not gate:
         return body
     return (f'\tif = {{\n\t\tlimit = {{ {cc_retool_open(b)} }}\n' + body.replace('\n\t', '\n\t\t').replace('\t', '\t\t', 1).rstrip('\t')
             + '\t}\n')
