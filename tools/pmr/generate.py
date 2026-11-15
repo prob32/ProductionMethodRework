@@ -68,6 +68,7 @@ import company_culture  # noqa: E402
 import cc_tree  # noqa: E402
 import subsidiaries  # noqa: E402
 import company_panel  # noqa: E402
+import cmf_compat  # noqa: E402
 import methods_row  # noqa: E402
 import localise  # noqa: E402
 import frames  # noqa: E402
@@ -3645,6 +3646,8 @@ def main():
         'short_description': SHORT_DESCRIPTION,
         'tags': ['Gameplay', 'Economy And Buildings'], 'relationships': [],
         'game_custom_data': {'multiplayer_synchronized': True}}, indent=2) + '\n', bom=False)
+    # Community Mod Framework alongside PMR (#14): PMR's copies of the GUI types CMF also overrides load first
+    report['cmf_first_types'] = {f: names for f, names in cmf_compat.apply(args.out)}
     report['loc_hash_renames'] = rename_hash_clashes(game, args.out, args.release)
     for old, new in report['loc_hash_renames'].items():
         print(f'renamed {old} to {new}: another localisation key has its hash')

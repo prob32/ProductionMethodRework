@@ -17,7 +17,33 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: plantations are weighed on vanilla's exploitation output too (q129, test mod)
+## Latest: Community Mod Framework alongside PMR, and two small fixes (q130, test mod)
+
+You asked for CMF (Workshop 3385002128) to run with PMR. The only conflict was ten GUI types that both mods override.
+The game keeps the first definition of a GUI type it loads, in file-name order, and CMF's files (`00_MPM_*`,
+`00_com_*`) sorted before PMR's copies, which carry vanilla's file names. So with CMF on, PMR's building browser,
+methods panel, building card and state Buildings tab changes were dropped without an error. q130 moves PMR's copies of
+those types, unchanged, into `gui/00_00_pmr_*.gui` files that load first. It also adds CMF's two Buildings tab hooks,
+so mods built on CMF still list their buildings there. Without CMF nothing changes: every type is defined once, with
+the same text, in another file. PMR does not need CMF. No simulation change.
+
+Two fixes from the bug hunt: Secular Bureaucrats are barred under Communal Administration again, as in vanilla, and the
+11 "used but is never set" shortage reads are gone from error.log.
+
+Everything from q129 stands, and its rows below are for the same game. **The observer game runs without CMF**, so its
+pace and balance read against q120-1 and vanilla. For X1 to X5, add CMF to the PMR Test playset (load order does not
+matter); X6 is PMR Test alone.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| X1 | PMR Test with CMF, `logs\error.log` after loading to the main menu | No `pmr_`, `00_00_pmr` or `com_owner_building` errors (CMF may log its own) | An error naming a `00_00_pmr_` file or an unknown `com_owner_building_*` type: the move broke a type; send the line to the build thread |
+| X2 | Same, the Buildings browser, any industry (steel mills) | PMR's cards and buttons, as without CMF | Vanilla-style method icons in a thin scroll strip: CMF's copy still wins, so the first-definition rule is the other way round |
+| X3 | Same, a building's card in the state panel with five or more method groups | Every group PMR shows today | Only four groups, or a second row: CMF's building card copy wins |
+| X4 | Same, a state's Buildings tab | PMR's urban list and Chamber of Commerce row | The vanilla tab: CMF's copy wins |
+| X5 | Same, CMF's sidebar button (International Organisations) and its debug menu | They open as with CMF alone | Missing: something in PMR blocks CMF; send a screenshot |
+| X6 | PMR Test alone, the screens of X2 to X4 and `logs\error.log` | As in q129; no `pmr_` or `com_` line | Any difference: the move changed PMR on its own; send a screenshot |
+
+## Earlier: plantations are weighed on vanilla's exploitation output too (q129, test mod)
 
 Found by checking every method a new building can start on against vanilla's, after q128's fix: the same flaw had a
 second case. The treatment switch (rules review F) emptied the Slave and Worker Exploitation methods of 8 plantation
