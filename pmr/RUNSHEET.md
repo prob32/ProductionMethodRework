@@ -17,7 +17,13 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: Community Mod Framework alongside PMR, and two small fixes (q130, test mod)
+## Latest: q131 (test mod) = q130 with one load line gone
+
+q131 changes only the hidden CMF fallback copy: its header names the building instead of a text key only CMF
+localises, so PMR Test alone no longer logs `Unlocalized text 'com_gui_total_building'` (q130-1). No screen, simulation
+or save change; a q130 game carries on. The q130 rows below stand; X6 now expects no `com_` line at all.
+
+## Earlier: Community Mod Framework alongside PMR, and two small fixes (q130, test mod)
 
 You asked for CMF (Workshop 3385002128) to run with PMR. The only conflict was ten GUI types that both mods override.
 The game keeps the first definition of a GUI type it loads, in file-name order, and CMF's files (`00_MPM_*`,
