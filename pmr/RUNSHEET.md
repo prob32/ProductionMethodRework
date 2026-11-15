@@ -37,6 +37,7 @@ game. **Needs a new game**, the observer game to 1878 or later.
 | P2 | Same saves | More than half the sugar, cotton, tea and banana levels on Slave or Worker Exploitation, as in vanilla | Most on Standard Labor, as in q120-1: an older production_methods folder is installed |
 | P3 | Same game, `PMR;rec=TREAT` lines for plantations running an exploitation method (the build thread reads them) | The goods read back give each level its blend's output within 2% (sugar: 25, plus 40 x the slave share, plus 20 x the exploitative share) | About the running method's output too much (sugar +40 at full slave share): an older pmr_effects.txt is installed |
 | P4 | `logs\error.log` | Names no `pmr_` key | A line there: send it to the build thread before reading anything else |
+| T1 | Same game, the tick log, August 1842 to January 1845 and 1848 to 1866 (the performance thread reads it) | Within one run's margin of q120-1, test build against test build | Slower by more, with the midnight tick up: count the buildings on record in the 1867 autosave before blaming the build, as a world with more buildings costs more. Daytime ticks up instead: the screen or the PC, and the row is unread |
 
 ## Earlier: new buildings start on vanilla's recipe again (q128, test mod)
 
