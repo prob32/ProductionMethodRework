@@ -17,7 +17,57 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: q131 (test mod) = q130 with one load line gone
+## Latest: Banks (q132, test mod; your "q121")
+
+You said build it in (2026-11-15 20:01Z). The Chamber of Commerce becomes **Banks**: investors at home keep one order
+book in each state, up to 16 places in a set order, and buy a whole package of construction at a time instead of one
+unit for one order. The owner's method sets the order: **Merchant Banks** (before Stock Exchange, or under
+Traditionalism) draws the places at random whenever an order joins, **Stock Exchange** is first in, first out, and
+**Investment Banking** (Investment Banks) sorts by score. Under Merchant Banks and Investment Banking an order with a
+part paid level goes first. A state offers the largest package its free construction fills: the four Refit sizes, and
+three new ones, **Major Refit 400** (Urban Planning), **Grand Refit 800** (Modern Sewerage) and **Capital Refit 1,200**
+(Steel-Frame Buildings), each up to 40 weeks of the country's construction. A landed package is poured down the book
+from place 1. An order on a founded company's industry scores up to three times as much, by the company's share of
+that industry's levels in the country. Governments, your government's button and investors abroad work as before.
+
+The card: the header says Banks with the new icon, two slots show the method and the largest package, a Package
+section above Funding shows the size on offer, its average gain and a strip of its orders, and the investors' rows run
+in place order with their numeral, a gold frame and brass segment while in the package, and the company's icon and
+weight. Banks also get the Financial District's model on the map in every state (its own switch, `--banks-map`).
+
+**A new game.** The book and the new sites start empty, so a q131 save would run with a book nobody has seated.
+Same switch list as q131 plus `--banks --banks-map`.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| B1 | Observer run to May 1844, `RETOOL_LEVEL` + `PROJECT_LEVEL` lines | Well above q130-1's 194, about 4 times | Level with q130-1: packages are never bought (B2). Far above 4 times: lower `CC_AI_MULT` |
+| B2 | `CENTER_LEVEL` lines with `site=building_pmr_cc_400_1` in Britain or France by 1838 | Present, `units=` 2 or more | None: the 400 site is never offered (cap or gate not set) or loses every roll (read `score_before_random` in a save's investment records) |
+| B3 | Yearly `BANK` lines | Tier 2 for Britain, 1 for Russia and Qing in 1836; cap 400 where Urban Planning is held | Every country tier 1: the technology test reads the wrong scope. No lines: the monthly country pass does not call it |
+| B4 | A Merchant Banks state where an order joins | Places re-drawn that month; a part paid order still first | Places never move: `pmr_bank_d` is not set. A part paid order moved back: the front rule is missing |
+| B5 | A Stock Exchange state, three orders | Served in order of arrival | Served by score: the tier is read as 3 |
+| B6 | An Investment Banking state (a test game with the technology given by console) | Place 1 holds the highest score; the package score is above a Stock Exchange state's with the same orders | Order of arrival: the sort does not run |
+| B7 | A package lands | Its orders' bars move by their share, construction adds up to the size, no `CENTER_DROP` | A drop: the package was offered larger than the book. A bar jumps twice: units credited per unit and per order |
+| B8 | A country on 10 construction with Modern Sewerage | Offers 400 at most | Offers 800: the 40-week cap is not applied |
+| B9 | Britain's company industries | Rows of those building types show the weight; others none | No weight anywhere: the yearly read has not run or finds no company type. Weight on every row: the type map is inverted |
+| B10 | Pace, the same stretches as q130-1 | Level with q130-1 within the perf thread's margin | Slower: read the perf thread's replay split first; the monthly pass or the new site types |
+| B11 | New private buildings started, by country, against q130-1 | Lower, but not near zero in any country that built before | Near zero in small countries: a package holds their one or two private queue places; lower `BANK_WEEKS` |
+| B12 | Your government's Retool button | Unchanged: every unit queued at once on the Refit sizes | A package row in the government queue: side `gov` was switched too |
+| U1 | Open a Banks card in Britain, 1836 | Header "Banks", new icon, the Stock Exchange icon and the V logo in the two slots | Old name: a mention missed in the rename. An empty slot: `pmr_bank_tier` or `pmr_bank_cap` not written yet (wait for the month's start, then it is the read) |
+| U2 | The same card after a month's start, with investors' orders | A Package section whose chips add up to the size; numerals 1 to n on investors' rows. Under Investment Banking the numerals follow the rows' Score, except that an order with a part paid level sits first | No section and a `BANK_PACK` line for that state: the card reads the wrong scope. No section and no `BANK_PACK`: mechanics, see B2 |
+| U3 | A row in the package | Gold frame, brass segment after the blue | A frame on every row: the test reads a removed variable. No segment: the second bar sits under the track; drop it and keep the frame |
+| U4 | A row of a company's industry in Britain | Company icon and ×N; the tooltip names the company | ×N with no icon: the company does not resolve from a variable; keep the name in the tooltip only. Neither: mechanics, see B9 |
+| U5 | Hover both slots in Russia, 1836 | Merchant Banks with "Requires Stock Exchange"; the size with its next size's lock | No lock line: `pmr_bank_lock` not read from the owner |
+| U6 | Open and close the card ten times, then `error.log` | No new lines naming `pmr_bank` or `pmr_cc_row_` | Any: fix before the observer run; a GUI error repeats every frame the card is open |
+| U7 | Zoom in on London and on a small state's city, new game | A Financial District model in each, also where the state has no Financial District | None anywhere: the city type files did not load (`error.log`, `city_types`), or a building that cannot be built places none; then drop `--banks-map`. Models in some regions only: a city style's file outside `game/gfx` (a DLC's) was not patched |
+| U8 | Map frame rate, zoomed out over Europe and zoomed in on a city, against q131 on the same date | Within a few percent | A clear drop: the model comes out with `--banks-map` off |
+| U9 | The observer run's pace, with B10 | As B10 | Slower only with `--banks-map` on: the model is not free at the day change; drop it |
+| U10 | A Banks card with five or more investors' orders, then again after a month's start in which an order joined | Rows top to bottom are places 1, 2, 3 and on; the framed rows are together; the order changes with the numerals | Rows out of numeral order: the slots are empty and the waiting list shows the rows, so `pmr_bank_j<k>` counts jobs differently from the card. A row twice: the waiting list does not test the place. The card opens slowly or the frame rate falls with a full book: report it before anything else |
+
+New log lines: `BANK` (yearly, every country: tier, lock, cap, construction, orders, packages by size), `BANK_PACK`
+(a logged country's state, when its package changes), and `CENTER_LEVEL` lines on the investors' home side now carry
+`rule=` (the method) and `units=`.
+
+## Earlier: q131 (test mod) = q130 with one load line gone
 
 q131 changes only the hidden CMF fallback copy: its header names the building instead of a text key only CMF
 localises, so PMR Test alone no longer logs `Unlocalized text 'com_gui_total_building'` (q130-1). No screen, simulation
