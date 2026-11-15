@@ -2599,6 +2599,8 @@ def main():
                 if o.key not in stripped_opts:
                     if mode == 'treat':
                         o.strip()
+                        if TREAT_MOD:   # q129: vanilla's own output stays, so a building not yet built is weighed on it
+                            o.src.inserts.append((o.node.end - 1, treat_goods_body(o)))
                     else:
                         o.src.cuts += [line_span(o.src.text, n) for n in o.node.value if n.key == 'required_input_goods']
                     stripped_opts.add(o.key)
@@ -2950,7 +2952,7 @@ def main():
             for o in opts:
                 live.append(frames.Live(o.j, o.mods, o.key, o.texture))
                 treat_count['before'] += SHARE_STEPS + 1
-                if not keeps_ladder(o):   # TREAT_MOD: its lines are modifiers (frames.treat_sizes)
+                if not keeps_ladder(o):   # TREAT_MOD: its lines are modifiers (frames.treat_sizes), its output its own method's
                     continue
                 treat_count['after'] += len(range(0, SHARE_STEPS + 1, opt_step(o)))
                 for sh, values, dv, _part in share_digits(f'pm_pmr_x_{b}_{o.j}', 0, opt_step(o)):
@@ -4188,6 +4190,17 @@ def treat_jobs(o):
 
 def keeps_ladder(o):
     return not TREAT_MOD or bool(treat_jobs(o))
+
+
+def treat_goods_body(o):
+    """TREAT_MOD (q129, world balance review 2026-11-15): the output a Treatment method keeps, vanilla's own. The AI weighs
+    a building it might build on its groups' first open methods before any modifier exists, so without it a sugar
+    plantation where slavery is legal was weighed on 25 sugar instead of vanilla's 65. pmr_frame_<b> counts the running
+    method's output into B (frames.treat_running), so the "less" and Treatment sizes still give the blend's output."""
+    out = {k: x for k, x in o.mods.get(('building_modifiers', 'workforce_scaled'), {}).items()
+           if k.startswith('goods_output_') and k.endswith('_add') and abs(x) > 1e-9}
+    return ('\tbuilding_modifiers = {\n\t\tworkforce_scaled = {\n' + ''.join(f'\t\t\t{k} = {fmt(x)}\n' for k, x in out.items())
+            + '\t\t}\n\t}\n') if out else ''
 
 
 def treat_job_body(o):

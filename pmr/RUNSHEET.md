@@ -17,7 +17,28 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: new buildings start on vanilla's recipe again (q128, test mod)
+## Latest: plantations are weighed on vanilla's exploitation output too (q129, test mod)
+
+Found by checking every method a new building can start on against vanilla's, after q128's fix: the same flaw had a
+second case. The treatment switch (rules review F) emptied the Slave and Worker Exploitation methods of 8 plantation
+types (banana, coffee, cotton, dye, rubber, sugar, tea, tobacco) and gave their extra output back only as modifiers on
+plantations already built. So where slavery was legal the AI weighed a new sugar plantation on 25 sugar instead of
+vanilla's 65, and in q120-1 most plantations ran Standard Labor (sugar 108 of 180 levels; vanilla 1878 38 of 251).
+
+q129 puts vanilla's output back into those methods (Slave Exploitation on sugar +40, Worker +20, and so on). A built
+plantation still makes what its treatment blend gives: the monthly pass counts the running method's output, its "less"
+modifier cuts that away and the treatment modifier adds the blend's back. Only the goods moved; the mortality, wage and
+slave-import lines stay modifiers sized by the shares. Everything from q128 stands, and S1 to S5 below are for the same
+game. **Needs a new game**, the observer game to 1878 or later.
+
+| # | Check | Pass | Null means |
+| --- | --- | --- | --- |
+| P1 | Observer game, the 1876-78 autosaves (the build thread reads them) | Sugar, cotton, dye and banana plantation levels worldwide each within a third of vanilla's (251, 576, 345, 659) | Near q120-1's (180, 453, 270, 457): the exploitation output was not what held them back; the plantations' weights are next |
+| P2 | Same saves | More than half the sugar, cotton, tea and banana levels on Slave or Worker Exploitation, as in vanilla | Most on Standard Labor, as in q120-1: an older production_methods folder is installed |
+| P3 | Same game, `PMR;rec=TREAT` lines for plantations running an exploitation method (the build thread reads them) | The goods read back give each level its blend's output within 2% (sugar: 25, plus 40 x the slave share, plus 20 x the exploitative share) | About the running method's output too much (sugar +40 at full slave share): an older pmr_effects.txt is installed |
+| P4 | `logs\error.log` | Names no `pmr_` key | A line there: send it to the build thread before reading anything else |
+
+## Earlier: new buildings start on vanilla's recipe again (q128, test mod)
 
 From the world balance review of your beta051-1 run (2026-11-15): the AI hardly built steel mills (18 levels in 1867;
 q120-1 had 32 in 1882, vanilla 153 in 1878), and too few tooling workshops, food industries and textile mills, while

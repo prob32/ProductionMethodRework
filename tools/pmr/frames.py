@@ -109,8 +109,10 @@ GATES = {}   # {(building key, method key): Gate} of the locked frames; generate
 # sizes by the share: its unscaled building lines at 100% in pmr_treat_<b>_<j> (size = share), its output as
 # goods_output_<good>_mult in pmr_treat_out_<b>_<good> (an _add is ignored on a building modifier: size = the options'
 # output a level at their shares / B, what the running frames carry a level, the B of the "less" sizes), its state
-# lines in pmr_treat_slave_<b> on the state (size = share). Its goods leave A and B, as no method adds them any more.
-# Job lines stay share methods (generate.py treat_jobs): no modifier moves jobs (q99, q100).
+# lines in pmr_treat_slave_<b> on the state (size = share). Job lines stay share methods (generate.py treat_jobs): no
+# modifier moves jobs (q99, q100). Since q129 the vanilla methods keep their own output (generate.py treat_goods_body), so
+# the AI weighs a plantation it might build on vanilla's goods; the running one's output counts into B (treat_running):
+# the "less" size cuts it away and the Treatment size gives the blend's back.
 TREAT_MOD = False
 TREAT_COUNT = False   # test builds with TREAT_MOD (generate.py): the month's TREAT_MOVES line counts the re-sizes
 
@@ -793,8 +795,8 @@ def modifier_type_loc(keys, vanilla_loc=frozenset(), named=frozenset()):
 TREAT_DOC = """# Treatment as modifiers (rules review item F, frames.py TREAT_MOD): pmr_frame_<b> puts each on a plantation with a
 # multiplier, removing and re-adding it only when its size moves. pmr_treat_<b>_<j>: option j's unscaled lines at 100%,
 # sized by its share. pmr_treat_out_<b>_<good>: the options' output of the good a level at their shares over what the
-# running frames carry a level, in steps of 0.01. pmr_treat_slave_<b>, on the state: the option's state lines at 100%,
-# sized by its share.
+# running frames and the running Treatment method (vanilla's own output) carry a level, in steps of 0.01.
+# pmr_treat_slave_<b>, on the state: the option's state lines at 100%, sized by its share.
 
 """
 
@@ -893,13 +895,17 @@ def treat_log(bld, ind='\t'):
     keys = list(dict.fromkeys([k for _, _, un in opts for k in un] + [f'goods_output_{g}_mult' for g in goods]))
     skeys = list(state[3]) if state else []
     f = lambda name, d=0: f"[THIS.Var('{name}').GetValue|{d}]"   # noqa: E731
-    reads = (''.join(f'{ind}\tset_variable = {{ name = pmr_trd_{i} value = -99 }}\n'
+    run = (f'{ind}\tset_variable = {{ name = pmr_trr value = 0 }}\n'
+           + ''.join(f'{ind}\tif = {{ limit = {{ is_production_method_active = {{ building_type = {bk} production_method = {lv.key} }} }} '
+                     f'set_variable = {{ name = pmr_trr value = {lv.j} }} }}\n' for lv in bld.live))
+    reads = run + (''.join(f'{ind}\tset_variable = {{ name = pmr_trd_{i} value = -99 }}\n'
                      f'{ind}\tset_variable = {{ name = pmr_trd_{i} value = b:{bk}.modifier:{k} }}\n' for i, k in enumerate(keys))
              + ''.join(f'{ind}\tset_variable = {{ name = pmr_trs_{i} value = -99 }}\n'
                        f'{ind}\tset_variable = {{ name = pmr_trs_{i} value = modifier:{k} }}\n' for i, k in enumerate(skeys)))
     line = ('PMR;rec=TREAT;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk};level=[THIS.Var(\'pmr_level_{b}\').GetValue|0]'
             + ';x=' + '/'.join(f(f'pmr_x_{lv.j}_{b}') for lv in bld.live)
+            + ';running=' + f('pmr_trr')   # q129: the Treatment method running (its option j, 0 none), whose output counts
             + ';size=' + ','.join([f'{j}:{f(f"pmr_tx_{j}_{b}", 2)}' for j, _, _ in opts]
                                   + [f'out_{g}:{f(f"pmr_txo_{g}_{b}", 2)}' for g in goods]
                                   + ([f'slave:{f(f"pmr_txs_{b}", 2)}'] if state else []))
@@ -910,7 +916,7 @@ def treat_log(bld, ind='\t'):
             f'{ind}\tset_variable = {{ name = pmr_trl_{b} value = yes days = 350 }}\n' + reads
             + f'{ind}\tdebug_log = "{line}"\n'
             + ''.join(f'{ind}\tremove_variable = pmr_trd_{i}\n' for i in range(len(keys)))
-            + ''.join(f'{ind}\tremove_variable = pmr_trs_{i}\n' for i in range(len(skeys))) + f'{ind}}}\n')
+            + ''.join(f'{ind}\tremove_variable = pmr_trs_{i}\n' for i in range(len(skeys))) + f'{ind}\tremove_variable = pmr_trr\n{ind}}}\n')
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -935,11 +941,23 @@ def clear_vars(bld, ind='\t'):
             + (f'{ind}if = {{ limit = {{ has_modifier = {slave} }} remove_modifier = {slave} }}\n' if slave else ''))
 
 
+def treat_running(bld, g, ind='\t\t'):
+    """TREAT_MOD (q129): the running Treatment method's own output of g a level (vanilla's, generate.py
+    treat_goods_body), x SHARE_STEPS, into B, as every output modifier multiplies it too"""
+    out = []
+    for lv in bld.live:
+        x = treat_split(lv)[1].get(g, 0)
+        if abs(x) > EPS:
+            out.append(f'{ind}if = {{ limit = {{ is_production_method_active = {{ building_type = {bld.bk} '
+                       f'production_method = {lv.key} }} }} change_variable = {{ name = pmr_fm_b add = {fmt(x * SHARE_STEPS)} }} }}\n')
+    return ''.join(out)
+
+
 def treat_sizes(bld, size, xs, setv):
     """TREAT_MOD, inside pmr_frame_<b> after the "less" sizes (the frames and pmr_fm_pr / pmr_fm_po<gi> are set):
     each Treatment modifier sized from the shares pmr_x_<j>_<b>, removed and re-added only when its size moved. The
-    output's B is size()'s, the "less" sizes' own: the running pure frame's amount a level, or the union's, plus each
-    trade-off group's running frame (x SHARE_STEPS)."""
+    output's B is the "less" sizes' own: the running pure frame's amount a level, or the union's, plus each trade-off
+    group's running frame and the running Treatment method (x SHARE_STEPS)."""
     bk, b = bld.bk, bld.b
     opts, goods, state = treat_plan(bld)
 
@@ -968,7 +986,7 @@ def treat_sizes(bld, size, xs, setv):
         o.append(f'\t# output {g}: the options\' a level at their shares over B, in steps of 0.01\n\t{setv("pmr_fm_x", 0)}\n'
                  '\tif = {\n\t\tlimit = { ' + (f'{xs(held[0])} > 0' if len(held) == 1 else
                                                'OR = { ' + ' '.join(f'{xs(j)} > 0' for j in held) + ' }') + ' }\n'
-                 + size(1, g)
+                 + size(1, g) + treat_running(bld, g)
                  + '\t\tif = {\n\t\t\tlimit = { var:pmr_fm_b > 0 }\n'
                  '\t\t\tset_variable = { name = pmr_fm_x value = { value = 0'
                  + ''.join(f' add = {{ value = {xs(j)} multiply = {fmt(x)} }}' for j, x in terms)
@@ -1139,7 +1157,8 @@ def frame_effect(bld, log=True, count=False):
     unions = {og.gi: option_union(og) for og in bld.option_groups}
     mem = {m.j: split(m.mods) for m in bld.members}
     opt = {og.gi: (option_full(og, None), {x.j: split(x.mods) for x in og.options}) for og in bld.option_groups}
-    live = [] if TREAT_MOD else [(lv.j, split(lv.mods)) for lv in bld.live]   # TREAT_MOD: no method adds its goods
+    live = [] if TREAT_MOD else [(lv.j, split(lv.mods)) for lv in bld.live]   # TREAT_MOD: treat_running, below
+    tgoods = set(treat_plan(bld)[1]) if TREAT_MOD and bld.live else set()
 
     def size(side, name):
         # side: 0 goods in, 1 goods out, 2 jobs
@@ -1186,8 +1205,11 @@ def frame_effect(bld, log=True, count=False):
     o.append('\t# sizes, applied only when they move (remove, then add)\n')
     for side, names, kind, pre in ((0, gin, 'in', 'pmr_lxi'), (1, gout, 'out', 'pmr_lxo'), (2, pops, 'job', 'pmr_lj')):
         for name in names:
+            # TREAT_MOD (q129): a Treatment good on a pure frame too, as the running Treatment method adds its own
+            tr = side == 1 and name in tgoods
             o.append(f'\t# {kind} {name}\n\t{setv("pmr_fm_x", 0)}\n'
-                     '\tif = {\n\t\tlimit = { var:pmr_fm_pure = 0 }\n' + size(side, name)
+                     '\tif = {\n\t\tlimit = { ' + ('always = yes' if tr else 'var:pmr_fm_pure = 0') + ' }\n'
+                     + size(side, name) + (treat_running(bld, name) if tr else '')
                      + '\t\tif = {\n\t\t\tlimit = { var:pmr_fm_b > 0 }\n'
                      '\t\t\tset_variable = { name = pmr_fm_x value = { value = var:pmr_fm_a divide = var:pmr_fm_b '
                      f'multiply = -{SHARE_STEPS} add = {SHARE_STEPS} min = 0 max = {SHARE_STEPS} }} }}\n'
