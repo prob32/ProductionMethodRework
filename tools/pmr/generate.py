@@ -2771,6 +2771,8 @@ def main():
     unlogged = re.compile(r'debug_log = "PMR;rec=(?!(?:' + '|'.join(RELEASE_LOGS) + r');)[^"]*"')
 
     def write(rel, text, bom=True):
+        if '@PMR_BANK_NO:' in text:   # the posts' job numbers, now that CC_JOB is whole
+            text = BANK_NO_TOKEN.sub(lambda m: str(bank_no(m[1], m[2])), text)
         if args.release and rel.endswith('.txt'):
             text = drop_empty(unlogged.sub('', text))
         if args.trace_from and rel.endswith('.txt'):
@@ -5208,8 +5210,18 @@ BANK_COMPANIES = []   # [(the company type's pmr_cc_k_id, [b of its industries w
 
 
 def bank_no(b, vp):
-    """BANKS: a job's number, 1-based in cc_jobs() (pmr_bank_j<k>, the GUI's slots)"""
+    """BANKS: a job's number, 1-based in cc_jobs() (pmr_bank_j<k>, the GUI's slots). Only once CC_JOB is whole: a
+    post (tick_effect, while CC_JOB still fills) writes bank_no_token instead, and write() puts the number in"""
     return cc_jobs().index((b, vp)) + 1
+
+
+BANK_NO_TOKEN = re.compile(r'@PMR_BANK_NO:(\w+):(\w+)@')
+
+
+def bank_no_token(b, vp):
+    """BANKS: bank_no(b, vp) as written before CC_JOB is whole (perf review 27: an index into the part-filled
+    CC_JOB gave 85 of q132's 94 posts another job's number); write() resolves it"""
+    return f'@PMR_BANK_NO:{b}:{vp}@'
 
 
 def bank_open():
@@ -5290,7 +5302,7 @@ def bank_post(b, vp):
             f'\t\tif = {{ limit = {{ var:pmr_cc_c1 > 0 }} set_variable = {{ name = {prev} value = var:pmr_cc_c1 }} }}\n'
             f'\t\telse_if = {{ limit = {{ has_variable = {prev} }} remove_variable = {prev} }}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_p <= 0 var:pmr_cc_c1 > 0 }}\n'
-            f'\t\t\tset_variable = {{ name = pmr_bank_q value = {bank_no(b, vp)} }}\n\t\t\tpmr_bank_join = yes\n'
+            f'\t\t\tset_variable = {{ name = pmr_bank_q value = {bank_no_token(b, vp)} }}\n\t\t\tpmr_bank_join = yes\n'
             f'\t\t\tif = {{ limit = {{ var:pmr_bank_qk > 0 }} set_variable = {{ name = {pos} value = var:pmr_bank_qk }} }}\n\t\t}}\n'
             f'\t\telse_if = {{\n\t\t\tlimit = {{ var:pmr_cc_c1 <= 0 }}\n'
             f'\t\t\tif = {{ limit = {{ has_variable = {pos} }} set_variable = {{ name = pmr_bank_lk value = var:{pos} }} '
