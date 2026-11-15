@@ -2668,15 +2668,24 @@ def main():
         lp = pdx.get(n.value, 'low_pop_method')
         if lp is not None:
             psrc.cuts.append(line_span(psrc.text, lp))
+    # each law's law group, so a bar from another group (pm_secular_bureaucrats' law_communal_administration, a
+    # bureaucracy law) stays when the church-and-state bars become unlocking_laws (bug hunt 2026-11-15, B2)
+    law_group = {k: pdx.get(n.value, 'group').value for s in load_dir(game, 'laws') for k, n in s.objects().items()
+                 if pdx.get(n.value, 'group') is not None}
     for sec, rel in AUTO_SECULAR.items():
         n, psrc = pms[sec]
         dl, rl = pdx.get(n.value, 'disallowing_laws'), pdx.get(pms[rel][0].value, 'disallowing_laws')
         if dl is None or rl is None or pdx.get(n.value, 'unlocking_laws') is not None:
             raise SystemExit(f'AUTO_SECULAR: {sec} or {rel} no longer gated by disallowing_laws alone; update AUTO_SECULAR')
+        church = {law_group.get(x) for x in pdx.items(rl)}
+        if None in church or len(church) != 1:
+            raise SystemExit(f'AUTO_SECULAR: {rel} is barred by laws outside one law group; update AUTO_SECULAR')
+        keep = [x for x in pdx.items(dl) if law_group.get(x) not in church]
         s0, e0 = line_span(psrc.text, dl)
         psrc.cuts.append((s0, e0))
         psrc.inserts.append((s0, f'\t# PMR: only where {rel} is barred (vanilla: disallowing_laws = {{ '
-                                 + ' '.join(pdx.items(dl)) + ' })\n\tunlocking_laws = { ' + ' '.join(pdx.items(rl)) + ' }\n'))
+                                 + ' '.join(pdx.items(dl)) + ' })\n\tunlocking_laws = { ' + ' '.join(pdx.items(rl)) + ' }\n'
+                                 + (f'\tdisallowing_laws = {{ {" ".join(keep)} }}\n' if keep else '')))
 
     if os.path.isdir(args.out):
         for sub in ('common', 'events', 'localization', '.metadata', 'gfx', 'gui'):
@@ -3460,7 +3469,8 @@ def main():
                     f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xav_{o.j}_{short(bk)} ?= 0 }}\n'   # unset below level 1 (bug review q48, P3-1)
                     f'\t\tlocalization_key = {"PMR_OPT_BARRED" if mode == "treat" else "PMR_OPT_LOCKED"}\n\t}}\n'
                     + (f'\ttext = {{\n\t\ttrigger = {{ var:pmr_xsh_{o.j}_{short(bk)} ?= 1 }}\n'
-                       '\t\tlocalization_key = PMR_OPT_SHORT\n\t}\n' if mode == 'market' and o.group not in DEMAND_GROUPS else '')
+                       '\t\tlocalization_key = PMR_OPT_SHORT\n\t}\n' if mode == 'market' and o.group not in DEMAND_GROUPS
+                       and (short(bk), o.j) in SHORT_FLAGGED else '')
                     + '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n'
                     for bk, groups in opt_ui.items() for gi, mode, none, tex, os_ in groups for o in os_)
           + '\n# State and country scope. The names on the switching bars\' tooltips (pick_custom_loc).\n'
@@ -4211,6 +4221,7 @@ def treat_job_body(o):
 
 
 LOCAL_GOODS = ('services', 'transportation', 'electricity')   # local = yes: no market order book to share out
+SHORT_FLAGGED = set()   # (b, j): the market options option_effects gives a shortage flag pmr_xsh_<j>_<b> (one input or more)
 
 
 def option_goods(options):
@@ -4454,6 +4465,7 @@ def option_effects(bk, b, conv, goods_cost, recipes):
             # spare supply instead (pmr_xb_<good>)
             short_of = inputs(x)
             if short_of:
+                SHORT_FLAGGED.add((b, x.j))   # the panel asks pmr_xsh_<j>_<b> only of these (option_loc, pmr_xlk_)
                 cap = fmt(1 + PRICE_RANGE - 0.001)
                 o.append(f'\tset_variable = {{ name = {xv("pmr_xsh", x.j)} value = 0 }}\n'
                          '\tif = { limit = { OR = { '
@@ -12187,7 +12199,7 @@ def option_loc(opt_ui):
                 market = mode == 'market' and o.group not in DEMAND_GROUPS
                 worth = f'  @money!#v {var(f"pmr_xw_{o.j}", "D")}#! / week' if market else ''   # vanilla's money format (Q104-FEEDBACK L2)
                 shown = f"Or({gtz(ex(f'pmr_x_{o.j}'), 0.5)}, {eqz(ex(f'pmr_xav_{o.j}'), 0)})"
-                if market:
+                if market and (b, o.j) in SHORT_FLAGGED:
                     shown = f"Or({shown}, {eqz(ex(f'pmr_xsh_{o.j}'), 1)})"
                 rows += zrow(loc, f'PMR_OPT_X_{b}_{o.j}', f'${o.key}$ #v {var(f"pmr_x_{o.j}")}%#!{worth}{note}', shown)
             foot = ''
