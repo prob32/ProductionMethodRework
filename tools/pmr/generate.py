@@ -5286,6 +5286,7 @@ def bank_post(b, vp):
     return (f'\t# 1: the Banks\' book (bank_post)\n\tset_variable = {{ name = pmr_cc_p value = 0 }}\n'
             f'\tif = {{ limit = {{ has_variable = {prev} }} set_variable = {{ name = pmr_cc_p value = var:{prev} }} }}\n'
             f'\tif = {{\n\t\tlimit = {{ NOT = {{ var:pmr_cc_c1 = var:pmr_cc_p }} }}\n'
+            '\t\tset_variable = pmr_bank_pd\n'
             f'\t\tif = {{ limit = {{ var:pmr_cc_c1 > 0 }} set_variable = {{ name = {prev} value = var:pmr_cc_c1 }} }}\n'
             f'\t\telse_if = {{ limit = {{ has_variable = {prev} }} remove_variable = {prev} }}\n'
             f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_cc_p <= 0 var:pmr_cc_c1 > 0 }}\n'
@@ -5376,6 +5377,23 @@ def bank_swap(a, z, names):
                     f'set_variable = {{ name = pmr_bank_{n}{z} value = var:pmr_bank_x }}' for n in names)
 
 
+def bank_sites(qd, ind, check=False):
+    """BANKS, state scope: the seven investors' home sites' queued construction added to var:qd; each site's
+    level_after_queued_constructions (-1 with no site) written as pmr_bank_s_<S> (the pack's snapshot), or with check
+    compared against it, a difference setting pmr_bank_pd"""
+    out = ''
+    for S in bank_all():
+        site, Sf = cc_site(S, '1'), fmt(S)
+        to = 'pmr_bank_z' if check else f'pmr_bank_s_{Sf}'
+        out += (f'{ind}if = {{ limit = {{ exists = b:{site} }} change_variable = {{ name = {qd} add = {{ '
+                f'value = b:{site}.level_after_queued_constructions subtract = b:{site}.level multiply = {Sf} }} }} '
+                f'set_variable = {{ name = {to} value = b:{site}.level_after_queued_constructions }} }} '
+                f'else = {{ set_variable = {{ name = {to} value = -1 }} }}\n')
+        if check:
+            out += f'{ind}if = {{ limit = {{ NOT = {{ var:pmr_bank_z = var:pmr_bank_s_{Sf} }} }} set_variable = pmr_bank_pd }}\n'
+    return out
+
+
 def bank_effects():
     """BANKS, state scope unless said: the book's effects (MECHANICS 8): join, leave, the month's seating and ordering, the
     package, the pour, the job dispatches; and, country scope, the method and largest size, the company weights"""
@@ -5396,6 +5414,12 @@ def bank_effects():
                            f'set_variable = {{ name = pmr_bank_jb value = bt:{CC_BK[b]} }} pmr_bank_fill = yes '
                            f'if = {{ limit = {{ var:pmr_bank_t > 0 }} set_variable = {{ name = {J(b, vp, "pk_1")} value = var:pmr_bank_t }} }}',
                            'The job\'s part of the package on offer, after what is already queued (pmr_bank_skip).'))
+    o.append(bank_dispatch('pmr_bank_rescore', lambda b, vp: f'if = {{ limit = {{ has_variable = {J(b, vp, "pk_1")} }} '
+                           + bank_score_of(b, vp) + ' set_variable = { name = pmr_bank_jg value = 0 } '
+                           f'if = {{ limit = {{ has_variable = {J(b, vp, "gain")} }} set_variable = {{ name = pmr_bank_jg value = var:{J(b, vp, "gain")} }} }} '
+                           f'change_variable = {{ name = pmr_bank_sc add = {{ value = var:{J(b, vp, "pk_1")} divide = var:pmr_bank_P multiply = var:pmr_bank_js }} }} '
+                           f'change_variable = {{ name = pmr_bank_gain add = {{ value = var:{J(b, vp, "pk_1")} divide = var:pmr_bank_P multiply = var:pmr_bank_jg }} }} }}',
+                           'The job\'s part of the package as last drawn (pmr_<vp>_pk_1_<b>) adds its score and gain, as pmr_bank_fill.'))
     o.append(bank_dispatch('pmr_bank_take', bank_take, 'The job\'s part of a package that landed (pmr_bank_left).'))
     o.append(bank_dispatch('pmr_bank_tick', lambda b, vp: f'if = {{ limit = {{ exists = b:{CC_BK[b]} b:{CC_BK[b]} = {{ level >= 1 }} }} '
                                                           f'pmr_tick_{b} = yes }}',
@@ -5432,7 +5456,7 @@ def bank_effects():
              '\t\tif = { limit = { NOT = { has_variable = pmr_bank_n } } set_variable = { name = pmr_bank_n value = 0 } }\n'
              + seat + '\t}\n'
              '\tif = { limit = { has_variable = pmr_bank_n var:pmr_bank_n >= 2 } pmr_bank_order = yes }\n'
-             '\tif = { limit = { has_variable = pmr_bank_d } remove_variable = pmr_bank_d }\n\tpmr_bank_pack = yes\n}\n\n')
+             '\tif = { limit = { has_variable = pmr_bank_d } remove_variable = pmr_bank_d set_variable = pmr_bank_pd }\n\tpmr_bank_pack_month = yes\n}\n\n')
     # ordering: tier 1 shuffles when an order joined, tier 3 sorts by score; under both an order with a part paid level
     # moves to the front, keeping its order (a stable sort on pmr_bank_f, then pmr_bank_v)
     shuffle = ''
@@ -5442,11 +5466,13 @@ def bank_effects():
                     + ' }\n' + lookup('var:pmr_bank_r', list(range(1, i)), lambda r, i=i: bank_swap(i, r, ['j']), '\t\t') + '\t}\n')
     o.append('# Tier 1 (Merchant Banks): every order equally likely in every place (Fisher-Yates).\npmr_bank_shuffle = {\n' + shuffle + '}\n\n')
     sort = ''
-    for p in places[:-1]:
+    for p in places[:-1]:   # pass p only in a book of more than p (perf review 26, 4): a sorted book swaps nothing
+        sort += f'\tif = {{\n\t\tlimit = {{ var:pmr_bank_n > {p} }}\n'
         for i in range(1, K - p + 1):
-            sort += (f'\tif = {{ limit = {{ var:pmr_bank_n > {i} }} if = {{ limit = {{ OR = {{ var:pmr_bank_f{i + 1} > var:pmr_bank_f{i} '
+            sort += (f'\t\t{"\t" * (i - 1)}if = {{ limit = {{ var:pmr_bank_n > {i} }} if = {{ limit = {{ OR = {{ var:pmr_bank_f{i + 1} > var:pmr_bank_f{i} '
                      f'AND = {{ var:pmr_bank_f{i + 1} = var:pmr_bank_f{i} var:pmr_bank_v{i + 1} > var:pmr_bank_v{i} }} }} }} '
-                     + bank_swap(i, i + 1, ['j', 'f', 'v']) + ' } }\n')
+                     + bank_swap(i, i + 1, ['j', 'f', 'v']) + ' set_variable = pmr_bank_mv }' + ('\n' if i < K - p else ' }\n'))
+        sort += ''.join(f'\t\t{"\t" * (i - 1)}}}\n' for i in range(K - p - 1, 0, -1)) + '\t}\n'
     o.append('# Places 1 to n by pmr_bank_f (a part paid level first), then pmr_bank_v (the score, tier 3), highest first;\n'
              '# a bubble sort, so equal orders keep their places.\npmr_bank_sort = {\n' + sort + '}\n\n')
     o.append('pmr_bank_order = {\n\tset_variable = { name = pmr_bank_rt value = 1 }\n'
@@ -5459,11 +5485,12 @@ def bank_effects():
                        f'set_variable = {{ name = pmr_bank_v{k} value = 0 }} '
                        f'if = {{ limit = {{ var:pmr_bank_rt = 3 }} pmr_bank_score = yes set_variable = {{ name = pmr_bank_v{k} value = var:pmr_bank_js }} }} }}\n'
                        for k in places)
-             + '\t\tif = { limit = { OR = { var:pmr_bank_rt = 3 var:pmr_bank_nf > 0 } } pmr_bank_sort = yes set_variable = pmr_bank_re }\n'
+             + '\t\tif = { limit = { OR = { var:pmr_bank_rt = 3 var:pmr_bank_nf > 0 } } pmr_bank_sort = yes '
+             'if = { limit = { has_variable = pmr_bank_mv } remove_variable = pmr_bank_mv set_variable = pmr_bank_re } }\n'
              + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_bank_f{k} }} remove_variable = pmr_bank_f{k} remove_variable = pmr_bank_v{k} }}\n'
                        for k in places)
              + '\t\tremove_variable = pmr_bank_nf\n\t}\n'
-             '\tif = {\n\t\tlimit = { has_variable = pmr_bank_re }\n'
+             '\tif = {\n\t\tlimit = { has_variable = pmr_bank_re }\n\t\tset_variable = pmr_bank_pd\n'
              + ''.join(f'\t\tif = {{ limit = {{ var:pmr_bank_n >= {k} }} set_variable = {{ name = pmr_bank_q value = var:pmr_bank_j{k} }} '
                        f'set_variable = {{ name = pmr_bank_qk value = {k} }} pmr_bank_setpos = yes }}\n' for k in places)
              + '\t\tremove_variable = pmr_bank_re\n\t}\n\tremove_variable = pmr_bank_rt\n}\n\n')
@@ -5514,9 +5541,7 @@ def bank_effects():
              '# order past the part already bought. Not while a package is being poured (pmr_bank_busy: it draws it at the end).\n'
              'pmr_bank_pack = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_bank_busy } }\n'
              '\t\tset_variable = { name = pmr_bank_qd value = 0 }\n'
-             + ''.join(f'\t\tif = {{ limit = {{ exists = b:{cc_site(S, "1")} }} change_variable = {{ name = pmr_bank_qd add = {{ '
-                       f'value = b:{cc_site(S, "1")}.level_after_queued_constructions subtract = b:{cc_site(S, "1")}.level multiply = {fmt(S)} }} }} }}\n'
-                       for S in sizes)
+             + bank_sites('pmr_bank_qd', '\t\t')
              + '\t\tset_variable = { name = pmr_bank_op value = 0 }\n'
              '\t\tif = { limit = { NOT = { has_variable = pmr_bank_n } } set_variable = { name = pmr_bank_n value = 0 } }\n'
              + ''.join(f'\t\tif = {{ limit = {{ var:pmr_bank_n >= {k} }} set_variable = {{ name = pmr_bank_q value = var:pmr_bank_j{k} }} '
@@ -5549,9 +5574,34 @@ def bank_effects():
              + '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_bank_c1 var:pmr_bank_m = 1 }\n'
              + lookup('var:pmr_bank_P', sorted(sizes), lambda S: f'set_variable = {{ name = pmr_for_{cc_site(S, "1")} value = var:pmr_bank_c1 }}', '\t\t\t')
              + '\t\t}\n' + log
+             + '\t\tset_variable = { name = pmr_bank_sq value = var:pmr_bank_qd }\n\t\tset_variable = { name = pmr_bank_sp value = var:pmr_bank_cp }\n'
+             '\t\tif = { limit = { has_variable = pmr_bank_pd } remove_variable = pmr_bank_pd }\n'
              + ''.join(f'\t\tremove_variable = pmr_bank_{x}\n' for x in ('qd', 'op', 'fr', 'P0', 'cp'))
              + '\t\tif = { limit = { has_variable = pmr_bank_o } remove_variable = pmr_bank_o }\n'
              '\t}\n}\n\n')
+    # the month's pack (perf review 26, 1): drawn again only when what it is drawn from moved, else its score and gain read
+    walk = ''.join(f'\t\t{"\t" * (k - 1)}if = {{ limit = {{ var:pmr_bank_n >= {k} }} set_variable = {{ name = pmr_bank_q value = var:pmr_bank_j{k} }} '
+                   'pmr_bank_rescore = yes' + ('\n' if k < K else ' }\n') for k in places)
+    walk += ''.join(f'\t\t{"\t" * (k - 1)}}}\n' for k in range(K - 1, 0, -1))
+    o.append('# Monthly (pmr_bank_month): the package is drawn again (pmr_bank_pack) only when something it is drawn from moved\n'
+             '# since it was last drawn: pmr_bank_pd (an order seated, joined, left, reordered, or its contribution changed), the\n'
+             '# seven sites\' queued levels and levels (pmr_bank_s_<S>, pmr_bank_sq) or the owner\'s largest package (pmr_bank_sp).\n'
+             '# Otherwise the same package\'s orders give their score and gain again, as every month (pmr_bank_rescore).\n'
+             'pmr_bank_pack_month = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_bank_pd } }\n'
+             '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_bank_sp }\n\t\t\tset_variable = { name = pmr_bank_y value = 0 }\n'
+             + bank_sites('pmr_bank_y', '\t\t\t', check=True)
+             + '\t\t\tif = { limit = { NOT = { var:pmr_bank_y = var:pmr_bank_sq } } set_variable = pmr_bank_pd }\n'
+             f'\t\t\tset_variable = {{ name = pmr_bank_z value = {fmt(max(CC_SIZES))} }}\n'
+             '\t\t\tif = { limit = { owner = { has_variable = pmr_bank_cap } } set_variable = { name = pmr_bank_z value = owner.var:pmr_bank_cap } }\n'
+             '\t\t\tif = { limit = { NOT = { var:pmr_bank_z = var:pmr_bank_sp } } set_variable = pmr_bank_pd }\n'
+             '\t\t\tremove_variable = pmr_bank_y\n\t\t\tremove_variable = pmr_bank_z\n\t\t}\n'
+             '\t\telse = { set_variable = pmr_bank_pd }\n\t}\n'
+             '\tif = { limit = { has_variable = pmr_bank_pd } pmr_bank_pack = yes }\n'
+             '\telse_if = {\n\t\tlimit = { has_variable = pmr_bank_P has_variable = pmr_bank_n }\n'
+             '\t\tset_variable = { name = pmr_bank_sc value = 0 }\n\t\tset_variable = { name = pmr_bank_gain value = 0 }\n'
+             + walk
+             + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_bank_{x} }} remove_variable = pmr_bank_{x} }}\n' for x in ('js', 'jg'))
+             + '\t}\n}\n\n')
     # the pour
     o.append('# A package landed: var:pmr_bank_pin construction of size var:pmr_bank_ps, poured down the book from place 1. The\n'
              '# buildings are ticked after the walk (their posts may close places up), then the package on offer is drawn.\n'
@@ -5639,8 +5689,10 @@ def bank_country_effects():
         for b in dict(BANK_COMPANIES)[i])
     ids = sorted(i for i, bs in BANK_COMPANIES if bs)
     o.append('pmr_bank_company = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_bank_cy } }\n'
-             + ''.join(f'\t\tif = {{ limit = {{ has_variable = pmr_bank_cw_{b} }} remove_variable = pmr_bank_cw_{b} remove_variable = pmr_bank_co_{b} }}\n'
+             '\t\tif = {\n\t\t\tlimit = { NOT = { has_variable = pmr_bank_nc } }   # the last read wrote weights, or none on record\n'
+             + ''.join(f'\t\t\tif = {{ limit = {{ has_variable = pmr_bank_cw_{b} }} remove_variable = pmr_bank_cw_{b} remove_variable = pmr_bank_co_{b} }}\n'
                        for b in types)
+             + '\t\t}\n'
              + '\t\tsave_temporary_scope_as = pmr_bank_ctry\n\t\tset_variable = { name = pmr_bank_cf value = 0 }\n'
              '\t\tevery_company = {\n'
              '\t\t\tlimit = { has_variable = pmr_cc_k_id NOT = { has_variable = pmr_sub } has_variable = pmr_bl_cl has_variable = pmr_bl_iq '
@@ -5652,7 +5704,9 @@ def bank_country_effects():
              '\t\t\t\tchange_variable = { name = pmr_bank_cf add = 1 }\n\t\t\t}\n'
              + (lookup('var:pmr_cc_k_id', ids, lambda i: f'scope:pmr_bank_ctry = {{ {put(i)} }}', '\t\t\t') if ids else '')
              + '\t\t}\n'
-             '\t\tif = { limit = { var:pmr_bank_cf > 0 } set_variable = { name = pmr_bank_cy value = yes days = 365 } }\n'
+             '\t\tif = { limit = { var:pmr_bank_cf > 0 } set_variable = { name = pmr_bank_cy value = yes days = 365 } '
+             'if = { limit = { has_variable = pmr_bank_nc } remove_variable = pmr_bank_nc } }\n'
+             '\t\telse = { set_variable = pmr_bank_nc }\n'
              '\t\tremove_variable = pmr_bank_cf\n'
              '\t\tif = { limit = { has_variable = pmr_bank_x } remove_variable = pmr_bank_x }\n\t}\n}\n\n')
     return ''.join(o)

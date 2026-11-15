@@ -17,7 +17,27 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: Banks (q132, test mod; your "q121")
+## Latest: Banks with a lighter monthly pass (q133, test mod)
+
+q132 with three cuts in the Banks' monthly script, from the performance thread's replay of q132. Nothing you see or the
+AI weighs changes, and a q132 game carries on (no new game). The rows of q132 below all hold for q133.
+
+- The month's package pass draws the package again only when something it is drawn from moved since it was last
+  drawn: an order seated, joined, left, reordered or changed its contribution, a level queued or landed on one of the
+  seven investors' sites, or the owner's largest package. Otherwise the same package's orders give their score and
+  weekly gain again, so the AI's weight and the card's gain still move every month.
+- The yearly company read skips its clear of the company weights in a country whose last read found no company.
+- Under Investment Banking and for an order with a part paid level, the sort runs only as many passes as the book has
+  orders less one, and the places are written again only when it moved an order.
+
+| Row | Check | Expected | A null means |
+| --- | --- | --- | --- |
+| R1 | `BANK_PACK` lines after the install, a month at a time | They keep coming at about q132's rate in a game with books | None for a year with books open: the month's check never sees a change; put q132 back |
+| R2 | A Banks card with the same package two months running: the Package strip's Average Weekly gain | Moves with prices while the package stays | Frozen for months while prices move: the month's score and gain are not read again |
+| R3 | A founded company's mark on its industry's row, and the yearly `BANK` line | As q132: the mark appears the month after the company's first board count | Never appears in a country that has a company: the company read skips wrongly |
+| R4 | `logs\error.log`, lines with `pmr_bank` | None | Any: the new month pass reads a variable it never set |
+
+## Earlier: Banks (q132, test mod; your "q121")
 
 You said build it in (2026-11-15 20:01Z). The Chamber of Commerce becomes **Banks**: investors at home keep one order
 book in each state, up to 16 places in a set order, and buy a whole package of construction at a time instead of one
