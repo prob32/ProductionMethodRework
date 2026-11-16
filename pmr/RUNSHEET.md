@@ -17,7 +17,18 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: Banks book by profit, Focus on Infrastructure ×2 to ×3 (q134, test mod)
+## Latest: q135 (test mod) = q134 with the Methods view kept straight
+
+q135 changes one thing in q134. When an investors' Retool order joins the book, it works out its gain by pricing two
+of the building's recipes at today's prices. In q134 those two raw figures stayed behind in the Methods view until the
+building's next check. Now the view's figures are put back once the gain is taken. The gain, the book and the AI's
+choices are unchanged. A q134 game carries on. The q134 rows K1-K6 below stand.
+
+| Row | Check | Expected | A null means |
+| --- | --- | --- | --- |
+| M1 | A building's Methods view, before and after one of its investors' Retool orders joins (a `BANK_JOIN` line names it) | The recipes' "per level a week" figures are the same before and after the join | Two recipes jump at the join and settle at the next check: the figures are not put back |
+
+## Earlier: Banks book by profit, Focus on Infrastructure ×2 to ×3 (q134, test mod)
 
 q133 with three changes from your Banks card in Lancashire (2026-11-15 23:29Z to 23:35Z). A q133 game carries on; the
 policy line on the Investment Chance tooltip appears once the state's package is next drawn (a month at most). Same
