@@ -9139,10 +9139,23 @@ def cc_retool_gain(b, k, head=None, gate=True):
             + ''.join(f'\t\tif = {{ limit = {{ NOT = {{ var:{now} = {i} }} has_variable = pmr_lv_{i}_{b} var:pmr_lv_{i}_{b} > var:pmr_cc_ft }} '
                       f'set_variable = {{ name = pmr_cc_ft value = var:pmr_lv_{i}_{b} }} set_variable = {{ name = {frm} value = {i} }} }}\n'
                       for i in rng))
+    keep = ('', '')
+    if head is not None and not gate:
+        # perf review 28, 5: the join prices the two recipes raw (pmr_off 0, not held to the books), and the Methods view
+        # shows pmr_rm_<i>_<b> as stored, so their figures go back once the difference is taken
+        sv = [(frm, 'pmr_cc_kf'), (now, 'pmr_cc_kn')]
+        keep = (''.join(lookup(f'var:{x}', rng, lambda i, k=k: f'if = {{ limit = {{ has_variable = pmr_rm_{i}_{b} }} '
+                                                               f'set_variable = {{ name = {k} value = var:pmr_rm_{i}_{b} }} }}', '\t\t\t')
+                        for x, k in sv),
+                ''.join(lookup(f'var:{x}', rng, lambda i, k=k: f'if = {{ limit = {{ has_variable = {k} }} '
+                                                               f'set_variable = {{ name = pmr_rm_{i}_{b} value = var:{k} }} }} '
+                                                               f'else_if = {{ limit = {{ has_variable = pmr_rm_{i}_{b} }} remove_variable = pmr_rm_{i}_{b} }}', '\t\t\t')
+                        for x, k in sv)
+                + ''.join(f'\t\t\tif = {{ limit = {{ has_variable = {k} }} remove_variable = {k} }}\n' for _x, k in sv))
     if head is None:
         price = lookup(f'var:{frm}', rng, lambda i: f'if = {{ limit = {{ NOT = {{ var:pmr_ref = {i} }} }} pmr_rmx_{i}_{b} = yes }}', '\t\t\t')
     else:
-        price = ('\t\t\t' + head.replace('\n\t', '\n\t\t\t').rstrip('\t')
+        price = (keep[0] + '\t\t\t' + head.replace('\n\t', '\n\t\t\t').rstrip('\t')
                  + lookup(f'var:{frm}', rng, lambda i: f'pmr_rmx_{i}_{b} = yes', '\t\t\t')
                  + lookup(f'var:{now}', rng, lambda i: f'pmr_rmx_{i}_{b} = yes', '\t\t\t'))
     body = ('\t# CENTER: the Order Book\'s weekly gain a level (cc_retool_gain)\n'
@@ -9153,7 +9166,8 @@ def cc_retool_gain(b, k, head=None, gate=True):
             + '\t\t\tset_variable = { name = pmr_cc_t value = 0 }\n'
             + lookup(f'var:{now}', rng, lambda i: f'if = {{ limit = {{ has_variable = pmr_rm_{i}_{b} }} set_variable = {{ name = pmr_cc_t value = var:pmr_rm_{i}_{b} }} }}', '\t\t\t')
             + lookup(f'var:{frm}', rng, lambda i: f'if = {{ limit = {{ has_variable = pmr_rm_{i}_{b} }} change_variable = {{ name = pmr_cc_t subtract = var:pmr_rm_{i}_{b} }} }}', '\t\t\t')
-            + f'\t\t\tset_variable = {{ name = pmr_retool_gain_{b} value = var:pmr_cc_t }}\n\t\t}}\n'
+            + f'\t\t\tset_variable = {{ name = pmr_retool_gain_{b} value = var:pmr_cc_t }}\n'
+            + keep[1] + '\t\t}\n'
             f'\t\telse_if = {{ limit = {{ has_variable = pmr_retool_gain_{b} }} remove_variable = pmr_retool_gain_{b} }}\n\t}}\n'
             f'\telse_if = {{ limit = {{ has_variable = pmr_retool_gain_{b} }} remove_variable = pmr_retool_gain_{b} }}\n')
     if head is None or not gate:
