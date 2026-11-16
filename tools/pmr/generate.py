@@ -1314,7 +1314,7 @@ GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
 MOD_NAME = 'ProductionMethodRework'
-MOD_VERSION = '0.5.2'
+MOD_VERSION = '0.5.3'
 SUPPORTED_VERSION = '1.15.*'
 
 # Building files whose buildings make goods from goods. Government, military, monuments, canals,
