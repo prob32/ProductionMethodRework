@@ -17,7 +17,25 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: q136 (test mod) = q135 without the workforce line on the card
+## Latest: q137 (test mod) = q136 with Banks offering the fewest packages of one size
+
+You asked on 2026-11-17 (15:03Z to 15:09Z) for a state's Banks to offer all of its open work at once, in the fewest
+packages, all one size, so investors can pick up several levels together. A state now works out how many packages its
+largest allowed size needs to cover the open work, then offers that many of the smallest size that still covers it.
+West Virginia's 600 with Major Refits unlocked is two Major Refits (800), where q136 offered one Major Refit and then a
+Heavy Refit. With only Heavy Refits, 600 is three Heavy Refits. The Package header reads "Major Refit ×2" when more than
+one is on offer. If investors buy only one, the next draw offers what is left, as before.
+
+Construction the book cannot take when a package lands (the 200 spare of 800 for 600) is no longer dropped. It stays
+with the state as a credit and goes first into the next order that joins its book, before any package is offered for
+it. A q136 game carries on; each state's package is drawn again within a month.
+
+| Row | Check | Expected | A null means |
+| --- | --- | --- | --- |
+| B1 | `BANK_PACK` lines for the player's states (each has `size`, `count` and `free`) | `size` × `count` is at least `free`; `count` is the fewest packages of the largest unlocked size that cover `free`; a state with 600 free and Major Refits unlocked shows `size=400;count=2` | Only `count=1` lines in a state with more free than one package: the pack still rounds down (an older `pmr_effects.txt`) |
+| B2 | `BANK_CREDIT` lines, then that state's next `CENTER_LEVEL` lines | A credit appears only after a state's packages land with no order left to take them; the next order to join gets `CENTER_LEVEL` lines with `site=building_pmr_cc_0_1` (the credit) within a month | No `BANK_CREDIT` line in a whole run: investors never bought every package of a rounded-up offer, or every spare found an order in the book. The `count=2` lines in B1 tell which: if none of them was ever fully bought, B2 is untested |
+
+## Earlier: q136 (test mod) = q135 without the workforce line on the card
 
 You asked on 0.5.3-beta (2026-11-17 14:33Z) for the workforce change to sit in a hover only. The building card no
 longer shows the line of added and removed posts under the cash bar. The figures stay in two hovers. The New Default

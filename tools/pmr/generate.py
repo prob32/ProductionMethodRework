@@ -503,9 +503,12 @@ CC_KINDS = (('retool', 'Retool'), ('eq', 'Re-equip'), ('rc', 'Rail Connection'))
 # --center-skip, a new game): the Chamber of Commerce becomes Banks. The investors' side at home (side '1') keeps one book of
 # its open orders in each state, BANK_PLACES places in a definite order (pmr_bank_j<k>, each order's pmr_<vp>_pos_1_<b>), set
 # by the state owner's method (pmr_bank_tier: 1 Merchant Banks shuffles, 2 Stock Exchange first in first out, 3 Investment
-# Banking highest score first; an order with a part paid level always first). The state offers one package (pmr_bank_P):
-# the largest size its free construction fills, the four Refit sizes and BANK_SIZES as their technologies and BANK_WEEKS x
-# the country's construction allow, scored on the average of its orders. A package that lands is poured down the book.
+# Banking highest score first; an order with a part paid level always first). The state offers one package size
+# (pmr_bank_P), pmr_bank_lv of it at once: the fewest packages that cover its free construction, all one size, the
+# smallest that does it in that many (Pat 2026-11-17 15:09Z, q137: West Virginia's 600 is two Major Refits, not a Major and
+# a Heavy); the four Refit sizes and BANK_SIZES as their technologies and BANK_WEEKS x the country's construction allow,
+# scored on the average of its orders. A package that lands is poured down the book; what the book cannot take is the
+# state's credit (pmr_bank_kr), poured first into the next orders.
 # Governments, the player's button and both abroad sides stay as the Center has them.
 BANKS = False
 BANKS_MAP = False   # --banks-map (UI.md 7, Pat's card 19:47Z): Banks get the Financial District's city model
@@ -5501,12 +5504,17 @@ def bank_effects():
                    f'set_variable = {{ name = {J(b, vp, "pos_1")} value = var:pmr_bank_n }} set_variable = pmr_bank_d }} '
                    'else = { change_variable = { name = pmr_bank_w add = 1 } } }\n'
                    for j, (b, vp) in enumerate(jobs, 1))
-    o.append('# Monthly (pmr_cc_upkeep), a state with an order or a package.\npmr_bank_month = {\n'
+    o.append('# Monthly (pmr_cc_upkeep), a state with an order or a package. A credit (pmr_bank_kr) is poured once the book has\n'
+             '# an order; the pour draws the package again.\npmr_bank_month = {\n'
              '\tif = {\n\t\tlimit = { has_variable = pmr_bank_w var:pmr_bank_w > 0 }\n\t\tset_variable = { name = pmr_bank_w value = 0 }\n'
              '\t\tif = { limit = { NOT = { has_variable = pmr_bank_n } } set_variable = { name = pmr_bank_n value = 0 } }\n'
              + seat + '\t}\n'
              '\tif = { limit = { has_variable = pmr_bank_n var:pmr_bank_n >= 2 } pmr_bank_order = yes }\n'
-             '\tif = { limit = { has_variable = pmr_bank_d } remove_variable = pmr_bank_d set_variable = pmr_bank_pd }\n\tpmr_bank_pack_month = yes\n}\n\n')
+             '\tif = { limit = { has_variable = pmr_bank_d } remove_variable = pmr_bank_d set_variable = pmr_bank_pd }\n'
+             '\tif = {\n\t\tlimit = { has_variable = pmr_bank_kr has_variable = pmr_bank_n var:pmr_bank_n > 0 }\n'
+             '\t\tset_variable = { name = pmr_bank_pin value = 0 }\n\t\tset_variable = { name = pmr_bank_ps value = 0 }\n'
+             '\t\tpmr_bank_pour = yes\n\t}\n'
+             '\telse = { pmr_bank_pack_month = yes }\n}\n\n')
     # ordering: tier 1 shuffles when an order joined, tier 3 sorts by the row's gain x the company weight (Pat 2026-11-15
     # 23:35Z: the book read by score put Harvesting Tools, +53, over Sewing Machines, +238); under both an order with a part paid level
     # moves to the front, keeping its order (a stable sort on pmr_bank_f, then pmr_bank_v)
@@ -5576,21 +5584,29 @@ def bank_effects():
              + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_bank_{x} }} remove_variable = pmr_bank_{x} }}\n' for x in ('cr', 'mx'))
              + '}\n\n')
     sizes = bank_all()
-    offer = ''.join(f'\t\t{"if" if i == 0 else "else_if"} = {{ limit = {{ var:pmr_bank_fr >= {fmt(S)}'
-                    + (f' var:pmr_bank_cp >= {fmt(S)}' if S in BANK_SIZES else '')
-                    + f' }} set_variable = {{ name = pmr_bank_P value = {fmt(S)} }} }}\n' for i, S in enumerate(sizes))
+    # q137 (Pat 2026-11-17 15:09Z): the fewest packages that cover the free construction (pmr_bank_r: how many the
+    # largest size allowed takes), then the smallest size that covers it in that many; nothing under the smallest size
+    offer = (f'\t\tif = {{\n\t\t\tlimit = {{ var:pmr_bank_fr >= {fmt(min(sizes))} }}\n'
+             '\t\t\tset_variable = { name = pmr_bank_r value = { value = var:pmr_bank_fr divide = var:pmr_bank_cp ceiling = yes } }\n'
+             '\t\t\tset_variable = { name = pmr_bank_r value = { value = var:pmr_bank_fr divide = var:pmr_bank_r } }\n'
+             + ''.join(f'\t\t\t{"if" if i == 0 else "else_if"} = {{ limit = {{ var:pmr_bank_r <= {fmt(S)}'
+                       + (f' var:pmr_bank_cp >= {fmt(S)}' if S in BANK_SIZES else '')
+                       + f' }} set_variable = {{ name = pmr_bank_P value = {fmt(S)} }} }}\n' for i, S in enumerate(sorted(sizes)))
+             + '\t\t\tremove_variable = pmr_bank_r\n\t\t}\n')
     log = ('' if RELEASE else
            '\t\tset_variable = { name = pmr_bank_P1 value = 0 }\n'
            '\t\tif = { limit = { has_variable = pmr_bank_P } set_variable = { name = pmr_bank_P1 value = var:pmr_bank_P } }\n'
            '\t\tif = {\n\t\t\tlimit = { NOT = { var:pmr_bank_P1 = var:pmr_bank_P0 } owner = { pmr_logged = yes } }\n'
            '\t\t\tdebug_log = "PMR;rec=BANK_PACK;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
-           "state=[THIS.GetState.GetNameNoFormatting];size=[THIS.Var('pmr_bank_P1').GetValue|0];was=[THIS.Var('pmr_bank_P0').GetValue|0];"
+           "state=[THIS.GetState.GetNameNoFormatting];size=[THIS.Var('pmr_bank_P1').GetValue|0];count=[THIS.Var('pmr_bank_lv').GetValue|0];was=[THIS.Var('pmr_bank_P0').GetValue|0];"
            "orders=[THIS.Var('pmr_bank_m').GetValue|0];score=[THIS.Var('pmr_bank_sc').GetValue|1];free=[THIS.Var('pmr_bank_fr').GetValue|0];"
            "queued=[THIS.Var('pmr_bank_qd').GetValue|0];book=[THIS.Var('pmr_bank_n').GetValue|0];waiting=[THIS.Var('pmr_bank_w').GetValue|0];"
            "tier=[THIS.GetState.GetOwner.MakeScope.Var('pmr_bank_tier').GetValue|0]\"\n\t\t}\n\t\tremove_variable = pmr_bank_P1\n")
-    o.append('# The package on offer (MECHANICS 4): the largest size the free construction (the book\'s open construction less what\n'
-             '# is queued on the seven sites) fills, up to the owner\'s pmr_bank_cap; its orders are the first that much in book\n'
-             '# order past the part already bought. Not while a package is being poured (pmr_bank_busy: it draws it at the end).\n'
+    o.append('# The package on offer (MECHANICS 4, q137): the free construction (the book\'s open construction less what is queued\n'
+             '# on the seven sites and the credit) in the fewest packages, up to the owner\'s pmr_bank_cap, all the smallest size\n'
+             '# that covers it in that many; pmr_bank_lv of them may be queued at once. Its orders are the first package\'s worth\n'
+             '# in book order past the part already bought. Not while a package is being poured (pmr_bank_busy: it draws it at\n'
+             '# the end).\n'
              'pmr_bank_pack = {\n\tif = {\n\t\tlimit = { NOT = { has_variable = pmr_bank_busy } }\n'
              '\t\tset_variable = { name = pmr_bank_qd value = 0 }\n'
              + bank_sites('pmr_bank_qd', '\t\t')
@@ -5599,6 +5615,7 @@ def bank_effects():
              + ''.join(f'\t\tif = {{ limit = {{ var:pmr_bank_n >= {k} }} set_variable = {{ name = pmr_bank_q value = var:pmr_bank_j{k} }} '
                        'pmr_bank_open = yes change_variable = { name = pmr_bank_op add = var:pmr_bank_o } }\n' for k in places)
              + '\t\tset_variable = { name = pmr_bank_fr value = { value = var:pmr_bank_op subtract = var:pmr_bank_qd } }\n'
+             '\t\tif = { limit = { has_variable = pmr_bank_kr } change_variable = { name = pmr_bank_fr subtract = var:pmr_bank_kr } }\n'
              '\t\tset_variable = { name = pmr_bank_P0 value = 0 }\n'
              '\t\tif = { limit = { has_variable = pmr_bank_P } set_variable = { name = pmr_bank_P0 value = var:pmr_bank_P } remove_variable = pmr_bank_P }\n'
              f'\t\tset_variable = {{ name = pmr_bank_cp value = {fmt(max(CC_SIZES))} }}\n'
@@ -5606,7 +5623,7 @@ def bank_effects():
              + offer
              + '\t\tpmr_bank_chips_clear = yes\n'
              '\t\tif = {\n\t\t\tlimit = { has_variable = pmr_bank_P }\n'
-             '\t\t\tset_variable = { name = pmr_bank_lv value = { value = var:pmr_bank_fr divide = var:pmr_bank_P floor = yes } }\n'
+             '\t\t\tset_variable = { name = pmr_bank_lv value = { value = var:pmr_bank_fr divide = var:pmr_bank_P ceiling = yes } }\n'
              '\t\t\tset_variable = { name = pmr_bank_skip value = var:pmr_bank_qd }\n'
              '\t\t\tset_variable = { name = pmr_bank_room value = var:pmr_bank_P }\n'
              + ''.join(f'\t\t\tset_variable = {{ name = pmr_bank_{x} value = 0 }}\n' for x in ('m', 'sc', 'gain', 'pm'))
@@ -5662,6 +5679,7 @@ def bank_effects():
              + lookup('var:pmr_bank_nt', places, lambda k: f'set_variable = {{ name = pmr_bank_tk{k} value = var:pmr_bank_q }}') + '}\n\n'
              'pmr_bank_pour = {\n\tset_variable = pmr_bank_busy\n'
              '\tset_variable = { name = pmr_bank_left value = var:pmr_bank_pin }\n\tset_variable = { name = pmr_bank_nt value = 0 }\n'
+             '\tif = { limit = { has_variable = pmr_bank_kr } change_variable = { name = pmr_bank_left add = var:pmr_bank_kr } remove_variable = pmr_bank_kr }\n'
              '\tset_variable = { name = pmr_bank_rt value = 1 }\n'
              '\tif = { limit = { owner = { has_variable = pmr_bank_tier } } set_variable = { name = pmr_bank_rt value = owner.var:pmr_bank_tier } }\n'
              '\tif = { limit = { NOT = { has_variable = pmr_bank_n } } set_variable = { name = pmr_bank_n value = 0 } }\n'
@@ -5671,9 +5689,13 @@ def bank_effects():
                        f'remove_variable = pmr_bank_tk{k} pmr_bank_tick = yes }}\n' for k in places)
              + '\tremove_variable = pmr_bank_busy\n'
              '\tif = {\n\t\tlimit = { var:pmr_bank_left > 0 }\n'
-             '\t\tdebug_log = "PMR;rec=CENTER_DROP;date=[TimeKeeper.GetCurrentDate.GetString];'
-             'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
-             "site=building_pmr_cc_[THIS.Var('pmr_bank_ps').GetValue|0]_1;side=1;construction=[THIS.Var('pmr_bank_left').GetValue|0]\"\n\t}\n"
+             '\t\tset_variable = { name = pmr_bank_kr value = var:pmr_bank_left }\n'
+             + ('' if RELEASE else
+                '\t\tif = {\n\t\t\tlimit = { owner = { pmr_logged = yes } }\n'
+                '\t\t\tdebug_log = "PMR;rec=BANK_CREDIT;date=[TimeKeeper.GetCurrentDate.GetString];'
+                'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                "site=building_pmr_cc_[THIS.Var('pmr_bank_ps').GetValue|0]_1;construction=[THIS.Var('pmr_bank_kr').GetValue|0]\"\n\t\t}\n")
+             + '\t}\n'
              + ''.join(f'\tif = {{ limit = {{ has_variable = pmr_bank_{x} }} remove_variable = pmr_bank_{x} }}\n'
                        for x in ('left', 'pin', 'nt', 'rt', 'un', 'uc', 't', 'o'))
              + '\tpmr_bank_pack = yes\n}\n\n')
@@ -6882,9 +6904,11 @@ def bank_card_loc():
                    f"'PMR_BANK_CAPLOCK_C', 'PMR_BANK_CAPLOCK_{fmt(nx)}')]")
         loc.append(tt + '"')
     m = f"{G}.Var('pmr_bank_m').GetValue"
-    loc += [f' PMR_BANK_PACKAGE_HEAD:0 "$PMR_BANK_PACKAGE$: {pname}  @construction! #v {var("pmr_bank_P", "D")}#!"',
+    many = f"[SelectLocalization(GreaterThan_CFixedPoint({G}.Var('pmr_bank_lv').GetValue, '(CFixedPoint)1'), 'PMR_BANK_LVN', 'PMR_EMPTY')]"
+    loc += [f' PMR_BANK_PACKAGE_HEAD:0 "$PMR_BANK_PACKAGE$: {pname}{many}  @construction! #v {var("pmr_bank_P", "D")}#!"',
+            f' PMR_BANK_LVN:0 " ×{var("pmr_bank_lv")}"',
             f' PMR_BANK_GAIN:0 "@money! {var("pmr_bank_gain", "+=0")}"',
-            f' PMR_BANK_PACKAGE_TT:0 "#header $PMR_BANK_PACKAGE$#!\\n@construction! #v {var("pmr_bank_P", "D")}#! {pname}{TT_DELIM}'
+            f' PMR_BANK_PACKAGE_TT:0 "#header $PMR_BANK_PACKAGE$#!\\n@construction! #v {var("pmr_bank_P", "D")}#! {pname}{many}{TT_DELIM}'
             f'\\n@money! {var("pmr_bank_gain", "+=0")} Average Weekly [concept_building_balance] a level'
             f"\\n#v {var('pmr_bank_m')}#! [SelectLocalization({eq(m, 1)}, 'PMR_CC_ORDER_ONE', 'PMR_CC_ORDER_MANY')]\""]
     for k in range(1, BANK_CHIPS + 1):
@@ -7229,6 +7253,7 @@ def cc_card_loc(froms):
     if BANKS:   # the package up for investment (UI.md 5), only while the state offers one
         loc.append(' PMR_BANK_CHANCE_PK:0 "' + TT_DELIM + '\\n#title Up for Investment:#!'
                    + '\\n@construction! #v ' + var('pmr_bank_P', 'D') + "#! [Building.GetState.GetCustom('pmr_bank_pname')]"
+                   + "[SelectLocalization(GreaterThan_CFixedPoint(Building.GetState.MakeScope.Var('pmr_bank_lv').GetValue, '(CFixedPoint)1'), 'PMR_BANK_LVN', 'PMR_EMPTY')]"
                    + '\\n@money! ' + var('pmr_bank_gain', '+=0') + ' Average Weekly [concept_building_balance] a level'
                    + "[SelectLocalization(GreaterThan_CFixedPoint(Building.GetState.MakeScope.Var('pmr_bank_pm').GetValue, '(CFixedPoint)1.001'), "
                    "'PMR_BANK_CHANCE_PM', 'PMR_EMPTY')]\"")
