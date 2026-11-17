@@ -17,23 +17,25 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: q137 (test mod) = q136 with Banks offering the fewest packages of one size
+## Latest: q137 (test mod) = q136 with Banks offering their whole budget in exact packages
 
-You asked on 2026-11-17 (15:03Z to 15:09Z) for a state's Banks to offer all of its open work at once, in the fewest
-packages, all one size, so investors can pick up several levels together. A state now works out how many packages its
-largest allowed size needs to cover the open work, then offers that many of the smallest size that still covers it.
-West Virginia's 600 with Major Refits unlocked is two Major Refits (800), where q136 offered one Major Refit and then a
-Heavy Refit. With only Heavy Refits, 600 is three Heavy Refits. The Package header reads "Major Refit ×2" when more than
-one is on offer. If investors buy only one, the next draw offers what is left, as before.
+You asked on 2026-11-17 (15:03Z to 15:30Z) for a state's Banks to put all of its open work up at once: exactly on
+budget, in the fewest packages, the same size where it can. A state now splits its free construction (open orders less
+what is already queued) into packages of the sizes its owner has unlocked. The packages add up to exactly that figure.
+There are as few of them as possible, and among the splits with that count, the one with the fewest different sizes
+wins. West Virginia's 600 with Major Refits unlocked is a Major Refit and a Heavy Refit, both on offer together; 800 is
+two Major Refits; 300 is two Medium Refits; 650 is a Major, a Heavy and a Minor. Nothing is ever offered over budget
+and nothing is carried over. If investors buy only some of the packages, the next draw splits what is left.
 
-Construction the book cannot take when a package lands (the 200 spare of 800 for 600) is no longer dropped. It stays
-with the state as a credit and goes first into the next order that joins its book, before any package is offered for
-it. A q136 game carries on; each state's package is drawn again within a month.
+The Package header lists the sizes on offer, largest first, with "×N" for more than one of a size, and the total. The
+Package and Investment Chance tooltips give a line per size. Each size on offer is its own bid for the investors, all
+scored on the orders one package of the largest size would buy, as before. A q136 game carries on; each state's offer
+is drawn again within a month.
 
 | Row | Check | Expected | A null means |
 | --- | --- | --- | --- |
-| B1 | `BANK_PACK` lines for the player's states (each has `size`, `count` and `free`) | `size` × `count` is at least `free`; `count` is the fewest packages of the largest unlocked size that cover `free`; a state with 600 free and Major Refits unlocked shows `size=400;count=2` | Only `count=1` lines in a state with more free than one package: the pack still rounds down (an older `pmr_effects.txt`) |
-| B2 | `BANK_CREDIT` lines, then that state's next `CENTER_LEVEL` lines | A credit appears only after a state's packages land with no order left to take them; the next order to join gets `CENTER_LEVEL` lines with `site=building_pmr_cc_0_1` (the credit) within a month | No `BANK_CREDIT` line in a whole run: investors never bought every package of a rounded-up offer, or every spare found an order in the book. The `count=2` lines in B1 tell which: if none of them was ever fully bought, B2 is untested |
+| B1 | `BANK_PACK` lines for the player's states (each has `total`, `cap` and `n50` to `n1200`) | `total` is the line's `free` rounded down to 50, and the `n` counts times their sizes add up to `total` exactly; with `cap=400`, 600 shows `n400=1;n200=1` | Only one `n` above zero in a state with `free` that no single size fills: the pack still offers one size (an older `pmr_effects.txt`) |
+| B2 | A state whose Banks offer two or more sizes: its Package header and the construction queue | The header reads e.g. "Major Refit + Heavy Refit  600" on one line; investors' rows appear on both sites | Only the largest size gets queued for months while the smaller sits: the AI weighs the smaller site lower; note the state and sizes |
 
 ## Earlier: q136 (test mod) = q135 without the workforce line on the card
 
