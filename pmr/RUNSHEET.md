@@ -17,7 +17,19 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: q135 (test mod) = q134 with the Methods view kept straight
+## Latest: q136 (test mod) = q135 without the workforce line on the card
+
+You asked on 0.5.3-beta (2026-11-17 14:33Z) for the workforce change to sit in a hover only. The building card no
+longer shows the line of added and removed posts under the cash bar. The figures stay in two hovers. The New Default
+bar has them while it runs. Method bar 1's tooltip, after "To retool", now reads "Once 2 of 2 levels run Condensing
+Engine Pump:" and lists each pop type with its change. The posts move in one go once more than half the levels run
+the target, so "2 of 2" on a 2-level mine and "6 of 10" on a 10-level one. A q135 game carries on.
+
+| Row | Check | Expected | A null means |
+| --- | --- | --- | --- |
+| W1 | A building with a retool target that adds or removes posts (an iron mine on Atmospheric Engine Pump with Condensing as target) | No posts line under the cash bar; method bar 1's tooltip ends with "Once N of L levels run <target>:" and a row per pop type | The line is still on the card: the panel file is an older copy (another mod overriding `building_details_panel.gui`) |
+
+## Earlier: q135 (test mod) = q134 with the Methods view kept straight
 
 q135 changes one thing in q134. When an investors' Retool order joins the book, it works out its gain by pricing two
 of the building's recipes at today's prices. In q134 those two raw figures stayed behind in the Methods view until the

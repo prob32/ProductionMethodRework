@@ -1314,7 +1314,7 @@ GOV_RETOOL_ICON = 'gfx/interface/icons/formation_order_icons/upgrade.dds'
 RETOOL_CREW_ICON = 'gfx/interface/icons/production_method_icons/wooden_buildings.dds'
 
 MOD_NAME = 'ProductionMethodRework'
-MOD_VERSION = '0.5.3'
+MOD_VERSION = '0.5.4'
 SUPPORTED_VERSION = '1.15.*'
 
 # Building files whose buildings make goods from goods. Government, military, monuments, canals,
@@ -11463,22 +11463,13 @@ def pick_row(bk, ind):
     b = short(bk)
     swd = state_var(b, 'pmr_swd')
     bar = f"Not(EqualTo_CFixedPoint({swd}, '(CFixedPoint)0'))"
-    # Pat 2026-11-12 17:07Z (Q111-WORKFORCE.md "Still live" 3): the posts on their way, in the right column, level with
-    # the employment bar, from the day a method with other posts is on its way until they have moved: the New Default
-    # pick's while its bar runs, the retool target's after (wf_loc)
-    wf = [(f'And({bar}, {wf_on(b, "n")})', 'N'), (f'And(Not({bar}), {wf_on(b, "o")})', 'O')] if WF_POPS.get(b) else []
-    on = f'Or({bar}, {wf_on(b, "o")})' if wf else bar
-    i1, i2 = ind + '\t', ind + '\t\t'
+    # Pat 2026-11-17 14:33Z: the posts on their way are no longer a line on the card (q112 to 0.5.3, Q111-WORKFORCE.md
+    # "Still live" 3); they stay in the hovers: the New Default bar's and method bar 1's (wf_loc)
+    i1 = ind + '\t'
     return (f'{ind}# PMR: switching bar of {bk}\n'
-            f'{ind}widget = {{\n{i1}visible = "[And({is_type(bk)}, {on})]"\n{i1}size = {{ @panel_width {SW_ROW_H} }}\n'
+            f'{ind}widget = {{\n{i1}visible = "[And({is_type(bk)}, {bar})]"\n{i1}size = {{ @panel_width {SW_ROW_H} }}\n'
             + switch_row(SWITCH_ICONS[bk], sw_shown(b), swd, state_var(b, 'pmr_swto'), ROW_X, ROW_W, SW_BAR_H,
                          ('@panel_width', SW_ROW_H), (SW_ROW_H - SW_ICON) // 2, i1, f'PMR_SW_TT_{b}')
-            + ''.join(f'{i1}textbox = {{  # PMR: the posts on their way\n{i2}visible = "[{cond}]"\n'
-                      # its left edge on the employment bar's (vanilla: 230 wide, 5 from the panel's right edge)
-                      f'{i2}parentanchor = right|vcenter\n{i2}widgetanchor = left|vcenter\n{i2}position = {{ -{BAR_W + 5} 0 }}\n'
-                      f'{i2}autoresize = yes\n{i2}maximumsize = {{ {BAR_W} -1 }}\n'
-                      f'{i2}align = left|nobaseline\n{i2}elide = right\n{i2}text = "PMR_WF_CARD_{k}_{b}"\n'
-                      f'{i2}tooltip = "PMR_WF_TT_{k}_{b}"\n{i2}using = tooltip_above\n{i1}}}\n' for cond, k in wf)
             + f'{ind}}}\n')
 
 
@@ -13082,7 +13073,7 @@ def wf_bits(loc, b, k):
 
 
 def wf_rows(loc, b, k):
-    """The card line's tooltip rows: a row a pop type, its icon, the change and its name, added posts first"""
+    """Method bar 1's tooltip rows (PMR_WF_AT_<b>): a row a pop type, its icon, the change and its name, added posts first"""
     out = []
     for pop, _ in WF_POPS.get(b) or []:
         loc.append(f' PMR_WFR{k.upper()}_{pop.upper()}_{b}:0 "\\n@{pop}! #v [{wf_ex(b, f"pmr_wf{k}_{pop}")}|=+K]#! ${pop}_no_icon$"')
@@ -13093,20 +13084,18 @@ def wf_rows(loc, b, k):
 
 
 def wf_loc(b):
-    """Q111-WORKFORCE.md "Still live" (Pat 2026-11-12 17:07Z): the posts line where a change is decided and on the card.
-    PMR_WF_SW_<b> ends the New Default tooltip, PMR_WF_GOV_<b> sits under the retool button's row, PMR_WF_AT_<b> follows
-    "To retool" in method bar 1's tooltip; PMR_WF_CARD_<k>_<b> and PMR_WF_TT_<k>_<b> are the card's line and its hover."""
+    """Q111-WORKFORCE.md "Still live" (Pat 2026-11-12 17:07Z): the posts line where a change is decided. PMR_WF_SW_<b>
+    ends the New Default tooltip, PMR_WF_GOV_<b> sits under the retool button's row, PMR_WF_AT_<b> follows "To retool"
+    in method bar 1's tooltip: the whole building's change, which lands once more than half its levels run the target
+    (pmr_wfa_<b>). Pat 2026-11-17 14:33Z: no line on the card any more, and the hover names the target (he read "At 2 of
+    2 levels" as now)."""
     if not WF_POPS.get(b):
         return []
     loc = []
     at = f"#v [{wf_ex(b, 'pmr_wfa')}|0]#! of #v [{wf_ex(b, 'pmr_level')}|0]#! levels"
-    names = {'o': "[Building.GetCustom('pmr_new_recipe')]", 'n': f"[Building.GetState.GetCustom('pmr_sw_to_{b}')]"}
     loc += [f' PMR_WF_SW_{b}:0 "\\n{wf_bits(loc, b, "n")}"',
             f' PMR_WF_GOV_{b}:0 "\\n{wf_bits(loc, b, "o")}"',
-            f' PMR_WF_AT_{b}:0 "\\n#title At {at}:#!  {wf_bits(loc, b, "o")}"']
-    for k in 'on':
-        loc += [f' PMR_WF_CARD_{k.upper()}_{b}:0 "{wf_bits(loc, b, k)}"',
-                f' PMR_WF_TT_{k.upper()}_{b}:0 "#header Workforce#!{TT_DELIM}\\n#title At {at} on {names[k]}:#!{wf_rows(loc, b, k)}"']
+            f' PMR_WF_AT_{b}:0 "\\n#title Once {at} run [Building.GetCustom(\'pmr_new_recipe\')]:#!{wf_rows(loc, b, "o")}"']
     return list(dict.fromkeys(loc))
 
 
