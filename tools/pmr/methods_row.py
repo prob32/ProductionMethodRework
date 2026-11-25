@@ -9,7 +9,7 @@ same width (cols).
 The grids read the profit calculation's interface variables (generate.py profit_effect and pair_effect) from whatever
 scope the caller names, so the caller decides where the prices come from:
     pmr_rm_<i>_<b>     profit per level a week          pmr_rav_<i>_<b>    1 while recipe i can run and was priced
-    pmr_rveto_<i>_<b>  1 while recipe i is skipped      pmr_pbest_<b>      the pick (recipe index, 0 if none)
+    pmr_rveto_<i>_<b>  1 or 2 while recipe i is skipped pmr_pbest_<b>      the pick (recipe index, 0 if none)
 read(name) returns the GUI expression for one of them, e.g. lambda n: f"GetPlayer.MakeScope.Var('{n}').GetValue" for
 country copies.
 """
@@ -89,7 +89,7 @@ def recipes_grid(bk, recipes, read, tip, ind, cols=None, visible=None):
     for col, (i, tex) in enumerate(recipes):
         out += _head(col, tex, tip(i), i1)
     for col, (i, _) in enumerate(recipes):
-        alive = f"And({eq(read(f'pmr_rav_{i}_{b}'), 1)}, Not({eq(read(f'pmr_rveto_{i}_{b}'), 1)}))"
+        alive = f"And({eq(read(f'pmr_rav_{i}_{b}'), 1)}, Not({gt(read(f'pmr_rveto_{i}_{b}'), 0)}))"
         out += _cell(col, PAIR_HEAD, tip(i), eq(read(f'pmr_pbest_{b}'), i), alive, read(f'pmr_rm_{i}_{b}'), i1,
                      eq(read(f'pmr_rav_{i}_{b}'), 1))
     return out + f'{ind}}}\n'

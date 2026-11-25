@@ -137,6 +137,57 @@ LAB_UP = 12       # 1,500 more
 # 31 coal and 30 electricity for 150 steel); 32 types were built too little or too much.
 ONE_FRAME = False
 
+# Issue #29 (Steam board F26; Pat 2026-11-25 01:18Z card, "Prevent and contain now"; generate.py --idle-missing): the
+# engine cuts a whole building's output by GOODS_SHORTAGE_PENALTY_MISSING_INPUTS (0.75) while any input it asks for
+# has no supply, but an input a modifier takes to nothing counts as no shortage (q99's SHORT lines). On a union frame,
+# the levels on a recipe that takes an input no one in the market sells (the market owner's pmr_xno_<good>,
+# generate.py market_read) sit idle while their shares come to under IDLE_UNDER points: their goods leave the "less"
+# sizes' A (pmr_fm_e<j>, the share A counts for recipe member j), so that input is carried at nothing and the other
+# levels run at full output; their posts stay. At IDLE_UNDER or more the cut costs less than idling, so the frame is
+# left as vanilla has it, and so is a pure frame. pmr_fis_<b>: the flags the frame last read, as a sum of bits; the
+# monthly tick reads them again on a union frame (idle_watch) and runs the frame where they moved.
+IDLE_MISSING = False
+IDLE_UNDER = 75
+IDLE_SKIP = ()        # goods with no market order book (generate.py LOCAL_GOODS): their gates are generate.py's
+IDLE_GOODS = set()    # every good an idle check reads (generate.py market_read flags them: NOSELL_GOODS)
+
+
+def idle_members(bld):
+    """IDLE_MISSING: {recipe member j: the market goods it takes that some other recipe member does not}, and the
+    goods in bit order (sorted). Empty without the switch, with one recipe, or where no recipe takes such a good."""
+    if not IDLE_MISSING or len(bld.recipes) < 2:
+        return {}, []
+    rin = {m.j: {g for g, a in split(m.mods)[0].items() if a > EPS and g not in IDLE_SKIP} for m in bld.recipes}
+    every = set.intersection(*rin.values())
+    idle = {j: sorted(gs - every) for j, gs in rin.items() if gs - every}
+    goods = sorted({g for gs in idle.values() for g in gs})
+    IDLE_GOODS.update(goods)
+    return idle, goods
+
+
+def idle_sig(goods, ind):
+    """pmr_fm_sig: the goods no one in the market sells, bit k for goods[k] (scope:pmr_xmo saved, its reads
+    refreshed where their 28 days ran out: pmr_xmkt_<good>)"""
+    return (f'{ind}set_variable = {{ name = pmr_fm_sig value = 0 }}\n'
+            + ''.join(f'{ind}pmr_xmkt_{g} = yes\n' for g in goods)
+            + ''.join(f'{ind}if = {{ limit = {{ scope:pmr_xmo = {{ has_variable = pmr_xno_{g} }} }} '
+                      f'change_variable = {{ name = pmr_fm_sig add = {2 ** k} }} }}\n' for k, g in enumerate(goods)))
+
+
+def idle_watch(bld):
+    """State scope, the monthly tick before the frame: on a union frame (pmr_fu_<b>), the flags its idle check reads;
+    where they moved since the frame read them (pmr_fis_<b>), the frame runs again (pmr_fok_<b> goes)"""
+    idle, goods = idle_members(bld)
+    if not idle:
+        return ''
+    b = bld.b
+    return (f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month has_variable = pmr_fu_{b} has_variable = pmr_fok_{b} }}\n'
+            '\t\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
+            '\t\tif = {\n\t\t\tlimit = { exists = scope:pmr_xmo }\n' + idle_sig(goods, '\t\t\t')
+            + f'\t\t\tif = {{ limit = {{ OR = {{ NOT = {{ has_variable = pmr_fis_{b} }} NOT = {{ var:pmr_fm_sig = var:pmr_fis_{b} }} }} }} '
+            f'remove_variable = pmr_fok_{b} }}\n'
+            '\t\t}\n\t}\n')
+
 
 def lab_key(n):
     """the shared laborers method n x LAB_GRAIN a level (n < 0 fewer)"""
@@ -931,7 +982,8 @@ def state_vars(bld):
             + [f'pmr_lj_{p}_{bld.b}' for p in pops]
             + [f'pmr_fz_{bld.b}', f'pmr_fok_{bld.b}', f'pmr_fu_{bld.b}', f'pmr_fq_{bld.b}', f'pmr_fpl_{bld.b}']
             + (treat_vars(bld) if TREAT_MOD else [])
-            + ([f'pmr_lbm_{bld.b}'] if bld.steps else []) + ([f'pmr_fsk_{bld.b}'] if bld.skilled else []))
+            + ([f'pmr_lbm_{bld.b}'] if bld.steps else []) + ([f'pmr_fsk_{bld.b}'] if bld.skilled else [])
+            + ([f'pmr_fis_{bld.b}', f'pmr_fid_{bld.b}'] if idle_members(bld)[0] else []))
 
 
 def clear_vars(bld, ind='\t'):
@@ -1160,13 +1212,16 @@ def frame_effect(bld, log=True, count=False):
     live = [] if TREAT_MOD else [(lv.j, split(lv.mods)) for lv in bld.live]   # TREAT_MOD: treat_running, below
     tgoods = set(treat_plan(bld)[1]) if TREAT_MOD and bld.live else set()
 
+    idle, igoods = idle_members(bld)
+    share = lambda j, side: f'var:pmr_fm_e{j}' if side < 2 and j in idle else n(j)   # noqa: E731
+
     def size(side, name):
         # side: 0 goods in, 1 goods out, 2 jobs
         terms = [(j, d[side].get(name, 0)) for j, d in mem.items() if abs(d[side].get(name, 0)) > EPS]
         u = (ui, uo, uj)[side].get(name, 0)
         s = ('\t\t# the recipe axis: B is A itself on a pure frame (never below 0), else the union\'s\n'
              '\t\tset_variable = { name = pmr_fm_a value = { value = 0'
-             + ''.join(f' add = {{ value = {n(j)} multiply = {fmt(a)} }}' for j, a in terms) + ' } }\n'
+             + ''.join(f' add = {{ value = {share(j, side)} multiply = {fmt(a)} }}' for j, a in terms) + ' } }\n'
              f'\t\t{setv("pmr_fm_b", fmt(u * SHARE_STEPS))}\n'
              f'\t\tif = {{ limit = {{ var:pmr_fm_pr = 1 }} {setv("pmr_fm_b", "var:pmr_fm_a")} '
              f'if = {{ limit = {{ var:pmr_fm_b < 0 }} {setv("pmr_fm_b", 0)} }} }}\n')
@@ -1202,6 +1257,33 @@ def frame_effect(bld, log=True, count=False):
                 f'\t\t\tb:{bk} = {{ add_modifier = {{ name = {mod} multiplier = local_var:pmr_fm_lx }} }}\n\t\t}}\n'
                 f'\t\t{setv(var, "var:pmr_fm_x")}\n\t\t{setv("pmr_fm_ch", 1)}\n\t}}\n')
 
+    if idle:
+        # IDLE_MISSING (issue #29): the shares A counts for the recipes that take an input no one in the market sells
+        o.append('\t# idle levels (IDLE_MISSING): a recipe taking an input no one in the market sells, under '
+                 f'{IDLE_UNDER} points of the levels\n'
+                 + ''.join(f'\t{setv(f"pmr_fm_e{j}", n(j))}\n' for j in sorted(idle))
+                 + f'\t{setv("pmr_fm_id", 0)}\n\t{setv("pmr_fm_sig", 0)}\n'
+                 '\tif = {\n\t\tlimit = { var:pmr_fm_pure = 0 }\n'
+                 '\t\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
+                 '\t\tif = {\n\t\t\tlimit = { exists = scope:pmr_xmo }\n' + idle_sig(igoods, '\t\t\t')
+                 + '\t\t\tif = {\n\t\t\t\tlimit = { var:pmr_fm_sig > 0 }\n'
+                 + ''.join(f'\t\t\t\tif = {{ limit = {{ scope:pmr_xmo = {{ OR = {{ '
+                           + ' '.join(f'has_variable = pmr_xno_{x}' for x in idle[j])
+                           + f' }} }} }} change_variable = {{ name = pmr_fm_id add = {n(j)} }} {setv(f"pmr_fm_e{j}", 0)} }}\n'
+                           for j in sorted(idle))
+                 + f'\t\t\t\tif = {{ limit = {{ var:pmr_fm_id >= {IDLE_UNDER} }} '
+                 + ' '.join(setv(f'pmr_fm_e{j}', n(j)) for j in sorted(idle)) + ' }\n'
+                 '\t\t\t}\n\t\t}\n\t}\n'
+                 f'\t{setv(v("pmr_fis"), "var:pmr_fm_sig")}\n'
+                 + (f'\tif = {{ limit = {{ var:pmr_fm_id > 0 }}\n\t\t{setv("pmr_fm_ih", 0)}\n'
+                    f'\t\tif = {{ limit = {{ var:pmr_fm_id < {IDLE_UNDER} }} {setv(v("pmr_fid"), "var:pmr_fm_id")} {setv("pmr_fm_ih", 1)} }}\n'
+                    f'\t\telse_if = {{ limit = {{ has_variable = {v("pmr_fid")} }} remove_variable = {v("pmr_fid")} }}\n'
+                    '\t\tdebug_log = "PMR;rec=IDLE;date=[TimeKeeper.GetCurrentDate.GetString];'
+                    'country=[THIS.GetState.GetOwner.GetNameNoFormatting];state=[THIS.GetState.GetNameNoFormatting];'
+                    f'building={bk};share=[THIS.Var(\'pmr_fm_id\').GetValue|0];sig=[THIS.Var(\'pmr_fm_sig\').GetValue|0];'
+                    f'goods={"/".join(igoods)};held=[THIS.Var(\'pmr_fm_ih\').GetValue|0]"\n\t}}\n'
+                    f'\telse_if = {{ limit = {{ has_variable = {v("pmr_fid")} }} remove_variable = {v("pmr_fid")} }}\n'
+                    if log else ''))
     o.append('\t# sizes, applied only when they move (remove, then add)\n')
     for side, names, kind, pre in ((0, gin, 'in', 'pmr_lxi'), (1, gout, 'out', 'pmr_lxo'), (2, pops, 'job', 'pmr_lj')):
         for name in names:
@@ -1272,11 +1354,22 @@ def frame_effect(bld, log=True, count=False):
 
 def short_check(bld):
     """State scope, the tick, monthly in a player's state: a union frame with an input at nothing (pmr_fz_<b>) and the
-    building's goods shortage. short=1 means an input the frame carries at 0 still counts as missing."""
+    building's goods shortage. short=1 means an input the frame carries at 0 still counts as missing. IDLE_MISSING:
+    in every country's state while levels sit idle (pmr_fid_<b>, their share in idle=)."""
     bk, b = bld.bk, bld.b
     head = (f'PMR;rec=SHORT;date=[TimeKeeper.GetCurrentDate.GetString];country=[THIS.GetState.GetOwner.GetNameNoFormatting];'
             f'state=[THIS.GetState.GetNameNoFormatting];building={bk};zeroed='
             + ','.join(f"{g}:[THIS.Var('pmr_lxi_{g}_{b}').GetValue|2]" for g in frame_goods(bld)[0]))
+    if idle_members(bld)[0]:
+        # IDLE_MISSING: every country's building with idle levels too, and their share (short=0: the idle levels did it)
+        fid = f'pmr_fid_{b}'
+        held = f"{head};idle=[THIS.Var('{fid}').GetValue|0]"
+        return (f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month has_variable = pmr_fz_{b} has_variable = {fid} }}\n'
+                f'\t\tif = {{ limit = {{ b:{bk} = {{ building_has_goods_shortage = yes }} }} debug_log = "{held};short=1" }}\n'
+                f'\t\telse = {{ debug_log = "{held};short=0" }}\n\t}}\n'
+                f'\telse_if = {{\n\t\tlimit = {{ has_variable = pmr_month has_variable = pmr_fz_{b} owner = {{ is_player = yes }} }}\n'
+                f'\t\tif = {{ limit = {{ b:{bk} = {{ building_has_goods_shortage = yes }} }} debug_log = "{head};short=1" }}\n'
+                f'\t\telse = {{ debug_log = "{head};short=0" }}\n\t}}\n')
     return (f'\tif = {{\n\t\tlimit = {{ has_variable = pmr_month has_variable = pmr_fz_{b} owner = {{ is_player = yes }} }}\n'
             f'\t\tif = {{ limit = {{ b:{bk} = {{ building_has_goods_shortage = yes }} }} debug_log = "{head};short=1" }}\n'
             f'\t\telse = {{ debug_log = "{head};short=0" }}\n\t}}\n')

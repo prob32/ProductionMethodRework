@@ -518,6 +518,18 @@ BANK_WEEKS = 40          # a package is at most this many weeks of the country's
 BANK_PLACES = 16         # places in a book
 BANK_CHIPS = 6           # the Package strip's chips
 COMPANY_WEIGHT = 2       # an order's score x 1 + this x its company's share (vanilla's company mult, MECHANICS 5)
+# Issue #29 (Steam board F26; Pat 2026-11-25 01:18Z card, "Prevent and contain now"): a tooling workshop with 11% of its
+# levels on Rubber Grips and no rubber in its market took the engine's missing-input cut (GOODS_SHORTAGE_PENALTY_MISSING_
+# INPUTS 0.75) on every level. A market's read (market_read) flags each input no one in the market sells (pmr_xno_<good>,
+# on the market owner, NOSELL_GOODS), and:
+#   SELL_VETO (--sell-veto)  the profit pick skips a recipe that needs more of such an input than the reference
+#                            (pmr_rveto_<i>_<b> 2; the state's copy pmr_pxn_<good>, as pmr_px_<good>), where the price
+#                            veto missed it: with neither buy nor sell orders the price reads as base
+#   frames.IDLE_MISSING (--idle-missing)  a union frame's levels on such a recipe sit idle while they are under 75 points
+#                            of the building, so the input is carried at nothing and the rest run at full output
+SELL_VETO = False
+VETO_GOODS = set()       # SELL_VETO: the goods a veto reads (capped, profit_effect), the state copying their flag (price_effect)
+NOSELL_GOODS = set()     # the goods market_read flags: the vetoes' (capped, profit_effect) and the frames' (frames.IDLE_GOODS)
 BANK_COST_REF = 200      # the new sizes' cost divisor is cancelled back to this size's (x --cost-scale)
 BANK_BRASS = (0.51, 0.40, 0.22)   # the package's colour (UI.md 6)
 BANK_METHODS = ('Merchant Banks', 'Stock Exchange', 'Investment Banking')   # UI.md 2, by tier
@@ -2246,6 +2258,11 @@ def main():
                          '--center-skip and a new game')
     ap.add_argument('--banks-map', action='store_true',
                     help='BANKS_MAP (banks/UI.md 7): Banks stand in the city with the Financial District\'s model; needs --banks')
+    ap.add_argument('--sell-veto', action='store_true',
+                    help='SELL_VETO (issue #29): the profit pick skips a recipe needing more of an input no one in the market sells')
+    ap.add_argument('--idle-missing', action='store_true',
+                    help='frames.IDLE_MISSING (issue #29): a mixed building\'s levels on a recipe whose input no one in the '
+                         'market sells sit idle, under 75 points')
     ap.add_argument('--reinvest-floor', metavar='X', type=float, default=1,
                     help='Focus on Infrastructure (Pat 2026-11-15 23:35Z card): a retool weight of X at a group\'s 0%% priority, '
                          'rising to x3 at 100%%; 1 keeps x1 to x3')
@@ -2270,8 +2287,11 @@ def main():
     global INVEST_WINDOW, SOLO_COUNTS, PROFIT_RECHECK_DAYS, PROFIT_RECHECK_SPREAD, TREAT_MOD
     global BAR_COUNT, BAR_CLOCK, PRICE_NEWEST, PROFIT_RULE
     global RAILS, PAY_SCORE, FOLD_SITES, RETOOL_SHARE, PROJECT_SHARE, CENTER, CC_SIZES, CC_SKIP
-    global BANKS, BANKS_MAP, BANK_SIZES, BANK_COST_REF
+    global BANKS, BANKS_MAP, BANK_SIZES, BANK_COST_REF, SELL_VETO
     RELEASE = args.release
+    SELL_VETO = SELL_VETO or args.sell_veto
+    frames.IDLE_MISSING = frames.IDLE_MISSING or args.idle_missing
+    frames.IDLE_SKIP = LOCAL_GOODS
     if args.cost_scale <= 0:
         raise SystemExit('--cost-scale must be above 0')
     RETOOL_SHARE *= args.cost_scale   # same factor on both, so a retool stays a whole number of site levels
@@ -3422,6 +3442,10 @@ def main():
     price_goods = sorted(profit_goods | set(option_goods(options)))
     traded = sorted(set(price_goods) | set(demand_goods(options)))   # q96: local goods from their market's orders too
     spare = set(budget_goods(options))
+    if SELL_VETO or frames.IDLE_MISSING:   # issue #29: the goods whose market read flags no sellers (pmr_xno_<good>)
+        NOSELL_GOODS.update(VETO_GOODS | frames.IDLE_GOODS)
+        if NOSELL_GOODS - set(traded):
+            raise SystemExit(f'NOSELL_GOODS: no market read for {sorted(NOSELL_GOODS - set(traded))}')
     check_price_defines(game)
     write('common/script_values/pmr_market_values.txt', header + market_values(traded, sorted(spare))
           + (blend_fill_values() if BLEND_INFO else ''))
@@ -3996,12 +4020,16 @@ def price_effect(good):
     05:40Z: "we should read those by market and be as cheap as possible there as well") for a traded good, and since
     q96 (Pat 12:44Z, SUPPLY) for a local good too (LOCAL_GOODS): a local good's market orders are its states' summed,
     as vanilla's Five Year Plan reads electricity and transportation (ip5_je_values.txt), so a state's own surplus or
-    shortage no longer moves its price; whether the state has any at all is SUPPLY's flag."""
+    shortage no longer moves its price; whether the state has any at all is SUPPLY's flag. SELL_VETO: pmr_pxn_<good>
+    while no one in the market sells it (pmr_xno_<good>, a good a veto reads: VETO_GOODS)."""
+    xn = (f'\t\tif = {{ limit = {{ scope:pmr_xmo = {{ has_variable = pmr_xno_{good} }} }} set_variable = pmr_pxn_{good} }}\n'
+          f'\t\telse_if = {{ limit = {{ has_variable = pmr_pxn_{good} }} remove_variable = pmr_pxn_{good} }}\n'
+          if SELL_VETO and good in VETO_GOODS else '')
     return (f'pmr_price_{good} = {{\n'
             '\tmarket ?= { owner ?= { save_temporary_scope_as = pmr_xmo } }\n'
             f'\tset_variable = {{ name = pmr_px_{good} value = 1 }}\n'
             f'\tif = {{\n\t\tlimit = {{ exists = scope:pmr_xmo }}\n\t\tpmr_xmkt_{good} = yes\n'
-            f'\t\tset_variable = {{ name = pmr_px_{good} value = scope:pmr_xmo.var:pmr_mpx_{good} }}\n\t}}\n}}\n\n')
+            f'\t\tset_variable = {{ name = pmr_px_{good} value = scope:pmr_xmo.var:pmr_mpx_{good} }}\n{xn}\t}}\n}}\n\n')
 
 
 def local_price_effect(good):
@@ -4379,7 +4407,19 @@ def check_price_defines(game):
 def market_read(good, spare):
     """State scope, scope:pmr_xmo its market's owner: the owner's pmr_mpx_<good> (market_values), and for an input its
     pmr_xb_<good>, read once a month (pmr_xmm_<good>): two reads a good a market a month, where q93 read the price
-    through about five comparisons a good a state a day and the spare supply through a ladder."""
+    through about five comparisons a good a state a day and the spare supply through a ladder. Issue #29 (NOSELL_GOODS):
+    pmr_xno_<good> while no one in the market sells it, from the first monthly pulse on (the setup pass has no orders);
+    test builds log NOSELL when it comes and goes."""
+    nosell = ''
+    if good in NOSELL_GOODS:
+        line = ('PMR;rec=NOSELL;date=[TimeKeeper.GetCurrentDate.GetString];market=[THIS.GetCountry.GetNameNoFormatting];'
+                f'good={good};on=')
+        nosell = ('\t\t\tif = {\n\t\t\t\tlimit = { NOT = { has_global_variable = pmr_setup } '
+                  f'NOT = {{ market ?= {{ mg:{good} ?= {{ market_goods_sell_orders > 0 }} }} }} }}\n'
+                  + ('' if RELEASE else f'\t\t\t\tif = {{ limit = {{ NOT = {{ has_variable = pmr_xno_{good} }} }} debug_log = "{line}1" }}\n')
+                  + f'\t\t\t\tset_variable = pmr_xno_{good}\n\t\t\t}}\n'
+                  f'\t\t\telse_if = {{ limit = {{ has_variable = pmr_xno_{good} }} '
+                  + ('' if RELEASE else f'debug_log = "{line}0" ') + f'remove_variable = pmr_xno_{good} }}\n')
     return (f'pmr_xmkt_{good} = {{\n\tif = {{\n'
             f'\t\tlimit = {{ exists = scope:pmr_xmo NOT = {{ scope:pmr_xmo = {{ has_variable = pmr_xmm_{good} }} }} }}\n'
             '\t\tscope:pmr_xmo = {\n'
@@ -4388,7 +4428,7 @@ def market_read(good, spare):
             f'set_variable = {{ name = pmr_xmm_{good} value = yes days = 28 }} }}\n'
             f'\t\t\tset_variable = {{ name = pmr_mpx_{good} value = pmr_sv_mpx_{good} }}\n'
             + (f'\t\t\tset_variable = {{ name = pmr_xb_{good} value = pmr_sv_spare_{good} }}\n' if spare else '')
-            + '\t\t}\n\t}\n}\n\n')
+            + nosell + '\t\t}\n\t}\n}\n\n')
 
 
 FRAMES = {}            # building type -> its frames.Building (the method-count rework), set by main()
@@ -8463,6 +8503,8 @@ def tick_effect(bk, b, recipes, elec_tiers=(), opts=(), fold_techs=None, econ=()
              + (opts_call(b, any(mode == 'market' for _, _, mode, *_ in opts)) if opts else '')
              # the frames and their "less" sizes (frames.py): every event tick (an AI's or the game's switch is put back
              # at once), and a monthly one whose shares moved since (pmr_mix_<b>, pmr_opts_<b> drop pmr_fok_<b>)
+             # IDLE_MISSING (issue #29): a union frame's idle check reads the market again; where it moved, the frame runs
+             + (frames.idle_watch(FRAMES[bk]) if bk in FRAMES else '')
              + f'\tif = {{ limit = {{ NOT = {{ AND = {{ has_variable = pmr_month has_variable = pmr_fok_{b} }} }} }} pmr_frame_{b} = yes }}\n'
              + (f'\tpmr_wf_{b} = yes   # the posts a retool or a new default brings (WF_POPS)\n' if WF_POPS.get(b) else '')
              + short_check +
@@ -8670,7 +8712,8 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
       pmr_rm_<i>_<b>     pmr_rg - pmr_rw, the profit per level per week
       pmr_rav_<i>_<b>    1 while recipe i can become the target here (pmr_newest_<b>'s rule) and this run priced it:
                          the reference, or one runnable step from it (Pat 13:09Z); 0 otherwise, its figures an earlier run's
-      pmr_rveto_<i>_<b>  1 while recipe i needs more of an input than the default and its price is at the cap
+      pmr_rveto_<i>_<b>  1 while recipe i needs more of an input than the default and its price is at the cap, 2 (SELL_VETO)
+                         while no one in the market sells it
       pmr_pbest_<b>      the pick: the best pmr_rm of the runnable, unvetoed recipes, the default unless another beats
                          it by SWITCH_GAIN; 0 if none
       pmr_swg_<b>        the pick's gain over the default (0.3 = 30% more profit), pmr_swr_<b> the bar's points a month
@@ -8916,8 +8959,15 @@ def profit_effect(bk, b, recipes, econ, goods_cost, active, reach, setv, v, pair
     o += [f'\tset_variable = {{ name = {xv("pmr_rveto", i)} value = 0 }}\n' for i in range(1, k + 1)]
 
     def capped(gs, i):
-        return (f'\t\tif = {{ limit = {{ OR = {{ ' + ' '.join(f'var:pmr_px_{g} >= {top}' for g in gs)
-                + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
+        cap = (f'if = {{ limit = {{ OR = {{ ' + ' '.join(f'var:pmr_px_{g} >= {top}' for g in gs)
+               + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 1 }} }}\n')
+        ns = [g for g in gs if g not in LOCAL_GOODS]   # a local good has its own gates (pmr_elec, pmr_rail)
+        if not SELL_VETO or not ns:
+            return '\t\t' + cap
+        # issue #29: first an input no one in the market sells (2), whose price reads as base without buy orders
+        VETO_GOODS.update(ns)
+        return (f'\t\tif = {{ limit = {{ OR = {{ ' + ' '.join(f'has_variable = pmr_pxn_{g}' for g in ns)
+                + f' }} }} set_variable = {{ name = {xv("pmr_rveto", i)} value = 2 }} }}\n\t\telse_' + cap)
     # q98 (Pat 2026-11-10 18:29Z, the check map's savings): the references as a binary search (lookup), not a ladder
     vetoes = {}
     for c in range(1, k + 1):
@@ -9469,7 +9519,8 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
         return ''
     if pair.get('split'):
         # The pairs are the retool targets (SPLIT_AUTOMATION): the grid shows the pick's own figures, and its gold
-        # cell is the pick. pmr_cav_<i>_<a>_<b>: 1 priced and runnable, -1 priced but skipped at the price cap, 0 not
+        # cell is the pick. pmr_cav_<i>_<a>_<b>: 1 priced and runnable, -1 priced but skipped at the price cap (-2 for an
+        # input no one sells, SELL_VETO), 0 not
         # priced this run (out of reach or one step too far, profit_effect), so the card leaves its figure out.
         o = [f'\t# recipe + automation pairs: the retool targets\' figures (pair_effect)\n'
              f'\t{setv("pmr_cbi", 0)}\n\t{setv("pmr_cba", 0)}\n']
@@ -9478,7 +9529,9 @@ def pair_effect(bk, b, recipes, pair, goods_cost, active, setv, v):
             o.append(f'\tset_variable = {{ name = {cp} value = var:pmr_rm_{x}_{b} }}\n'
                      f'\tset_variable = {{ name = {cav} value = 0 }}\n'
                      f'\tif = {{ limit = {{ var:pmr_rav_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = 1 }} '
-                     f'if = {{ limit = {{ var:pmr_rveto_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = -1 }} }} }}\n')
+                     f'if = {{ limit = {{ var:pmr_rveto_{x}_{b} = 1 }} set_variable = {{ name = {cav} value = -1 }} }} '
+                     + (f'else_if = {{ limit = {{ var:pmr_rveto_{x}_{b} = 2 }} set_variable = {{ name = {cav} value = -2 }} }} '
+                        if SELL_VETO else '') + '}\n')
         at = {x: ia for ia, x in pair['index'].items()}
         o.append(lookup(f'var:{v("pmr_pbest")}', sorted(at), lambda x: f'{setv("pmr_cbi", at[x][0])} {setv("pmr_cba", at[x][1])}'))
         return ''.join(o)
@@ -12016,6 +12069,8 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cbi_{b} = {i} var:pmr_cba_{b} = {a} }}\n'
                        '\t\tlocalization_key = PMR_PAIR_NOTE_BEST\n\t}\n'
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cav_{i}_{a}_{b} = -1 }}\n\t\tlocalization_key = PMR_PICK_NOTE_VETO\n\t}}\n'
+                       + (f'\ttext = {{\n\t\ttrigger = {{ var:pmr_cav_{i}_{a}_{b} = -2 }}\n\t\tlocalization_key = PMR_PICK_NOTE_NOSELL\n\t}}\n'
+                          if SELL_VETO else '') +
                        '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     for bk, keys in recipe_keys.items():
         b = short(bk)
@@ -12025,6 +12080,8 @@ def methods_view_custom_loc(recipe_keys, pair_ui=None):
             out.append(f'pmr_mvnote_{b}_{i} = {{\n\ttype = country\n\trandom_valid = no\n'
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_pbest_{b} = {i} }}\n\t\tlocalization_key = PMR_PICK_NOTE_BEST\n\t}}\n'
                        f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rveto_{i}_{b} = 1 }}\n\t\tlocalization_key = PMR_PICK_NOTE_VETO\n\t}}\n'
+                       + (f'\ttext = {{\n\t\ttrigger = {{ var:pmr_rveto_{i}_{b} = 2 }}\n\t\tlocalization_key = PMR_PICK_NOTE_NOSELL\n\t}}\n'
+                          if SELL_VETO else '') +
                        '\ttext = {\n\t\tlocalization_key = PMR_EMPTY\n\t}\n}\n')
     return ''.join(out)
 
@@ -12199,6 +12256,8 @@ def pick_loc(pick_ui):
     """The switching bars' tooltips, and the notes the Policies cards' tooltips put after a recipe's profit. Pat,
     2026-10-19 02:32Z: no "Most profitable" line (PMR_PICK_ROW_<b>) and no idle bar (PMR_CSW_IDLE_<b>) any more."""
     loc = [' PMR_PICK_NOTE_BEST:0 "  #P Most profitable#!"', ' PMR_PICK_NOTE_VETO:0 "  @warning! #N Input at price cap#!"']
+    if SELL_VETO:
+        loc.append(' PMR_PICK_NOTE_NOSELL:0 "  @warning! #N Input has no sellers#!"')
     for bk, keys in pick_ui.items():
         b = short(bk)
 

@@ -17,7 +17,30 @@ Timed runs: from switching to no country until the timed stretch ends, nothing e
 only six debug.log files of 512 KB, so a long run loses PMR lines between backup pulls; `logs\dedicated_server.log`
 logs every tick's wall clock, and the pace is read from there.
 
-## Latest: q137 (test mod) = q136 with Banks offering their whole budget in exact packages
+## Latest: q138 (test mod) = q137 with no retooling onto an input no one sells
+
+A Steam player's tooling workshop ran 11% of its levels on Rubber Grips with no rubber in its market, and the game cut
+the whole building's output by 75% (issue #29). You chose on 2026-11-25 (01:18Z) to prevent it and contain it in this
+build, and to see what both cost before either reaches a release.
+
+Each market now marks every input that no one in it sells. Two switches use the mark. With `--sell-veto`, a building no
+longer picks a recipe that needs more of a marked input than its current one, and the Methods view shows "Input has no
+sellers" under that recipe. With `--idle-missing`, a building that already runs some levels on such a recipe leaves
+those levels idle, as long as they are under 75% of the building. They take none of the missing input and make
+nothing, and the other levels run at full output. The idle levels keep their workers. At 75% or more, or with every
+level on the one recipe, the building runs as vanilla does: idling it would cost more than the cut. A q137 game carries
+on. A building already on Rubber Grips in a mix goes idle on those levels within a month.
+
+| Row | Check | Expected | A null means |
+| --- | --- | --- | --- |
+| N1 | `NOSELL` lines (every market, from the first month) | `on=1` for goods no one in a market sells (rubber before any rubber plantation runs), `on=0` when sellers come | No `NOSELL` lines at all: the market read never marked a good; look in `error.log` for `pmr_xmkt_` |
+| N2 | `PROFIT` lines for the player's tooling workshops after Vulcanization, in a market with rubber `on=1` | `veto=` has 2 at Rubber Grips' place (the fourth); the Methods view greys the recipe with "Input has no sellers" | `veto=` 0 there: the state's copy of the mark never came through, and the old gap is open |
+| N3 | `IDLE` lines (every country) | `held=1` with `share` under 75 for a mixed building with a marked input; that building's `SHORT` line next month has the same `idle=` and `short=0` | `short=1`: the engine still counts the zeroed input as missing, so idling does not lift the cut. No `IDLE` line while rubber is `on=1` and a tooling workshop mixes Rubber Grips: the frame never ran again |
+| N4 | `IDLE` lines with `share` 75 or more | `held=0`, and no `SHORT` line with `idle=` for that building | `held=1` at 75 or more: the 75-point rule is not applied |
+
+The cost of each switch is measured on a timed stretch before either goes to a release.
+
+## Earlier: q137 (test mod) = q136 with Banks offering their whole budget in exact packages
 
 You asked on 2026-11-17 (15:03Z to 15:30Z) for a state's Banks to put all of its open work up at once: exactly on
 budget, in the fewest packages, the same size where it can. A state now splits its free construction (open orders less
